@@ -1,0 +1,19 @@
+{
+  "name": "acebase-test",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/index.js",
+  "private": true,
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
+  "license": "MIT",
+  "dependencies": {
+    "acebase": "file:../acebase",
+    "acebase-client": "file:../acebase-client",
+    "acebase-server": "file:../acebase-server",
+    "text-encoding": "^0.6.4"
+  }
+}
