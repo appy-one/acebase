@@ -1,0 +1,24 @@
+{
+  "name": "acebase-server",
+  "version": "0.0.1",
+  "description": "AceBase JSON database server",
+  "main": "./src/index.js",
+  "private": true,
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "database",
+    "db",
+    "json",
+    "binary",
+    "no-sql"
+  ],
+  "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
+  "license": "MIT",
+  "dependencies": {
+    "acebase": "file:../acebase",
+    "express": "^4.16.3",
+    "socket.io": "^2.1.1"
+  }
+}
