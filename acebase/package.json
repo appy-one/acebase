@@ -1,0 +1,25 @@
+{
+  "name": "acebase",
+  "version": "0.0.1",
+  "description": "AceBase JSON database engine",
+  "main": "./src/index.js",
+  "private": true,
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "database",
+    "db",
+    "json",
+    "binary",
+    "no-sql"
+  ],
+  "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
+  "license": "MIT",
+  "dependencies": {
+    "ascii85": "^1.0.2",
+    "observable": "^2.1.4",
+    "text-encoding": "^0.6.4",
+    "uuid62": "^1.0.0"
+  }
+}
