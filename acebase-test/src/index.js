@@ -15,6 +15,6 @@ db.on("ready", () => {
     require("./tests/transaction")(db);
     require("./tests/getset")(db);
     require("./tests/stats")(db);
-    //require("./tests/indexing")(db);
+    //require("./tests/indexing");
 
 });

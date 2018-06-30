@@ -50,8 +50,6 @@ class BTreeNode {
         else if (typeof value !== "undefined") {
             this.add(key, value);
         }
-        // key instanceof Array ? key : [key instanceof BTreeEntry ? key : new BTreeEntry(key, value)];
-        
     }
 
     get size() {
@@ -193,40 +191,154 @@ class BTreeNode {
         return this.gtChild ? this.gtChild.find(key) : undefined;
     }
 
+    all() {
+        const all = [];
+        const add = (entry) => {
+            let obj = { key: entry.key };
+            if (this.tree.uniqueValues) {
+                obj.value = entry.values[0];
+            }
+            else {
+                obj.values = entry.values;
+            }
+            all.push(obj);
+        };        
+        for(let i = 0 ; i < this.entries.length; i++) {
+            let entry = this.entries[i];
+            entry.ltChild && all.push(...entry.ltChild.all());
+            add(entry);
+        }
+        this.gtChild && all.push(...this.gtChild.all()); 
+        return all;
+    }
+
+    search(op, val) {
+        if (["in","!in","between","!between"].indexOf(op) >= 0) {
+            // val must be an array
+            console.assert(val instanceof Array, `val must be an array when using operator ${op}`);
+        }
+        let results = [];
+        const add = (entry) => {
+            let obj = { key: entry.key };
+            if (this.tree.uniqueValues) {
+                obj.value = entry.values[0];
+            }
+            else {
+                obj.values = entry.values;
+            }
+            results.push(obj);
+        };
+        /**
+         * 
+         * @param {BTreeNode} parentNode 
+         */
+        const addNode = (parentNode) => {
+            for(let i = 0 ; i < parentNode.entries.length; i++) {
+                let entry = parentNode.entries[i];
+                entry.ltChild && addNode(entry.ltChild); 
+                add(entry);
+            }
+            parentNode.gtChild && addNode(parentNode.gtChild); 
+        }
+        
+        for(let i = 0; i < this.entries.length; i++) {
+            const entry = this.entries[i];
+            const isFirstEntry = i === 0;
+            const isLastEntry = i + 1 === this.entries.length;
+            // const valIsBetween = ["between","!between"].indexOf(op) >= 0 && entry.key >= val[0] && entry.key <= val[1];
+            // const valIsInSet =  ["in","!in"].indexOf(op) >= 0 && val.indexOf(entry.key) >= 0;
+
+            // if (op === "between") {
+            //     // This is way easier using a B+ tree!!!
+            //     if (valIsBetween && isFirstEntry && val[0] !== entry.key) {
+            //         entry.ltChild && results.push(...entry.ltChild.search(op, val));
+            //     }
+            //     if (valIsBetween) {
+            //         add(entry);
+            //     }
+            //     if (valIsBetween && isLastEntry && val[1] !== entry.key) {
+            //         this.gtChild && results.push(...this.gtChild.search(op, val));
+            //     }
+            // }
+            //else 
+            if (entry.key < val) {
+                if (["<","<=","!="].indexOf(op) >= 0) {
+                    entry.ltChild && addNode(entry.ltChild);
+                    add(entry);
+                }
+                if (isLastEntry) {
+                    // Last entry is smaller than compare value
+                    this.gtChild && results.push(...this.gtChild.search(op, val));
+                }
+            }
+            else if (entry.key === val) {
+                if (op === "<=") {
+                    entry.ltChild && addNode(entry.ltChild);
+                }
+                if (["<=","==",">="].indexOf(op) >= 0) {
+                    add(entry);
+                }
+                if (isLastEntry && op === ">=") {
+                    this.gtChild && results.push(...this.gtChild.search(op, val));
+                }
+            }
+            else if (entry.key > val) {
+                if (isFirstEntry) {
+                    // First entry is greater than compare value
+                    entry.ltChild && results.push(...entry.ltChild.search(op, val));
+                }
+                if ([">",">=","!="].indexOf(op) >= 0) {
+                    add(entry);
+                    if (isLastEntry) {
+                        this.gtChild && addNode(this.gtChild);
+                    }
+                }
+                else if (isFirstEntry) {
+                    break; // Break the loop, because the values will only become bigger
+                }
+            }
+            else {
+                throw new Error(`Impossible. Debug this`);
+            }
+        }
+        return results;
+    }
+
+
     toBinary() {
-        // layout:
-        // data                 := index_length, index_type, max_node_entries, root_node
-        // index_length         := 4 byte number
-        // index_type           := 1 byte = [0,0,0,0,0,0,0,is_unique]
-        // max_node_entries     := 1 byte number
-        // root_node            := node
-        // node*                := node_length, entries_length, entries, gt_child_ptr, children
-        // node_length          := 4 byte number (byte count)
-        // entries_length       := 1 byte number
-        // entries              := entry, [entry, [entry...]]
-        // entry                := key, lt_child_ptr, val
-        // key                  := key_type, key_length, key_data
-        // key_type             := 1 byte number
+        // EBNF layout:
+        // data                 = index_length, index_type, max_node_entries, root_node
+        // index_length         = 4 byte number
+        // index_type           = 1 byte = [0,0,0,0,0,0,0,is_unique]
+        // max_node_entries     = 1 byte number
+        // root_node            = node
+        // node*                = node_length, entries_length, entries, gt_child_ptr, children
+        // node_length          = 4 byte number (byte count)
+        // entries_length       = 1 byte number
+        // entries              = entry, [entry, [entry...]]
+        // entry                = key, lt_child_ptr, val
+        // key                  = key_type, key_length, key_data
+        // key_type             = 1 byte number
         //                          0: UNDEFINED (equiv to sql null values)
         //                          1: STRING
         //                          2: NUMBER
         //                          3: BOOLEAN
         //                          4: DATE
-        // key_length           := 1 byte number
-        // key_data             := [key_length] bytes ASCII string
-        // lt_child_ptr         := 4 byte number (byte offset)
-        // val                  := val_length, val_data
-        // val_length           := 4 byte number (byte count)
-        // val_data             := is_unique?
+        // key_length           = 1 byte number
+        // key_data             = [key_length] bytes ASCII string
+        // lt_child_ptr         = 4 byte number (byte offset)
+        // val                  = val_length, val_data
+        // val_length           = 4 byte number (byte count)
+        // val_data             = is_unique?
         //                          0: value_list
         //                          1: value
-        // value_list           := value_list_length, value, [value, [value...]]
-        // value_list_length    := 4 byte number
-        // value                := value_length, value_data
-        // value_length         := 1 byte number
-        // value_data           := [value_length] bytes data 
-        // gt_child_ptr         := 4 byte number (byte offset)
-        // children             := node, [node, [node...]]
+        // value_list           = value_list_length, value, [value, [value...]]
+        // value_list_length    = 4 byte number
+        // value                = value_length, value_data
+        // value_length         = 1 byte number
+        // value_data           = [value_length] bytes data 
+        // gt_child_ptr         = 4 byte number (byte offset)
+        // children             = node, [node, [node...]]
         // * BTreeNode.toBinary() starts writing here
 
         let bytes = [];
