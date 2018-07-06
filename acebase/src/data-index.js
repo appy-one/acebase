@@ -1168,7 +1168,11 @@ class BPlusTreeNode {
                     if (offset > maxOffset) {
                         throw new Error(`reference offset to big to store in 31 bits`);
                     }
+                    let debugName = bytes[ref.index] instanceof Array ? bytes[ref.index][0] : undefined;
                     bytes[ref.index] = ((offset >> 24) & 0x7f) | (negative ? 0x80 : 0);
+                    if (debugName) {
+                        bytes[ref.index] = [debugName, bytes[ref.index]];
+                    }
                     bytes[ref.index+1] = (offset >> 16) & 0xff;
                     bytes[ref.index+2] = (offset >> 8) & 0xff;
                     bytes[ref.index+3] = offset & 0xff;
@@ -1702,7 +1706,7 @@ class BPlusTree {
         return all;
     }
 
-    static get debugBinary() { return false; }
+    static get debugBinary() { return true; }
     static addBinaryDebugString(str, byte) {
         if (this.debugBinary) {
             return [str, byte];
@@ -1892,6 +1896,28 @@ class ChunkReader {
     rewind(byteCount) {
         this.index -= byteCount;
     }
+    go(index) {
+        if (this.offset <= index && this.offset + this.data.length > index) {
+            this.index = index - this.offset;
+            return Promise.resolve();
+        }
+        return this.read(index, this.chunkSize)
+        .then(chunk => {
+            this.data = chunk;
+            this.offset = index;
+            this.index = 0;
+        });
+    }
+    savePosition(offsetCorrection = 0) {
+        let savedIndex = this.offset + this.index + offsetCorrection;
+        let go = (offset = 0) => {
+            let index = savedIndex + offset;
+            return this.go(index);
+        }
+        return {
+            go
+        };
+    }
 }
 
 class BinaryBPlusTree {
@@ -1899,7 +1925,509 @@ class BinaryBPlusTree {
     //     this.read = readFn;
     // }
     constructor(data) {
+        if (BPlusTree.debugBinary) {
+            this.debugData = data;
+            data = data.map(entry => entry instanceof Array ? entry[1] : entry);
+        }
         this.data = data;
+
+        // this._ready = false;
+        // this.reader = new ChunkReader(32, (i, length) => {
+        //     let slice = this.data.slice(i, i + length);
+        //     return Promise.resolve(slice);
+        // });
+    }
+
+    // ready() {
+    //     if (this._ready && this.info) {
+    //         return Promise.resolve(this.info);
+    //     }
+    //     return this.reader.init()
+    //     .then(() => {
+    //         return this.reader.get(6);
+    //     })
+    //     .then(header => {
+    //         this.info = {
+    //             byteLength: (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3],
+    //             isUnique: (header[4] & 0x1) === 1,
+    //             entriesPerNode: header[5]
+    //         };
+    //         this._ready = true;
+    //         return this.info;
+    //     });
+    // }
+
+    _getReader() {
+        const reader = new ChunkReader(32, (i, length) => {
+            let slice = this.data.slice(i, i + length);
+            return Promise.resolve(slice);
+        });
+        return reader.init()
+        .then(() => {
+            return reader.get(6);
+        })
+        .then(header => {
+            this.info = {
+                byteLength: (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3],
+                isUnique: (header[4] & 0x1) === 1,
+                entriesPerNode: header[5]
+            };
+            //this._ready = true;
+            return reader;
+        });
+    }
+
+    _readChild(reader) {
+        return reader.get(5) // byte_length, is_leaf
+        .then(bytes => {
+            const byteLength = (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]; // byte_length
+            const isLeaf = bytes[4] === 1; // is_leaf
+
+            // load whole node/leaf for easy processing
+            return reader.get(byteLength - 5)
+            .then(bytes => {
+                return {
+                    isLeaf,
+                    bytes
+                };
+            });
+        });
+    }
+
+    _getLeaf(bytes, reader) {
+        const savedPosition = reader.savePosition(-bytes.length);
+        const getSignedOffset = (bytes, index) => {
+            let offset = ((bytes[index] & 0x7f) << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8)  | bytes[index+3];
+            let isNegative = (bytes[index] & 0x80) > 0;
+            if (isNegative) { offset = -offset; }
+            return offset;
+        };
+        const prevLeafOffset = getSignedOffset(bytes, 0); // prev_leaf_ptr
+        const nextLeafOffset = getSignedOffset(bytes, 4); // next_leaf_ptr
+        
+        let index = 8;
+        let entriesLength = bytes[index]; // entries_length
+        index++;
+        let entries = [];
+
+        const readValue = () => {
+            let valueLength = bytes[index];
+            index++;
+            let value = [];
+            for (let j = 0; j < valueLength; j++) {
+                value[j] = bytes[index + j];
+            }
+            index += valueLength;
+            return value;
+        };
+
+        for (let i = 0; i < entriesLength; i++) {
+            let keyInfo = BPlusTree.getKeyFromBinary(bytes, index);
+            let key = keyInfo.key;
+            index += keyInfo.length + 2;
+
+            // Read value(s) and return
+            index += 4; // Skip val_length, we will read all values
+            if (this.info.isUnique) {
+                // Read single value
+                entries.push({
+                    key,
+                    values: [readValue()]
+                });
+            }
+            else {
+                // Read value_list_length
+                const valuesLength = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // value_list_length
+                index += 4;
+                const values = [];
+                for(let i = 0; i < valuesLength; i++) {
+                    const value = readValue();
+                    values.push(value);
+                }
+                entries.push({
+                    key,
+                    values
+                });
+            }
+        }
+
+        const leaf = {
+            entries
+        };
+        if (prevLeafOffset !== 0) {
+            leaf.getPrevious = () => {
+                return savedPosition.go(prevLeafOffset)
+                .then(() => {
+                    return this._readChild(reader)
+                    .then(child => {
+                        console.assert(child.isLeaf, `If this is not the case, debug me`);
+                        return this._getLeaf(child.bytes, reader);
+                    });
+                });
+            };
+        }
+        if (nextLeafOffset !== 0) {
+            leaf.getNext = () => {
+                return savedPosition.go(nextLeafOffset + 4) // +4 because next_leaf_ptr is 4 bytes from savedPosition
+                .then(() => {
+                    return this._readChild(reader)
+                    .then(child => {
+                        console.assert(child.isLeaf, `If this is not the case, debug me`);
+                        return this._getLeaf(child.bytes, reader);
+                    });                    
+                });
+            };
+        }
+        return leaf;
+    }
+
+    _getNode(bytes, reader) {
+        const node = { 
+            entries: [] 
+        };
+        const entriesLength = bytes[0];
+        let index = 1;
+
+        for (let i = 0; i < entriesLength; i++) {
+            let keyInfo = BPlusTree.getKeyFromBinary(bytes, index);
+            let key = keyInfo.key;
+            index += keyInfo.length + 2;
+            let entry = {
+                key
+            };
+            node.entries.push(entry);
+
+            // read lt_child_ptr:
+            let ltChildOffset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // lt_child_ptr
+            if (ltChildOffset > 0) {
+                const savedPosition = reader.savePosition(-bytes.length + index + 3); // +3 because offset is from first byte
+                entry.getLtChild = () => {
+                    return savedPosition.go(ltChildOffset)
+                    .then(() => {
+                        return this._readChild(reader);
+                    });
+                };
+                // reader.rewind(bytes.length - index); // correct reader's index
+                // return reader.seek(offset + 3).then(() => {
+                //     return readChild();
+                // });
+            }
+        }
+        // read gt_child_ptr:
+        let gtChildOffset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // gt_child_ptr
+        if (gtChildOffset > 0) {
+            const savedPosition = reader.savePosition(-bytes.length + index + 3); // +3 because offset is from first byte
+            node.getGtChild = () => {
+                return savedPosition.go(gtChildOffset)
+                .then(() => {
+                    return this._readChild(reader);
+                });
+            };
+            // reader.rewind(bytes.length - index); // correct reader's index
+            // return reader.seek(gtNodeOffset + 3).then(() => {
+            //     return readChild();
+            // });
+        }
+        return node;
+    }
+
+    getFirstLeaf() {
+        let reader;
+        const processChild = (child) => {
+            if (child.isLeaf) {
+                return this._getLeaf(child.bytes, reader);
+            }
+            else {
+                const node = this._getNode(child.bytes, reader);
+                return node.entries[0].getLtChild()
+                .then(processChild);
+            }
+        };
+        return this._getReader()
+        .then(r => {
+            reader = r;
+            return this._readChild(reader);
+        })
+        .then(processChild);
+    }
+
+    getLastLeaf() {
+        let reader;
+        const processChild = (child) => {
+            if (child.isLeaf) {
+                return this._getLeaf(child.bytes, reader);
+            }
+            else {
+                return this._getNode(child.bytes, reader)
+                .then(node => {
+                    return node.getGtChild();
+                })
+                .then(processChild);
+            }
+        };
+        return this._getReader()
+        .then(r => {
+            reader = r;
+            return this._readChild(reader);
+        })
+        .then(processChild);
+    }
+
+    findLeaf(searchKey) {
+        // navigate to the right child
+        let reader;
+        const readChild = () => {
+            return this._readChild(reader)
+            .then(child => {
+                if (child.isLeaf) {
+                    return this._getLeaf(child.bytes, reader);
+                }
+                else {
+                    return readNode(child.bytes);
+                }
+            });
+        };
+
+        const readNode = (bytes) => {
+            let entries = bytes[0];
+            let index = 1;
+
+            for (let i = 0; i < entries; i++) {
+                let keyInfo = BPlusTree.getKeyFromBinary(bytes, index);
+                let key = keyInfo.key;
+                index += keyInfo.length + 2;
+
+                if (searchKey < key) {
+                    // Check lesser child node
+                    let offset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // lt_child_ptr
+                    if (offset > 0) {
+                        reader.rewind(bytes.length - index); // correct reader's index
+                        return reader.seek(offset + 3).then(() => {
+                            return readChild();
+                        });
+                    }
+                    else {
+                        return null;
+                    }
+                }
+                else {
+                    // Increase index to point to next entry
+                    index += 4; // skip lt_child_ptr
+                }
+            }
+            // Still here? key > last entry in node
+            let gtNodeOffset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // gt_child_ptr
+            if (gtNodeOffset > 0) {
+                reader.rewind(bytes.length - index); // correct reader's index
+                return reader.seek(gtNodeOffset + 3).then(() => {
+                    return readChild();
+                });
+            }
+            else {
+                return null;
+            }
+        };            
+
+        // let the reader start after the 6 header bytes
+        return this._getReader()
+        .then(r => {
+            reader = r;
+            return reader.go(6);
+        }) 
+        .then(() => {
+            return readChild();
+        });
+    }
+
+    search(op, param) {
+        if (["in","!in","between","!between"].indexOf(op) >= 0) {
+            // param must be an array
+            console.assert(param instanceof Array, `param must be an array when using operator ${op}`);
+        }
+
+        let results = [];
+        const add = (entry) => {
+            let obj = { key: entry.key };
+            if (this.info.uniqueValues) {
+                obj.value = entry.values[0];
+            }
+            else {
+                obj.values = entry.values;
+            }
+            results.push(obj);
+        };
+
+        if (["<","<="].indexOf(op) >= 0) {
+            const processLeaf = (leaf) => {
+                for (let i = leaf.entries.length-1; i >= 0; i--) {
+                    const entry = leaf.entries[i];
+                    if (op === "<=" && entry.key <= param) { add(entry); }
+                    else if (op === "<" && entry.key < param) { add(entry); }
+                }
+                if (leaf.getPrevious) {
+                    return leaf.getPrevious()
+                    .then(processLeaf)
+                }
+                else {
+                    return results;
+                }
+            }
+            return this.findLeaf(param)
+            .then(processLeaf);
+        }
+        else if ([">",">="].indexOf(op) >= 0) {
+            const processLeaf = (leaf) => {
+                for (let i = 0; i < leaf.entries.length; i++) {
+                    const entry = leaf.entries[i];
+                    if (op === ">=" && entry.key >= param) { add(entry); }
+                    else if (op === ">" && entry.key > param) { add(entry); }
+                }
+                if (leaf.getNext) {
+                    return leaf.getNext()
+                    .then(processLeaf);
+                }
+                else {
+                    return results;
+                }
+            }
+            return this.findLeaf(param)
+            .then(processLeaf);
+        }
+        else if (op === "==") {
+            return this.findLeaf(param)
+            .then(leaf => {
+                let entry = leaf.entries.find(entry => entry.key === param);
+                if (entry) {
+                    add(entry);
+                }
+                return results;
+            });
+        }
+        else if (op === "!=") {
+            // Full index scan needed
+            const processLeaf = leaf => {
+                for (let i = 0; i < leaf.entries.length; i++) {
+                    const entry = leaf.entries[i];
+                    if (entry.key !== param) { add(entry); }
+                }
+                if (leaf.getNext) {
+                    return leaf.getNext()
+                    .then(processLeaf);
+                }
+                else {
+                    return results;
+                }
+            };
+            return this.getFirstLeaf()
+            .then(processLeaf);
+        }
+        else if (op === "in") {
+            let sorted = param.slice().sort();
+            let searchKey = sorted.shift();
+            const processLeaf = (leaf) => {
+                while (true) {
+                    let entry = leaf.entries.find(entry => entry.key === searchKey);
+                    if (entry) { add(entry); }
+                    searchKey = sorted.shift();
+                    if (!searchKey) {
+                        return results;
+                    }
+                    else if (searchKey > leaf.entries[leaf.entries.length-1].key) {
+                        return this.findLeaf(searchKey).then(processLeaf);
+                    }
+                    // Stay in the loop trying more keys on the same leaf
+                }
+            };
+            return this.findLeaf(searchKey).then(processLeaf);
+        }
+        else if (op === "!in") {
+            // Full index scan needed
+            let keys = param;
+            const processLeaf = (leaf) => {
+                for (let i = 0; i < leaf.entries.length; i++) {
+                    const entry = leaf.entries[i];
+                    if (keys.indexOf(entry.key) < 0) { add(entry); }
+                }
+                if (leaf.getNext) {
+                    return leaf.getNext()
+                    .then(processLeaf);
+                }
+                else {
+                    return results;
+                }
+            };
+            return this.getFirstLeaf().then(processLeaf);
+        }        
+        else if (op === "between") {
+            let bottom = param[0], top = param[1];
+            if (top < bottom) {
+                let swap = top;
+                top = bottom;
+                bottom = swap;
+            }
+            return this.findLeaf(bottom)
+            .then(leaf => {
+                let stop = false;
+                const processLeaf = leaf => {
+                    for (let i = 0; i < leaf.entries.length; i++) {
+                        const entry = leaf.entries[i];
+                        if (entry.key >= bottom && entry.key <= top) { add(entry); }
+                        if (entry.key > top) { stop = true; break; }
+                    }
+                    if (stop || !leaf.getNext) {
+                        return results;
+                    }
+                    else {
+                        return leaf.getNext().then(processLeaf);
+                    }
+                };
+                return processLeaf(leaf);
+            });           
+        }
+        else if (op === "!between") {
+            // Equal to key < bottom || key > top
+            let bottom = param[0], top = param[1];
+            if (top < bottom) {
+                let swap = top;
+                top = bottom;
+                bottom = swap;
+            }
+            // Add lower range first, lowest value < val < bottom
+            return this.getFirstLeaf()
+            .then(leaf => {
+                let stop = false;
+                const processLeaf = leaf => {
+                    for (let i = 0; i < leaf.entries.length; i++) {
+                        const entry = leaf.entries[i];
+                        if (entry.key < bottom) { add(entry); }
+                        else { stop = true; break; }
+                    }
+                    if (!stop && leaf.getNext) {
+                        return leaf.getNext().then(processLeaf);
+                    }
+                };
+                return processLeaf(leaf);
+            })
+            .then(() => {
+                // Now add upper range, top < val < highest value
+                return this.findLeaf(top);
+            })
+            .then(leaf => {
+                const processLeaf = leaf => {
+                    for (let i = 0; i < leaf.entries.length; i++) {
+                        const entry = leaf.entries[i];
+                        if (entry.key > top) { add(entry); }
+                    }
+                    if (!leaf.getNext) {
+                        return results;
+                    }
+                    else {
+                        return leaf.getNext().then(processLeaf);
+                    }                
+                };
+                return processLeaf(leaf);
+            });
+        }
     }
 
     find(searchKey) {

@@ -45,3 +45,43 @@ keys.forEach(key => {
         console.log(val);
     });
 });
+
+binaryIndex.search("<", 50)
+.then(results => {
+    console.log(results);
+});
+
+binaryIndex.search(">=", 50)
+.then(results => {
+    console.log(results);
+});
+
+binaryIndex.search("==", 50)
+.then(results => {
+    console.log(results);
+});
+
+binaryIndex.search("!=", 50)
+.then(results => {
+    console.log(results);
+});
+
+binaryIndex.search("between", [15, 55])
+.then(results => {
+    console.log(results);
+});
+
+binaryIndex.search("!between", [15, 55])
+.then(results => {
+    console.log(results);
+});
+
+binaryIndex.search("in", [15, 55, 60, 80])
+.then(results => {
+    console.log(results);
+});
+
+binaryIndex.search("!in", [15, 55, 60, 80])
+.then(results => {
+    console.log(results);
+});
