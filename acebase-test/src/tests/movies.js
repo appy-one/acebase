@@ -7,7 +7,7 @@ const run = (db) => {
     // Load some test data to store in the database
     
     const moviesRef = db.ref("movies");
-    moviesRef.exists()
+    return moviesRef.exists()
     .then(exists => {
         if (!exists) {
             const movies = require("./testdata").movies;

@@ -10,7 +10,7 @@ const run = (db) => {
     });
 
     // Test serial transaction (1 followed by another when done)
-    db.ref("accounts/sadfasdf75")
+    const serialPromise = db.ref("accounts/sadfasdf75")
     .set({
         balance: 50
     })
@@ -38,7 +38,7 @@ const run = (db) => {
     });
 
     // Now test parallel transactions (3 executed at the same time)
-    db.ref("accounts/fgyjtry345")
+    const parallelPromise = db.ref("accounts/fgyjtry345")
     .set({
         balance: 500
     })
@@ -72,16 +72,18 @@ const run = (db) => {
             return withdraw(snap, 450);
         });
 
-        Promise.all([t1, t2, t3]).then(refs => { //, t2, t3
-            console.log(`All transactions processed`);
+        return Promise.all([t1, t2, t3]).then(refs => { //, t2, t3
+            console.log(`All parallel transactions processed`);
             return ref.get()
         })
         .then(snap => {
             console.log(`Final balance = ${snap.val().balance}`);
         });
-
     });
 
+    return Promise.all([serialPromise, parallelPromise]).then(results => {
+        console.log(`All serial and parallel transactions done`);
+    });
 }
 
 module.exports = run;

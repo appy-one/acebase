@@ -68,7 +68,7 @@ const mapDeep = (mappings, entryPath) => {
             return m; // Can't be a match
         }
         let isMatch = true;
-        if (keys.length === 0) {
+        if (keys.length === 0 && startPath !== null) {
             // Only match first node's children if mapping pattern is "*"
             isMatch = mkeys.length === 1 && mkeys[0] === "*";
         }
@@ -138,7 +138,7 @@ const process = (mappings, path, obj, action) => {
                 // Get the 1 child
                 let child = parent[key];
                 if (typeof child === "object") {
-                    children.push(child);
+                    children.push({ key, val: child });
                 }
             }
             children.forEach(child => { 
@@ -156,7 +156,7 @@ const process = (mappings, path, obj, action) => {
                 }
                 else {
                     // Dig deeper
-                    process(child, keys.slice(1)); 
+                    process(child.val, keys.slice(1)); 
                 }
             });
         };

@@ -5,9 +5,7 @@ const { AceBase } = require('acebase');
  */
 const run = (db) => {
 
-    //disbabled, confusing: db.schema.global.exclude.push("chats/*/members");
-
-    db.ref("chats/somechatid").set({
+    return db.ref("chats/somechatid").set({
         members: ["ewout", "annet"],
         title: "Spouse chat",
         messages: {
@@ -47,6 +45,7 @@ const run = (db) => {
     })
     .then(snapshot => {
         const chat = snapshot.val();
+        console.log(chat);
         console.assert(typeof chat.messages === "undefined", "retrieved chat should not include messages!");
 
         // Now get all chats without messages and members
@@ -54,6 +53,7 @@ const run = (db) => {
     })
     .then(snapshot => {
         const chats = snapshot.val();
+        console.log(chats);
         Object.keys(chats).forEach(id => {
             const chat = chats[id];
             console.assert(!chat.members && !chat.messages, "retrieved chat should NOT include members and messages!");
@@ -66,6 +66,7 @@ const run = (db) => {
     })
     .then(snapshot => {
         const root = snapshot.val();
+        console.log(root);
         Object.keys(root).forEach(key => {
             console.assert(key === "chats", "retrieved root object should ONLY have .chats");
         });

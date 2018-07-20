@@ -8,10 +8,10 @@ const run = (db) => {
     let text = "Is this binary data stored correctly? 😎";
     let binary = new TextEncoder().encode(text);
     
-    db.ref("/binary")
+    return db.ref("/binary")
     .push(binary.buffer)
     .then((ref) => {
-        console.log(`Binary data was stored`);
+        console.log(`Binary data was stored at "/${ref.path}"`);
         return ref.get(); //res.ref.once("value");
     })
     .then(snap => {

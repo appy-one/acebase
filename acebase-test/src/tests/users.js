@@ -53,7 +53,7 @@ const run = (db) => {
     ewout.addPet(new Pet("rabbit", "bunny"));
     ewout.addPet(new Pet("rabbit", "fluffy"));
 
-    db.ref("users/ewout")
+    return db.ref("users/ewout")
     .update(ewout)
     .then(ref => {
         console.log("User saved");

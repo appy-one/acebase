@@ -16,15 +16,17 @@ const run = (db) => {
     db.types.bind("regular_expressions", toRegularExpression, { instantiate: false, serializer: toPlainObject });
 
     // Now store a regular expression
-    db.ref("regular_expressions/words").set(/\w+/g)
+    return db.ref("regular_expressions/words").set(/\w+/g)
     .then(ref => {
         // regular expression was successfully stored as a plain object in the database
         return ref.get();
     })
     .then(snap => {
         let re = snap.val();
+        console.log(re);
         let text = "value is a regular expression that was loaded from the database and deserialized to a real RegExp object";
         let allWords = text.match(re);
+        console.log(allWords);
         console.assert(allWords.length === 18, "there should be 18 matched words in the array");
     });
 };

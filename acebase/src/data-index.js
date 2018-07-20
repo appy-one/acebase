@@ -1221,13 +1221,19 @@ class BPlusTreeLeaf {
         this.nextLeaf = null;
     }
 
+    /**
+     * The BPlusTree this leaf is in
+     * @type {BPlusTree}
+     */
     get tree() {
         return this.parent instanceof BPlusTree ? this.parent : this.parent.tree;
     }
 
     /**
      * Adds an entry to this leaf
-     * @param {BPlusTreeLeafEntry} entry 
+     * @param {string|number|boolean|Date|undefined} key 
+     * @param {ArrayBuffer|Array} value data to store with the key, max size is 255
+     * @returns {BPlusTreeLeafEntry} returns the added leaf entry
      */
     add(key, value) {
 
@@ -1464,6 +1470,12 @@ class BPlusTree {
     //     checkNode(this.root);
     // }
 
+    /**
+     * Adds a key to the tree
+     * @param {string|number|boolean|Date|undefined} key 
+     * @param {ArrayBuffer|Array} value data to store with the key, max size is 255
+     * @returns {BPlusTree} returns reference to this tree
+     */
     add(key, value) {
         // Find the leaf to insert to
         let leaf;
@@ -1476,8 +1488,23 @@ class BPlusTree {
             leaf = this.findLeaf(key, true);
         }
         leaf.add(key, value);
+        return this;
     }
 
+    // TODO: Enable bulk adding of keys: throw away all nodes, append/insert all keys ordered. Uupon commit, cut all data into leafs, construct the nodes up onto the root
+    // addBulk(arr, commit = false) {
+    //     // Adds given items in bulk and reconstructs the tree
+    //     let leaf = this.firstLeaf();
+    //     while(leaf) {
+    //         leaf = leaf.getNext()
+    //     }
+    // }
+
+    /**
+     * Finds the relevant leaf for a key
+     * @param {string|number|boolean|Date|undefined} key 
+     * @returns {BPlusTreeLeaf} returns the leaf the key is in, or would be in when present
+     */
     findLeaf(key) {
         /**
          * 
@@ -1706,7 +1733,7 @@ class BPlusTree {
         return all;
     }
 
-    static get debugBinary() { return true; }
+    static get debugBinary() { return false; }
     static addBinaryDebugString(str, byte) {
         if (this.debugBinary) {
             return [str, byte];
@@ -1921,47 +1948,34 @@ class ChunkReader {
 }
 
 class BinaryBPlusTree {
-    // constructor(readFn) {
-    //     this.read = readFn;
-    // }
-    constructor(data) {
-        if (BPlusTree.debugBinary) {
-            this.debugData = data;
-            data = data.map(entry => entry instanceof Array ? entry[1] : entry);
+    /**
+     * Provides functionality to read and search in a B+tree from a binary data source
+     * @param {Array|(index: number, length: number) => Promise<Array>} readFn byte array, or function that reads from your data source, must return a promise that resolves with a byte array (the bytes read from file/memory)
+     * @param {number} chunkSize numbers of bytes per chunk to read at once
+     */
+    constructor(readFn, chunkSize = 1024) {
+        this._chunkSize = chunkSize;
+        if (readFn instanceof Array) {
+            let data = readFn;
+            if (BPlusTree.debugBinary) {
+                this.debugData = data;
+                data = data.map(entry => entry instanceof Array ? entry[1] : entry);
+            }            
+            this._readFn = (i, length) => {
+                let slice = data.slice(i, i + length);
+                return Promise.resolve(slice);
+            };
         }
-        this.data = data;
-
-        // this._ready = false;
-        // this.reader = new ChunkReader(32, (i, length) => {
-        //     let slice = this.data.slice(i, i + length);
-        //     return Promise.resolve(slice);
-        // });
+        else if (typeof readFn === "function") {
+            this._readFn = readFn;
+        }
+        else {
+            throw new TypeError(`readFn must be a byte array or function that reads from a data source`);
+        }
     }
 
-    // ready() {
-    //     if (this._ready && this.info) {
-    //         return Promise.resolve(this.info);
-    //     }
-    //     return this.reader.init()
-    //     .then(() => {
-    //         return this.reader.get(6);
-    //     })
-    //     .then(header => {
-    //         this.info = {
-    //             byteLength: (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3],
-    //             isUnique: (header[4] & 0x1) === 1,
-    //             entriesPerNode: header[5]
-    //         };
-    //         this._ready = true;
-    //         return this.info;
-    //     });
-    // }
-
     _getReader() {
-        const reader = new ChunkReader(32, (i, length) => {
-            let slice = this.data.slice(i, i + length);
-            return Promise.resolve(slice);
-        });
+        const reader = new ChunkReader(this._chunkSize, this._readFn);        
         return reader.init()
         .then(() => {
             return reader.get(6);
@@ -2030,9 +2044,11 @@ class BinaryBPlusTree {
             index += 4; // Skip val_length, we will read all values
             if (this.info.isUnique) {
                 // Read single value
+                const value = readValue();
                 entries.push({
                     key,
-                    values: [readValue()]
+                    value,
+                    values: [value] // TODO: Deprecate
                 });
             }
             else {
@@ -2259,20 +2275,22 @@ class BinaryBPlusTree {
 
         if (["<","<="].indexOf(op) >= 0) {
             const processLeaf = (leaf) => {
-                for (let i = leaf.entries.length-1; i >= 0; i--) {
+                let stop = false;
+                for (let i = 0; i < leaf.entries.length; i++) {
                     const entry = leaf.entries[i];
                     if (op === "<=" && entry.key <= param) { add(entry); }
                     else if (op === "<" && entry.key < param) { add(entry); }
+                    else { stop = true; break; }
                 }
-                if (leaf.getPrevious) {
-                    return leaf.getPrevious()
+                if (!stop && leaf.getNext) {
+                    return leaf.getNext()
                     .then(processLeaf)
                 }
                 else {
                     return results;
                 }
             }
-            return this.findLeaf(param)
+            return this.getFirstLeaf()
             .then(processLeaf);
         }
         else if ([">",">="].indexOf(op) >= 0) {
@@ -2431,133 +2449,151 @@ class BinaryBPlusTree {
     }
 
     find(searchKey) {
-        // layout: see BPlusTreeNode.toBinary()
-
-        // let reader = new ChunkReader(32, this.read);
-        let reader = new ChunkReader(32, (i, length) => {
-            let slice = this.data.slice(i, i + length);
-            return Promise.resolve(slice);
-        });
-
-        return reader.init()
-        .then(() => {
-            return reader.get(6);
-        })
-        .then(header => {
-            const isUnique = (header[4] & 0x1) === 1;
-
-            const checkChild = () => {
-                return reader.get(5) // byte_length, is_leaf
-                .then(bytes => {
-                    const byteLength = (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]; // byte_length
-                    const isLeaf = bytes[4] === 1; // is_leaf
-
-                    // load whole node/leaf for easy processing
-                    return reader.get(byteLength - 5)
-                    .then(bytes => {
-                        if (isLeaf) {
-                            return checkLeaf(bytes);
-                        }
-                        else {
-                            return checkNode(bytes);
-                        }
-                    });
-                });
-            };
-
-            const checkLeaf = (bytes) => {
-                let index = 8;  // skip prev_leaf_ptr, next_leaf_ptr
-                let entries = bytes[index];
-                index++;
-
-                for (let i = 0; i < entries; i++) {
-                    let keyInfo = BPlusTree.getKeyFromBinary(bytes, index);
-                    let key = keyInfo.key;
-                    index += keyInfo.length + 2;
-
-                    if (key < searchKey) {
-                        let valLength = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; //  val_length
-                        index += valLength + 4; // skip to next entry
-                        continue;
-                    }
-                    else if (key === searchKey) {
-                        // Match! Read value(s) and return
-                        const readValue = () => {
-                            let valueLength = bytes[index];
-                            index++;
-                            let value = [];
-                            for (let j = 0; j < valueLength; j++) {
-                                value[j] = bytes[index + j];
-                            }
-                            return value;
-                        };
-    
-                        index += 4; // Ignore val_length, we will read all values
-                        if (isUnique) {
-                            // Read value
-                            return readValue();
-                        }
-                        else {
-                            // Read value_list_length
-                            const valuesLength = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // value_list_length
-                            index += 4;
-                            const values = [];
-                            for(let i = 0; i < valuesLength; i++) {
-                                const value = readValue();
-                                values.push(value);
-                            }
-                            return values;
-                        }
-                    }
-                    else {
-                        return null; // key > searchKey, stop
-                    }
-                }
-            }
-
-            const checkNode = (bytes) => {
-                let entries = bytes[0];
-                let index = 1;
-
-                for (let i = 0; i < entries; i++) {
-                    let keyInfo = BPlusTree.getKeyFromBinary(bytes, index);
-                    let key = keyInfo.key;
-                    index += keyInfo.length + 2;
-
-                    if (searchKey < key) {
-                        // Check lesser child node
-                        let offset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // lt_child_ptr
-                        if (offset > 0) {
-                            reader.rewind(bytes.length - index); // correct reader's index
-                            return reader.seek(offset + 3).then(() => {
-                                return checkChild();
-                            });
-                        }
-                        else {
-                            return null;
-                        }
-                    }
-                    else {
-                        // Increase index to point to next entry
-                        index += 4; // skip lt_child_ptr
-                    }
-                }
-                // Still here? key > last entry in node
-                let gtNodeOffset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // gt_child_ptr
-                if (gtNodeOffset > 0) {
-                    reader.rewind(bytes.length - index); // correct reader's index
-                    return reader.seek(gtNodeOffset + 3).then(() => {
-                        return checkChild();
-                    });
+        return this.findLeaf(searchKey)
+        .then(leaf => {
+            let entry = leaf.entries.find(entry => entry.key === searchKey);
+            if (entry) {
+                if (this.info.isUnique) {
+                    return entry.values[0];
                 }
                 else {
-                    return null;
+                    return entry.values;
                 }
-            };            
-
-            return checkChild();
+            }
+            else {
+                return null;
+            }
         });
     }
+
+    // find(searchKey) {
+    //     // layout: see BPlusTreeNode.toBinary()
+
+    //     // let reader = new ChunkReader(32, this.read);
+    //     let reader = new ChunkReader(32, (i, length) => {
+    //         let slice = this.data.slice(i, i + length);
+    //         return Promise.resolve(slice);
+    //     });
+
+    //     return reader.init()
+    //     .then(() => {
+    //         return reader.get(6);
+    //     })
+    //     .then(header => {
+    //         const isUnique = (header[4] & 0x1) === 1;
+
+    //         const checkChild = () => {
+    //             return reader.get(5) // byte_length, is_leaf
+    //             .then(bytes => {
+    //                 const byteLength = (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]; // byte_length
+    //                 const isLeaf = bytes[4] === 1; // is_leaf
+
+    //                 // load whole node/leaf for easy processing
+    //                 return reader.get(byteLength - 5)
+    //                 .then(bytes => {
+    //                     if (isLeaf) {
+    //                         return checkLeaf(bytes);
+    //                     }
+    //                     else {
+    //                         return checkNode(bytes);
+    //                     }
+    //                 });
+    //             });
+    //         };
+
+    //         const checkLeaf = (bytes) => {
+    //             let index = 8;  // skip prev_leaf_ptr, next_leaf_ptr
+    //             let entries = bytes[index];
+    //             index++;
+
+    //             for (let i = 0; i < entries; i++) {
+    //                 let keyInfo = BPlusTree.getKeyFromBinary(bytes, index);
+    //                 let key = keyInfo.key;
+    //                 index += keyInfo.length + 2;
+
+    //                 if (key < searchKey) {
+    //                     let valLength = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; //  val_length
+    //                     index += valLength + 4; // skip to next entry
+    //                     continue;
+    //                 }
+    //                 else if (key === searchKey) {
+    //                     // Match! Read value(s) and return
+    //                     const readValue = () => {
+    //                         let valueLength = bytes[index];
+    //                         index++;
+    //                         let value = [];
+    //                         for (let j = 0; j < valueLength; j++) {
+    //                             value[j] = bytes[index + j];
+    //                         }
+    //                         return value;
+    //                     };
+    
+    //                     index += 4; // Ignore val_length, we will read all values
+    //                     if (isUnique) {
+    //                         // Read value
+    //                         return readValue();
+    //                     }
+    //                     else {
+    //                         // Read value_list_length
+    //                         const valuesLength = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // value_list_length
+    //                         index += 4;
+    //                         const values = [];
+    //                         for(let i = 0; i < valuesLength; i++) {
+    //                             const value = readValue();
+    //                             values.push(value);
+    //                         }
+    //                         return values;
+    //                     }
+    //                 }
+    //                 else {
+    //                     return null; // key > searchKey, stop
+    //                 }
+    //             }
+    //         }
+
+    //         const checkNode = (bytes) => {
+    //             let entries = bytes[0];
+    //             let index = 1;
+
+    //             for (let i = 0; i < entries; i++) {
+    //                 let keyInfo = BPlusTree.getKeyFromBinary(bytes, index);
+    //                 let key = keyInfo.key;
+    //                 index += keyInfo.length + 2;
+
+    //                 if (searchKey < key) {
+    //                     // Check lesser child node
+    //                     let offset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // lt_child_ptr
+    //                     if (offset > 0) {
+    //                         reader.rewind(bytes.length - index); // correct reader's index
+    //                         return reader.seek(offset + 3).then(() => {
+    //                             return checkChild();
+    //                         });
+    //                     }
+    //                     else {
+    //                         return null;
+    //                     }
+    //                 }
+    //                 else {
+    //                     // Increase index to point to next entry
+    //                     index += 4; // skip lt_child_ptr
+    //                 }
+    //             }
+    //             // Still here? key > last entry in node
+    //             let gtNodeOffset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // gt_child_ptr
+    //             if (gtNodeOffset > 0) {
+    //                 reader.rewind(bytes.length - index); // correct reader's index
+    //                 return reader.seek(gtNodeOffset + 3).then(() => {
+    //                     return checkChild();
+    //                 });
+    //             }
+    //             else {
+    //                 return null;
+    //             }
+    //         };            
+
+    //         return checkChild();
+    //     });
+    // }
 
 }
 

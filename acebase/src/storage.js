@@ -1,17 +1,12 @@
 const fs = require('fs');
 const { EventEmitter } = require('events');
-const { Record, RecordAddress, UNCHANGED } = require('./record');
+const { Record, RecordAddress, RecordLock, UNCHANGED, VALUE_TYPES } = require('./record');
 const { TextEncoder } = require('text-encoding');
 const { concatTypedArrays, getPathKeys, getPathInfo } = require('./utils');
+const { BPlusTree, BinaryBPlusTree } = require('./data-index');
 const debug = require('./debug');
 
 const textEncoder = new TextEncoder();
-const LOCK_STATE = {
-    PENDING: 'pending',
-    LOCKED: 'locked',
-    EXPIRED: 'expired',
-    DONE: 'done'
-};
 
 class StorageOptions {
     constructor(options) {
@@ -155,7 +150,7 @@ class Storage extends EventEmitter {
                             promise = this.FST.allocate(request.records);
                         }
                         else if (request.type === "release") {
-                            this.FST.release(request.addresses);
+                            this.FST.release(request.ranges);
                             worker.send({ id, result: "ok" });
                         }
                         else if (request.type === "lock") {
@@ -351,8 +346,8 @@ class Storage extends EventEmitter {
                     //     return result;
                     // });
                 },
-                release(addresses) {
-                    return cluster.request({ type: "release", addresses });
+                release(ranges) {
+                    return cluster.request({ type: "release", ranges });
                 },
                 load() {
                     return Promise.resolve([]); // Fake loader
@@ -525,24 +520,29 @@ class Storage extends EventEmitter {
                 //     return this.getFreeAddresses(requiredRecords, true); // Let's try again
                 // },
 
-                release(addresses) {
-                    addresses.forEach(address => {
-                        let arr = [];
-                        let adjacent = this.ranges.find(range => {
-                            if (range.page !== address.pageNr) { return false; }
-                            if (address.recordNr + 1 === range.start) {
-                                range.start--; // Add available record at start of range
-                                return true;
-                            }
-                            if (address.recordNr === range.end) {
-                                range.end++; // Add available record at end of range
-                                return true;
-                            }
-                            return false;
-                        })
-                        if (!adjacent) {
-                            this.ranges.push({ page: address.pageNr, start: address.recordNr, end: address.recordNr + 1 });
-                        }
+                release(ranges) {
+                    // addresses.forEach(address => {
+                    //     let arr = [];
+                    //     let adjacent = this.ranges.find(range => {
+                    //         if (range.page !== address.pageNr) { return false; }
+                    //         if (address.recordNr + 1 === range.start) {
+                    //             range.start--; // Add available record at start of range
+                    //             return true;
+                    //         }
+                    //         if (address.recordNr === range.end) {
+                    //             range.end++; // Add available record at end of range
+                    //             return true;
+                    //         }
+                    //         return false;
+                    //     })
+                    //     if (!adjacent) {
+                    //         this.ranges.push({ page: address.pageNr, start: address.recordNr, end: address.recordNr + 1 });
+                    //     }
+                    // });
+
+                    // Add freed ranges
+                    ranges.forEach(range => {
+                        this.ranges.push({ page: range.pageNr, start: range.recordNr, end: range.recordNr + range.length });
                     });
 
                     // Now normalize the ranges
@@ -877,6 +877,204 @@ class Storage extends EventEmitter {
                 });
             });
         };
+
+        const _indexes = [];
+        const _getIndexFileName = (path, key) => {
+            return `${this.name}-${path.replace(/\//g, '-')}-${key}.idx`;
+        };
+        const _createRecordPointer = (key, address) => {
+            // layout:
+            // record_pointer   = key_info, record_location
+            // key_info         = key_length, key_bytes
+            // key_length       = 1 byte
+            // key_bytes        = byte[key_length] (ASCII char codes)
+            // record_location  = page_nr, record_nr
+            // page_nr          = 4 byte number
+            // record_nr        = 2 byte number
+
+            let recordPointer = [key.length]; // key_length
+            // key_bytes:
+            for (let i = 0; i < key.length; i++) {
+                recordPointer.push(key.charCodeAt(i));
+            }
+            // page_nr:
+            recordPointer.push((address.pageNr >> 24) & 0xff);
+            recordPointer.push((address.pageNr >> 16) & 0xff);
+            recordPointer.push((address.pageNr >> 8) & 0xff);
+            recordPointer.push(address.pageNr & 0xff);
+            // record_nr:
+            recordPointer.push((address.recordNr >> 8) & 0xff);
+            recordPointer.push(address.recordNr & 0xff);
+            return recordPointer;
+        };
+        const _parseRecordPointer = (path, recordPointer) => {
+            const keyLength = recordPointer[0];
+            let key = "";
+            for(let i = 0; i < keyLength; i++) {
+                key += String.fromCharCode(recordPointer[i+1]);
+            }
+            let index = keyLength + 1;
+            const pageNr = recordPointer[index] << 24 | recordPointer[index+1] << 16 | recordPointer[index+2] << 8 | recordPointer[index+3];
+            index += 4;
+            const recordNr = recordPointer[index] << 8 | recordPointer[index+1];
+            return { key, pageNr, recordNr, address: new RecordAddress(`${path}/${key}`, pageNr, recordNr) };
+        }
+        this.indexes = {
+            /**
+             * Creates an index on specified path and key(s)
+             * @param {string} path location of objects to be indexed. Eg: "users" to index all children of the "users" node; or "chats/* /members" to index all members of all chats
+             * @param {string[]} key for now - one key to index. Once our B+tree implementation supports nested trees, we can allow multiple fields
+             */
+            create(path, key) {
+                // Find all matching records
+                if (path.indexOf("*") >= 0) {
+                    throw new Error(`Wildcard paths not implemented yet`);
+                }
+                const state = {
+                    index: new BPlusTree(30, false),
+                    lock: undefined
+                };
+                return storage.lock(path, `index-create-${path}-${key}`, false, `indexes.create "/${path}", "${key}"`)
+                .then(lock => {
+                    state.lock = lock;
+                    return Record.get(storage, { path }, { lock });
+                })
+                .then(record => {
+                    if (!record) {
+                        return Promise.reject(`Path to index "/${path}" not found`);
+                    }
+                    const promises = [];
+                    return record.getChildStream({ lock: state.lock })
+                    .next(child => {
+                        // TODO: Refactor getChildStream to return same objects as getChildInfo with .storageType and .valueType
+                        if (!child.address || child.type !== VALUE_TYPES.OBJECT) { //if (child.storageType !== "record" || child.valueType !== VALUE_TYPES.OBJECT) {
+                            return; // This child cannot be indexed because it is not an object with properties
+                        }
+                        const p = Record.get(storage, child.address, { lock: state.lock })
+                        .then(childRecord => {
+                            return childRecord.getChildInfo(key, { lock: state.lock });
+                        })
+                        .then(childInfo => {
+                            // What can be indexed? 
+                            // strings, numbers, booleans, dates
+                            if (childInfo.exists && [VALUE_TYPES.STRING, VALUE_TYPES.NUMBER, VALUE_TYPES.BOOLEAN, VALUE_TYPES.DATETIME].indexOf(childInfo.valueType) >= 0) {
+                                // Index this value
+                                if (childInfo.storageType === "record") {
+                                    return Record.get(storage, childInfo.address, { lock: state.lock })
+                                    .then(valueRecord => {
+                                        return valueRecord.getValue();
+                                    });
+                                }
+                                else {
+                                    return childInfo.value;
+                                }
+                            }
+                            else {
+                                return null;
+                            }
+                        })
+                        .then(value => {
+                            if (value !== null) {
+                                // Add it to the index, using value as the index key, a record pointer as the value
+                                // Create record pointer
+                                const recordPointer = _createRecordPointer(child.key, child.address);
+                                // Add it to the index
+                                state.index.add(value, recordPointer);
+                            }
+                        });
+                        promises.push(p);
+                    })
+                    .then(() => {
+                        // Alls child keys have been streamed
+                        // wait for all promises to resolve
+                        return Promise.all(promises);
+                    });
+                })
+                .then(() => {
+                    // All child objects have been indexed. save the index
+                    const binary = new Uint8Array(state.index.toBinary());
+                    return new Promise((resolve, reject) => {
+                        const fileName = _getIndexFileName(path, key);
+                        fs.writeFile(fileName, Buffer.from(binary.buffer), (err) => {
+                            if (err) {
+                                debug.error(err);
+                                reject(err);
+                            }
+                            else {
+                                resolve(fileName);
+                            }
+                        });
+                    });
+                })
+                .then(fileName => {
+                    _indexes.push({ path, key, fileName });
+                    // Now release the lock
+                    state.lock.release();
+                });
+            },
+
+            query(path, key, op, val) {
+                return this.get(path, key)
+                .then(index => {
+                    /**
+                     * @type BinaryBPlusTree
+                     */
+                    const tree = index.tree;
+                    return tree.search(op, val)
+                    .then(entries => {
+                        // We now have record pointers...
+                        index.close();
+
+                        const results = [];
+                        entries.forEach(entry => {
+                            const value = entry.key;
+                            entry.values.forEach(data => {
+                                const recordPointer = _parseRecordPointer(path, data);
+                                results.push({ key: recordPointer.key, value, address: recordPointer.address });
+                            })
+                        });
+                        return results;
+                    });
+                });
+            },
+
+            get(path, key) {
+                const index = _indexes.find(index => index.path === path && index.key === key);
+                if (!index) {
+                    throw new Error(`Index for path "/${path}", key "${key}" does not exist`);
+                }
+                return new Promise((resolve, reject) => {
+                    const fileName = _getIndexFileName(path, key);
+                    fs.open(fileName, "r", (err, fd) => {
+                        if (err) {
+                            return reject(err);
+                        }
+                        const reader = (index, length) => {
+                            const binary = new Uint8Array(length);
+                            const buffer = Buffer.from(binary.buffer);
+                            return new Promise((resolve, reject) => {
+                                fs.read(fd, buffer, 0, length, index, (err, bytesRead) => {
+                                    if (err) {
+                                        reject(err);
+                                    }
+                                    // Convert Uint8Array to byte array
+                                    let bytes = [];
+                                    bytes.push(...binary);
+                                    resolve(bytes);
+                                });
+                            });
+                        }
+                        const tree = new BinaryBPlusTree(reader, 512);
+                        resolve({ 
+                            tree,
+                            close: () => {
+                                fs.close(fd);
+                            }
+                        });
+                    });
+                });
+            }
+        }
 
         // Open or create database 
         fs.exists(filename, (exists) => {
@@ -1300,65 +1498,108 @@ class Storage extends EventEmitter {
         return index;
     }
 
-    _allowLock(lock) {
+    _allowLock(path, tid, forWriting) {
         // Can this lock be granted now or do we have to wait?
-        const { path, tid } = lock;
-        const isConflictingPath = (otherPath) => {
-            if (path === "" || otherPath === "" || otherPath === path) {
-                return true;
+        let conflictLock = this._locks.find(otherLock => {
+            if (otherLock.path === path && otherLock.tid !== tid && otherLock.state === RecordLock.LOCK_STATE.LOCKED) {
+                return forWriting || otherLock.forWriting;
             }
-            else if (otherPath.startsWith(`${path}/`) || path.startsWith(`${otherPath}/`)) {
-                return true;
-            }
-        };
-        const proceed = this._locks.every(otherLock => {
-            if (otherLock.tid !== tid && otherLock.state === LOCK_STATE.LOCKED) {
-                return !isConflictingPath(otherLock.path);
-            }
-            return true;
+            return false;
+            
+            // if (otherLock.tid !== tid && otherLock.state === RecordLock.LOCK_STATE.LOCKED) {
+            //     const pathClash = path === "" 
+            //         || otherLock.path === "" 
+            //         || path === otherLock.path 
+            //         || otherLock.path.startsWith(`${path}/`) 
+            //         || path.startsWith(`${otherLock.path}/`);
+                
+            //     if (!pathClash) {
+            //         // This lock is on a different path
+            //         return false;
+            //     } 
+            //     else {
+            //         // Lock is on a clashing path. If any or both locks are for write mode, 
+            //         // deny the new lock.
+            //         return (forWriting && (path === "" || path.startsWith(`${otherLock.path}/`))) 
+            //             || (otherLock.forWriting && (otherLock.path === "" || otherLock.path.startsWith(`${path}/`)));
+            //     }
+            // }
         });
-        return proceed;
+        if (conflictLock) {
+            return false;
+        }
+        return true;
     }
 
-    lock(path, tid) {
-        const MAX_LOCK_TIME = 60 * 1000 * 0.5; // 1 minute
+    // _allowLock(lock) {
+    //     // Can this lock be granted now or do we have to wait?
+    //     const { path, tid } = lock;
+    //     const isConflictingPath = (otherPath) => {
+    //         if (path === "" || otherPath === "" || otherPath === path) {
+    //             return true;
+    //         }
+    //         else if (otherPath.startsWith(`${path}/`) || path.startsWith(`${otherPath}/`)) {
+    //             return true;
+    //         }
+    //     };
+    //     const proceed = this._locks.every(otherLock => {
+    //         if (otherLock.tid !== tid && otherLock.state === LOCK_STATE.LOCKED) {
+    //             return !isConflictingPath(otherLock.path);
+    //         }
+    //         return true;
+    //     });
+    //     return proceed;
+    // }
 
-        let lock = this._locks.find(lock => lock.tid === tid);
-        if (!lock) {
-            debug.log(`lock :: new lock requested for "/${path}" by tid ${tid}`);
-            lock = {
-                tid,
-                path,
-                state: LOCK_STATE.PENDING
-            };
+    /**
+     * Locks a path for writing. While the lock is in place, it's value cannot be changed by other transactions.
+     * @param {string} path path being locked
+     * @param {any} tid a unique value to identify your transaction
+     * @param {boolean} forWriting if the record will be written to. Multiple read locks can be granted access at the same time if there is no write lock. Once a write lock is granted, no others can read from or write to it.
+     * @returns {Promise<{ tid: any, path: string, state: number, release: () => Promise<void> }>} returns a promise with the lock object once it is granted. It's .release method can be used as a shortcut to .unlock(path, tid) to release the lock
+     */
+    lock(path, tid, forWriting = true, comment) {
+        //const MAX_LOCK_TIME = 5 * 1000; // 5 seconds
+        const MAX_LOCK_TIME = 60 * 1000 * 1; // 5 minutes FOR DEBUGGING PURPOSES ONLY
+
+        let lock, proceed;
+        if (path instanceof RecordLock) {
+            lock = path;
+            lock.comment = `(retry: ${lock.comment})`;
+            proceed = true;
+        }
+        else {
+            lock = new RecordLock(this, path, tid, forWriting);
+            lock.comment = comment;
             this._locks.push(lock);
-        }
-        else if (lock.path !== path) {
-            // Path changing
-            debug.log(`lock :: path change requested for tid ${tid}, from "/${lock.path}" ==> "/${path}"`);
-            console.assert(lock.state === LOCK_STATE.LOCKED);
-            lock.state = LOCK_STATE.PENDING;
-            lock.path = path;
+            proceed = this._allowLock(path, tid, forWriting);
         }
 
-        const proceed = this._allowLock(lock);
         if (proceed) {
-            lock.state = LOCK_STATE.LOCKED;
-            lock.granted = Date.now();
-            lock.expires = Date.now() + MAX_LOCK_TIME;
-            setTimeout(() => {
-                if (lock.state !== LOCK_STATE.LOCKED) { return; }
-                debug.log(`lock :: lock on path "/${lock.path}" by tid ${tid} took too long`);
-                lock.state = LOCK_STATE.EXPIRED;
-                const i = this._locks.indexOf(lock);
-                this._locks.splice(i, 1);
-                this._processLockQueue();
-            }, MAX_LOCK_TIME);
+            lock.state = RecordLock.LOCK_STATE.LOCKED;
+            if (typeof lock.granted === "number") {
+                //debug.warn(`lock :: ALLOWING ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
+            }
+            else {
+                lock.granted = Date.now();
+                lock.expires = Date.now() + MAX_LOCK_TIME;
+                //debug.warn(`lock :: GRANTED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
+                lock.timeout = setTimeout(() => {
+                    if (lock.state !== RecordLock.LOCK_STATE.LOCKED) { return; }
+                    debug.error(`lock :: ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} took too long, ${lock.comment}`);
+                    lock.state = RecordLock.LOCK_STATE.EXPIRED;
+                    // TODO Enable again once data storing bug has been found:
+                    // const i = this._locks.indexOf(lock);
+                    // this._locks.splice(i, 1);
+                    this._processLockQueue();
+                }, MAX_LOCK_TIME);
+            }
             return Promise.resolve(lock);
         }
         else {
             // Keep pending until clashing lock(s) is/are removed
-            console.assert(lock.state === LOCK_STATE.PENDING);
+            //debug.warn(`lock :: QUEUED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
+            console.assert(lock.state === RecordLock.LOCK_STATE.PENDING);
             const p = new Promise((resolve, reject) => {
                 lock.resolve = resolve;
                 lock.reject = reject;
@@ -1367,24 +1608,30 @@ class Storage extends EventEmitter {
         }
     }
 
-    unlock(path, tid) {
-        const i = this._locks.findIndex(lock => lock.tid === tid);
+    unlock(lock, comment) {// (path, tid, comment) {
+        const i = this._locks.indexOf(lock); //this._locks.findIndex(lock => lock.tid === tid && lock.path === path);
         if (i < 0) {
-            return Promise.reject(new Error(`Lock for tid ${tid} wasn't found (path: "/${path}")`));
+            const msg = `lock on "/${lock.path}" for tid ${lock.tid} wasn't found; ${comment}`;
+            console.error(`unlock :: ${msg}`);
+            return Promise.reject(new Error(msg));
         }
-        const lock = this._locks[i];
-        lock.state = LOCK_STATE.DONE;
+        //const lock = this._locks[i];
+        lock.state = RecordLock.LOCK_STATE.DONE;
+        clearTimeout(lock.timeout);
         this._locks.splice(i, 1);
-        debug.log(`unlock :: lock on "/${lock.path}" for tid ${tid} was removed`);
+        //debug.warn(`unlock :: RELEASED ${lock.forWriting ? "write" : "read" } lock on "/${lock.path}" for tid ${lock.tid}; ${lock.comment}; ${comment}`);
         this._processLockQueue();
         return Promise.resolve(lock);
     }
 
     _processLockQueue() {
-        const pending = this._locks.filter(lock => lock.state === LOCK_STATE.PENDING);
+        const pending = this._locks.filter(lock => lock.state === RecordLock.LOCK_STATE.PENDING);
         pending.forEach(lock => {
-            if (this._allowLock(lock)) {
-                this.lock(lock.path, lock.tid)
+            if (this._allowLock(lock.path, lock.tid, lock.forWriting)) {
+                // lock.state = "cancel";
+                // let index = this._locks.indexOf(lock);
+                // this._locks.splice(index, 1); // Remove, it will be added again by .lock!
+                this.lock(lock) //lock.path, lock.tid, lock.forWriting, `(unqueued) ${lock.comment}`)
                 .then(lock.resolve)
                 .catch(lock.reject);
             }

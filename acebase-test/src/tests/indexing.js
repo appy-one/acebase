@@ -34,10 +34,6 @@ let binary = index.toBinary();
 //console.log(binary);
 
 let binaryIndex = new BinaryBPlusTree(binary);
-binaryIndex.find(keys[0])
-.then(val => {
-    console.log(val);
-});
 
 keys.forEach(key => {
     binaryIndex.find(key)
