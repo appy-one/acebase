@@ -1,11 +1,13 @@
-const numberToBytes = (number) => {
+const { PathReference } = require('./path-reference');
+
+function numberToBytes(number) {
     const bytes = new Uint8Array(8);
     const view = new DataView(bytes.buffer);
     view.setFloat64(0, number);
     return new Array(...bytes);
 }
 
-const bytesToNumber = (bytes) => {
+function bytesToNumber(bytes) {
     //if (bytes.length !== 8) { throw "passed value must contain 8 bytes"; }
     if (bytes.length < 8) {
         throw new TypeError("must be 8 bytes");
@@ -20,19 +22,19 @@ const bytesToNumber = (bytes) => {
     return nr;
 }
 
-const concatTypedArrays = (a, b) => {
+function concatTypedArrays(a, b) {
     const c = new a.constructor(a.length + b.length);
     c.set(a);
     c.set(b, a.length);
     return c;
 };
 
-const cloneObject = (original, stack) => {
+function cloneObject(original, stack) {
     const { DataSnapshot } = require('./data-snapshot'); // Don't move to top, because data-snapshot requires this script (utils)
     if (original instanceof DataSnapshot) {
         throw new TypeError(`Object to clone is a DataSnapshot (path "${original.ref.path}")`);
     }
-    else if (typeof original !== "object" || original === null || original instanceof Date || original instanceof ArrayBuffer) {
+    else if (typeof original !== "object" || original === null || original instanceof Date || original instanceof ArrayBuffer || original instanceof PathReference) {
         return original;
     }
     const cloneValue = (val) => {
@@ -42,7 +44,7 @@ const cloneObject = (original, stack) => {
         if (stack.indexOf(val) >= 0) {
             throw new ReferenceError(`object contains a circular reference`);
         }
-        if (val === null || val instanceof Date || val instanceof ArrayBuffer) { // || val instanceof ID
+        if (val === null || val instanceof Date || val instanceof ArrayBuffer || val instanceof PathReference) { // || val instanceof ID
             return val;
         }
         else if (val instanceof Array) {
@@ -73,7 +75,7 @@ const cloneObject = (original, stack) => {
     return clone;
 }
 
-const getPathKeys = (path) => {
+function getPathKeys(path) {
     if (path.length === 0) { return []; }
     let keys = path.replace(/\[/g, "/[").split("/");
     keys.forEach((key, index) => {
@@ -84,7 +86,7 @@ const getPathKeys = (path) => {
     return keys;
 }
 
-const getPathInfo = (path) => {
+function getPathInfo(path) {
     if (path.length === 0) {
         return { parent: null, key: "" };
     }
@@ -106,11 +108,23 @@ const getPathInfo = (path) => {
     };
 };
 
+function getChildPath(path, key) {
+    if (path.length === 0) {
+        if (typeof key === "number") { throw new TypeError("Cannot add array index to root path!"); }
+        return key;
+    }
+    if (typeof key === "number") {
+        return `${path}[${key}]`;
+    }
+    return `${path}/${key}`;
+}
+
 module.exports = {
     numberToBytes,
     bytesToNumber,
     concatTypedArrays,
     cloneObject,
     getPathKeys,
-    getPathInfo
+    getPathInfo,
+    getChildPath
 };

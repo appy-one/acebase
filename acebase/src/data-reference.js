@@ -1,5 +1,5 @@
 const { DataSnapshot } = require('./data-snapshot');
-const { EventSubscription } = require('./subscription');
+const { EventStream } = require('./subscription');
 const uuid62 = require('uuid62');
 const debug = require('./debug');
 const { getPathKeys, getPathInfo } = require('./utils');
@@ -96,7 +96,11 @@ class DataReference {
             throw new Error(`Cannot set the root object. Use update, or set individual child properties`);
         }
         value = this.db.types.serialize(this.path, value);
-        return this.db.api.set(this, value).then(res => {
+        let flags;
+        // if (this.__pushed) {
+        //     flags = { pushed: true };
+        // }
+        return this.db.api.set(this, value).then(res => { // , flags
             onComplete && onComplete(null, this);
             return this;
         });
@@ -146,18 +150,18 @@ class DataReference {
     /**
      * Subscribes to an event.
      * @param {string} event - Name of the event to subscribe to, eg "value", "child_added", "child_changed", "child_removed"
-     * @param {Function} callback - Callback function(snapshot)
-     * @returns {EventSubscription} - returns an EventSubscription
+     * @param {boolean|((snapshot:DataSnapshot)=>void)} callback - Callback function(snapshot) or whether or not to run callbacks on current values when using "value" or "child_added" events
+     * @returns {EventStream} - returns an EventStream
      */
     on(event, callback) {
         // Does not support firebase's cancelCallbackOrContext and/or context yet,
-        // because AceBase doesn't have user/security layer build in yet
+        // because AceBase doesn't have user/security layer built in yet
 
-        const eventSubscription = new EventSubscription();
+        const eventStream = new EventStream();
         
         // Map OUR callback to original callback, so .off can remove the right callback
         let cb = { 
-            subscr: eventSubscription,
+            subscr: eventStream,
             original: callback, 
             ours: (err, path, data) => {
                 if (err) {
@@ -167,7 +171,7 @@ class DataReference {
                 let val = this.db.types.deserialize(path, data);
                 let ref = this.db.ref(path); // Might be a child node that triggered the event, don't use this ref but a new one from given path
                 let snap = new DataSnapshot(ref, val);
-                eventSubscription.publish(snap);
+                eventStream.publish(snap);
                 callback && callback(snap);
             }
         };
@@ -175,26 +179,32 @@ class DataReference {
 
         this.db.api.subscribe(this, event, cb.ours);
 
-        if (event === "value") {
-            this.once("value").then((snap) => {
-                eventSubscription.publish(snap);
-                callback && callback(snap);
-            });
-        }
-        else if (event === "child_added") {
-            this.once("value").then(snap => {
-                const val = snap.val();
-                if (typeof val !== "object") { return; }
-                Object.keys(val).forEach(key => {
-                    let childSnap = new DataSnapshot(this.child(key), val[key]);
-                    eventSubscription.publish(childSnap);
-                    callback && callback(childSnap);
+        if (callback) {
+            // If callback param is supplied (either a callback function or true eg),
+            // it will fire events for current values right now.
+            // Otherwise, it expects the .subscribe methode to be used, which will then
+            // only be called for future events
+            if (event === "value") {
+                this.once("value").then((snap) => {
+                    eventStream.publish(snap);
+                    typeof callback === "function" && callback(snap);
                 });
-            });
+            }
+            else if (event === "child_added") {
+                this.once("value").then(snap => {
+                    const val = snap.val();
+                    if (typeof val !== "object") { return; }
+                    Object.keys(val).forEach(key => {
+                        let childSnap = new DataSnapshot(this.child(key), val[key]);
+                        eventStream.publish(childSnap);
+                        typeof callback === "function" && callback && callback(childSnap);
+                    });
+                });
+            }
         }
 
         //return this;
-        return eventSubscription;
+        return eventStream;
     }
 
     /**
@@ -302,18 +312,33 @@ class DataReference {
     /**
      * Creates a new child with a unique key (base62 encoded uuid) and returns the new reference. 
      * If a value is passed as an argument, it will be stored to the database directly. 
-     * The returned reference can be used a a promise that resolves once the
+     * The returned reference can be used as a promise that resolves once the
      * given value is stored in the database
-     * @param {any} value | optional value to store into the database right away
-     * @param {function} onComplete | optional callback function to run once value has been stored
-     * @returns {DataReference} | "thenable" reference to the new child
+     * @param {any} value optional value to store into the database right away
+     * @param {function} onComplete optional callback function to run once value has been stored
+     * @returns {DataReference} "thenable" reference to the new child
+     * @example 
+     * // Create a new user in "game_users"
+     * db.ref("game_users")
+     * .push({ name: "Betty Boop", points: 0 })
+     * .then(ref => {
+     * //  ref is a new reference to the newly created object,
+     * //  eg to: "game_users/7dpJMeLbhY0tluMyuUBK27"
+     * });
+     * @example
+     * // Create a new child reference with a generated key, 
+     * // but don't store it yet
+     * let userRef = db.ref("users").push();
+     * // ... to store it later:
+     * userRef.set({ name: "Popeye the Sailor" })
      */
     push(value = undefined, onComplete = undefined) {
         const id = uuid62.v1(); //uuid();
         const ref = this.child(id);
+        ref.__pushed = true;
 
         if (typeof value !== undefined) {
-            let promise = ref.set(value).then(res => { return ref; });
+            let promise = ref.set(value, onComplete).then(res => ref);
             ref.then = (callback) => {
                 delete ref.then;
                 delete ref.catch;
@@ -349,69 +374,6 @@ class DataReference {
     exists() {
         return this.db.api.exists(this);
     }
-
-    // /**
-    //  * 
-    //  * @param {string} key | property to test value of
-    //  * @param {string} op | operator to use
-    //  * @param {any} compare | value to compare with, or null/undefined to test property existance (in combination with operators eq or neq)
-    //  */                
-    // filter(key, op, compare) {
-    //     if ((op === "in" || op === "!in") && (!(compare instanceof Array) || compare.length === 0)) {
-    //         throw `${op} filter for ${key} must supply an Array compare argument containing at least 1 value`;
-    //     }
-    //     if ((op === "between" || op === "!between") && (!(compare instanceof Array) || compare.length !== 2)) {
-    //         throw `${op} filter for ${key} must supply an Array compare argument containing 2 values`;
-    //     }
-    //     if ((op === "matches" || op === "!matches") && !(compare instanceof RegExp)) {
-    //         throw `${op} filter for ${key} must supply a RegExp compare argument`;
-    //     }
-    //     if (op === "custom" && typeof compare !== "function") {
-    //         throw `${op} filter for ${key} must supply a Function compare argument`;
-    //     }
-    //     this[_private].query.filters.push({ key, op, compare });
-    //     return this;
-    // }
-
-    // take(nr) {
-    //     this[_private].query.take = nr;
-    //     return this;
-    // }
-
-    // skip(nr) {
-    //     this[_private].query.skip = nr;
-    //     return this;
-    // }
-
-    // order(key, ascending = true) {
-    //     if (typeof key !== "string") {
-    //         throw `key must be a string`;
-    //     }
-    //     this[_private].query.order.push({ key, ascending });
-    //     return this;
-    // }
-
-    // /**
-    //  * Executes a query on this ref's children with filters set by .filter
-    //  * @param {object} options | Configures how the query runs. snapshots: Whether to resolve with snapshots instead of references, default is false
-    //  * @returns {Promise<DataReference[]>|Promise<DataSnapshot[]>} | returns an Promise that resolves with an array of DataReferences, or DataSnapshots when requested
-    //  */
-    // query(options = { snapshots: false, include: undefined, exclude: undefined }) {
-    //     //return this.db.api.query(this, this[_private].query, options);
-    //     return this.db.api.query(this, this[_private].query, options)
-    //     .then(results => {
-    //         results.forEach((result, index) => {
-    //             if (options.snapshots) {
-    //                 const val = this.db.types.deserialize(result.path, result.val);
-    //                 results[index] = new DataSnapshot(this.db.ref(result.path), val);
-    //             }
-    //             else {
-    //                 results[index] = this.db.ref(result);
-    //             }
-    //         });
-    //         return results;
-    //     });
-    // }
 
     query() {
         return new DataReferenceQuery(this);
@@ -510,4 +472,4 @@ class DataReferenceQuery {
     }
 }
 
-module.exports = { DataReference };
+module.exports = { DataReference, DataReferenceQuery };

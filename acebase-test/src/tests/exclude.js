@@ -1,6 +1,7 @@
 const { AceBase } = require('acebase');
 /**
- * 
+ * This test adds chats to the database, retrieves them while excluding certain properties.
+ * It also tests using a wildcard index to query all chat messages by user
  * @param {AceBase} db 
  */
 const run = (db) => {
@@ -74,7 +75,58 @@ const run = (db) => {
         Object.keys(chats).forEach(id => {
             const chat = chats[id];
             console.assert(!chat.messages, "retrieved chats should NOT include messages!");
+        });
+    })
+    .then(() => {
+        // Add another chat
+        return db.ref("chats/anotherchat").set({
+            members: ["ewout", "friend"],
+            title: "Friend chat",
+            messages: {
+                msg1: {
+                    sent: new Date("2018-06-19T13:02:09Z"),
+                    user: "ewout",
+                    text: "We should grab a beer soon 🍺",
+                    receipts: {
+                        friend: {
+                            received: new Date("2018-06-19T13:02:10Z"),
+                            read: new Date("2018-06-19T13:03:54Z")
+                        }
+                    } 
+                },
+                msg2: {
+                    sent: new Date("2018-06-19T13:05:09Z"),
+                    user: "friend",
+                    text: "Good idea. I'm pretty thirsty now. How about tonight?",
+                    receipts: {
+                        ewout: {
+                            received: new Date("2018-06-19T13:05:09Z"),
+                            read: new Date("2018-06-19T13:05:54Z")
+                        }
+                    }
+                },
+                msg3: {
+                    sent: new Date("2018-06-19T13:06:01Z"),
+                    user: "ewout",
+                    text: "👍 Meet you around 9?",
+                    receipts: {} 
+                }
+            }
         });        
+    })
+    .then(() => {
+        // Create a wildcard index so we can query all chat messages by user
+        return db.indexes.create("chats/*/messages", "user");
+    })
+    .then(() => {
+        // Now use the wildcard query to get all messages by ewout, in all chats
+        return db.query("chats/*/messages")
+        .where("user", "==", "ewout")
+        .get();
+    })
+    .then(snapshots => {
+        const messages = snapshots.map(snapshot => snapshot.val());
+        console.log(messages);
     })
     ;
 };

@@ -1,5 +1,5 @@
 const { PathReference } = require('./path-reference');
-const { DataReference } = require('./data-reference');
+//const { DataReference } = require('./data-reference');
 const { cloneObject } = require('./utils');
 const ascii85 = require('ascii85');
 
@@ -56,7 +56,7 @@ module.exports = {
 
     serialize(obj) {
         // Recursively find dates and binary data
-        if (obj === null || typeof obj !== "object" || obj instanceof Date || obj instanceof ArrayBuffer || obj instanceof PathReference || obj instanceof DataReference) {
+        if (obj === null || typeof obj !== "object" || obj instanceof Date || obj instanceof ArrayBuffer || obj instanceof PathReference) {
             // Single value
             const ser = this.serialize({ value: obj });
             return {
@@ -79,7 +79,7 @@ module.exports = {
                     obj[key] = ascii85.encode(Buffer.from(val)).toString();
                     mappings[path] = "binary";
                 }
-                else if (val instanceof PathReference || val instanceof DataReference) {
+                else if (val instanceof PathReference) {
                     obj[key] = val.path;
                     mappings[path] = "reference";
                 }

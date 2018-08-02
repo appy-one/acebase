@@ -1,8 +1,9 @@
 const fs = require('fs');
 const { EventEmitter } = require('events');
-const { Record, RecordAddress, RecordLock, UNCHANGED, VALUE_TYPES } = require('./record');
+const uuid62 = require('uuid62');
+const { Record, RecordAddress, RecordLock, RecordReference, UNCHANGED, VALUE_TYPES } = require('./record');
 const { TextEncoder } = require('text-encoding');
-const { concatTypedArrays, getPathKeys, getPathInfo } = require('./utils');
+const { concatTypedArrays, getPathKeys, getPathInfo, getChildPath } = require('./utils');
 const { BPlusTree, BinaryBPlusTree } = require('./data-index');
 const debug = require('./debug');
 
@@ -880,11 +881,17 @@ class Storage extends EventEmitter {
 
         const _indexes = [];
         const _getIndexFileName = (path, key) => {
-            return `${this.name}-${path.replace(/\//g, '-')}-${key}.idx`;
+            return `${this.name}-${path.replace(/\//g, '-').replace(/\*/g, '#')}-${key}.idx`;
         };
-        const _createRecordPointer = (key, address) => {
+        const _createRecordPointer = (wildcards, key, address) => {
             // layout:
-            // record_pointer   = key_info, record_location
+            // record_pointer   = wildcards_info, key_info, record_location
+            // wildcards_info   = wildcards_length, wildcards
+            // wildcards_length = 1 byte (nr of wildcard values)
+            // wildcards        = wilcard[wildcards_length]
+            // wildcard         = wilcard_length, wilcard_bytes
+            // wildcard_length  = 1 byte
+            // wildcard_value   = byte[wildcard_length] (ASCII char codes)
             // key_info         = key_length, key_bytes
             // key_length       = 1 byte
             // key_bytes        = byte[key_length] (ASCII char codes)
@@ -892,7 +899,17 @@ class Storage extends EventEmitter {
             // page_nr          = 4 byte number
             // record_nr        = 2 byte number
 
-            let recordPointer = [key.length]; // key_length
+            let recordPointer = [wildcards.length]; // wildcards_length
+            for (let i = 0; i < wildcards.length; i++) {
+                const wildcard = wildcards[i];
+                recordPointer.push(wildcard.length); // wildcard_length
+                // wildcard_bytes:
+                for (let j = 0; j < wildcard.length; j++) {
+                    recordPointer.push(wildcard.charCodeAt(j));
+                }
+            }
+            
+            recordPointer.push(key.length); // key_length
             // key_bytes:
             for (let i = 0; i < key.length; i++) {
                 recordPointer.push(key.charCodeAt(i));
@@ -908,91 +925,224 @@ class Storage extends EventEmitter {
             return recordPointer;
         };
         const _parseRecordPointer = (path, recordPointer) => {
-            const keyLength = recordPointer[0];
+            const wildcardsLength = recordPointer[0];
+            let wildcards = [];
+            let index = 1;
+            for (let i = 0; i < wildcardsLength; i++) {
+                let wildcard = "";
+                let length = recordPointer[index];
+                for (let j = 0; j < length; j++) {
+                    wildcard += String.fromCharCode(recordPointer[index+j+1]);
+                }
+                wildcards.push(wildcard);
+                index += length + 1;
+            }
+            const keyLength = recordPointer[index];
             let key = "";
             for(let i = 0; i < keyLength; i++) {
-                key += String.fromCharCode(recordPointer[i+1]);
+                key += String.fromCharCode(recordPointer[index+i+1]);
             }
-            let index = keyLength + 1;
+            index += keyLength + 1;
             const pageNr = recordPointer[index] << 24 | recordPointer[index+1] << 16 | recordPointer[index+2] << 8 | recordPointer[index+3];
             index += 4;
             const recordNr = recordPointer[index] << 8 | recordPointer[index+1];
+            if (wildcards.length > 0) {
+                let i = 0;
+                path = path.replace(/\*/g, () => {
+                    const wildcard = wildcards[i];
+                    i++;
+                    return wildcard;
+                });
+            }
             return { key, pageNr, recordNr, address: new RecordAddress(`${path}/${key}`, pageNr, recordNr) };
         }
+        /**
+         * @param {string} path index path
+         * @param {string} key index key
+         * @returns {Promise<{ tree: BinaryBPlusTree, close: () => void}>} returns a promise that resolves with a reference to the binary B+Tree and a close method to close the file once reading is done
+         */
+        const _getIndexTree = (path, key) => {
+            const index = _indexes.find(index => index.path === path && index.key === key);
+            if (!index) {
+                throw new Error(`Index for path "/${path}", key "${key}" does not exist`);
+            }
+            return new Promise((resolve, reject) => {
+                const fileName = _getIndexFileName(path, key);
+                fs.open(fileName, "r", (err, fd) => {
+                    if (err) {
+                        return reject(err);
+                    }
+                    const reader = (index, length) => {
+                        const binary = new Uint8Array(length);
+                        const buffer = Buffer.from(binary.buffer);
+                        return new Promise((resolve, reject) => {
+                            fs.read(fd, buffer, 0, length, index, (err, bytesRead) => {
+                                if (err) {
+                                    reject(err);
+                                }
+                                // Convert Uint8Array to byte array
+                                let bytes = [];
+                                bytes.push(...binary);
+                                resolve(bytes);
+                            });
+                        });
+                    }
+                    const tree = new BinaryBPlusTree(reader, 512);
+                    resolve({ 
+                        tree,
+                        close: () => {
+                            fs.close(fd, err => {
+                                if (err) {
+                                    console.warn(`Could not close index file ${fileName}:`, err);
+                                }
+                            });
+                        }
+                    });
+                });
+            });
+        };
+        const _keepIndexUpdated = (path, key) => {
+            // Subscribe to changes
+            this.subscriptions.add(`${path}`, "child_changed", (childPath, newValue, oldValue) => {
+                // A child's value changed.
+                // Did the indexed key change?
+                if (oldValue[key] !== UNCHANGED && newValue[key] !== oldValue[key]) {
+                    // TODO: do something clever to update the index
+                    // But BPlusTree/BinaryBPlusTree does not support changes yet!
+                    // _getIndexTree(index.path, index.key)
+                    // .then(idx => {
+                    //     idx.tree.update(oldValue[key], newValue[key], (data) => {
+                    //         // Check if this is the current record
+                    //         const recordPointer = _parseRecordPointer(path, data);
+                    //         const pathInfo = getPathInfo(recordPointer.address.path);
+                    //         return pathInfo.key === key;
+                    //     });
+                    // });
+
+                    // Re-create the entire index for now
+                    this.indexes.create(path, key, true);
+                }
+            });
+            this.subscriptions.add(`${path}`, "child_added", (childPath, newValue) => {
+                // A child was added
+                // TODO: do something clever to update the index
+                this.indexes.create(path, key, true);
+            });
+            this.subscriptions.add(`${path}`, "child_removed", (childPath) => {
+                // A child was removed
+                // TODO: do something clever to update the index
+                this.indexes.create(path, key, true);
+            });
+        };
+
         this.indexes = {
             /**
              * Creates an index on specified path and key(s)
-             * @param {string} path location of objects to be indexed. Eg: "users" to index all children of the "users" node; or "chats/* /members" to index all members of all chats
-             * @param {string[]} key for now - one key to index. Once our B+tree implementation supports nested trees, we can allow multiple fields
+             * @param {string} path location of objects to be indexed. Eg: "users" to index all children of the "users" node; or "chats/*\/members" to index all members of all chats
+             * @param {string} key for now - one key to index. Once our B+tree implementation supports nested trees, we can allow multiple fields
              */
-            create(path, key) {
+            create(path, key, refresh = false) {
                 // Find all matching records
-                if (path.indexOf("*") >= 0) {
-                    throw new Error(`Wildcard paths not implemented yet`);
+                const existingIndex = _indexes.find(index => index.path === path && index.key === key)
+                if (existingIndex && refresh !== true) {
+                    debug.log(`Index on "${key}" in "/${path}" already exists`);
+                    return Promise.resolve(existingIndex);
                 }
-                const state = {
-                    index: new BPlusTree(30, false),
-                    lock: undefined
-                };
-                return storage.lock(path, `index-create-${path}-${key}`, false, `indexes.create "/${path}", "${key}"`)
-                .then(lock => {
-                    state.lock = lock;
-                    return Record.get(storage, { path }, { lock });
-                })
-                .then(record => {
-                    if (!record) {
-                        return Promise.reject(`Path to index "/${path}" not found`);
-                    }
-                    const promises = [];
-                    return record.getChildStream({ lock: state.lock })
-                    .next(child => {
-                        // TODO: Refactor getChildStream to return same objects as getChildInfo with .storageType and .valueType
-                        if (!child.address || child.type !== VALUE_TYPES.OBJECT) { //if (child.storageType !== "record" || child.valueType !== VALUE_TYPES.OBJECT) {
-                            return; // This child cannot be indexed because it is not an object with properties
-                        }
-                        const p = Record.get(storage, child.address, { lock: state.lock })
-                        .then(childRecord => {
-                            return childRecord.getChildInfo(key, { lock: state.lock });
-                        })
-                        .then(childInfo => {
-                            // What can be indexed? 
-                            // strings, numbers, booleans, dates
-                            if (childInfo.exists && [VALUE_TYPES.STRING, VALUE_TYPES.NUMBER, VALUE_TYPES.BOOLEAN, VALUE_TYPES.DATETIME].indexOf(childInfo.valueType) >= 0) {
-                                // Index this value
-                                if (childInfo.storageType === "record") {
-                                    return Record.get(storage, childInfo.address, { lock: state.lock })
-                                    .then(valueRecord => {
-                                        return valueRecord.getValue();
-                                    });
-                                }
-                                else {
-                                    return childInfo.value;
-                                }
+
+                const hasWildcards = path.indexOf('*') >= 0;
+                const wildcardsPattern = '^' + path.replace(/\*/g, "([a-z0-9\-_$]+)") + '/';
+                const wildcardRE = new RegExp(wildcardsPattern, 'i');
+                const tree = new BPlusTree(30, false);
+                let lock;
+                const keys = getPathKeys(path);
+                // "users/*/posts" 
+                // --> Get all children of "users", 
+                // --> get their "posts" children,
+                // --> get their children to index
+                const getAll = (currentPath, index) => {
+                    const childPromises = [];
+                    const getChildren = () => {
+                        return Record.getChildStream(storage, { path }, { lock })
+                        .next(child => {
+                            if (!child.address || child.type !== VALUE_TYPES.OBJECT) { //if (child.storageType !== "record" || child.valueType !== VALUE_TYPES.OBJECT) {
+                                return; // This child cannot be indexed because it is not an object with properties
+                            }
+                            else if (index === keys.length) {
+                                // We have to index this child
+                                const p = Record.get(storage, child.address, { lock })
+                                .then(childRecord => {
+                                    return childRecord.getChildInfo(key, { lock });
+                                })
+                                .then(childInfo => {
+                                    // What can be indexed? 
+                                    // strings, numbers, booleans, dates
+                                    if (childInfo.exists && [VALUE_TYPES.STRING, VALUE_TYPES.NUMBER, VALUE_TYPES.BOOLEAN, VALUE_TYPES.DATETIME].indexOf(childInfo.valueType) >= 0) {
+                                        // Index this value
+                                        if (childInfo.storageType === "record") {
+                                            return Record.get(storage, childInfo.address, { lock })
+                                            .then(valueRecord => {
+                                                return valueRecord.getValue();
+                                            });
+                                        }
+                                        else {
+                                            return childInfo.value;
+                                        }
+                                    }
+                                    else {
+                                        return null;
+                                    }
+                                })
+                                .then(value => {
+                                    if (value !== null) {
+                                        // Add it to the index, using value as the index key, a record pointer as the value
+                                        // Create record pointer
+                                        let wildcards = [];
+                                        if (hasWildcards) {
+                                            const match = wildcardRE.exec(child.address.path);
+                                            wildcards = match.slice(1);
+                                        }
+                                        const recordPointer = _createRecordPointer(wildcards, child.key, child.address);
+                                        // Add it to the index
+                                        tree.add(value, recordPointer);
+                                    }
+                                });
+                                childPromises.push(p);
                             }
                             else {
-                                return null;
+                                const p = getAll(child.address.path, index+1);
+                                childPromises.push(p);
                             }
                         })
-                        .then(value => {
-                            if (value !== null) {
-                                // Add it to the index, using value as the index key, a record pointer as the value
-                                // Create record pointer
-                                const recordPointer = _createRecordPointer(child.key, child.address);
-                                // Add it to the index
-                                state.index.add(value, recordPointer);
-                            }
+                        .catch(reason => {
+                            // Record doesn't exist? No biggy
+                            console.warn(reason);
+                        })
+                        .then(() => {
+                            return Promise.all(childPromises);
                         });
-                        promises.push(p);
-                    })
-                    .then(() => {
-                        // Alls child keys have been streamed
-                        // wait for all promises to resolve
-                        return Promise.all(promises);
-                    });
-                })
+                    };
+                    
+                    let path = currentPath;
+                    while (keys[index] && keys[index] !== "*") {
+                        if (path.length > 0) { path += '/'; }
+                        path += keys[index];
+                        index++;
+                    }
+                    if (!lock) {
+                        return storage.lock(path, uuid62.v1(), false, `indexes.create "/${path}", "${key}"`)
+                        .then(l => {
+                            lock = l;
+                            return getChildren();
+                        });
+                    }
+                    else {
+                        return getChildren();
+                    }    
+                };
+                return getAll("", 0)
                 .then(() => {
                     // All child objects have been indexed. save the index
-                    const binary = new Uint8Array(state.index.toBinary());
+                    const binary = new Uint8Array(tree.toBinary());
                     return new Promise((resolve, reject) => {
                         const fileName = _getIndexFileName(path, key);
                         fs.writeFile(fileName, Buffer.from(binary.buffer), (err) => {
@@ -1007,29 +1157,35 @@ class Storage extends EventEmitter {
                     });
                 })
                 .then(fileName => {
-                    _indexes.push({ path, key, fileName });
+                    const index = { path, key, fileName }
+                    if (!existingIndex) {
+                        _indexes.push(index);
+                        _keepIndexUpdated(path, key);
+                    }
                     // Now release the lock
-                    state.lock.release();
+                    lock.release();
+                    return index;
                 });
+
             },
 
-            query(path, key, op, val) {
-                return this.get(path, key)
-                .then(index => {
+            query(index, op, val) {
+                return _getIndexTree(index.path, index.key)
+                .then(idx => {
                     /**
                      * @type BinaryBPlusTree
                      */
-                    const tree = index.tree;
+                    const tree = idx.tree;
                     return tree.search(op, val)
                     .then(entries => {
                         // We now have record pointers...
-                        index.close();
+                        idx.close();
 
                         const results = [];
                         entries.forEach(entry => {
                             const value = entry.key;
                             entry.values.forEach(data => {
-                                const recordPointer = _parseRecordPointer(path, data);
+                                const recordPointer = _parseRecordPointer(index.path, data);
                                 results.push({ key: recordPointer.key, value, address: recordPointer.address });
                             })
                         });
@@ -1038,43 +1194,37 @@ class Storage extends EventEmitter {
                 });
             },
 
-            get(path, key) {
-                const index = _indexes.find(index => index.path === path && index.key === key);
-                if (!index) {
-                    throw new Error(`Index for path "/${path}", key "${key}" does not exist`);
-                }
-                return new Promise((resolve, reject) => {
-                    const fileName = _getIndexFileName(path, key);
-                    fs.open(fileName, "r", (err, fd) => {
-                        if (err) {
-                            return reject(err);
-                        }
-                        const reader = (index, length) => {
-                            const binary = new Uint8Array(length);
-                            const buffer = Buffer.from(binary.buffer);
-                            return new Promise((resolve, reject) => {
-                                fs.read(fd, buffer, 0, length, index, (err, bytesRead) => {
-                                    if (err) {
-                                        reject(err);
-                                    }
-                                    // Convert Uint8Array to byte array
-                                    let bytes = [];
-                                    bytes.push(...binary);
-                                    resolve(bytes);
-                                });
-                            });
-                        }
-                        const tree = new BinaryBPlusTree(reader, 512);
-                        resolve({ 
-                            tree,
-                            close: () => {
-                                fs.close(fd);
-                            }
-                        });
-                    });
-                });
+            get(path, key = null) {
+                return _indexes.filter(index => index.path === path && (key === null || key === index.key));
+            },
+
+            list() {
+                return _indexes.slice();
             }
-        }
+        };
+
+        fs.readdir(".", (err, files) => {
+            if (err) {
+                return console.error(err);
+            }
+            files.forEach(fileName => {
+                if (fileName.endsWith(".idx")) {
+                    const match = fileName.match(/^([a-z0-9_$\-]+)-([a-z0-9_$#\-]+)-([a-z0-9_$]+)\.idx$/i);
+                    //console.log(match);
+                    if (match && match[1] === this.name) {
+                        const path = match[2].replace(/\-/g, "/").replace(/\#/g, "*");
+                        const key = match[3];
+
+                        // We can do 2 things now:
+                        // 1. Just add it to our array
+                        // 2. Rebuild
+                        _indexes.push({ fileName, path, key });  // 1
+                        _keepIndexUpdated(path, key);
+                        // storage.indexes.create(path, key, true); // 2
+                    }
+                }
+            });
+        });
 
         // Open or create database 
         fs.exists(filename, (exists) => {
@@ -1104,16 +1254,12 @@ class Storage extends EventEmitter {
                 padding.fill(0);
                 header = concatTypedArrays(header, padding);
                 
-                // Create object key index table (KIT) to allow very small record creation
+                // Create object Key Index Table (KIT) to allow very small record creation.
                 // key_index uses 2 bytes, so max 65536 keys could technically be indexed.
                 // Using an average key length of 7 characters, the index would become 
                 // 7 chars + 1 delimiter * 65536 keys = 520KB. That would be total overkill.
                 // The table should be at most 64KB so that means approx 8192 keys can 
                 // be indexed. With shorter keys, this will be more. With longer keys, less.
-                // If we get really uptight about space - to save more space:
-                // Considering the amount of possible key name characters [a-zA-Z0-9_$] = 26+26+10+2 = 64,
-                // we'd only need 6 bits per character. From 4 chars on, this saves a byte!
-                // [key_length: 6 bits - max 64 chars][key_name: key_length * 6 bits][count?: 8 bits]
                 let kit = new Uint8Array(65536 - header.length);
                 kit.fill(0);
                 let uint8 = concatTypedArrays(header, kit);
@@ -1191,17 +1337,15 @@ class Storage extends EventEmitter {
              * @param {string} path - Path to the node that triggered execution
              * @param {any} previous - Previous value, to determine changes
              */
-            trigger(event, path, previous) {
+            trigger(event, path, previous, updates, current, lock) {
                 //const ref = new Reference(db, path); //createReference(path);
+                //console.trace(`Event "${event} "on "/${path}", previous value: `, previous);
+                console.warn(`Event "${event}" on "/${path}"`);
                 if (event === "update") {
-
-                    // storage.emit("dataupdated", {
-                    //     path
-                    // });
 
                     const compare = (oldVal, newVal) => {
                         const voids = [undefined, null];
-                        if (oldVal === UNCHANGED) { return "identical"; }
+                        if (oldVal === UNCHANGED || oldVal === newVal) { return "identical"; }
                         else if (voids.indexOf(oldVal) >= 0 && voids.indexOf(newVal) < 0) { return "added"; }
                         else if (voids.indexOf(oldVal) < 0 && voids.indexOf(newVal) >= 0) { return "removed"; }
                         else if (typeof oldVal !== typeof newVal) { return "changed"; }
@@ -1214,18 +1358,20 @@ class Storage extends EventEmitter {
                             const newKeys = isArray 
                                 ? Object.keys(newVal).map(v => parseInt(v)) //new Array(newVal.length).map((v,i) => i) 
                                 : Object.keys(newVal);
-                            const removedKeys = oldKeys.reduce((removed, key) => { 
-                                if (newKeys.indexOf(key) < 0) { 
-                                    removed.push(key); 
-                                } 
-                                return removed;
-                            }, []);
-                            const addedKeys = newKeys.reduce((added, key) => { 
-                                if (oldKeys.indexOf(key) < 0) { 
-                                    added.push(key); 
-                                } 
-                                return added;
-                            }, []);
+                            const removedKeys = oldKeys.filter(key => newKeys.indexOf(key) < 0);
+                            // = oldKeys.reduce((removed, key) => { 
+                            //     if (newKeys.indexOf(key) < 0) { 
+                            //         removed.push(key); 
+                            //     } 
+                            //     return removed;
+                            // }, []);
+                            const addedKeys = newKeys.filter(key => oldKeys.indexOf(key) < 0);
+                            // = newKeys.reduce((added, key) => { 
+                            //     if (oldKeys.indexOf(key) < 0) { 
+                            //         added.push(key); 
+                            //     } 
+                            //     return added;
+                            // }, []);
                             const changedKeys = newKeys.reduce((changed, key) => { 
                                 if (oldKeys.indexOf(key) >= 0) {
                                     const val1 = oldVal[key];
@@ -1257,139 +1403,201 @@ class Storage extends EventEmitter {
                         return "identical";
                     };
 
-                    // Figure out what top parent path is subscribed to, so we can get that data at once
-                    // then use that data to run all subscribers on the tree
-                    const callbacks = [];
-                    // const checkRef = (ref) => { //, specificType) => {
-                    //     const subs = _subs[ref.path];
-                    //     subs && subs.forEach(sub => {
-                    //         //if (!specificType || sub.type === specificType) {
-                    //         callbacks.push({ ref, type: sub.type, callback: sub.callback });
-                    //         //}
-                    //     });
-                    // };
-                    const checkPath = (p) => {
+                    const changedKeys = {
+                        added: Object.keys(updates).filter(key => updates[key] !== null && !(key in previous)),
+                        updated: Object.keys(updates).filter(key => updates[key] !== null && key in previous && compare(previous[key], updates[key]) !== "identical"),
+                        deleted: Object.keys(updates).filter(key => updates[key] === null && key in previous)
+                    }
+                    if (changedKeys.added.length > 0 || changedKeys.updated.length > 0 || changedKeys.deleted.length > 0) {
+                        storage.emit("update", {
+                            path,
+                            added: changedKeys.added,
+                            updated: changedKeys.updated,
+                            deleted: changedKeys.deleted
+                        });
+                    }
+                    else {
+                        console.warn(`There are no real changes to path "/${path}"`);
+                        return;
+                    }
+
+                    // Subscription handling logic:
+                    // 1. For all subscriptions on child paths, we have all changed data
+                    // 2. For all child_* subscriptions on current path or parent paths, we have all changed data
+                    // 3. All child_added & child_removed events on grandparent+ paths can be ignored
+                    // 4. For all value subscriptions on current or parent paths, we need to get all data
+
+                    const subscriptions = [];
+                    const addSubscriptions = (p, checkCallback = undefined) => { 
                         const subs = _subs[p];
                         subs && subs.forEach(sub => {
-                            //if (!specificType || sub.type === specificType) {
-                            callbacks.push({ path: p, type: sub.type, callback: sub.callback });
-                            //}
+                            const add = checkCallback ? checkCallback({ path: p, type: sub.type }) : true;
+                            add && subscriptions.push({ path: p, type: sub.type, callback: sub.callback });
                         });
                     };
-                     
-                    // Check if there are any subscribers to child paths (of any event type)
+
+                    // 1. Add all subscriptions to child paths
                     Object.keys(_subs).forEach(spath => {
-                        if (spath.startsWith(path + "/")) {
+                        if (spath.startsWith(path + "/") || path === "") {
                             //checkRef(createReference(spath));
-                            checkPath(spath);
+                            const trailPath = spath.slice(path.length).replace(/^\//, "");
+                            const firstKey = getPathKeys(trailPath)[0];
+                            if (firstKey && previous[firstKey] !== UNCHANGED) {
+                                addSubscriptions(spath);
+                            }
                         }
                     });
 
-                    //checkRef(ref); // Check subscriptions on the updated node
-                    checkPath(path); // Check subscriptions on the updated node
+                    // 2. and 4. Add all subscriptions on the updated node itself
+                    let topSubscriptionPath = null;
+                    let topDataPath = null;
+                    let currentHasAllData = current && !Object.keys(current).some(key => current[key] instanceof RecordReference);
+                    addSubscriptions(path, subscription => {
+                        if (subscription.type === "value" && !currentHasAllData) {
+                            topDataPath = path;
+                            topSubscriptionPath = path;
+                        }
+                        return true;
+                    });
 
-                    // // Check parent node subscriptions
-                    // let parentRef = ref.parent;
-                    // while (parentRef) {
-                    //     checkRef(parentRef); // Only get subscribers for value changes on parent nodes
-                    //     parentRef = parentRef.parent;
-                    // }
+                    // 2. 3. and 4. Check parent/grandparent+ node subscriptions
+                    let currentPath = path;
                     let parentPath = getPathInfo(path).parent;
+                    let isOurParent = true;
                     while (parentPath !== null) {
-                        checkPath(parentPath); // Only get subscribers for value changes on parent nodes
+                        addSubscriptions(parentPath, subscription => {
+                            let add = false;
+                            if (subscription.type === "value") { 
+                                topDataPath = parentPath;
+                                add = true;
+                            }
+                            else if (isOurParent && subscription.type.startsWith("child_")) {
+                                // This node changed, so these are the only relevant events for the parent
+                                add = true;
+                            }
+                            else if (!isOurParent && subscription.type === "child_changed") {
+                                topDataPath = currentPath;
+                                add = true;
+                            }
+                            if (add) {
+                                topSubscriptionPath = parentPath;
+                            }
+                            return add;
+                        });
+                        currentPath = parentPath;
                         parentPath = getPathInfo(parentPath).parent;
+                        isOurParent = false;
                     }
 
-                    const loadData = (path) => {
+                    function loadData(path) {
                         // const ref = new Reference(db, path);
                         // return ref.once("value");
                         path = path.replace(/^\/|\/$/g, "");
-                        return Record.get(storage, { path }).then(record => {
+                        const tid = lock ? lock.tid : uuid62.v1();
+                        let ourLock;
+                        return storage.lock(path, tid, false, `storage.trigger:loadData "/${path}"`)
+                        .then(lock => {
+                            ourLock = lock;
+                            return Record.get(storage, { path }, { lock: ourLock });
+                        })
+                        .then(record => {
                             if (!record) {
                                 if (path.length === 0) { return null; }
                                 const pathInfo = getPathInfo(path);
-                                return loadData(pathInfo.parent).then(data => {
+                                return loadData(pathInfo.parent)
+                                .then(data => {
                                     if (typeof data !== "object") { return null; }
                                     else if (typeof data[pathInfo.key] === "undefined") { return null; }
                                     return data[pathInfo.key];
                                 });
                             }
                             else {
-                                return record.getValue().then(val => {
-                                    return val;
-                                });
+                                return record.getValue({ lock: ourLock });
                             }
+                        })
+                        .then(val => {
+                            ourLock.release();
+                            return val;
                         });
-                    };
+                    }
 
                     // Now we know all callbacks to run, get the "top" data and run 
                     // each callback with their appropriate data
-                    if (callbacks.length === 0) { return; }
-                    //const topRef = callbacks[callbacks.length - 1].ref;
-                    const topPath = callbacks[callbacks.length - 1].path;
-                    
-                    //topRef.once("value").then(snap => { //, { use_mapping: false }
-                    //    const topData = snap.val();
-                    //    const topPath = topRef.path;
-                    loadData(topPath).then(topData => {
+                    if (subscriptions.length === 0) { return Promise.resolve(); }
 
-                        // First, find out if the data that triggered the event really changed at all
-                        // (If .update or .set executed resulted in the same value already there..)
-                        const getDataAtPath = (targetPath) => {
-                            const trailPath = topPath.length === 0 ? targetPath : targetPath.substr(topPath.length + 1);
-                            let keys = getPathKeys(trailPath); //  trailPath.length > 0 ? trailPath.split("/") : [];
-                            let newData = topData;
-                            let oldData = topPath === path ? previous : null;
-                            let currentPath = topPath;
-                            // keys = keys.reduce((keys, key) => {
-                            //     while(true) {
-                            //         const i = key.indexOf("[");
-                            //         if (i < 0) {
-                            //             keys.push(key);
-                            //             break;
-                            //         }
-                            //         const m = key.match(/^(.*?)\[([0-9]+)\]/);
-                            //         key = m[1];
-                            //         if (key.length > 0) {
-                            //             keys.push(key);
-                            //         }
-                            //         index = parseInt(m[2]);
-                            //         keys.push(index);
-                            //     }
-                            //     return keys;
-                            // }, []);
-                            keys.forEach(key => {
-                                // Current data:
-                                currentPath += (currentPath.length > 0 ? "/" : "") + key;
-                                if (typeof newData === "object" && newData !== null && key in newData) {
-                                    newData = newData[key];
-                                }
-                                else {
-                                    newData = null;
-                                }
-                                // Previous data:
-                                if (currentPath === path) {
-                                    oldData = previous;
-                                }
-                                else if (typeof oldData === "object" && oldData !== null && key in oldData) {
-                                    oldData = oldData[key];
-                                }
-                                else {
-                                    oldData = null;
-                                }
-                            });
-                            return {
-                                current: newData,
-                                previous: oldData
-                            };
-                        };
-                        const current = getDataAtPath(path).current;
-                        const change = compare(previous, current);
-                        //debug.log(`Data on path ${path} compare result:`);
-                        //debug.log(change);
-                        if (change === "identical") {
-                            return; // The node was updated, but nothing changed really. No need to run any callbacks
+                    // Check if we have to load any data
+                    const topPath = topSubscriptionPath !== null ? topSubscriptionPath : path;
+                    const buildTopData = (currentData) => {
+                        let topData = {
+                            previous,
+                            current: currentData
                         }
+                        if (path.length > topPath.length) {
+                            const trailPath = path.slice(topPath.length).replace(/^\//, "");
+                            const trailKeys = getPathKeys(trailPath);
+                            while (trailKeys.length > 0) {
+                                const key = trailKeys.pop();
+                                topData.previous = { [key]: topData.previous };
+                            }
+                        }
+                        if (topDataPath.length > topPath.length) {
+                            const trailPath = topDataPath.slice(topPath.length).replace(/^\//, "");
+                            const trailKeys = getPathKeys(trailPath);
+                            while (trailKeys.length > 0) {
+                                const key = trailKeys.pop();
+                                topData.current = { [key]: topData.current };
+                            }
+                        }
+                        return topData;                    
+                    };
+                    let topPromise; 
+                    if (topDataPath) {
+                        // We have to load data
+                        topPromise = loadData(topDataPath)
+                        .then(topData => {
+                            topData = buildTopData(topData);
+                            return topData;
+                        });
+                    }
+                    else {
+                        // No need to load data, but if the top subscribed path is on a parent, we have to create the parent data
+                        let topData = {};
+                        Object.keys(previous).forEach(key => topData[key] = previous[key]);
+                        Object.keys(updates).forEach(key => topData[key] = updates[key]);
+
+                        topDataPath = path;
+                        topData = buildTopData(topData);
+                        topPromise = Promise.resolve(topData);
+                    }
+
+                    return topPromise.then(topData => {
+
+                        const getDataAtPath = (targetPath) => {
+                            const trailPath = targetPath.slice(topPath.length).replace(/^\//,"");
+                            const trailKeys = getPathKeys(trailPath);
+                            const data = {
+                                previous: topData.previous,
+                                current: topData.current
+                            };
+                            while (trailKeys.length > 0) {
+                                const key = trailKeys.shift();
+                                if (data.previous !== null) {
+                                    data.previous = typeof data.previous === "object" && key in data.previous ? data.previous[key] : null;
+                                }
+                                if (data.current !== null) {
+                                    data.current = typeof data.current === "object" && key in data.current ? data.current[key] : null;
+                                }
+                            }
+                            return data;
+                        }
+                        
+                        // const current = getDataAtPath(path).current;
+                        // const change = compare(previous, current);
+                        // //debug.log(`Data on path ${path} compare result:`);
+                        // //debug.log(change);
+                        // if (change === "identical") {
+                        //     return; // The node was updated, but nothing changed really. No need to run any callbacks
+                        // }
 
                         // storage.emit("datachanged", {
                         //     //type: "update",
@@ -1398,87 +1606,104 @@ class Storage extends EventEmitter {
                         //     current: current
                         // });
 
+                        // Group callbacks by path
+                        const groupedSubscriptions = subscriptions.reduce((all, sub) => {
+                            let i = all.findIndex(group => group.path === sub.path);
+                            let group = all[i] || { path: sub.path, subscriptions: [] };
+                            group.subscriptions.push(sub);
+                            if (i < 0) { all.push(group); }
+                            return all;
+                        }, []);
+
                         // Now proceed with callbacks
-                        callbacks.forEach(c => {
-                            const refPath = c.path; //c.ref.path;
-                            const dataset = getDataAtPath(refPath);
-                            if (refPath.length < path.length) {
-                                // The path of the subscriber is at a higher node than the updated
-                                // object. We don't need to compare data for this
-                                //const ref = new Reference(db, c.path);
-                                if (c.type === "value") {
-                                    //c.callback(null, new Snapshot(c.ref, dataset.current));
-                                    //c.callback(null, new Snapshot(ref, dataset.current));
-                                    c.callback(null, c.path, dataset.current);
-                                }
-                                else {
-                                    const nextSlash = path.indexOf("/", refPath.length + 1);
-                                    const key = path.substring(
-                                        refPath.length === 0 ? 0 : refPath.length + 1, 
-                                        nextSlash >= 0 ? nextSlash : path.length
-                                    );
-                                    //const childRef = ref.child(key); //c.ref.child(key);
-                                    const childPath = `${c.path}/${key}`;
-                                    const childData = dataset.current[key];
+                        //process.nextTick(() => {
+                            groupedSubscriptions.forEach(group => {
+                                const refPath = group.path; //c.ref.path;
+                                const dataset = getDataAtPath(refPath);
+                                if (refPath.length < path.length) {
+                                    // The path of the subscriber is at a higher node than the updated
+                                    // object. We don't need to compare data for this
+                                    group.subscriptions.forEach(c => {
+                                        if (c.type === "value") {
+                                            //c.callback(null, new Snapshot(c.ref, dataset.current));
+                                            //c.callback(null, new Snapshot(ref, dataset.current));
+                                            c.callback(null, c.path, dataset.current);
+                                        }
+                                        else {
+                                            // const nextSlash = path.indexOf("/", refPath.length + 1);
+                                            // const childKey = path.substring(
+                                            //     refPath.length === 0 ? 0 : refPath.length + 1, 
+                                            //     nextSlash >= 0 ? nextSlash : path.length
+                                            // );
+                                            // const childPath = `${c.path}/${childKey}`;
+                                            const refPathKeys = getPathKeys(refPath);
+                                            const pathKeys = getPathKeys(path);
+                                            const childKey = pathKeys[refPathKeys.length];
+                                            const childPath = getChildPath(refPath, childKey);
 
-                                    if (c.type === "child_changed" && childData) {
-                                        //c.callback(null, new Snapshot(childRef, childData));
-                                        c.callback(null, childPath, childData);
+                                            const childData = dataset.current[childKey];
+                                            const oldChildData = dataset.previous[childKey];
+
+                                            if (c.type === "child_changed" && childData) {
+                                                //c.callback(null, new Snapshot(childRef, childData));
+                                                c.callback(null, childPath, childData, oldChildData);
+                                            }
+                                            else if (c.type === "child_removed" && !childData) {
+                                                //c.callback(null, new Snapshot(childRef, null));
+                                                c.callback(null, childPath, null, oldChildData);
+                                            }
+                                            // else if (c.type === "child_added" && `${refPath}/${key}` === path) {
+                                            //     // Logic isn't right. Will be called on updates now too
+                                            //     c.callback(null, createSnapshot(childRef, childData));
+                                            // }
+                                        }
+                                    });
+                                    return;
+                                }
+
+                                // Get data changes
+                                const change = compare(dataset.previous, dataset.current);
+                                if (change === "identical") {
+                                    return; // next!
+                                }
+
+                                // Run with data
+                                group.subscriptions.forEach(c => {
+                                    if (c.type === "value") {
+                                        c.callback(null, c.path, dataset.current);
                                     }
-                                    else if (c.type === "child_removed" && !childData) {
-                                        //c.callback(null, new Snapshot(childRef, null));
-                                        c.callback(null, childPath, null);
+                                    else if (typeof change === "object") {
+                                        if (c.type === "child_added" && change.added.length > 0) {
+                                            change.added.forEach(key => {
+                                                //const childRef = ref.child(key); //c.ref.child(key);
+                                                const childPath = getChildPath(c.path, key); //`${c.path}/${key}`;
+                                                const childData = dataset.current[key];
+                                                //c.callback(null, new Snapshot(childRef, childData));
+                                                c.callback(null, childPath, childData);
+                                            });
+                                        }
+                                        else if (c.type === "child_removed" && change.removed.length > 0) {
+                                            change.removed.forEach(key => {
+                                                //const childRef = ref.child(key); //c.ref.child(key);
+                                                //c.callback(null, new Snapshot(childRef, null));
+                                                const childPath = getChildPath(c.path, key); //`${c.path}/${key}`;
+                                                c.callback(null, childPath, null);
+                                            });
+                                        }
+                                        else if (c.type === "child_changed" && change.changed.length > 0) {
+                                            change.changed.forEach(item => {
+                                                const key = item.key; //typeof item === "object" ? item.key : item;
+                                                //const childRef = ref.child(key); //c.ref.child(key);
+                                                const childPath = getChildPath(c.path, key); //`${c.path}/${key}`;
+                                                const childData = dataset.current[key];
+                                                //c.callback(null, new Snapshot(childRef, childData));
+                                                c.callback(null, childPath, childData);
+                                            });
+                                        }
                                     }
-                                    // else if (c.type === "child_added" && `${refPath}/${key}` === path) {
-                                    //     // Logic isn't right. Will be called on updates now too
-                                    //     c.callback(null, createSnapshot(childRef, childData));
-                                    // }
-                                }
-                                return;
-                            }
-
-                            // Get data changes
-                            const change = compare(dataset.previous, dataset.current);
-                            if (change === "identical") {
-                                return; // next!
-                            }
-
-                            // Run with data
-                            if (c.type === "value") {
-                                //c.callback(null, new Snapshot(c.ref, dataset.current));
-                                //c.callback(null, new Snapshot(ref, dataset.current));
-                                c.callback(null, c.path, dataset.current);
-                            }
-                            else if (typeof change === "object") {
-                                if (c.type === "child_added" && change.added.length > 0) {
-                                    change.added.forEach(key => {
-                                        //const childRef = ref.child(key); //c.ref.child(key);
-                                        const childPath = `${c.path}/${key}`;
-                                        const childData = dataset.current[key];
-                                        //c.callback(null, new Snapshot(childRef, childData));
-                                        c.callback(null, childPath, childData);
-                                    });
-                                }
-                                else if (c.type === "child_removed" && change.removed.length > 0) {
-                                    change.removed.forEach(key => {
-                                        //const childRef = ref.child(key); //c.ref.child(key);
-                                        //c.callback(null, new Snapshot(childRef, null));
-                                        const childPath = `${c.path}/${key}`;
-                                        c.callback(null, childPath, null);
-                                    });
-                                }
-                                else if (c.type === "child_changed" && change.changed.length > 0) {
-                                    change.changed.forEach(item => {
-                                        const key = item.key; //typeof item === "object" ? item.key : item;
-                                        //const childRef = ref.child(key); //c.ref.child(key);
-                                        const childPath = `${c.path}/${key}`;
-                                        const childData = dataset.current[key];
-                                        //c.callback(null, new Snapshot(childRef, childData));
-                                        c.callback(null, childPath, childData);
-                                    });
-                                }
-                            }
-                        });
+                                });
+                            });
+                        //});
                     });
                 }
             } // End of .trigger
@@ -1556,11 +1781,11 @@ class Storage extends EventEmitter {
      * @param {string} path path being locked
      * @param {any} tid a unique value to identify your transaction
      * @param {boolean} forWriting if the record will be written to. Multiple read locks can be granted access at the same time if there is no write lock. Once a write lock is granted, no others can read from or write to it.
-     * @returns {Promise<{ tid: any, path: string, state: number, release: () => Promise<void> }>} returns a promise with the lock object once it is granted. It's .release method can be used as a shortcut to .unlock(path, tid) to release the lock
+     * @returns {Promise<RecordLock>} returns a promise with the lock object once it is granted. It's .release method can be used as a shortcut to .unlock(path, tid) to release the lock
      */
     lock(path, tid, forWriting = true, comment) {
-        //const MAX_LOCK_TIME = 5 * 1000; // 5 seconds
-        const MAX_LOCK_TIME = 60 * 1000 * 1; // 5 minutes FOR DEBUGGING PURPOSES ONLY
+        const MAX_LOCK_TIME = 5 * 1000; // 5 seconds
+        //const MAX_LOCK_TIME = 60 * 1000 * 15; // 15 minutes FOR DEBUGGING PURPOSES ONLY
 
         let lock, proceed;
         if (path instanceof RecordLock) {
@@ -1591,6 +1816,10 @@ class Storage extends EventEmitter {
                     // TODO Enable again once data storing bug has been found:
                     // const i = this._locks.indexOf(lock);
                     // this._locks.splice(i, 1);
+                    let allTransactionLocks = this._locks.filter(l => l.tid === lock.tid).sort((a,b) => a.requested < b.requested ? -1 : 1);
+                    let transactionsDebug = allTransactionLocks.map(l => `${l.state} ${l.forWriting ? "WRITE" : "read"} ${l.comment}`).join("\n");
+                    debug.warn(transactionsDebug);
+
                     this._processLockQueue();
                 }, MAX_LOCK_TIME);
             }

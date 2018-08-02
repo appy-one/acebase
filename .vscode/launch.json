@@ -7,6 +7,7 @@
         {
             "type": "node",
             "request": "launch",
+            "protocol": "inspector",
             "name": "Launch Program",
             "program": "${workspaceFolder}/acebase-test\\src\\index.js"
         }

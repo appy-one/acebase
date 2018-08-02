@@ -20,7 +20,7 @@
 const { EventEmitter } = require('events');
 const { TypeMappings } = require('./type-mappings');
 const { StorageOptions } = require('./storage');
-const { DataReference } = require('./data-reference');
+const { DataReference, DataReferenceQuery } = require('./data-reference');
 const debug = require('./debug');
 
 class AceBaseSettings {
@@ -87,10 +87,7 @@ class AceBase extends EventEmitter {
             });
         }
 
-
-
         this.types = new TypeMappings();
-
         // this.schema = {
         //     global: {
         //         //include: [],
@@ -114,6 +111,39 @@ class AceBase extends EventEmitter {
      */
     get root() {
         return this.ref("");
+    }
+
+    /**
+     * Creates a query on the requested node
+     * @param {string} path 
+     * @returns {DataReferenceQuery} query for the requested node
+     */
+    query(path) {
+        const ref = new DataReference(this, path);
+        return new DataReferenceQuery(ref);
+    }
+
+    get indexes() {
+        return {
+            /**
+             * Gets all indexes
+             */
+            get: () => {
+                return this.api.getIndexes();
+            },
+            /**
+             * Creates an index on "key" for all child nodes at "path". If the index already exists, nothing happens.
+             * Example: creating an index on all "name" keys of child objects of path "system/users", 
+             * will index "system/users/user1/name", "system/users/user2/name" etc.
+             * You can also use wildcard paths to enable indexing and quering of fragmented data.
+             * Example: path "users/*\/posts", key "title": will index all "title" keys in all posts of all users.
+             * @param {string} path
+             * @param {string} key
+             */
+            create: (path, key) => {
+                return this.api.createIndex(path, key);
+            }
+        };
     }
 
 }

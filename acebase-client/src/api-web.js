@@ -235,6 +235,15 @@ class WebApi extends Api {
                 return results.list;
             });
     }
+
+    createIndex(path, key) {
+        const data = JSON.stringify({ action: "create", path, key });
+        return _request("POST", `${this.url}/index/${this.dbname}`, data);
+    }
+
+    getIndexes() {
+        return _request("GET", `${this.url}/index/${this.dbname}`);
+    }
 }
 
 module.exports = { WebApi };

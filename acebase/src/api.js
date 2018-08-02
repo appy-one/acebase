@@ -14,12 +14,14 @@ class Api {
 
     // TODO: add jsdoc comments
 
-    unsubscribe(ref, event = undefined, callback = undefined) {}
+    unsubscribe(ref, event, callback) {}
     update(ref, updates) {}
     set(ref, value) {}
-    get(ref, options = undefined) {}
+    get(ref, options) {}
     exists(ref) {}
-    query(ref, query, options = { snapshots: false }) {}
+    query(ref, query, options) {}
+    createIndex(path, key) {}
+    getIndexes() {}
 }
 
 module.exports = { Api };

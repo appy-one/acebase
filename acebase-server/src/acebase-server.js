@@ -182,8 +182,8 @@ class AceBaseServer extends EventEmitter {
                 // Execute query
                 const path = req.path.substr(dbname.length + 8);
                 const data = transport.deserialize(req.body);
-                const ref = db.ref(path);
-                const query = ref.query();
+                //const ref = db.ref(path);
+                const query = db.query(path);
                 data.query.filters.forEach(filter => {
                     query.where(filter.key, filter.op, filter.compare);
                 });
@@ -211,6 +211,30 @@ class AceBaseServer extends EventEmitter {
                     });
                     res.send(transport.serialize(response));
                 });
+            });
+
+            app.get(`/index/${dbname}`, (req, res) => {
+                // Get all indexes
+                db.indexes.list()
+                .then(indexes => {
+                    res.send(indexes);
+                });
+            });
+
+            app.post(`/index/${dbname}`, (req, res) => {
+                // create index
+                const data = req.body;
+                if (data.action === "create") {
+                    db.indexes.create(data.path, data.key)
+                    .then(() => {
+                        res.send({ success: true });
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        res.statusCode = 500;
+                        res.send(err);         
+                    })
+                }
             });
 
             // Websocket implementation:

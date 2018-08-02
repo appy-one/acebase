@@ -1,7 +1,4 @@
-// require("./tests/indexing");
-// return;
-
-const local = true;
+const local = true;    // Set to false to spawn an acebase webserver and run tests over http connection
 const db = local 
     ? require('./local') 
     : require('./client-server');
@@ -11,6 +8,7 @@ db.on("ready", () => {
 
     // Run tests
     let tests = [
+        require("./tests/events")(db),
         require("./tests/movies")(db),
         require("./tests/users")(db),
         require("./tests/exclude")(db),
@@ -18,7 +16,7 @@ db.on("ready", () => {
         require("./tests/binary")(db),
         require("./tests/transaction")(db),
         require("./tests/getset")(db),
-        local ? require("./tests/indexed-query")(db) : null,
+        require("./tests/indexed_data")(db),
         // require("./tests/stats")(db)
     ];
 

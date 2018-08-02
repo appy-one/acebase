@@ -13,17 +13,24 @@ const run = (db) => {
             const movies = require("./testdata").movies;
             return moviesRef.set(movies);
         }
-        return true;
+    })
+    .then(() => {
+        // Optional: creates indexes on year and rating keys to speed up query
+        return Promise.all([
+            db.indexes.create("movies", "year"),
+            db.indexes.create("movies", "rating")
+        ]);
     })
     .then(() => {
         return moviesRef.query()
-            .where("year", "between", [1990, 2010])
+            .where("year", "between", [1995, 2010]) // Uses index
+            .where("rating", ">=", 9)               // Uses index
             .where("genres", "contains", "action")
             .order("rating", false)
             .order("votes", false)
             .skip(0)
             .take(3)
-            .get({ snapshots: true, exclude: ["genres"] });
+            .get({ snapshots: true });
     })
     .then(snaps => {
         let movies = snaps.map(snap => snap.val());
@@ -35,42 +42,42 @@ const run = (db) => {
 
     /*
     *      // Update a movie's rating
-    *      db.ref("top100/shawshank_redemption")
+    *      db.ref("movies/shawshank_redemption")
     *      .update({ rating: 9.8 })
     *      .then((result) => {
     *          // Done
     *      })
     * 
     *      // Monitor changes to a movies votes
-    *      db.ref("top100/top_gun/votes")
+    *      db.ref("movies/top_gun/votes")
     *      .on("value", (err, snapshot) => {
     *          // New value in in snapshot.value()
     *          // Note: .on does not use a promise because callback needs to run each time value changes
     *      })
     * 
     *      // Query movies with a rating higher than 5
-    *      db.ref("top100")
-    *      .filter("rating", ">=", 5)
-    *      .query()
+    *      db.query("movies")
+    *      .where("rating", ">=", 5)
+    *      .get({ snapshots: false })
     *      .then(references => {
     *          // An array of references to matching movies
     *      })
     * 
     *      // Query movies whose title match a pattern (starts with "top ", ignoring case)
     *      // Also gets the snapshots data right away
-    *      db.ref("top100")
-    *      .filter("title", "matches", /^top /i)
-    *      .query({ snapshots: true })
+    *      db.query("movies")
+    *      .where("title", "matches", /^top /i)
+    *      .get()
     *      .then(snapshots => {
     *          // An array of snapshots to matching movies
     *      })
     *
     *      // Query multiple conditions
-    *      db.ref("top100")
-    *      .filter("rating", "between", [5,8])
-    *      .filter("title", "matches", /^sing/i)
-    *      .filter("genres", "contains", "thriller") // genres array has a value "thriller"?
-    *      .query({ snapshots: true })
+    *      db.query("movies")
+    *      .where("rating", "between", [5,8])
+    *      .where("title", "matches", /^sing/i)
+    *      .where("genres", "contains", "thriller") // genres array has a value "thriller"?
+    *      .get()
     *      .then(snapshots => {
     *          // An array of snapshots to matching movies
     *      })
