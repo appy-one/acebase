@@ -4,7 +4,8 @@ const uuid62 = require('uuid62');
 const { Record, RecordAddress, RecordLock, RecordReference, UNCHANGED, VALUE_TYPES } = require('./record');
 const { TextEncoder } = require('text-encoding');
 const { concatTypedArrays, getPathKeys, getPathInfo, getChildPath } = require('./utils');
-const { BPlusTree, BinaryBPlusTree } = require('./data-index');
+const { BPlusTree, BinaryBPlusTree } = require('./btree');
+const { DataIndex } = require('./data-index');
 const debug = require('./debug');
 
 const textEncoder = new TextEncoder();
@@ -870,6 +871,10 @@ class Storage extends EventEmitter {
                             return this.FST.load(); // Read Free Space Table
                         })
                         .then(() => {
+                            // Load indexes
+                            return this.indexes.load();
+                        })
+                        .then(() => {
                             resolve(fd);
                             !justCreated && this.emit("ready");
                         });
@@ -879,161 +884,8 @@ class Storage extends EventEmitter {
             });
         };
 
+        /** @type {DataIndex[]} */ 
         const _indexes = [];
-        const _getIndexFileName = (path, key) => {
-            return `${this.name}-${path.replace(/\//g, '-').replace(/\*/g, '#')}-${key}.idx`;
-        };
-        const _createRecordPointer = (wildcards, key, address) => {
-            // layout:
-            // record_pointer   = wildcards_info, key_info, record_location
-            // wildcards_info   = wildcards_length, wildcards
-            // wildcards_length = 1 byte (nr of wildcard values)
-            // wildcards        = wilcard[wildcards_length]
-            // wildcard         = wilcard_length, wilcard_bytes
-            // wildcard_length  = 1 byte
-            // wildcard_value   = byte[wildcard_length] (ASCII char codes)
-            // key_info         = key_length, key_bytes
-            // key_length       = 1 byte
-            // key_bytes        = byte[key_length] (ASCII char codes)
-            // record_location  = page_nr, record_nr
-            // page_nr          = 4 byte number
-            // record_nr        = 2 byte number
-
-            let recordPointer = [wildcards.length]; // wildcards_length
-            for (let i = 0; i < wildcards.length; i++) {
-                const wildcard = wildcards[i];
-                recordPointer.push(wildcard.length); // wildcard_length
-                // wildcard_bytes:
-                for (let j = 0; j < wildcard.length; j++) {
-                    recordPointer.push(wildcard.charCodeAt(j));
-                }
-            }
-            
-            recordPointer.push(key.length); // key_length
-            // key_bytes:
-            for (let i = 0; i < key.length; i++) {
-                recordPointer.push(key.charCodeAt(i));
-            }
-            // page_nr:
-            recordPointer.push((address.pageNr >> 24) & 0xff);
-            recordPointer.push((address.pageNr >> 16) & 0xff);
-            recordPointer.push((address.pageNr >> 8) & 0xff);
-            recordPointer.push(address.pageNr & 0xff);
-            // record_nr:
-            recordPointer.push((address.recordNr >> 8) & 0xff);
-            recordPointer.push(address.recordNr & 0xff);
-            return recordPointer;
-        };
-        const _parseRecordPointer = (path, recordPointer) => {
-            const wildcardsLength = recordPointer[0];
-            let wildcards = [];
-            let index = 1;
-            for (let i = 0; i < wildcardsLength; i++) {
-                let wildcard = "";
-                let length = recordPointer[index];
-                for (let j = 0; j < length; j++) {
-                    wildcard += String.fromCharCode(recordPointer[index+j+1]);
-                }
-                wildcards.push(wildcard);
-                index += length + 1;
-            }
-            const keyLength = recordPointer[index];
-            let key = "";
-            for(let i = 0; i < keyLength; i++) {
-                key += String.fromCharCode(recordPointer[index+i+1]);
-            }
-            index += keyLength + 1;
-            const pageNr = recordPointer[index] << 24 | recordPointer[index+1] << 16 | recordPointer[index+2] << 8 | recordPointer[index+3];
-            index += 4;
-            const recordNr = recordPointer[index] << 8 | recordPointer[index+1];
-            if (wildcards.length > 0) {
-                let i = 0;
-                path = path.replace(/\*/g, () => {
-                    const wildcard = wildcards[i];
-                    i++;
-                    return wildcard;
-                });
-            }
-            return { key, pageNr, recordNr, address: new RecordAddress(`${path}/${key}`, pageNr, recordNr) };
-        }
-        /**
-         * @param {string} path index path
-         * @param {string} key index key
-         * @returns {Promise<{ tree: BinaryBPlusTree, close: () => void}>} returns a promise that resolves with a reference to the binary B+Tree and a close method to close the file once reading is done
-         */
-        const _getIndexTree = (path, key) => {
-            const index = _indexes.find(index => index.path === path && index.key === key);
-            if (!index) {
-                throw new Error(`Index for path "/${path}", key "${key}" does not exist`);
-            }
-            return new Promise((resolve, reject) => {
-                const fileName = _getIndexFileName(path, key);
-                fs.open(fileName, "r", (err, fd) => {
-                    if (err) {
-                        return reject(err);
-                    }
-                    const reader = (index, length) => {
-                        const binary = new Uint8Array(length);
-                        const buffer = Buffer.from(binary.buffer);
-                        return new Promise((resolve, reject) => {
-                            fs.read(fd, buffer, 0, length, index, (err, bytesRead) => {
-                                if (err) {
-                                    reject(err);
-                                }
-                                // Convert Uint8Array to byte array
-                                let bytes = [];
-                                bytes.push(...binary);
-                                resolve(bytes);
-                            });
-                        });
-                    }
-                    const tree = new BinaryBPlusTree(reader, 512);
-                    resolve({ 
-                        tree,
-                        close: () => {
-                            fs.close(fd, err => {
-                                if (err) {
-                                    console.warn(`Could not close index file ${fileName}:`, err);
-                                }
-                            });
-                        }
-                    });
-                });
-            });
-        };
-        const _keepIndexUpdated = (path, key) => {
-            // Subscribe to changes
-            this.subscriptions.add(`${path}`, "child_changed", (childPath, newValue, oldValue) => {
-                // A child's value changed.
-                // Did the indexed key change?
-                if (oldValue[key] !== UNCHANGED && newValue[key] !== oldValue[key]) {
-                    // TODO: do something clever to update the index
-                    // But BPlusTree/BinaryBPlusTree does not support changes yet!
-                    // _getIndexTree(index.path, index.key)
-                    // .then(idx => {
-                    //     idx.tree.update(oldValue[key], newValue[key], (data) => {
-                    //         // Check if this is the current record
-                    //         const recordPointer = _parseRecordPointer(path, data);
-                    //         const pathInfo = getPathInfo(recordPointer.address.path);
-                    //         return pathInfo.key === key;
-                    //     });
-                    // });
-
-                    // Re-create the entire index for now
-                    this.indexes.create(path, key, true);
-                }
-            });
-            this.subscriptions.add(`${path}`, "child_added", (childPath, newValue) => {
-                // A child was added
-                // TODO: do something clever to update the index
-                this.indexes.create(path, key, true);
-            });
-            this.subscriptions.add(`${path}`, "child_removed", (childPath) => {
-                // A child was removed
-                // TODO: do something clever to update the index
-                this.indexes.create(path, key, true);
-            });
-        };
 
         this.indexes = {
             /**
@@ -1042,155 +894,20 @@ class Storage extends EventEmitter {
              * @param {string} key for now - one key to index. Once our B+tree implementation supports nested trees, we can allow multiple fields
              */
             create(path, key, refresh = false) {
-                // Find all matching records
+                path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
                 const existingIndex = _indexes.find(index => index.path === path && index.key === key)
                 if (existingIndex && refresh !== true) {
                     debug.log(`Index on "${key}" in "/${path}" already exists`);
                     return Promise.resolve(existingIndex);
                 }
-
-                const hasWildcards = path.indexOf('*') >= 0;
-                const wildcardsPattern = '^' + path.replace(/\*/g, "([a-z0-9\-_$]+)") + '/';
-                const wildcardRE = new RegExp(wildcardsPattern, 'i');
-                const tree = new BPlusTree(30, false);
-                let lock;
-                const keys = getPathKeys(path);
-                // "users/*/posts" 
-                // --> Get all children of "users", 
-                // --> get their "posts" children,
-                // --> get their children to index
-                const getAll = (currentPath, index) => {
-                    const childPromises = [];
-                    const getChildren = () => {
-                        return Record.getChildStream(storage, { path }, { lock })
-                        .next(child => {
-                            if (!child.address || child.type !== VALUE_TYPES.OBJECT) { //if (child.storageType !== "record" || child.valueType !== VALUE_TYPES.OBJECT) {
-                                return; // This child cannot be indexed because it is not an object with properties
-                            }
-                            else if (index === keys.length) {
-                                // We have to index this child
-                                const p = Record.get(storage, child.address, { lock })
-                                .then(childRecord => {
-                                    return childRecord.getChildInfo(key, { lock });
-                                })
-                                .then(childInfo => {
-                                    // What can be indexed? 
-                                    // strings, numbers, booleans, dates
-                                    if (childInfo.exists && [VALUE_TYPES.STRING, VALUE_TYPES.NUMBER, VALUE_TYPES.BOOLEAN, VALUE_TYPES.DATETIME].indexOf(childInfo.valueType) >= 0) {
-                                        // Index this value
-                                        if (childInfo.storageType === "record") {
-                                            return Record.get(storage, childInfo.address, { lock })
-                                            .then(valueRecord => {
-                                                return valueRecord.getValue();
-                                            });
-                                        }
-                                        else {
-                                            return childInfo.value;
-                                        }
-                                    }
-                                    else {
-                                        return null;
-                                    }
-                                })
-                                .then(value => {
-                                    if (value !== null) {
-                                        // Add it to the index, using value as the index key, a record pointer as the value
-                                        // Create record pointer
-                                        let wildcards = [];
-                                        if (hasWildcards) {
-                                            const match = wildcardRE.exec(child.address.path);
-                                            wildcards = match.slice(1);
-                                        }
-                                        const recordPointer = _createRecordPointer(wildcards, child.key, child.address);
-                                        // Add it to the index
-                                        tree.add(value, recordPointer);
-                                    }
-                                });
-                                childPromises.push(p);
-                            }
-                            else {
-                                const p = getAll(child.address.path, index+1);
-                                childPromises.push(p);
-                            }
-                        })
-                        .catch(reason => {
-                            // Record doesn't exist? No biggy
-                            console.warn(reason);
-                        })
-                        .then(() => {
-                            return Promise.all(childPromises);
-                        });
-                    };
-                    
-                    let path = currentPath;
-                    while (keys[index] && keys[index] !== "*") {
-                        if (path.length > 0) { path += '/'; }
-                        path += keys[index];
-                        index++;
-                    }
-                    if (!lock) {
-                        return storage.lock(path, uuid62.v1(), false, `indexes.create "/${path}", "${key}"`)
-                        .then(l => {
-                            lock = l;
-                            return getChildren();
-                        });
-                    }
-                    else {
-                        return getChildren();
-                    }    
-                };
-                return getAll("", 0)
+                const index = existingIndex || new DataIndex(storage, path, key); //{ path, key, fileName }
+                return index.build()
                 .then(() => {
-                    // All child objects have been indexed. save the index
-                    const binary = new Uint8Array(tree.toBinary());
-                    return new Promise((resolve, reject) => {
-                        const fileName = _getIndexFileName(path, key);
-                        fs.writeFile(fileName, Buffer.from(binary.buffer), (err) => {
-                            if (err) {
-                                debug.error(err);
-                                reject(err);
-                            }
-                            else {
-                                resolve(fileName);
-                            }
-                        });
-                    });
-                })
-                .then(fileName => {
-                    const index = { path, key, fileName }
                     if (!existingIndex) {
                         _indexes.push(index);
-                        _keepIndexUpdated(path, key);
+                        //_keepIndexUpdated(path, key);
                     }
-                    // Now release the lock
-                    lock.release();
                     return index;
-                });
-
-            },
-
-            query(index, op, val) {
-                return _getIndexTree(index.path, index.key)
-                .then(idx => {
-                    /**
-                     * @type BinaryBPlusTree
-                     */
-                    const tree = idx.tree;
-                    return tree.search(op, val)
-                    .then(entries => {
-                        // We now have record pointers...
-                        idx.close();
-
-                        const results = [];
-                        entries.forEach(entry => {
-                            const value = entry.key;
-                            entry.values.forEach(data => {
-                                const recordPointer = _parseRecordPointer(index.path, data);
-                                results.push({ key: recordPointer.key, value, address: recordPointer.address });
-                            })
-                        });
-                        return results;
-                    });
                 });
             },
 
@@ -1200,31 +917,40 @@ class Storage extends EventEmitter {
 
             list() {
                 return _indexes.slice();
+            },
+
+            load() {
+                _indexes.splice(0);
+                return new Promise((resolve, reject) => {
+                    fs.readdir(".", (err, files) => {
+                        if (err) {
+                            resolve(); //reject(err);
+                            return console.error(err);
+                        }
+                        files.forEach(fileName => {
+                            if (fileName.endsWith(".idx")) {
+                                const match = fileName.match(/^([a-z0-9_$]+)-([a-z0-9_$#\-]+)-([a-z0-9_$]+)\.idx$/i);
+                                console.log(match);
+                                if (match && match[1] === storage.name) {
+                                    const path = match[2].replace(/\-/g, "/").replace(/\#/g, "*");
+                                    const key = match[3];
+            
+                                    // We can do 2 things now:
+                                    // 1. Just add it to our array
+                                    // 2. Rebuild
+                                    const index = new DataIndex(storage, path, key);
+                                    _indexes.push(index); //_indexes.push({ fileName, path, key });  // 1
+                                    //_keepIndexUpdated(index);
+                                    // storage.indexes.create(path, key, true); // 2
+                                }
+                            }
+                        });
+                        resolve();
+                    });
+                });
+
             }
         };
-
-        fs.readdir(".", (err, files) => {
-            if (err) {
-                return console.error(err);
-            }
-            files.forEach(fileName => {
-                if (fileName.endsWith(".idx")) {
-                    const match = fileName.match(/^([a-z0-9_$\-]+)-([a-z0-9_$#\-]+)-([a-z0-9_$]+)\.idx$/i);
-                    //console.log(match);
-                    if (match && match[1] === this.name) {
-                        const path = match[2].replace(/\-/g, "/").replace(/\#/g, "*");
-                        const key = match[3];
-
-                        // We can do 2 things now:
-                        // 1. Just add it to our array
-                        // 2. Rebuild
-                        _indexes.push({ fileName, path, key });  // 1
-                        _keepIndexUpdated(path, key);
-                        // storage.indexes.create(path, key, true); // 2
-                    }
-                }
-            });
-        });
 
         // Open or create database 
         fs.exists(filename, (exists) => {
@@ -1404,9 +1130,9 @@ class Storage extends EventEmitter {
                     };
 
                     const changedKeys = {
-                        added: Object.keys(updates).filter(key => updates[key] !== null && !(key in previous)),
-                        updated: Object.keys(updates).filter(key => updates[key] !== null && key in previous && compare(previous[key], updates[key]) !== "identical"),
-                        deleted: Object.keys(updates).filter(key => updates[key] === null && key in previous)
+                        added: Object.keys(updates).filter(key => updates[key] !== null && (typeof previous !== "object" || !(key in previous))),
+                        updated: Object.keys(updates).filter(key => updates[key] !== null && typeof previous === "object" && key in previous && compare(previous[key], updates[key]) !== "identical"),
+                        deleted: Object.keys(updates).filter(key => updates[key] === null && typeof previous === "object" && key in previous)
                     }
                     if (changedKeys.added.length > 0 || changedKeys.updated.length > 0 || changedKeys.deleted.length > 0) {
                         storage.emit("update", {

@@ -4,7 +4,7 @@ const { PathReference } = require('./path-reference');
 const { bytesToNumber, numberToBytes, concatTypedArrays, getPathKeys, getPathInfo, cloneObject } = require('./utils');
 const { TextEncoder, TextDecoder } = require('text-encoding');
 const uuid62 = require('uuid62');
-const { BPlusTree, BinaryBPlusTree } = require('./data-index');
+const { BPlusTree, BinaryBPlusTree } = require('./btree');
 const debug = require('./debug');
 
 const textEncoder = new TextEncoder();
@@ -763,6 +763,21 @@ class Record {
                         console.log(`Releasing ${deallocateRanges.length} old ranges of "/${address.path}"`);
                         storage.FST.release(rangesFromAllocation(deallocateRanges));
                     }
+
+                    // Find out if there are indexes that need to be updated
+                    // this.storage.indexes.list().forEach(index => {
+                    //     const pattern = `^${index.path}/*$`.replace(/\*/g, "([a-z0-9_$]+)");
+                    //     const re = new RegExp(pattern, "g");
+                    //     const match = this.address.path.match(re);
+                    //     if (match && index.key in value) {
+                    //         index.handleRecordUpdate(record, value);
+                    //     }
+                    // });
+                    const pathInfo = getPathInfo(record.address.path)
+                    const indexes = storage.indexes.get(pathInfo.parent);
+                    indexes.forEach(index => {
+                        index.handleRecordUpdate(record, value);
+                    });
 
                     return record;
                 });

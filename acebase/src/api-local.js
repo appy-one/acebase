@@ -113,18 +113,18 @@ class LocalApi extends Api {
             // There are unprocessed filters, which means the fields aren't indexed. 
             // We're not going to get all data of a wildcard path to query manually. 
             // Indexes must be created
-            const keys = filters.reduce((keys, f) => { 
+            const keys =  tableScanFilters.reduce((keys, f) => { 
                 if (keys.indexOf(f.key) < 0) { keys.push(f.key); }
                 return keys;
-            }, []);
-            throw new Error(`This wildcard path query on "/${ref.path}" requires index(es) on key(s) ${keys.join(", ")}. Create the indexes and retry`);
+            }, []).map(key => `"${key}"`);
+            throw new Error(`This wildcard path query on "/${ref.path}" requires index(es) on key(s): ${keys.join(", ")}. Create the index(es) and retry`);
         }
 
         const indexScanPromises = [];
         availableIndexes.forEach(index => {
             const filters = query.filters.filter(f => f.key === index.key);
             filters.forEach(filter => {
-                const promise = this.storage.indexes.query(index, filter.op, filter.compare);
+                const promise = index.query(filter.op, filter.compare);
                 indexScanPromises.push(promise);
             });
         });

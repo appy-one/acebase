@@ -22,6 +22,7 @@ const run = (db) => {
 
     //return db.ref("posts").remove();
 
+    let postKey;
     return db.indexes.create("posts", "posted")
     .then(() => {
         return db.ref("posts")
@@ -35,17 +36,17 @@ const run = (db) => {
     })
     .then(ref => {
         // ref points to the new post
+        postKey = ref.key;
         return ref.parent
             .query()
             .where("posted", "<", new Date())
             .get();
     })
     .then(snapshots => {
-        // the index update runs async, out of process of the update.
-        // .query does not wait until the index is rebuilt (TODO), so
-        // snapshots does not contain the just added post yet 
         let posts = snapshots.map(snap => snap.val());
-        console.log(posts);
+        let createdPost = snapshots.find(snap => snap.key === postKey);
+        console.log(createdPost);
+        console.assert(createdPost, "Newly created post must be in the query results");
     });
 }
 
