@@ -7,10 +7,10 @@ Natively supports storing of objects, arrays, numbers, strings, booleans, dates 
 ## Getting Started
 
 AceBase is split up into multiple repositories:
-..* **acebase**: local AceBase database engine
-..* **acebase_server**: AceBase webserver endpoint to enable remote connections 
-..* **acebase-client**: client to access an AceBase webserver 
-..* **acebase-test**: Tests
+* **acebase**: local AceBase database engine
+* **acebase_server**: AceBase webserver endpoint to enable remote connections 
+* **acebase-client**: client to access an AceBase webserver 
+* **acebase-test**: Tests
 
 ### Prerequisites
 
@@ -21,9 +21,11 @@ You need to have Node installed on your system. See [nodejs.org](https://nodejs.
 All AceBase repositories will become available through npm (aren't yet).
 For now, you can fork the repository and add the right folder as a dependency from your project's package.json:
 
-```"dependencies": {
+```
+"dependencies": {
     ...
-    "acebase": "file:../acebase",```
+    "acebase": "file:../acebase",
+```
 
 Once AceBase is available through npm, follow these instructions:
 
