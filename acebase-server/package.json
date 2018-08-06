@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "description": "AceBase JSON database server",
   "main": "./src/index.js",
-  "private": true,
+  "private": false,
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
