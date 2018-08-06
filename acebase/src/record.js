@@ -410,11 +410,12 @@ class Record {
                     });
                 });
             }
-            return parentUpdatePromise;
-        })
-        .then(() => {
-            // Free all previously allocated records that moved or were deleted
 
+        //     return parentUpdatePromise;
+        // })
+        // .then(() => {
+
+            // Free all previously allocated records that moved or were deleted
             const discard = (record) => {
                 record.address.path = record.address.path.replace(/^removed:/, "");
                 debug.log(`Releasing (OLD) record allocation for "/${record.address.path}"`);
@@ -432,7 +433,7 @@ class Record {
                 .then(() => {
                     return Promise.all(promises);
                 });
-            }
+            };
 
             const promises = [];
             discardedRecords.forEach(address => {
@@ -1664,6 +1665,11 @@ class Record {
                 const recordNr = view.getUint16(4);
                 const childPath = isArray ? `${this.address.path}[${child.index}]` : this.address.path === "" ? child.key : `${this.address.path}/${child.key}`;
                 child.address = new RecordAddress(childPath, pageNr, recordNr);
+
+                // Make sure we have the latest address - if the record was changed and its parent
+                // must still be updated with the new address, we can get it already
+                child.address = this.storage.addressCache.getLatest(child.address);
+
                 index += 6;
             }
             else {

@@ -4,7 +4,6 @@ const uuid62 = require('uuid62');
 const { Record, RecordAddress, RecordLock, RecordReference, UNCHANGED, VALUE_TYPES } = require('./record');
 const { TextEncoder } = require('text-encoding');
 const { concatTypedArrays, getPathKeys, getPathInfo, getChildPath } = require('./utils');
-const { BPlusTree, BinaryBPlusTree } = require('./btree');
 const { DataIndex } = require('./data-index');
 const debug = require('./debug');
 
@@ -40,7 +39,7 @@ class Storage extends EventEmitter {
         options.pageSize = options.pageSize || 1024;    // page size in records
         options.maxInlineValueSize = options.maxInlineValueSize || 16;  // in bytes, max amount of child data to store within a parent record before moving to a dedicated record
         options.removeVoidProperties = options.removeVoidProperties === true; // Instead of throwing errors on null or undefined values, remove the properties automatically
-        options.cluster = options.cluster || { enabled: false }; // When running in a cluster, managing record allocation, key indice and record locking must be done by the cluster master
+        options.cluster = options.cluster || { enabled: false }; // When running in a cluster, managing record allocation, key indixes and record locking must be done by the cluster master
 
         if (options.maxInlineValueSize > 64) {
             throw new Error("maxInlineValueSize cannot be larger than 64"); // This is technically not possible because we store inline length with 6 bits: range = 0 to 2^6-1 = 0 - 63 // NOTE: lengths are stored MINUS 1, because an empty value is stored as tiny value, so "a"'s stored inline length is 0, allowing values up to 64 bytes
@@ -679,7 +678,20 @@ class Storage extends EventEmitter {
                     cluster.request({ type: "address", address });
                 }
                 if (cacheEnabled || address.path.length === 0) {
+                    const oldAddress = _addressCache[address.path];
                     _addressCache[address.path] = address;
+                
+                    if (oldAddress) {
+                        address.history = oldAddress.history || [];
+                        address.history.push({ pageNr: oldAddress.pageNr, recordNr: oldAddress.recordNr });
+                        if (address.history.length > 5) { 
+                            // Limit the amount of old addresses per path
+                            address.history.shift(); 
+                        }
+                    }
+                    else {
+                        address.history = [];
+                    }
                 }
                 if (address.path.length === 0 && !fromClusterMaster) {
                     // Root address changed, this has to be saved to the database file
@@ -733,6 +745,17 @@ class Storage extends EventEmitter {
                     }
                 }
                 return addr;
+            },
+            getLatest(address) {
+                let cached = this.find(address.path);
+                if (cached && (cached.pageNr !== address.pageNr || cached.recordNr !== address.recordNr)) {
+                    // Find out if the given address is old
+                    const isOld = cached.history.some(a => a.pageNr === address.pageNr && a.recordNr === address.recordNr);
+                    if (isOld) { 
+                        return cached; 
+                    }
+                }
+                return address;
             }
         };
 
@@ -1376,7 +1399,7 @@ class Storage extends EventEmitter {
                                             }
                                             else if (c.type === "child_removed" && !childData) {
                                                 //c.callback(null, new Snapshot(childRef, null));
-                                                c.callback(null, childPath, null, oldChildData);
+                                                c.callback(null, childPath, oldChildData);
                                             }
                                             // else if (c.type === "child_added" && `${refPath}/${key}` === path) {
                                             //     // Logic isn't right. Will be called on updates now too
@@ -1401,29 +1424,25 @@ class Storage extends EventEmitter {
                                     else if (typeof change === "object") {
                                         if (c.type === "child_added" && change.added.length > 0) {
                                             change.added.forEach(key => {
-                                                //const childRef = ref.child(key); //c.ref.child(key);
-                                                const childPath = getChildPath(c.path, key); //`${c.path}/${key}`;
+                                                const childPath = getChildPath(c.path, key);
                                                 const childData = dataset.current[key];
-                                                //c.callback(null, new Snapshot(childRef, childData));
                                                 c.callback(null, childPath, childData);
                                             });
                                         }
                                         else if (c.type === "child_removed" && change.removed.length > 0) {
                                             change.removed.forEach(key => {
-                                                //const childRef = ref.child(key); //c.ref.child(key);
-                                                //c.callback(null, new Snapshot(childRef, null));
-                                                const childPath = getChildPath(c.path, key); //`${c.path}/${key}`;
-                                                c.callback(null, childPath, null);
+                                                const childPath = getChildPath(c.path, key);
+                                                const oldChildData = dataset.previous[key];
+                                                c.callback(null, childPath, oldChildData);
                                             });
                                         }
                                         else if (c.type === "child_changed" && change.changed.length > 0) {
                                             change.changed.forEach(item => {
-                                                const key = item.key; //typeof item === "object" ? item.key : item;
-                                                //const childRef = ref.child(key); //c.ref.child(key);
-                                                const childPath = getChildPath(c.path, key); //`${c.path}/${key}`;
+                                                const key = item.key;
+                                                const childPath = getChildPath(c.path, key);
                                                 const childData = dataset.current[key];
-                                                //c.callback(null, new Snapshot(childRef, childData));
-                                                c.callback(null, childPath, childData);
+                                                const oldChildData = dataset.previous[key];
+                                                c.callback(null, childPath, childData, oldChildData);
                                             });
                                         }
                                     }
@@ -1510,8 +1529,8 @@ class Storage extends EventEmitter {
      * @returns {Promise<RecordLock>} returns a promise with the lock object once it is granted. It's .release method can be used as a shortcut to .unlock(path, tid) to release the lock
      */
     lock(path, tid, forWriting = true, comment) {
-        const MAX_LOCK_TIME = 5 * 1000; // 5 seconds
-        //const MAX_LOCK_TIME = 60 * 1000 * 15; // 15 minutes FOR DEBUGGING PURPOSES ONLY
+        //const MAX_LOCK_TIME = 5 * 1000; // 5 seconds
+        const MAX_LOCK_TIME = 60 * 1000 * 15; // 15 minutes FOR DEBUGGING PURPOSES ONLY
 
         let lock, proceed;
         if (path instanceof RecordLock) {
@@ -1580,7 +1599,17 @@ class Storage extends EventEmitter {
     }
 
     _processLockQueue() {
-        const pending = this._locks.filter(lock => lock.state === RecordLock.LOCK_STATE.PENDING);
+        const pending = this._locks
+            .filter(lock => lock.state === RecordLock.LOCK_STATE.PENDING)
+            .sort((a,b) => {
+                // Writes get higher priority so all reads get the most recent data
+                if (a.forWriting === b.forWriting) { 
+                    if (a.requested < b.requested) { return -1; }
+                    else { return 1; }
+                }
+                else if (a.forWriting) { return -1; }
+                else { return 1; }
+            });
         pending.forEach(lock => {
             if (this._allowLock(lock.path, lock.tid, lock.forWriting)) {
                 // lock.state = "cancel";
