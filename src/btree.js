@@ -1461,7 +1461,7 @@ class BPlusTreeBuilder {
             tree.depth++;
         }
 
-        if (true) {
+        if (false) {
             // TEST the tree!
             const ok = list.every(item => {
                 const val = tree.find(item.key);
