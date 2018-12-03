@@ -70,7 +70,6 @@ class NodeCache {
             // Don't cache root address, it has to be retrieved from storage.rootAddress
             return;
         }
-        // console.error(`CACHE UPDATE ${nodeInfo}`);
         let entry = this._cache.get(nodeInfo.path);
         if (entry) {
             if (!overwrite) {
@@ -83,7 +82,7 @@ class NodeCache {
         }
         else {
             // New entry
-            // console.error(`CACHE INSERT ${nodeInfo}`);
+            DEBUG_MODE && console.error(`CACHE INSERT ${nodeInfo}`);
             entry = new NodeCacheEntry(nodeInfo);
             this._cache.set(nodeInfo.path, entry);
         }
@@ -99,14 +98,14 @@ class NodeCache {
     invalidate(path, recursive, reason) {
         const entry = this._cache.get(path);
         if (entry) {
-            // console.error(`CACHE INVALIDATE ${entry.nodeInfo}`);
+            DEBUG_MODE && console.error(`CACHE INVALIDATE ${reason} => ${entry.nodeInfo}`);
             this._cache.delete(path);
         }
         if (recursive) {
             const pathInfo = PathInfo.get(path);
             this._cache.forEach((entry, cachedPath) => {
                 if (pathInfo.isAncestorOf(cachedPath)) {
-                    DEBUG_MODE && console.error(`CACHE INVALIDATE (child) ${entry.nodeInfo}`);
+                    DEBUG_MODE && console.error(`CACHE INVALIDATE ${reason} => (child) ${entry.nodeInfo}`);
                     this._cache.delete(cachedPath);
                 }
             });

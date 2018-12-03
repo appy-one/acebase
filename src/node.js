@@ -1748,7 +1748,7 @@ class Node {
             }
             else {
                 // Node doesn't exist, isn't stored in its own record, or must be overwritten
-                return _createNode(storage, nodeInfo, value, lock);
+                return _createNode(storage, nodeInfo, value, lock, !options._internal);
             }
         })
         .then(result => {
@@ -2666,7 +2666,7 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
                 if (change.changeType === NodeChange.CHANGE_TYPE.DELETE) {
                     storage.nodeCache.delete(childPath);
                 }
-                else {
+                else if (!(change.newValue instanceof InternalNodeReference)) {
                     storage.nodeCache.invalidate(childPath, true, 'mergeNode');
                 }
             });
@@ -2832,7 +2832,7 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
  * @param {NodeLock} lock
  * @returns {RecordInfo}
  */
-function _createNode(storage, nodeInfo, newValue, lock) {
+function _createNode(storage, nodeInfo, newValue, lock, invalidateCache = true) {
     debug.log(`Node "/${nodeInfo.path}" is being ${nodeInfo.exists ? 'overwritten' : 'created'}`.cyan);
 
     /** @type {NodeAllocation} */
@@ -2848,7 +2848,9 @@ function _createNode(storage, nodeInfo, newValue, lock) {
 
     return getCurrentAllocation.then(allocation => {
         currentAllocation = allocation;
-        storage.nodeCache.invalidate(nodeInfo.path, true, 'createNode'); // remove cache
+        if (invalidateCache) {
+            storage.nodeCache.invalidate(nodeInfo.path, true, 'createNode'); // remove cache
+        }
         return _writeNode(storage, nodeInfo.path, newValue, lock); 
     })
     .then(recordInfo => {
