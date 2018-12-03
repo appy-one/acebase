@@ -1,0 +1,48 @@
+{
+  "name": "acebase",
+  "version": "0.4.0",
+  "description": "AceBase realtime database engine",
+  "main": "./src/index.js",
+  "private": false,
+  "repository": "github:appy-one/acebase",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "database",
+    "db",
+    "json",
+    "binary",
+    "object",
+    "tree",
+    "nosql",
+    "embedded",
+    "schemaless",
+    "orm",
+    "query",
+    "index",
+    "indexes",
+    "fulltext",
+    "geo",
+    "transaction",
+    "datastore",
+    "fast",
+    "low-memory",
+    "realtime",
+    "events",
+    "users",
+    "authentication",
+    "rules",
+    "authorization",
+    "ssl",
+    "https",
+    "firebase"
+  ],
+  "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
+  "license": "MIT",
+  "dependencies": {
+    "acebase-core": "file:../acebase-core",
+    "colors": "^1.3.2",
+    "text-encoding": "^0.6.4"
+  }
+}
