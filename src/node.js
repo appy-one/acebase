@@ -1782,15 +1782,15 @@ class Node {
                     // Release record allocation marked for deallocation
                     debug.log(`Releasing ${deallocate.totalAddresses} addresses (${deallocate.ranges.length} ranges) previously used by node "/${path}" and/or descendants: ${deallocate}`.gray);
                     
-                    // TEMP check, remove loop when all is good:
-                    storage.nodeCache._cache.forEach((entry, path) => {
-                        let cachedAddress = entry.nodeInfo.address;
-                        if (!cachedAddress) { return; }
-                        const i = deallocate.addresses.findIndex(a => a.pageNr === cachedAddress.pageNr && a.recordNr === cachedAddress.recordNr);
-                        if (i >= 0) {
-                            throw new Error(`This is bad`);
-                        }
-                    });
+                    // // TEMP check, remove loop when all is good:
+                    // storage.nodeCache._cache.forEach((entry, path) => {
+                    //     let cachedAddress = entry.nodeInfo.address;
+                    //     if (!cachedAddress) { return; }
+                    //     const i = deallocate.addresses.findIndex(a => a.pageNr === cachedAddress.pageNr && a.recordNr === cachedAddress.recordNr);
+                    //     if (i >= 0) {
+                    //         throw new Error(`This is bad`);
+                    //     }
+                    // });
 
                     storage.FST.release(deallocate.ranges);
                 }
@@ -2660,16 +2660,42 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
             debug.log(`Node "/${nodeInfo.path}" being updated: adding ${changes.inserts.length} keys (${changes.inserts.map(ch => `"${ch.keyOrIndex}"`).join(',')}), updating ${changes.updates.length} keys (${changes.updates.map(ch => `"${ch.keyOrIndex}"`).join(',')}), removing ${changes.deletes.length} keys (${changes.deletes.map(ch => `"${ch.keyOrIndex}"`).join(',')})`.cyan);
 
             // Update cache (remove entries or mark them as deleted)
+            const pathInfo = PathInfo.get(nodeInfo.path);
+            const invalidatePaths = changes.all
+                .filter(ch => !(ch.newValue instanceof InternalNodeReference))
+                .map(ch => {
+                    const childPath = pathInfo.childPath(ch.keyOrIndex);
+                    return { 
+                        path: childPath, 
+                        pathInfo: PathInfo.get(childPath), 
+                        action: ch.changeType === NodeChange.CHANGE_TYPE.DELETE ? 'delete' : 'invalidate' 
+                    };
+                });
             storage.nodeCache.invalidate(nodeInfo.path, false, 'mergeNode');
-            changes.all.forEach(change => {
-                const childPath = PathInfo.getChildPath(nodeInfo.path, change.keyOrIndex);
-                if (change.changeType === NodeChange.CHANGE_TYPE.DELETE) {
-                    storage.nodeCache.delete(childPath);
-                }
-                else if (!(change.newValue instanceof InternalNodeReference)) {
-                    storage.nodeCache.invalidate(childPath, true, 'mergeNode');
-                }
-            });
+            if (invalidatePaths.length > 0) {
+                storage.nodeCache.invalidate(nodeInfo.path, path => {
+                    // if (path === nodeInfo.path) { return true; }
+                    const i = invalidatePaths.findIndex(inv => inv.path === path || inv.pathInfo.isAncestorOf(path));
+                    if (i < 0) { return false; }
+                    else if (invalidatePaths[i].action === 'invalidate') { 
+                        return true; 
+                    }
+                    else {
+                        storage.nodeCache.delete(invalidatePaths[i].path);
+                    }
+                    return false;
+                }, 'mergeNode');
+            }
+            // storage.nodeCache.invalidate(nodeInfo.path, false, 'mergeNode');
+            // changes.all.forEach(change => {
+            //     const childPath = PathInfo.getChildPath(nodeInfo.path, change.keyOrIndex);
+            //     if (change.changeType === NodeChange.CHANGE_TYPE.DELETE) {
+            //         storage.nodeCache.delete(childPath);
+            //     }
+            //     else if (!(change.newValue instanceof InternalNodeReference)) {
+            //         storage.nodeCache.invalidate(childPath, true, 'mergeNode');
+            //     }
+            // });
         }
 
         // What we need to do now is make changes to the actual record data. 

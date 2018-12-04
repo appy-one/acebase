@@ -92,17 +92,29 @@ class NodeCache {
     /**
      * Invalidates a node and (optionally) its children by removing them from cache
      * @param {string} path 
-     * @param {boolean} recursive 
+     * @param {boolean|((path: string) => boolean)} recursive 
      * @param {string} reason 
      */
     invalidate(path, recursive, reason) {
         const entry = this._cache.get(path);
+        const pathInfo = PathInfo.get(path);
         if (entry) {
             DEBUG_MODE && console.error(`CACHE INVALIDATE ${reason} => ${entry.nodeInfo}`);
             this._cache.delete(path);
         }
-        if (recursive) {
-            const pathInfo = PathInfo.get(path);
+        
+        if (typeof recursive === 'function') {
+            this._cache.forEach((entry, cachedPath) => {
+                if (pathInfo.isAncestorOf(cachedPath)) {
+                    const invalidate = recursive(cachedPath);
+                    if (invalidate) {
+                        DEBUG_MODE && console.error(`CACHE INVALIDATE ${reason} => (child) ${entry.nodeInfo}`);
+                        this._cache.delete(cachedPath);
+                    }
+                }
+            });
+        }
+        else if (recursive) {
             this._cache.forEach((entry, cachedPath) => {
                 if (pathInfo.isAncestorOf(cachedPath)) {
                     DEBUG_MODE && console.error(`CACHE INVALIDATE ${reason} => (child) ${entry.nodeInfo}`);
