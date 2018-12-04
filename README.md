@@ -633,9 +633,9 @@ v0.4.0 - introduced fulltext, geo and array indexes. This required making change
 
 ## Known issues
 
-* v0.4.0 and older: index building is done in memory (heap), which can cause a "v8::internal::FatalProcessOutOfMemory" (JavaScript heap out of memory) crash on larger datasets. I will refactor this to use input and output streams in a following version.
+* v0.4.x and older: index building is done in memory (heap), which can cause a "v8::internal::FatalProcessOutOfMemory" (JavaScript heap out of memory) crash on larger datasets. I will refactor this to use input and output streams in a following version.
 
-* v0.4.0 fulltext indexes are currently only able to index words with latin characters. This will be fixed in a following version.
+* v0.4.x fulltext indexes are currently only able to index words with latin characters. This will be fixed in a following version.
 
 ## Authors
 
