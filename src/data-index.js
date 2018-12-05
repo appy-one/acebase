@@ -2,7 +2,7 @@
 
 const { Storage } = require('./storage');
 const { Node } = require('./node');
-const { BPlusTreeBuilder, BinaryBPlusTree } = require('./btree');
+const { BPlusTreeBuilder, BinaryBPlusTree, BinaryWriter } = require('./btree');
 const { PathInfo, Utils, ID, debug } = require('acebase-core');
 const { compareValues, getChildValues, numberToBytes, bytesToNumber } = Utils;
 const Geohash = require('./geohash');
@@ -10,6 +10,7 @@ const { TextEncoder, TextDecoder } = require('text-encoding');
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const pfs = require('./promise-fs');
+const fs = require('fs');
 
 const DISK_BLOCK_SIZE = 4096; // use 512 for older disks
 const FILL_FACTOR = 50; // leave room for inserts
@@ -817,6 +818,16 @@ class DataIndex {
                                     this.includeKeys.forEach(key => obj[key] = undefined);
                                     return obj;
                                 })();
+                                const addValue = (key, value) => {
+                                    if (typeof value === 'string' && value.length > 255) {
+                                        value = value.slice(0, 255);
+                                    }
+                                    if (typeof value === 'string' && !this.caseSensitive) {
+                                        value = value.toLocaleLowerCase(this.textLocale);
+                                    }
+                                    if (key === this.key) { keyValue = value; }
+                                    else { metadata[key] = value; };
+                                };
                                 const keyPromises = [];
                                 const seenKeys = [];
                                 return Node.getChildren(this.storage, childPath, keyFilter)
@@ -836,22 +847,11 @@ class DataIndex {
                                     // Index this value
                                     if (childInfo.address) {
                                         const p = Node.getValue(this.storage, childInfo.address.path, { tid })
-                                        .then(value => {
-                                            if (typeof value === 'string' && !this.caseSensitive) {
-                                                value = value.toLocaleLowerCase(this.textLocale);
-                                            }
-                                            if (childInfo.key === this.key) { keyValue = value; }
-                                            else { metadata[childInfo.key] = value; };
-                                        });
+                                            .then(value => addValue(childInfo.key, value));
                                         keyPromises.push(p);
                                     }
                                     else {
-                                        let value = childInfo.value;
-                                        if (typeof value === 'string' && !this.caseSensitive) {
-                                            value = value.toLocaleLowerCase(this.textLocale);
-                                        }
-                                        if (childInfo.key === this.key) { keyValue = value; }
-                                        else { metadata[childInfo.key] = value; };
+                                        addValue(childInfo.key, childInfo.value);
                                     }
                                 })
                                 .then(() => {
@@ -950,10 +950,10 @@ class DataIndex {
         //                      3: BOOLEAN
         //                      4: ARRAY
         // value_length     = value_type ?
-        //                      0, 3: not present
+        //                      0, 3: (not present)
         //                      1, 2, 4: 2 byte number
         // value_data       = value_type ?
-        //                      0: not present
+        //                      0: (not present)
         //                      1-3: value_length bytes
         //                      4: info_value[value_length]
         // trees_info       = trees_count, tree_info, [tree_info, [tree_info...]]
@@ -967,8 +967,8 @@ class DataIndex {
 
         const indexEntries = builder.list.size;
         const indexedValues = builder.indexedValues;
-        const tree = builder.create();
-        const binary = new Uint8Array(tree.toBinary(true));
+        // const tree = builder.create();
+        // const binary = new Uint8Array(tree.toBinary(true));
         
         return pfs.open(this.fileName, pfs.flags.write)
         .then(fd => {
@@ -1108,7 +1108,7 @@ class DataIndex {
 
             const headerLength = header.length;
             treeDetails.fileIndex = headerLength;
-            treeDetails.byteLength = binary.length;
+            // treeDetails.byteLength = binary.length;
 
             // Update header_length:
             header[11] = (headerLength >> 24) & 0xff;
@@ -1122,18 +1122,50 @@ class DataIndex {
             header[treeRefIndex+2] = (headerLength >> 8) & 0xff;
             header[treeRefIndex+3] = headerLength & 0xff;
 
-            // Update default tree byte_length:
-            header[treeRefIndex+4] = (binary.byteLength >> 24) & 0xff;
-            header[treeRefIndex+5] = (binary.byteLength >> 16) & 0xff;
-            header[treeRefIndex+6] = (binary.byteLength >> 8) & 0xff;
-            header[treeRefIndex+7] = binary.byteLength & 0xff;
+            // // Update default tree byte_length:
+            // header[treeRefIndex+4] = (binary.byteLength >> 24) & 0xff;
+            // header[treeRefIndex+5] = (binary.byteLength >> 16) & 0xff;
+            // header[treeRefIndex+6] = (binary.byteLength >> 8) & 0xff;
+            // header[treeRefIndex+7] = binary.byteLength & 0xff;
 
             // anything else?
 
             return pfs.write(fd, Buffer.from(header))
             .then(() => {
                 // append binary tree data
-                return pfs.write(fd, binary);
+                const tree = builder.create();
+                const stream = fs.createWriteStream(null, { fd, autoClose: false });
+                // const stream = fs.createWriteStream(this.fileName, { start: headerLength });
+                const references = [];
+                const writer = new BinaryWriter(stream, (data, position) => {
+                    references.push({ data, position });
+                    return Promise.resolve();
+                    // return pfs.write(fd, data, 0, data.byteLength, headerLength + position);
+                });
+                return tree.toBinary(true, writer)
+                .then(() => {
+                    // Update all references
+                    const nextReference = () => {
+                        const ref = references.shift();
+                        if (!ref) { return Promise.resolve(); }
+                        return pfs.write(fd, ref.data, 0, ref.data.byteLength, headerLength + ref.position)
+                        .then(nextReference);
+                    }
+                    return nextReference();
+                })
+                .then(() => {                    
+                    // Update default tree byte_length:
+                    const treeByteLength = writer.length;
+                    const bytes = [
+                        (treeByteLength >> 24) & 0xff,
+                        (treeByteLength >> 16) & 0xff,
+                        (treeByteLength >> 8) & 0xff,
+                        treeByteLength & 0xff
+                    ];
+                    treeDetails.byteLength = treeByteLength;
+                    return pfs.write(fd, Buffer.from(bytes), 0, bytes.length, treeRefIndex+4);
+                });
+                // return pfs.write(fd, binary);
             })
             .then(() => {
                 return pfs.close(fd);
