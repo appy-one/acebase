@@ -477,7 +477,7 @@ class NodeReader {
      */
     constructor(storage, address, lock, updateCache = false) {
         if (!(address instanceof NodeAddress)) {
-            throw new TypeError(`WT...`);
+            throw new TypeError(`address argument must be a NodeAddress`);
         }
         this.storage = storage;
         this.address = address;
