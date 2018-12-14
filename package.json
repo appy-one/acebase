@@ -1,8 +1,9 @@
 {
   "name": "acebase",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "AceBase realtime database engine",
   "main": "./src/index.js",
+  "types": "./index.d.ts",
   "private": false,
   "repository": "github:appy-one/acebase",
   "scripts": {
