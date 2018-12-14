@@ -6,7 +6,7 @@ const { NodeAddress } = require('./node-address');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { numberToBytes, bytesToNumber, concatTypedArrays, cloneObject, compareValues, getChildValues } = Utils;
 // removed: getPathInfo, getPathKeys, getChildPath
-const { BinaryBPlusTree, BPlusTreeBuilder } = require('./btree');
+const { BinaryBPlusTree, BPlusTreeBuilder, BinaryWriter } = require('./btree');
 const { TextEncoder, TextDecoder } = require('text-encoding');
 // const promiseTimeout = require('./promise-timeout');
 const colors = require('colors');
@@ -2793,7 +2793,9 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
                         builder.add(change.keyOrIndex, change.newValue);
                     });
 
-                    return builder.create().toBinary(true);
+                    const bytes = [];
+                    return builder.create().toBinary(true, BinaryWriter.forArray(bytes))
+                    .then(() => bytes);
                 })
                 .then(bytes => {
                     // write new record(s)
@@ -2995,7 +2997,6 @@ function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
     return Promise.all(childPromises).then(() => {
         // Append all serialized data into 1 binary array
 
-        let data, keyTree;
         const minKeysPerNode = 25;
         const minKeysForTreeCreation = 100;
         if (true && serialized.length > minKeysForTreeCreation) {
@@ -3011,19 +3012,14 @@ function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
                 let binaryValue = _getValueBytes(kvp);
                 builder.add(kvp.key, binaryValue);
             });
-            let bytes = builder.create().toBinary(true);
-            
-            // const keysPerNode = Math.max(minKeysPerNode, Math.ceil(serialized.length / 10));
-            // keyTree = new BPlusTree(keysPerNode, true); // 4 for quick testing, should be 10 or so
-            // serialized.forEach(kvp => {
-            //     let binaryValue = getBinaryValue(kvp);
-            //     keyTree.add(kvp.key, binaryValue);
-            // });
-            // let bytes = keyTree.toBinary();
-            data = new Uint8Array(bytes);
+            let bytes = [];
+            return builder.create().toBinary(true, BinaryWriter.forArray(bytes))
+            .then(() => {
+                return { keyTree: true, data: new Uint8Array(bytes) };
+            });
         }
         else {
-            data = serialized.reduce((binary, kvp) => {
+            const data = serialized.reduce((binary, kvp) => {
                 // For binary key/value layout, see _write function
                 let bytes = [];
                 if (!isArray) {
@@ -3052,10 +3048,12 @@ function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
                 binaryValue.forEach(val => bytes.push(val));//bytes.push(...binaryValue);
                 return concatTypedArrays(binary, new Uint8Array(bytes));
             }, new Uint8Array());
+            return { keyTree: false, data };
         }
-
+    })
+    .then(result => {
         // Now write the record
-        return _write(storage, path, isArray ? VALUE_TYPES.ARRAY : VALUE_TYPES.OBJECT, data, serialized, keyTree, currentRecordInfo);
+        return _write(storage, path, isArray ? VALUE_TYPES.ARRAY : VALUE_TYPES.OBJECT, result.data, serialized, result.keyTree, currentRecordInfo);
     });
 }
 
