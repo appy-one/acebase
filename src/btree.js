@@ -36,37 +36,56 @@ const KEY_TYPE = {
 //     }
 // };
 
+function _getComparibleValue(val) {
+    if (typeof val === 'undefined') { val = null; }
+    if (val instanceof Date) { val = val.getTime(); }
+    return val;
+}
+
 // Typeless comparison methods
 function _isEqual(val1, val2) {
-    if (typeof val1 === 'undefined') { val1 = null; }
-    if (typeof val2 === 'undefined') { val2 = null; }
+    val1 = _getComparibleValue(val1);
+    val2 = _getComparibleValue(val2);
     return val1 == val2;
 }
 function _isNotEqual(val1, val2) {
-    if (typeof val1 === 'undefined') { val1 = null; }
-    if (typeof val2 === 'undefined') { val2 = null; }
+    val1 = _getComparibleValue(val1);
+    val2 = _getComparibleValue(val2);
     return val1 != val2;
 }
 function _isLess(val1, val2) {
-    if (typeof val1 === 'undefined') { return typeof val2 !== 'undefined'; }
+    val1 = _getComparibleValue(val1);
+    val2 = _getComparibleValue(val2);
+    if (val2 === null) { return false; }
+    if (val1 === null) { return val2 !== null; }
     return val1 < val2;
 }
 function _isLessOrEqual(val1, val2) {
-    if (typeof val1 === 'undefined') { return true; }
+    val1 = _getComparibleValue(val1);
+    val2 = _getComparibleValue(val2);
+    if (val1 === null) { return true; }
+    else if (val2 === null) { return false; }
     return val1 <= val2;
 }
 function _isMore(val1, val2) {
-    if (typeof val1 === 'undefined') { return false; }
+    val1 = _getComparibleValue(val1);
+    val2 = _getComparibleValue(val2);
+    if (val1 === null) { return false; }
+    else if (val2 === null) { return true; }
     return val1 > val2;
 }
 function _isMoreOrEqual(val1, val2) {
-    if (typeof val1 === 'undefined') { return typeof val2 === 'undefined'; }
+    val1 = _getComparibleValue(val1);
+    val2 = _getComparibleValue(val2);
+    if (val1 === null) { return val2 === null; }
+    else if (val2 === null) { return true; }
     return val1 >= val2;
 }
 function _sortCompare(val1, val2) {
-    if (typeof val1 === 'undefined' && typeof val2 === 'undefined') { return 0; }
-    if (typeof val1 === 'undefined' && typeof val2 !== 'undefined') { return -1; }
-    if (typeof val1 !== 'undefined' && typeof val2 === 'undefined') { return 1; }
+    val1 = _getComparibleValue(val1);
+    val2 = _getComparibleValue(val2);
+    if (val1 === null && val2 !== null) { return -1; }
+    if (val1 !== null && val2 === null) { return 1; }
     if (val1 < val2) { return -1; }
     if (val1 > val2) { return 1; }
     return 0;
@@ -124,7 +143,7 @@ class BPlusTreeNode {
      */
     insertKey(newKey, fromLeaf, newLeaf) {
         // New key is being inserted from splitting leaf node
-        if(this.entries.findIndex(entry => entry.key === newKey) >= 0) {
+        if(this.entries.findIndex(entry => _isEqual(entry.key, newKey)) >= 0) {
             throw new Error(`Key ${newKey} is already present in node`);
         }
 
@@ -184,7 +203,7 @@ class BPlusTreeNode {
                 gtChild.parent = newSibling;
 
                 // Find where to insert moveUp
-                const insertIndex = this.parent.entries.findIndex(entry => entry.key > moveUpEntry.key);
+                const insertIndex = this.parent.entries.findIndex(entry => _isMore(entry.key, moveUpEntry.key));
                 if (insertIndex < 0) {
                     // Add to the end
                     this.parent.entries.push(moveUpEntry);
@@ -509,7 +528,7 @@ class BPlusTreeLeaf {
         const entryValue = new BPlusTreeLeafEntryValue(recordPointer, metadata);
 
         // First. check if we already have an entry with this key
-        const entryIndex = this.entries.findIndex(entry => entry.key === key);
+        const entryIndex = this.entries.findIndex(entry => _isEqual(entry.key, key));
         if (entryIndex >= 0) {
             if (this.tree.uniqueKeys) {
                 throw new Error(`Cannot insert duplicate key ${key}`);
@@ -526,7 +545,7 @@ class BPlusTreeLeaf {
         }
         else {
             // Find where to insert sorted
-            let insertIndex = this.entries.findIndex(otherEntry => otherEntry.key > entry.key);
+            let insertIndex = this.entries.findIndex(otherEntry => _isMore(otherEntry.key, entry.key));
             if (insertIndex < 0) { 
                 this.entries.push(entry);
             }
@@ -786,7 +805,7 @@ class BPlusTree {
 
     find(key) {
         const leaf = this.findLeaf(key);
-        const entry = leaf.entries.find(entry => entry.key === key);
+        const entry = leaf.entries.find(entry => _isEqual(entry.key, key));
         if (!entry) { return null; }
         if (this.uniqueKeys) {
             return entry.values[0];
@@ -1104,6 +1123,9 @@ class BPlusTree {
      * @param {BinaryWriter} writer
      */
     toBinary(keepFreeSpace = false, writer) {
+        if (!(writer instanceof BinaryWriter)) {
+            throw new Error(`writer argument must be an instance of BinaryWriter`);
+        }
         // Return binary data
         const indexTypeFlags = 
               (this.uniqueKeys ? 1 : 0) 
@@ -1860,16 +1882,7 @@ class BinaryBPlusTree {
         // const { bytes } = leaf.toBinary(false); // Let us add the free space ourselves
 
         const bytes = [];
-        const fakeStream = {
-            write(buffer) {
-                for(let i = 0; i < buffer.byteLength; i++) {
-                    bytes.push(buffer[i]);
-                }
-                return true;
-            }
-        };
-        const writer = new BinaryWriter(fakeStream);
-        return leaf.toBinary(false, writer) // Let us add the free space ourselves
+        return leaf.toBinary(false, BinaryWriter.forArray(bytes)) // Let us add the free space ourselves
         .then(() => {
             // Add free space
             const freeBytesLength = leafInfo.length - bytes.length;
@@ -2421,7 +2434,7 @@ class BinaryBPlusTree {
     find(searchKey, options) {
         return this.findLeaf(searchKey, options)
         .then(leaf => {
-            let entry = leaf.entries.find(entry => entry.key === searchKey);
+            const entry = leaf.entries.find(entry => _isEqual(searchKey, entry.key));
             if (options && options.stats) {
                 return entry ? entry.totalValues : 0;
             }
@@ -2453,7 +2466,7 @@ class BinaryBPlusTree {
         return this.findLeaf(key)
         .then(leaf => {
             // This is the leaf the key should be added to
-            const entryIndex = leaf.entries.findIndex(entry => entry.key === key);
+            const entryIndex = leaf.entries.findIndex(entry => _isEqual(key, entry.key));
             let addNew = false;
             if (this.info.isUnique) {
                 // Make sure key doesn't exist yet
@@ -2486,7 +2499,7 @@ class BinaryBPlusTree {
                 const entry = new BinaryBPlusTreeLeafEntry(key, [entryValue]);
 
                 // Insert it
-                const insertBeforeIndex = leaf.entries.findIndex(entry => entry.key > key);
+                const insertBeforeIndex = leaf.entries.findIndex(entry => _isMore(entry.key, key));
                 if (insertBeforeIndex < 0) { 
                     leaf.entries.push(entry);
                 }
@@ -2513,7 +2526,7 @@ class BinaryBPlusTree {
         return this.findLeaf(key)
         .then(leaf => {
             // This is the leaf the key should be in
-            const entryIndex = leaf.entries.findIndex(entry => entry.key === key);
+            const entryIndex = leaf.entries.findIndex(entry => _isEqual(key, entry.key));
             if (!~entryIndex) { return; }
             if (this.info.isUnique || typeof recordPointer === "undefined" || leaf.entries[entryIndex].values.length === 1) {
                 leaf.entries.splice(entryIndex, 1);
@@ -2545,7 +2558,7 @@ class BinaryBPlusTree {
         return this.findLeaf(key)
         .then(leaf => {
             // This is the leaf the key should be in
-            const entryIndex = leaf.entries.findIndex(entry => entry.key === key);
+            const entryIndex = leaf.entries.findIndex(entry => _isEqual(entry.key, key));
             if (!~entryIndex) { 
                 throw new Error(`Key to update ("${key}") not found`); 
             }
@@ -2746,6 +2759,14 @@ class BinaryBPlusTreeLeaf extends BinaryBPlusTreeNodeInfo {
         /** @type {function?} only present if there is a next leaf */
         this.getNext = undefined;
     }
+
+    findEntryIndex(key) {
+        return this.entries.findIndex(entry => _isEqual(entry.key, key));
+    }
+
+    findEntry(key) {
+        return this.entries[this.findEntryIndex(key)];
+    }
 }
 
 class BinaryBPlusTreeLeafEntryValue {
@@ -2853,6 +2874,27 @@ class BinaryWriter {
         this._stream = stream;
         this._write = writeCallback;
         this._written = 0;
+    }
+
+    static forArray(bytes) {
+        let stream = {
+            write(data) {
+                for (let i = 0; i < data.byteLength; i++) {
+                    bytes.push(data[i]);
+                }
+                return true; // let caller know its ok to continue writing
+            },
+            end(callback) {
+                callback();
+            }
+        };
+        const writer = new BinaryWriter(stream, (data, position) => {
+            for(let i = 0; i < data.byteLength; i++) {
+                bytes[position + i] = data[i];
+            }
+            return Promise.resolve();
+        });  
+        return writer;      
     }
 
     get length() { return this._written; }
