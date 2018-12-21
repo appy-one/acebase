@@ -1151,27 +1151,28 @@ class Storage extends EventEmitter {
                 //  - "child_added", "child_removed" events on the parent path
                 //  - "child_changed" events on the parent path and its ancestors
                 //  - ALL events on child/descendant paths
-                const pathInfo = PathInfo.get(path);
+                const pathInfo = new PathInfo(path);
                 const valueSubscribers = [];
                 Object.keys(_subs).forEach(subscriptionPath => {
-                    if (path === subscriptionPath || pathInfo.isDescendantOf(subscriptionPath)) {
+                    if (pathInfo.equals(subscriptionPath) || pathInfo.isDescendantOf(subscriptionPath)) {
                         let pathSubs = _subs[subscriptionPath];
+                        const eventPath = PathInfo.fillVariables(subscriptionPath, path);
                         pathSubs.forEach(sub => {
                             let dataPath;
                             if (sub.type === "value" || sub.type === "notify_value") { 
-                                dataPath = subscriptionPath;
+                                dataPath = eventPath;
                             }
-                            else if ((sub.type === "child_changed" || sub.type === "notify_child_changed") && path !== subscriptionPath) {
-                                let childKey = PathInfo.getPathKeys(path.slice(subscriptionPath.length).replace(/^\//, ''))[0];
-                                dataPath = PathInfo.getChildPath(subscriptionPath, childKey); //NodePath(subscriptionPath).childPath(childKey); 
+                            else if ((sub.type === "child_changed" || sub.type === "notify_child_changed") && path !== eventPath) {
+                                let childKey = PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
+                                dataPath = PathInfo.getChildPath(eventPath, childKey);
                              }
-                            else if (~["child_added", "child_removed", "notify_child_added", "notify_child_removed"].indexOf(sub.type) && pathInfo.isChildOf(subscriptionPath)) { 
-                                let childKey = PathInfo.getPathKeys(path.slice(subscriptionPath.length).replace(/^\//, ''))[0];
-                                dataPath = PathInfo.getChildPath(subscriptionPath, childKey) //NodePath(subscriptionPath).childPath(childKey); 
+                            else if (~["child_added", "child_removed", "notify_child_added", "notify_child_removed"].indexOf(sub.type) && pathInfo.isChildOf(eventPath)) { 
+                                let childKey = PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
+                                dataPath = PathInfo.getChildPath(eventPath, childKey);
                             }
                             
-                            if (dataPath && valueSubscribers.findIndex(s => s.type === sub.type && s.path === subscriptionPath) < 0) {
-                                valueSubscribers.push({ type: sub.type, path: subscriptionPath, dataPath });
+                            if (dataPath && valueSubscribers.findIndex(s => s.type === sub.type && s.path === eventPath) < 0) {
+                                valueSubscribers.push({ type: sub.type, eventPath, dataPath, subscriptionPath });
                             }
                         });
                     }
@@ -1187,37 +1188,38 @@ class Storage extends EventEmitter {
                 const pathInfo = PathInfo.get(path);
                 const subscribers = [];
                 Object.keys(_subs).forEach(subscriptionPath => {
-                    if (path === subscriptionPath 
+                    if (pathInfo.equals(subscriptionPath) //path === subscriptionPath 
                         || pathInfo.isDescendantOf(subscriptionPath) 
                         || pathInfo.isAncestorOf(subscriptionPath)
                     ) {
                         let pathSubs = _subs[subscriptionPath];
+                        const eventPath = PathInfo.fillVariables(subscriptionPath, path);
                         pathSubs.forEach(sub => {
                             let dataPath = null;
                             if (sub.type === "value" || sub.type === "notify_value") { 
-                                dataPath = subscriptionPath; 
+                                dataPath = eventPath; 
                             }
                             else if (sub.type === "child_changed" || sub.type === "notify_child_changed") { 
-                                let childKey = path === subscriptionPath || pathInfo.isAncestorOf(subscriptionPath) 
+                                let childKey = path === eventPath || pathInfo.isAncestorOf(eventPath) 
                                     ? "*" 
-                                    : PathInfo.getPathKeys(path.slice(subscriptionPath.length).replace(/^\//, ''))[0];
-                                dataPath = PathInfo.getChildPath(subscriptionPath, childKey); //NodePath(subscriptionPath).childPath(childKey); 
+                                    : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
+                                dataPath = PathInfo.getChildPath(eventPath, childKey);
                             }
                             else if (
                                 ~["child_added", "child_removed", "notify_child_added", "notify_child_removed"].indexOf(sub.type) 
                                 && (
-                                    pathInfo.isChildOf(subscriptionPath) 
-                                    || path === subscriptionPath 
-                                    || pathInfo.isAncestorOf(subscriptionPath)
+                                    pathInfo.isChildOf(eventPath) 
+                                    || path === eventPath 
+                                    || pathInfo.isAncestorOf(eventPath)
                                 )
                             ) { 
-                                let childKey = path === subscriptionPath || pathInfo.isAncestorOf(subscriptionPath) 
+                                let childKey = path === eventPath || pathInfo.isAncestorOf(eventPath) 
                                     ? "*" 
-                                    : PathInfo.getPathKeys(path.slice(subscriptionPath.length).replace(/^\//, ''))[0];
-                                dataPath = PathInfo.getChildPath(subscriptionPath, childKey); //NodePath(subscriptionPath).childPath(childKey); 
+                                    : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
+                                dataPath = PathInfo.getChildPath(eventPath, childKey); //NodePath(subscriptionPath).childPath(childKey); 
                             }
-                            if (dataPath && subscribers.findIndex(s => s.type === sub.type && s.path === subscriptionPath) < 0) {
-                                subscribers.push({ type: sub.type, path: subscriptionPath, dataPath });
+                            if (dataPath && subscribers.findIndex(s => s.type === sub.type && s.path === eventPath) < 0) {
+                                subscribers.push({ type: sub.type, eventPath, dataPath, subscriptionPath });
                             }
                         });
                     }
