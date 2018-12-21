@@ -1,4 +1,5 @@
 /// <reference types="node" />
+/// <reference types="acebase-core" />
 
 // import { EventEmitter } from 'events';
 import * as acebasecore from 'acebase-core';
@@ -37,3 +38,10 @@ declare namespace acebase {
 }
 
 export = acebase;
+export import DataSnapshot = acebasecore.DataSnapshot;
+export import DataReference = acebasecore.DataReference;
+export import EventStream = acebasecore.EventStream;
+export import EventSubscription = acebasecore.EventSubscription;
+export import PathReference = acebasecore.PathReference;
+export import TypeMappings = acebasecore.TypeMappings;
+export import TypeMappingOptions = acebasecore.TypeMappingOptions;
