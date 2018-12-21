@@ -2588,61 +2588,37 @@ class BinaryBPlusTree {
      * @param {BinaryBPlusTreeTransactionOperation[]} operations 
      */
     transaction(operations) {
-        const originalOperations = operations.slice();
         return new Promise((resolve, reject) => {
-            const rollbackOperations = [];
-            let rollingBack = false;
-            let errMessage;
-            let lastOp;
-            let lastRollbackOp;
-            const success = (rollbackOp) => {
+            const success = () => {
                 if (operations.length === 0) {
-                    if (rollingBack) { reject(errMessage); }
-                    else { resolve(); }
+                    resolve();
                 }
                 else {
-                    if (!rollingBack) {
-                        rollbackOperations.push(rollbackOp);
-                    }
                     processNextOperation();
                 }
             };
-            const rollback = (err) => {
-                if (rollingBack) {
-                    throw new Error(`FATAL ERROR: Failed to rollback transaction: ${err} on operation ${lastRollbackOp}. Rollback initiated because of error: ${errMessage} on operation ${lastOp}. All operations that were in queue: ${originalOperations}`)
-                }
-                else if (rollbackOperations.length === 0) {
-                    return reject(err);
-                }
-                rollingBack = true;
-                errMessage = err;
-                operations = rollbackOperations;
-                processNextOperation(); // Will start rollback now
-            };
             const processNextOperation = () => {
                 const op = operations.shift();
-                if (rollingBack) { lastRollbackOp = op; }
-                else { lastOp = op; }
-                let undoOp, p;
+                let p;
                 switch(op.type) {
                     case 'add': {
-                        undoOp = BinaryBPlusTreeTransactionOperation.remove(op.key, op.recordPointer); //{ type: 'remove', key: op.key, value: op.value };
                         p = this.add(op.key, op.recordPointer, op.metadata);
                         break;
                     }
                     case 'remove': {
-                        undoOp = BinaryBPlusTreeTransactionOperation.add(op.key, op.recordPointer);  // { type: 'add', key: op.key, value: op.value };
                         p = this.remove(op.key, op.recordPointer);
                         break;
                     }
                     case 'update': {
-                        undoOp = BinaryBPlusTreeTransactionOperation.update(op.key, op.currentValue, op.newValue); // { type: 'update', key: op.key, newValue: op.currentValue, currentValue: op.value };
                         p = this.update(op.key, op.newValue, op.currentValue);
                         break;
                     }
                 }
-                p.then(() => { success(undoOp); })
-                .catch(rollback);
+                p.then(success)
+                .catch(reason => {
+                    operations.unshift(op);
+                    reject(reason);
+                });
             };
             processNextOperation();
         });

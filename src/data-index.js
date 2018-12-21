@@ -365,16 +365,16 @@ class DataIndex {
              */
             const tree = idx.tree;
             // const oldEntry = tree.find(keyValues.oldValue);
-            const ops = [];
+            const operations = [];
             if (oldValue !== null) {
                 let op = BinaryBPlusTree.TransactionOperation.remove(oldValue, oldRecordPointer);
-                ops.push(op);
+                operations.push(op);
             }
             if (newValue !== null && canBeIndexed) {
                 let op = BinaryBPlusTree.TransactionOperation.add(newValue, newRecordPointer, metadata);
-                ops.push(op);
+                operations.push(op);
             }
-            return tree.transaction(ops)
+            return tree.transaction(operations)
             .then(() => {
                 // Index updated
                 idx.close();
@@ -389,13 +389,19 @@ class DataIndex {
                 .then(builder => {
                     idx.close();
 
-                    // Reprocess the changes
-                    if (oldValue !== null) {
-                        builder.remove(oldValue, oldRecordPointer);
-                    }
-                    if (newValue !== null && canBeIndexed) {
-                        builder.add(newValue, newRecordPointer, metadata);
-                    }
+                    // Process left-over operations:
+                    operations.forEach(op => {
+                        if (op.type === 'add') {
+                            builder.add(op.key, op.recordPointer, op.metadata);
+                        }
+                        else if (op.type === 'update') {
+                            builder.remove(op.key, op.recordPointer);
+                            builder.add(op.key, op.recordPointer, op.metadata);
+                        }
+                        else if (op.type === 'remove') {
+                            builder.remove(op.key, op.recordPointer);
+                        }
+                    });
                     return this._writeIndex(builder);
                 })
                 .then(() => {
