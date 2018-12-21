@@ -303,9 +303,68 @@ subscription1.stop();
 newPostStream.stop();
 ```
 
+### Using variables and wildcards in subscription paths (NEW! v0.5.0+)
+
+It is now possible to subscribe to events using wildcards and variables in the path:
+```javascript
+// Using wildcards:
+db.ref('users/*\/posts')
+.on('child_added')
+.subscribe(snap => {
+    // This will fire for every post added by any user,
+    // so for our example .push this will be the result:
+    // snap.ref.vars === { wildcards: ["ewout"] }
+    const wildcards = snap.ref.vars.wildcards;
+    console.log(`New post added by user "${wildcards[0]}"`)
+});
+db.ref('users/ewout/posts').push({ title: 'new post' });
+
+// Using named variables:
+db.ref('users/$userid/posts/$postid/title')
+.on('value')
+.subscribe(snap => {
+    // This will fire for every new or changed post title,
+    // so for our example .push below this will be the result:
+    // snap.ref.vars === { userid: "ewout", postid: "jpx0k53u0002ecr7s354c51l" }
+    const title = snap.val();
+    const vars = snap.ref.vars; // contains the variable values in path
+    console.log(`The title of post ${vars.postid} by user ${vars.userid} was set to: "${title}"`);
+});
+db.ref('users/ewout/posts').push({ title: 'new post' });
+
+// Or a combination:
+db.ref('users/*/posts/$postid/title')
+.on('value')
+.subscribe(snap => {
+    // snap.ref.vars === { wildcards: ['ewout'], postid: "jpx0k53u0002ecr7s354c51l" }
+});
+db.ref('users/ewout/posts').push({ title: 'new post' });
+```
+
 ### Notify only events
 
 In additional to the events mentioned above, you can also subscribe to their ```notify_``` counterparts which do the same, but with a reference to the changed data instead of a snapshot. This is quite useful if you want to monitor changes, but are not interested in the actual values. Doing this also saves serverside resources, and results in less data being transferred from the server. Eg: ```notify_child_changed``` will run your callback with a reference to the changed node.
+
+### Wait for events to activate
+
+In some situations, it is useful to wait for event handlers to be active before modifying data.
+```javascript
+var subscription = db.ref('users')
+.on('child_added')
+.subscribe(snap => { /*...*/ });
+
+subscription.activated((activated, cancelReason) => {
+    if (!activated) {
+        // Access to path denied by server?
+        console.error(`Could not get subscription: ${cancelReason}`);
+    }
+    else {
+        // We now know for sure the subscription is active,
+        // adding a new user will trigger the .subscribe callback
+        db.ref('users').push({ name: 'Ewout' });
+    }
+});
+```
 
 ## Querying data
 
