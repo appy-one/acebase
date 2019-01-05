@@ -91,6 +91,15 @@ function _sortCompare(val1, val2) {
     return 0;
 }
 
+/**
+ * 
+ * @param {number[]} val1 
+ * @param {number[]} val2 
+ */
+function _compareBinary(val1, val2) {
+    return val1.length === val2.length && val1.every((byte, index) => val2[index] === byte);
+}
+
 class BPlusTreeNodeEntry {
     /**
      * 
@@ -2127,10 +2136,11 @@ class BinaryBPlusTree {
      * @param {boolean} [include.entries=true]
      * @param {boolean} [include.values=false]
      * @param {boolean} [include.count=false]
+     * @param {BinaryBPlusTreeLeafEntry[]} [include.filter=undefined] recordPointers to filter upon
      * @returns {Promise<{ entries?: BinaryBPlusTreeLeafEntry[], keys?: Array, count?: number }}
      * // {Promise<BinaryBPlusTreeLeafEntry[]>}
      */
-    search(op, param, include = { entries: true, values: false, keys: false, count: false }) {
+    search(op, param, include = { entries: true, values: false, keys: false, count: false, filter: undefined }) {
         if (["in","!in","between","!between"].indexOf(op) >= 0) {
             // param must be an array
             console.assert(param instanceof Array, `param must be an array when using operator ${op}`);
@@ -2150,10 +2160,75 @@ class BinaryBPlusTree {
             valueCount: 0
         };
 
+        const binaryCompare = (a, b) => {
+            if (a.length < b.length) { return -1; }
+            if (a.length > b.length) { return 1; }
+            for (let i = 0; i < a.length; i++) {
+                if (a[i] < b[i]) { return -1; }
+                if (a[i] > b[i]) { return 1; }
+            }
+            return 0;
+        }
+        const filterRecordPointers = include.filter 
+            // Using string comparison:
+            ? include.filter.reduce((arr, entry) => {
+                arr = arr.concat(entry.values.map(val => String.fromCharCode(...val.recordPointer)));
+                return arr; 
+            }, [])
+            // // Using binary comparison:
+            // ? include.filter.reduce((arr, entry) => {
+            //     arr = arr.concat(entry.values.map(val => val.recordPointer));
+            //     return arr; 
+            // }, []).sort(binaryCompare)
+            : null;
+
+        let totalMatches = 0;
+        let totalAdded = 0;
+
         /**
          * @param {BinaryBPlusTreeLeafEntry} entry 
          */
         const add = (entry) => {
+            totalMatches += entry.totalValues;
+            if (filterRecordPointers) {
+                // Apply filter first, only use what remains
+
+                // String comparison method seem to have slightly better performance than binary
+
+                // Using string comparison:
+                const recordPointers = entry.values.map(val => String.fromCharCode(...val.recordPointer));
+                const values = [];
+                for (let i = 0; i < recordPointers.length; i++) {
+                    let a = recordPointers[i];
+                    if (~filterRecordPointers.indexOf(a)) {
+                        values.push(entry.values[i]);
+                    }
+                }
+
+                // // Using binary comparison:
+                // const recordPointers = entry.values.map(val => val.recordPointer).sort(binaryCompare);
+                // const values = [];
+                // for (let i = 0; i < recordPointers.length; i++) {
+                //     let a = recordPointers[i];
+                //     for (let j = 0; j < filterRecordPointers.length; j++) {
+                //         let b = filterRecordPointers[j];
+                //         let diff = binaryCompare(a, b);
+                //         if (diff === 0) {
+                //             let index = entry.values.findIndex(val => val.recordPointer === a);
+                //             values.push(entry.values[index]);
+                //             break;
+                //         }
+                //         else if (diff === -1) {
+                //             // stop searching for this recordpointer
+                //             break;
+                //         }
+                //     }
+                // }
+                
+                if (values.length === 0) { return; }
+                entry.values = values;
+                entry.totalValues = values.length;
+            }
             if (include.entries) {
                 results.entries.push(entry);
             }
@@ -2167,7 +2242,15 @@ class BinaryBPlusTree {
                 results.keyCount++;
                 results.valueCount += entry.totalValues;
             }
+            totalAdded += entry.totalValues;
         };
+
+        // const t1 = Date.now();
+        // const ret = () => {
+        //     const t2 = Date.now();
+        //     console.log(`tree.search [${op} ${param}] took ${t2-t1}ms, matched ${totalMatches} values, returning ${totalAdded} values in ${results.entries.length} entries`);
+        //     return results;
+        // };
 
         if (["<","<="].indexOf(op) >= 0) {
             const processLeaf = (leaf) => {
@@ -2183,7 +2266,7 @@ class BinaryBPlusTree {
                     .then(processLeaf)
                 }
                 else {
-                    return results;
+                    return results; //ret(results);
                 }
             }
             return this.getFirstLeaf(getLeafOptions)
@@ -2201,7 +2284,7 @@ class BinaryBPlusTree {
                     .then(processLeaf);
                 }
                 else {
-                    return results;
+                    return results; //ret(results);
                 }
             }
             return this.findLeaf(param, getLeafOptions)
@@ -2214,7 +2297,7 @@ class BinaryBPlusTree {
                 if (entry) {
                     add(entry);
                 }
-                return results;
+                return results; //ret(results);
             });
         }
         else if (op === "!=") {
@@ -2229,7 +2312,7 @@ class BinaryBPlusTree {
                     .then(processLeaf);
                 }
                 else {
-                    return results;
+                    return results; //ret(results);
                 }
             };
             return this.getFirstLeaf(getLeafOptions)
@@ -2252,14 +2335,14 @@ class BinaryBPlusTree {
                     // Check if we can stop. If the last entry does not start with the first part of the string.
                     // Eg: like 'Al*', we can stop if the last entry starts with 'Am'
                     const lastEntry = leaf.entries[leaf.entries.length-1];
-                    stop = lastEntry.key.slice(0, wildcardIndex) !== startSearch;
+                    stop = lastEntry.key.slice(0, wildcardIndex) > startSearch;
                 }
                 if (!stop && leaf.getNext) {
                     return leaf.getNext()
                     .then(processLeaf);
                 }
                 else {
-                    return results;
+                    return results; //ret(results);
                 }
             };
             if (wildcardIndex === 0) {
@@ -2285,7 +2368,7 @@ class BinaryBPlusTree {
                     .then(processLeaf);
                 }
                 else {
-                    return results;
+                    return results; //ret(results);
                 }
             };
             return this.getFirstLeaf(getLeafOptions)
@@ -2300,7 +2383,7 @@ class BinaryBPlusTree {
                     if (entry) { add(entry); }
                     searchKey = sorted.shift();
                     if (!searchKey) {
-                        return results;
+                        return results; //ret(results);
                     }
                     else if (searchKey > leaf.entries[leaf.entries.length-1].key) {
                         return this.findLeaf(searchKey).then(processLeaf);
@@ -2324,7 +2407,7 @@ class BinaryBPlusTree {
                     .then(processLeaf);
                 }
                 else {
-                    return results;
+                    return results; //ret(results);
                 }
             };
             return this.getFirstLeaf(getLeafOptions)
@@ -2347,7 +2430,7 @@ class BinaryBPlusTree {
                         if (_isMore(entry.key, top)) { stop = true; break; }
                     }
                     if (stop || !leaf.getNext) {
-                        return results;
+                        return results; //ret(results);
                     }
                     else {
                         return leaf.getNext().then(processLeaf);
@@ -2391,7 +2474,7 @@ class BinaryBPlusTree {
                         if (_isMore(entry.key, top)) { add(entry); }
                     }
                     if (!leaf.getNext) {
-                        return results;
+                        return results; //ret(results);
                     }
                     else {
                         return leaf.getNext().then(processLeaf);
@@ -2416,7 +2499,7 @@ class BinaryBPlusTree {
                     .then(processLeaf);
                 }
                 else {
-                    return results;
+                    return results; //ret(results);
                 }
             };
             return this.getFirstLeaf(getLeafOptions)
@@ -2519,10 +2602,6 @@ class BinaryBPlusTree {
      * @param {number[]|Uint8Array} recordPointer 
      */
     remove(key, recordPointer = undefined) {
-        function compareBinary(val1, val2) {
-            return val1.length === val2.length && val1.every((byte, index) => val2[index] === byte);
-        }
-
         return this.findLeaf(key)
         .then(leaf => {
             // This is the leaf the key should be in
@@ -2532,7 +2611,7 @@ class BinaryBPlusTree {
                 leaf.entries.splice(entryIndex, 1);
             }
             else {
-                let valueIndex = leaf.entries[entryIndex].values.findIndex(val => compareBinary(val.recordPointer, recordPointer));
+                let valueIndex = leaf.entries[entryIndex].values.findIndex(val => _compareBinary(val.recordPointer, recordPointer));
                 if (!~valueIndex) { return; }
                 leaf.entries[entryIndex].values.splice(valueIndex, 1);
             }
@@ -2550,9 +2629,6 @@ class BinaryBPlusTree {
      * @param {object} [newMetadata]
      */
     update(key, newRecordPointer, currentRecordPointer = undefined, newMetadata) {
-        function compareBinary(val1, val2) {
-            return val1.length === val2.length && val1.every((byte, index) => val2[index] === byte);
-        }
         if (currentRecordPointer === null) { currentRecordPointer = undefined; }
         const newEntryValue = new BPlusTreeLeafEntryValue(newRecordPointer, newMetadata);
         return this.findLeaf(key)
@@ -2570,7 +2646,7 @@ class BinaryBPlusTree {
                 throw new Error(`To update a non-unique key, the current value must be passed as parameter`);
             }
             else {
-                let valueIndex = entry.values.findIndex(val => compareBinary(val.recordPointer, currentRecordPointer));
+                let valueIndex = entry.values.findIndex(val => _compareBinary(val.recordPointer, currentRecordPointer));
                 if (!~valueIndex) { 
                     throw new Error(`Key/value combination to update not found (key: "${key}") `); 
                 }
