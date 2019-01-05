@@ -462,7 +462,7 @@ class RecordInfo {
             return this.lastRecordLength;
         }
 
-        let byteLength = ((this.allocation.totalAddresses-1) * this.bytesPerRecord) + this.lastRecordLength;
+        let byteLength = (((this.allocation.totalAddresses-1) * this.bytesPerRecord) + this.lastRecordLength) - this.headerLength;
         return byteLength;
     }
 
@@ -592,7 +592,7 @@ class NodeReader {
             });
         }
 
-        let allData = new Uint8Array(this.recordInfo.totalByteLength - this.recordInfo.headerLength);
+        let allData = new Uint8Array(this.recordInfo.totalByteLength);
         let index = 0;
         return this.getDataStream()
         .next(({ data }) => {
