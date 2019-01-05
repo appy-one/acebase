@@ -308,7 +308,7 @@ newPostStream.stop();
 It is now possible to subscribe to events using wildcards and variables in the path:
 ```javascript
 // Using wildcards:
-db.ref('users/*\/posts')
+db.ref('users/*/posts')
 .on('child_added')
 .subscribe(snap => {
     // This will fire for every post added by any user,
