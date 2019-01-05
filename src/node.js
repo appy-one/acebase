@@ -592,7 +592,7 @@ class NodeReader {
             });
         }
 
-        let allData = new Uint8Array(this.recordInfo.totalByteLength);
+        let allData = new Uint8Array(this.recordInfo.totalByteLength - this.recordInfo.headerLength);
         let index = 0;
         return this.getDataStream()
         .next(({ data }) => {
