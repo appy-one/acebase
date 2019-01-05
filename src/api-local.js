@@ -319,7 +319,7 @@ class LocalApi extends Api {
         };
 
         if (query.filters.length === 0 && query.take === 0) { 
-            console.error(`Filterless queries must use take to limit the results. Defaulting to 100`);
+            console.error(`Filterless queries must use .take to limit the results. Defaulting to 100`);
             query.take = 100;
         }
 
