@@ -621,9 +621,11 @@ class DataIndex {
      * 
      * @param {string} op 
      * @param {any} val 
+     * @param {object} [options]
+     * @param {IndexQueryResults} [options.filter=undefined] previous results to filter upon
      * @returns {Promise<IndexQueryResults>}
      */
-    query(op, val) {
+    query(op, val, options = { filter: undefined }) {
         if (DataIndex.validOperators.indexOf(op) < 0) {
             throw new TypeError(`Cannot use operator "${op}" to query index "${this.description}"`);
         }
@@ -651,7 +653,11 @@ class DataIndex {
              * @type BinaryBPlusTree
              */
             const tree = idx.tree;
-            return tree.search(op, val, { entries: true })
+            const searchOptions = {
+                entries: true,
+                // filter: options.filter && options.filter.treeEntries
+            }
+            return tree.search(op, val, searchOptions)
             .then(({ entries }) => {
                 // We now have record pointers
                 // debug.log(`Released query lock on index ${this.description}`.blue);
@@ -660,16 +666,21 @@ class DataIndex {
 
                 const results = new IndexQueryResults(); //[];
                 results.filterKey = this.key;
+                results.treeEntries = entries;
                 entries.forEach(entry => {
                     const value = entry.key;
                     entry.values.forEach(entryValue => {
                         const recordPointer = _parseRecordPointer(this.path, entryValue.recordPointer);
+                        if (options.filter && options.filter.findIndex(result => result.path === recordPointer.path) < 0) {
+                            return;
+                        }
                         const metadata = entryValue.metadata;
                         // results.push({ key: recordPointer.key, value, address: recordPointer.address });
                         // results.push({ key: recordPointer.key, value, path: recordPointer.path, metadata });
                         const result = new IndexQueryResult(recordPointer.key, recordPointer.path, value, metadata);
+                        result.entry = entry;
                         results.push(result);
-                    })
+                    });
                 });
                 return results;
             });
@@ -1178,6 +1189,7 @@ class IndexQueryResult {
 
 class IndexQueryResults extends Array {
     
+
     /**
      * @param {IndexQueryResult[]} results 
      */
@@ -1194,6 +1206,16 @@ class IndexQueryResults extends Array {
 
     get filterKey() {
         return this._filterKey;
+    }
+
+    /** @param {BinaryBPlusTreeLeafEntry[]} entries */
+    set treeEntries(entries) {
+        this._treeEntries = entries;
+    }
+
+    /** @type {BinaryBPlusTreeLeafEntry[]} */
+    get treeEntries() {
+        return this._treeEntries;
     }
 
     /**
@@ -1618,7 +1640,17 @@ class FullTextIndex extends DataIndex {
                 return words;
             }, []);
         }
-        const promises = words.map(word => {
+
+        // Sequentual method: query 1 word, then filter results further and further
+        // More or less performs the same as parallel, but uses less memory
+        // Use the longest word to search with, then filter those results
+        const allWords = words.slice().sort((a,b) => {
+            if (a.length < b.length) { return 1; }
+            else if (a.length > b.length) { return -1; }
+            return 0;
+        });
+        // const otherWords = allWords.slice(1);
+        const queryWord = (word, filter) => {
             const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?'));
             let wordOp;
             if (op === 'fulltext:contains') {
@@ -1628,39 +1660,41 @@ class FullTextIndex extends DataIndex {
                 wordOp = wildcardIndex >= 0 ? '!like' : '!=';
             }
             // return super.query(wordOp, word)
-            return super.query(wordOp, word)
-        });
-        return Promise.all(promises)
-        .then(resultSets => {
-            // Now only use matches that exist in all result sets
-            const sortedSets = resultSets.slice().sort((a,b) => a.length < b.length ? -1 : 1)
-            const shortestSet = sortedSets[0];
-            const otherSets = sortedSets.slice(1);
-            let matches = shortestSet.reduce((matches, match) => {
-                // Check if the key is present in the other result sets
-                const path = match.path;
-                const matchedInAllSets = otherSets.every(set => set.findIndex(match => match.path === path) >= 0);
-                if (matchedInAllSets) { matches.push(match); }
-                return matches;
-            }, new IndexQueryResults());
-
-            if (options.phrase === true && resultSets.length > 1) {
-                // Check if the words are in the right order
-                console.log(`Breakpoint time`);
-                matches = matches.reduce((matches, match) => {
-                    // the order of the resultSets is in the same order as the given words,
-                    // check if their metadata._indexes_ say the same about the indexed content
+            return super.query(wordOp, word, { filter });
+        }
+        let wordIndex = 0;
+        let results;
+        let resultsPerWord = new Array(words.length);
+        const nextWord = () => {
+            const word = allWords[wordIndex];
+            const t1 = Date.now();
+            return queryWord(word, results)
+            .then(fr => {
+                const t2 = Date.now();
+                console.log(`fulltext search for "${word}" took ${t2-t1}ms`);
+                resultsPerWord[words.indexOf(word)] = fr;
+                results = fr;
+                wordIndex++;
+                if (results.length === 0 || wordIndex === allWords.length) { return; }
+                return nextWord();
+            });
+        }
+        return nextWord().then(() => {
+            if (options.phrase === true && allWords.length > 1) {
+                // Check which results have the words in the right order
+                results = results.reduce((matches, match) => {
+                    // the order of the resultsPerWord is in the same order as the given words,
+                    // check if their metadata._occurs_ say the same about the indexed content
                     const path = match.path;
-                    const wordMatches = resultSets.map(set => {
-                        return set.find(match => match.path === path);
+                    const wordMatches = resultsPerWord.map(results => {
+                        return results.find(result => result.path === path);
                     });
-                    // Convert the _indexes_ strings to arrays we can use
+                    // Convert the _occurs_ strings to arrays we can use
                     wordMatches.forEach(match => {
-                        // match.metadata._indexes_ = match.metadata._indexes_.split(',').map(parseInt);
                         match.metadata._occurs_ = match.metadata._occurs_.split(',').map(parseInt);
                     });
                     const check = (wordMatchIndex, prevWordIndex) => {
-                        const sourceIndexes = wordMatches[wordMatchIndex].metadata._occurs_; //wordMatches[wordMatchIndex].metadata._indexes_;
+                        const sourceIndexes = wordMatches[wordMatchIndex].metadata._occurs_;
                         if (typeof prevWordIndex !== 'number') {
                             // try with each sourceIndex of the first word
                             for (let i = 0; i < sourceIndexes.length; i++) {
@@ -1686,9 +1720,83 @@ class FullTextIndex extends DataIndex {
                     return matches;
                 }, new IndexQueryResults());
             }
-            matches.filterKey = this.key;
-            return matches;
+            results.filterKey = this.key;
+            return results;
         });
+
+        // Parallel method: query all words at the same time, then combine results
+        // Uses more memory
+        // const promises = words.map(word => {
+        //     const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?'));
+        //     let wordOp;
+        //     if (op === 'fulltext:contains') {
+        //         wordOp = wildcardIndex >= 0 ? 'like' : '==';
+        //     }
+        //     else if (op === 'fulltext:!contains') {
+        //         wordOp = wildcardIndex >= 0 ? '!like' : '!=';
+        //     }
+        //     // return super.query(wordOp, word)
+        //     return super.query(wordOp, word)
+        // });
+        // return Promise.all(promises)
+        // .then(resultSets => {
+        //     // Now only use matches that exist in all result sets
+        //     const sortedSets = resultSets.slice().sort((a,b) => a.length < b.length ? -1 : 1)
+        //     const shortestSet = sortedSets[0];
+        //     const otherSets = sortedSets.slice(1);
+        //     let matches = shortestSet.reduce((matches, match) => {
+        //         // Check if the key is present in the other result sets
+        //         const path = match.path;
+        //         const matchedInAllSets = otherSets.every(set => set.findIndex(match => match.path === path) >= 0);
+        //         if (matchedInAllSets) { matches.push(match); }
+        //         return matches;
+        //     }, new IndexQueryResults());
+
+        //     if (options.phrase === true && resultSets.length > 1) {
+        //         // Check if the words are in the right order
+        //         console.log(`Breakpoint time`);
+        //         matches = matches.reduce((matches, match) => {
+        //             // the order of the resultSets is in the same order as the given words,
+        //             // check if their metadata._indexes_ say the same about the indexed content
+        //             const path = match.path;
+        //             const wordMatches = resultSets.map(set => {
+        //                 return set.find(match => match.path === path);
+        //             });
+        //             // Convert the _indexes_ strings to arrays we can use
+        //             wordMatches.forEach(match => {
+        //                 // match.metadata._indexes_ = match.metadata._indexes_.split(',').map(parseInt);
+        //                 match.metadata._occurs_ = match.metadata._occurs_.split(',').map(parseInt);
+        //             });
+        //             const check = (wordMatchIndex, prevWordIndex) => {
+        //                 const sourceIndexes = wordMatches[wordMatchIndex].metadata._occurs_; //wordMatches[wordMatchIndex].metadata._indexes_;
+        //                 if (typeof prevWordIndex !== 'number') {
+        //                     // try with each sourceIndex of the first word
+        //                     for (let i = 0; i < sourceIndexes.length; i++) {
+        //                         const found = check(1, sourceIndexes[i]);
+        //                         if (found) { return true; }
+        //                     }
+        //                     return false;
+        //                 }
+        //                 // We're in a recursive call on the 2nd+ word
+        //                 if (~sourceIndexes.indexOf(prevWordIndex + 1)) {
+        //                     // This word came after the previous word, hooray!
+        //                     // Proceed with next word, or report success if this was the last word to check
+        //                     if (wordMatchIndex === wordMatches.length-1) { return true; }
+        //                     return check(wordMatchIndex+1, prevWordIndex+1);
+        //                 }
+        //                 else {
+        //                     return false;
+        //                 }
+        //             }
+        //             if (check(0)) {
+        //                 matches.push(match); // Keep!
+        //             }
+        //             return matches;
+        //         }, new IndexQueryResults());
+        //     }
+        //     matches.filterKey = this.key;
+        //     return matches;
+        // });
     }
 }
 
