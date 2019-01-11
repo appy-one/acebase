@@ -1253,7 +1253,7 @@ class BPlusTreeBuilder {
         const entryValue = new BPlusTreeLeafEntryValue(recordPointer, metadata);
         const existing = this.list.get(key); // this.list[key]
         if (this.uniqueKeys && typeof existing !== 'undefined') {
-            throw `Cannot add duplicate key "${key}", tree must have unique keys`;
+            throw new Error(`Cannot add duplicate key "${key}", tree must have unique keys`);
         }
         else if (existing) {
             existing.push(entryValue);
@@ -1295,7 +1295,7 @@ class BPlusTreeBuilder {
         }
     }
 
-    create() {
+    create(maxEntries = undefined) {
         // Create a tree bottom-up with all nodes filled to the max (optionally capped to fillFactor)
 
         let list = [];
@@ -1314,7 +1314,7 @@ class BPlusTreeBuilder {
         //const length = Object.keys(this.list).length;
         const minNodeSize = 3; //25;
         const maxNodeSize = 255;
-        const entriesPerNode = Math.min(maxNodeSize, Math.max(minNodeSize, Math.ceil(list.length / 10)));
+        const entriesPerNode = typeof maxEntries === 'number' ? maxEntries : Math.min(maxNodeSize, Math.max(minNodeSize, Math.ceil(list.length / 10)));
         const entriesPerLeaf = Math.max(minNodeSize, Math.floor(entriesPerNode * (this.fillFactor / 100)));
         const minParentEntries = Math.max(1, Math.floor(entriesPerNode / 2));
         const tree = new BPlusTree(entriesPerNode, this.uniqueKeys, this.metadataKeys);
@@ -1453,7 +1453,7 @@ class BPlusTreeBuilder {
                                 const moveEntry = prevParent.entries.pop();
                                 const moveNode = prevParent.gtChild;
                                 prevParent.gtChild = moveEntry.ltChild;
-                                let ltChild = firstChild.entries[0];
+                                let ltChild = firstChild.entries[0].ltChild;
                                 while (!(ltChild instanceof BPlusTreeLeaf)) {
                                     ltChild = ltChild.entries[0].ltChild;
                                 }
@@ -2160,15 +2160,15 @@ class BinaryBPlusTree {
             valueCount: 0
         };
 
-        const binaryCompare = (a, b) => {
-            if (a.length < b.length) { return -1; }
-            if (a.length > b.length) { return 1; }
-            for (let i = 0; i < a.length; i++) {
-                if (a[i] < b[i]) { return -1; }
-                if (a[i] > b[i]) { return 1; }
-            }
-            return 0;
-        }
+        // const binaryCompare = (a, b) => {
+        //     if (a.length < b.length) { return -1; }
+        //     if (a.length > b.length) { return 1; }
+        //     for (let i = 0; i < a.length; i++) {
+        //         if (a[i] < b[i]) { return -1; }
+        //         if (a[i] > b[i]) { return 1; }
+        //     }
+        //     return 0;
+        // }
         const filterRecordPointers = include.filter 
             // Using string comparison:
             ? include.filter.reduce((arr, entry) => {
@@ -2990,6 +2990,7 @@ class BinaryWriter {
 module.exports = { 
     BPlusTree,
     BinaryBPlusTree,
+    BinaryBPlusTreeLeafEntry,
     BPlusTreeBuilder,
     BinaryWriter
 };
