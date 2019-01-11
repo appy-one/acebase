@@ -2,7 +2,7 @@
 
 const { Storage } = require('./storage');
 const { Node } = require('./node');
-const { BPlusTreeBuilder, BinaryBPlusTree, BinaryWriter } = require('./btree');
+const { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryWriter, BinaryBPlusTreeLeafEntry } = require('./btree');
 const { PathInfo, Utils, ID, debug } = require('acebase-core');
 const { compareValues, getChildValues, numberToBytes, bytesToNumber } = Utils;
 const Geohash = require('./geohash');
@@ -124,7 +124,13 @@ class DataIndex {
         this.includeKeys = options.include || [];
         // this.enableReverseLookup = false;
         this.indexMetadataKeys = [];
-
+    
+        /**
+         * @type {Map<string, Map<any, BinaryBPlusTreeLeafEntry>}
+         */
+        this._cache = new Map();
+        this.setCacheTimeout(60, true); // 1 minute query cache
+        
         this.trees = {
             'default': {
                 fileIndex: 0,
@@ -136,6 +142,57 @@ class DataIndex {
             }
         };
     }
+
+    setCacheTimeout(seconds, sliding = false) {
+        this._cacheTimeoutSettings = {
+            duration: seconds * 1000,
+            sliding
+        };
+    }
+
+    cache(op, val, results) {
+        if (results === undefined) {
+            // Get from cache
+            let cache;
+            if (this._cache.has(op) && this._cache.get(op).has(val)) {
+                cache = this._cache.get(op).get(val);
+            }
+            if (cache) {
+                cache.reads++;
+                if (this._cacheTimeoutSettings.sliding) {
+                    cache.extendLife();
+                }
+                return cache.results;
+            }
+            return null;
+        }
+        else {
+            // Set cache
+            let opCache = this._cache.get(op);
+            if (!opCache) {
+                opCache = new Map();
+                this._cache.set(op, opCache);
+            }
+            let clear = () => {
+                // debug.log(`Index ${this.description}, cache clean for ${op} "${val}"`);
+                opCache.delete(val);
+            }
+            let cache = {
+                results,
+                added: Date.now(),
+                reads: 0,
+                timeout: setTimeout(clear, this._cacheTimeoutSettings.duration),
+                extendLife: () => {
+                    // debug.log(`Index ${this.description}, cache lifetime extended for ${op} "${val}". reads: ${cache.reads}`);
+                    clearTimeout(cache.timeout);
+                    cache.timeout = setTimeout(clear, this._cacheTimeoutSettings.duration);
+                }
+            }
+            opCache.set(val, cache);            
+            // debug.log(`Index ${this.description}, cached ${results.length} results for ${op} "${val}"`);
+        }
+    }
+
 
     static readFromFile(storage, fileName) {
         // Read an index from file
@@ -458,6 +515,9 @@ class DataIndex {
             return obj;
         })();
 
+        // Invalidate query cache
+        this._cache.clear();
+
         return this._updateTree(path, keyValues.oldValue, keyValues.newValue, recordPointer, recordPointer, metadata);
     }
 
@@ -640,50 +700,242 @@ class DataIndex {
             }
         }
 
-        var lock;
-        // debug.log(`Requesting query lock on index ${this.description}`.blue);
-        return this._lock(false, `index.query "${op}", ${val}`)
-        .then(l => {
-            // debug.log(`Got query lock on index ${this.description}`.blue, l);
-            lock = l;
-            return this._getTree();
-        })
-        .then(idx => {
-            /**
-             * @type BinaryBPlusTree
-             */
-            const tree = idx.tree;
-            const searchOptions = {
-                entries: true,
-                // filter: options.filter && options.filter.treeEntries
-            }
-            return tree.search(op, val, searchOptions)
-            .then(({ entries }) => {
-                // We now have record pointers
-                // debug.log(`Released query lock on index ${this.description}`.blue);
-                lock.release();
-                idx.close();
+        /** @type {Promise<BinaryBPlusTreeLeafEntry[]>} */
+        let entriesPromise;
+        let cache = this.cache(op, val);
+        // if (this._cache.has(op) && this._cache.get(op).has(val)) {
+        //     // Use cached entries
+        //     let entries = this._cache.get(op).get(val);
+        //     entriesPromise = Promise.resolve(entries);
+        // }
+        if (cache) {
+            entriesPromise = Promise.resolve(cache);
+        }
+        else {
+            var lock;
+            entriesPromise = this._lock(false, `index.query "${op}", ${val}`)
+            .then(l => {
+                lock = l;
+                return this._getTree();
+            })
+            .then(idx => {
+                /**
+                 * @type BinaryBPlusTree
+                 */
+                const tree = idx.tree;
+                const searchOptions = {
+                    entries: true,
+                    // filter: options.filter && options.filter.treeEntries // Don't let tree apply filter, so we can cache results before filtering ourself
+                }
+                return tree.search(op, val, searchOptions)
+                .then(({ entries }) => {
+                    lock.release();
+                    idx.close();
 
-                const results = new IndexQueryResults(); //[];
-                results.filterKey = this.key;
-                results.treeEntries = entries;
+                    // Cache entries
+                    // let opCache = this._cache.get(op);
+                    // if (!opCache) {
+                    //     opCache = new Map();
+                    //     this._cache.set(op, opCache);
+                    // }
+                    // opCache.set(val, entries);
+                    this.cache(op, val, entries);
+
+                    return entries;
+                });
+            });
+        }
+
+        return entriesPromise.then(entries => {
+            const results = new IndexQueryResults(); //[];
+            results.filterKey = this.key;
+            results.values = [];
+
+            if (options.filter) {
+                // const binaryCompare = (a, b) => {
+                //     if (a.length < b.length) { return -1; }
+                //     if (a.length > b.length) { return 1; }
+                //     for (let i = 0; i < a.length; i++) {
+                //         if (a[i] < b[i]) { return -1; }
+                //         if (a[i] > b[i]) { return 1; }
+                //     }
+                //     return 0;
+                // };
+
+                let values = [], valueEntryIndexes = [];
                 entries.forEach(entry => {
-                    const value = entry.key;
-                    entry.values.forEach(entryValue => {
-                        const recordPointer = _parseRecordPointer(this.path, entryValue.recordPointer);
-                        if (options.filter && options.filter.findIndex(result => result.path === recordPointer.path) < 0) {
-                            return;
+                    valueEntryIndexes.push(values.length);
+                    values = values.concat(entry.values);
+                });
+                // let filterValues = [];
+                // options.filter.treeEntries.forEach(entry => filterValues = filterValues.concat(entry.values));
+                let filterValues = options.filter.values;
+
+                // Pre-process recordPointers to speed up matching
+                const preProcess = (values, tree = false) => {
+                    if (tree && values.rpTree) { return; }
+
+                    let builder = tree ? new BPlusTreeBuilder(true, 100) : null;
+
+                    for (let i = 0; i < values.length; i++) {
+                        let val = values[i];
+                        let rp = val.rp || '';
+                        if (rp === '') {
+                            for (let j = 0; j < val.recordPointer.length; j++) { rp += val.recordPointer[j].toString(36); }
+                            val.rp = rp;
                         }
-                        const metadata = entryValue.metadata;
-                        // results.push({ key: recordPointer.key, value, address: recordPointer.address });
-                        // results.push({ key: recordPointer.key, value, path: recordPointer.path, metadata });
-                        const result = new IndexQueryResult(recordPointer.key, recordPointer.path, value, metadata);
-                        result.entry = entry;
+                        
+                        if (tree && !builder.list.has(rp)) {
+                            builder.add(rp, [i]);
+                        }
+                    }
+                    if (tree) {
+                        values.rpTree = builder.create();
+                    }
+                }
+                // preProcess(values);
+                // preProcess(filterValues);
+
+                // Loop through smallest set
+                let smallestSet = filterValues.length < values.length ? filterValues : values;
+                let otherSet = smallestSet === filterValues ? values : filterValues;
+                
+                preProcess(smallestSet, false);
+                preProcess(otherSet, true);
+
+                // TODO: offload filtering from event loop to stay responsive
+                for (let i = 0; i < smallestSet.length; i++) {
+                    let value = smallestSet[i];
+                    // Find in other set
+                    let match = null;
+                    let matchIndex;
+                    // // for (let j = 0; j < otherSet.length; j++) {
+                    // //     let otherValue = otherSet[j];
+                    // //     if (value.rp === otherValue.rp) { //if (binaryCompare(value.recordPointer, otherValue.recordPointer) === 0) {
+                    // //         match = smallestSet === values ? value : otherValue;
+                    // //         matchIndex = match === value ? i : j;
+                    // //         break;
+                    // //     }
+                    // // }
+
+                    // let j = otherSet.rps.indexOf(smallestSet.rps[i]);
+                    // if (j >= 0) {
+                    //     match = smallestSet === values ? value : otherSet[j];
+                    //     matchIndex = match === value ? i : j;
+                    // }
+                    
+                    /** @type {BPlusTree} */
+                    let tree = otherSet.rpTree;
+                    let rpEntryValue = tree.find(value.rp);
+                    if (rpEntryValue) {
+                        let j = rpEntryValue.recordPointer[0];
+                        match = smallestSet === values ? value : otherSet[j];
+                        matchIndex = match === value ? i : j;                        
+                    }
+
+                    if (match) {
+                        const recordPointer = _parseRecordPointer(this.path, match.recordPointer);
+                        const metadata = match.metadata;
+                        const entry = entries[valueEntryIndexes.findIndex((entryIndex, i, arr) => 
+                            i + 1 === arr.length || (entryIndex <= matchIndex && arr[i + 1] > matchIndex)
+                        )];
+                        const result = new IndexQueryResult(recordPointer.key, recordPointer.path, entry.key, metadata);
+                        // result.entry = entry;
                         results.push(result);
+                        results.values.push(match);
+                    }
+                }
+            }
+            else {
+                // No filter, add all results
+                entries.forEach(entry => {
+                    entry.values.forEach(value => {
+                        const recordPointer = _parseRecordPointer(this.path, value.recordPointer);
+                        const metadata = value.metadata;
+                        const result = new IndexQueryResult(recordPointer.key, recordPointer.path, entry.key, metadata);
+                        // result.entry = entry;
+                        results.push(result);
+                        results.values.push(value);
                     });
                 });
-                return results;
-            });
+            }
+
+            // for (let i = 0; i < entries.length; i++) {
+            //     const entry = entries[i];
+            //     const value = entry.key;
+            //     for (let j = 0; j < entry.values.length; j++) {
+            //         const entryValue = entry.values[j];
+            //         if (options.filter) {
+            //             // Filtering should be offloaded from event loop to stay responsive
+            //             let filterEntries = options.filter.treeEntries;
+            //             let found = false;
+            //             for (let k = 0; k < filterEntries.length; k++) {
+            //                 let filterEntryValues = filterEntries[k].values;
+            //                 for(let l = 0; l < filterEntryValues.length; l++) {
+            //                     let filterValue = filterEntryValues[l];
+            //                     if (binaryCompare(filterValue.recordPointer, entryValue.recordPointer) === 0) {
+            //                         found = true;
+            //                         break;
+            //                     }
+            //                 }
+            //                 if (found) { break; }
+            //             }
+            //             if (!found) {
+            //                 continue;
+            //             }
+            //         }
+            //         const recordPointer = _parseRecordPointer(this.path, entryValue.recordPointer);
+            //         const metadata = entryValue.metadata;
+            //         const result = new IndexQueryResult(recordPointer.key, recordPointer.path, value, metadata);
+            //         result.entry = entry;
+            //         results.push(result);
+            //     }
+            // }
+
+            // entries.forEach(entry => {
+            //     const value = entry.key;
+            //     entry.values.forEach(entryValue => {
+            //         if (options.filter) {
+            //             let filterEntries = options.filter.treeEntries;
+            //             let found = false;
+            //             for (let k = 0; k < filterEntries.length; k++) {
+            //                 let filterEntryValues = filterEntries[k].values;
+            //                 for(let l = 0; l < filterEntryValues.length; l++) {
+            //                     let filterValue = filterEntryValues[l];
+            //                     if (binaryCompare(filterValue.recordPointer, entryValue.recordPointer) === 0) {
+            //                         found = true;
+            //                         break;
+            //                     }
+            //                 }
+            //                 if (found) { break; }
+            //             }
+            //             if (!found) {
+            //                 return;
+            //             }
+            //         }
+            //         const recordPointer = _parseRecordPointer(this.path, entryValue.recordPointer);
+            //         const metadata = entryValue.metadata;
+            //         const result = new IndexQueryResult(recordPointer.key, recordPointer.path, value, metadata);
+            //         result.entry = entry;
+            //         results.push(result);
+            //     });
+            // });
+
+            // entries.forEach(entry => {
+            //     const value = entry.key;
+            //     entry.values.forEach(entryValue => {
+            //         const recordPointer = _parseRecordPointer(this.path, entryValue.recordPointer);
+            //         if (options.filter && options.filter.findIndex(result => result.path === recordPointer.path) < 0) {
+            //             return;
+            //         }
+
+            //         const metadata = entryValue.metadata;
+            //         const result = new IndexQueryResult(recordPointer.key, recordPointer.path, value, metadata);
+            //         result.entry = entry;
+            //         results.push(result);
+            //     });
+            // });
+            return results;
         });
     }
     
@@ -1137,10 +1389,6 @@ class DataIndex {
         return pfs.open(this.fileName, pfs.flags.readAndWrite)
         .then(fd => {
             const reader = (index, length) => {
-                // console.log(`IO DEBUG :: performing ${length} byte READ from index ${index} in "${this.fileName}"`);
-                // if (length > DISK_BLOCK_SIZE) {
-                //     console.log('Check if this size is legit');
-                // }
                 const binary = new Uint8Array(length);
                 const buffer = Buffer.from(binary.buffer);
                 return pfs.read(fd, buffer, 0, length, this.trees.default.fileIndex + index)
@@ -1208,15 +1456,15 @@ class IndexQueryResults extends Array {
         return this._filterKey;
     }
 
-    /** @param {BinaryBPlusTreeLeafEntry[]} entries */
-    set treeEntries(entries) {
-        this._treeEntries = entries;
-    }
+    // /** @param {BinaryBPlusTreeLeafEntry[]} entries */
+    // set treeEntries(entries) {
+    //     this._treeEntries = entries;
+    // }
 
-    /** @type {BinaryBPlusTreeLeafEntry[]} */
-    get treeEntries() {
-        return this._treeEntries;
-    }
+    // /** @type {BinaryBPlusTreeLeafEntry[]} */
+    // get treeEntries() {
+    //     return this._treeEntries;
+    // }
 
     /**
      * 
@@ -1567,10 +1815,23 @@ class FullTextIndex extends DataIndex {
         return FullTextIndex.validOperators;
     }
 
-    query(op, val, options = {}) {
+    query(op, val, options = {}) {        
         if (FullTextIndex.validOperators.indexOf(op) < 0) { //if (op !== 'fulltext:contains' && op !== 'fulltext:not_contains') {
-            throw new Error(`Fulltext indexes can only be queried with operator "fulltext:contains" and "fulltext:not_contains`)
+            throw new Error(`Fulltext indexes can only be queried with operator "fulltext:contains" and "fulltext:!contains`)
         }
+
+        // Check cache. Using the _cache Map does not clash with the superclass's cache because the op will be different
+        // if (this._cache.has(op) && this._cache.get(op).has(val)) {
+        //     // Use cached results
+        //     let results = this._cache.get(op).get(val);
+        //     return Promise.resolve(results);
+        // }
+        let cache = this.cache(op, val);
+        if (cache) {
+            // Use cached results
+            return Promise.resolve(cache);
+        }
+
         const searchWordRegex = /[\w'?*]+/g;
         if (~val.indexOf(' OR ')) {
             // Multiple searches in one query: 'secret OR confidential OR "don't tell"'
@@ -1641,16 +1902,8 @@ class FullTextIndex extends DataIndex {
             }, []);
         }
 
-        // Sequentual method: query 1 word, then filter results further and further
-        // More or less performs the same as parallel, but uses less memory
-        // Use the longest word to search with, then filter those results
-        const allWords = words.slice().sort((a,b) => {
-            if (a.length < b.length) { return 1; }
-            else if (a.length > b.length) { return -1; }
-            return 0;
-        });
-        // const otherWords = allWords.slice(1);
-        const queryWord = (word, filter) => {
+        // Get result count for each word
+        const countPromises = words.map(word => {
             const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?'));
             let wordOp;
             if (op === 'fulltext:contains') {
@@ -1660,68 +1913,114 @@ class FullTextIndex extends DataIndex {
                 wordOp = wildcardIndex >= 0 ? '!like' : '!=';
             }
             // return super.query(wordOp, word)
-            return super.query(wordOp, word, { filter });
-        }
-        let wordIndex = 0;
-        let results;
-        let resultsPerWord = new Array(words.length);
-        const nextWord = () => {
-            const word = allWords[wordIndex];
-            const t1 = Date.now();
-            return queryWord(word, results)
-            .then(fr => {
-                const t2 = Date.now();
-                console.log(`fulltext search for "${word}" took ${t2-t1}ms`);
-                resultsPerWord[words.indexOf(word)] = fr;
-                results = fr;
-                wordIndex++;
-                if (results.length === 0 || wordIndex === allWords.length) { return; }
-                return nextWord();
+            return super.count(wordOp, word)
+            .then(count => {
+                return { word, count};
+            });            
+        });
+        return Promise.all(countPromises).then(counts => {
+            // Start with the smallest result set
+            counts.sort((a, b) => {
+                if (a.count < b.count) { return -1; }
+                else if (a.count > b.count) { return 1; }
+                return 0;
             });
-        }
-        return nextWord().then(() => {
-            if (options.phrase === true && allWords.length > 1) {
-                // Check which results have the words in the right order
-                results = results.reduce((matches, match) => {
-                    // the order of the resultsPerWord is in the same order as the given words,
-                    // check if their metadata._occurs_ say the same about the indexed content
-                    const path = match.path;
-                    const wordMatches = resultsPerWord.map(results => {
-                        return results.find(result => result.path === path);
-                    });
-                    // Convert the _occurs_ strings to arrays we can use
-                    wordMatches.forEach(match => {
-                        match.metadata._occurs_ = match.metadata._occurs_.split(',').map(parseInt);
-                    });
-                    const check = (wordMatchIndex, prevWordIndex) => {
-                        const sourceIndexes = wordMatches[wordMatchIndex].metadata._occurs_;
-                        if (typeof prevWordIndex !== 'number') {
-                            // try with each sourceIndex of the first word
-                            for (let i = 0; i < sourceIndexes.length; i++) {
-                                const found = check(1, sourceIndexes[i]);
-                                if (found) { return true; }
-                            }
-                            return false;
-                        }
-                        // We're in a recursive call on the 2nd+ word
-                        if (~sourceIndexes.indexOf(prevWordIndex + 1)) {
-                            // This word came after the previous word, hooray!
-                            // Proceed with next word, or report success if this was the last word to check
-                            if (wordMatchIndex === wordMatches.length-1) { return true; }
-                            return check(wordMatchIndex+1, prevWordIndex+1);
-                        }
-                        else {
-                            return false;
-                        }
-                    }
-                    if (check(0)) {
-                        matches.push(match); // Keep!
-                    }
-                    return matches;
-                }, new IndexQueryResults());
+            const allWords = counts.map(c => c.word);
+
+            // Sequentual method: query 1 word, then filter results further and further
+            // More or less performs the same as parallel, but uses less memory
+            // NEW: Start with the smallest result set
+
+            // OLD: Use the longest word to search with, then filter those results
+            // const allWords = words.slice().sort((a,b) => {
+            //     if (a.length < b.length) { return 1; }
+            //     else if (a.length > b.length) { return -1; }
+            //     return 0;
+            // });
+
+            const queryWord = (word, filter) => {
+                const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?'));
+                let wordOp;
+                if (op === 'fulltext:contains') {
+                    wordOp = wildcardIndex >= 0 ? 'like' : '==';
+                }
+                else if (op === 'fulltext:!contains') {
+                    wordOp = wildcardIndex >= 0 ? '!like' : '!=';
+                }
+                // return super.query(wordOp, word)
+                return super.query(wordOp, word, { filter });
             }
-            results.filterKey = this.key;
-            return results;
+            let wordIndex = 0;
+            let results;
+            let resultsPerWord = new Array(words.length);
+            const nextWord = () => {
+                const word = allWords[wordIndex];
+                const t1 = Date.now();
+                return queryWord(word, results)
+                .then(fr => {
+                    const t2 = Date.now();
+                    debug.log(`fulltext search for "${word}" took ${t2-t1}ms`);
+                    resultsPerWord[words.indexOf(word)] = fr;
+                    results = fr;
+                    wordIndex++;
+                    if (results.length === 0 || wordIndex === allWords.length) { return; }
+                    return nextWord();
+                });
+            }
+            return nextWord().then(() => {
+                if (options.phrase === true && allWords.length > 1) {
+                    // Check which results have the words in the right order
+                    results = results.reduce((matches, match) => {
+                        // the order of the resultsPerWord is in the same order as the given words,
+                        // check if their metadata._occurs_ say the same about the indexed content
+                        const path = match.path;
+                        const wordMatches = resultsPerWord.map(results => {
+                            return results.find(result => result.path === path);
+                        });
+                        // Convert the _occurs_ strings to arrays we can use
+                        wordMatches.forEach(match => {
+                            match.metadata._occurs_ = match.metadata._occurs_.split(',').map(parseInt);
+                        });
+                        const check = (wordMatchIndex, prevWordIndex) => {
+                            const sourceIndexes = wordMatches[wordMatchIndex].metadata._occurs_;
+                            if (typeof prevWordIndex !== 'number') {
+                                // try with each sourceIndex of the first word
+                                for (let i = 0; i < sourceIndexes.length; i++) {
+                                    const found = check(1, sourceIndexes[i]);
+                                    if (found) { return true; }
+                                }
+                                return false;
+                            }
+                            // We're in a recursive call on the 2nd+ word
+                            if (~sourceIndexes.indexOf(prevWordIndex + 1)) {
+                                // This word came after the previous word, hooray!
+                                // Proceed with next word, or report success if this was the last word to check
+                                if (wordMatchIndex === wordMatches.length-1) { return true; }
+                                return check(wordMatchIndex+1, prevWordIndex+1);
+                            }
+                            else {
+                                return false;
+                            }
+                        }
+                        if (check(0)) {
+                            matches.push(match); // Keep!
+                        }
+                        return matches;
+                    }, new IndexQueryResults());
+                }
+                results.filterKey = this.key;
+                
+                // Cache results
+                delete results.values; // No need to cache these. Free the memory
+                // let opCache = this._cache.get(op);
+                // if (!opCache) {
+                //     opCache = new Map();
+                //     this._cache.set(op, opCache);
+                // }
+                // opCache.set(val, results);
+                this.cache(op, val, results);
+                return results;
+            });
         });
 
         // Parallel method: query all words at the same time, then combine results
