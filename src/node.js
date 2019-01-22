@@ -281,7 +281,7 @@ class NodeLock {
     }
 
     static list() {
-        return this._locks || [];
+        return _locks || [];
     }
 
     static isAllowed(path, tid, forWriting) {
