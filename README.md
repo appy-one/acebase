@@ -629,25 +629,25 @@ Indexed locations are stored using 10 character geohashes, which have a precisio
 ## Mapping data to custom classes
 
 Mapping data to your own classes allows you to store and load objects to/from the database without them losing their class type. Once you have mapped a database path to a class, you won't ever have to worry about serialization or deserialization of the objects.
+By default, AceBase runs your class constructor with a snapshot of the data to instantiate new objects, and uses all properties of your class to serialize them for storage. 
 
 ```javascript
 // User class implementation
 class User {
-    constructor(plainObject) {
-        this.name = plainObject.name;
-    }
-
-    serialize() {
-        // (optional) method to manually serialize
-        return {
-            name: this.name
+    constructor(obj) {
+        if (obj && obj instanceof DataSnapshot) {
+            let obj = snapshot.val();
+            this.name = obj.name;
         }
     }
 }
 
 // Bind to all children of users node
 db.types.bind("users", User);
+```
 
+You can now do the following:
+```javascript
 // Create a user
 let user = new User();
 user.name = 'Ewout';
@@ -665,7 +665,8 @@ db.ref('users')
 })
 ```
 
-If you are unable (or don't want to) to change your class constructor, add a static method to deserialize the plain object and bind to it:
+
+If you are unable (or don't want to) to change your class constructor, add a static method named ```create``` to deserialize stored objects:
 
 ```javascript
 class Pet {
@@ -675,18 +676,70 @@ class Pet {
         this.name = name;
     }
     // Static method that instantiates a Pet object
-    static from(obj) {
+    static create(snap) {
+        let obj = snap.val();
         return new Pet(obj.animal, obj.name);
     }
 }
-// Bind to all pets of any user, using Pet.from as deserializer
-db.types.bind("users/*/pets", Pet.from, { instantiate: false }); 
+// Bind to all pets of any user
+db.types.bind("users/*/pets", Pet); 
 ```
 
-Note: ```{ instantiate: false }``` informs AceBase that ```Pet.from``` should not be called using the ```new``` keyword.
-Also note that ```class Pet``` did not implement a ```serialize``` method. In this case, AceBase will serialize the object's properties automatically. If your class contains properties that should not be serialized (eg ```get``` properties), make sure to implement a custom ```serialize``` method.
+If you want to change how your objects are serialized for storage, add a method named ```serialize``` to your class. You should do this if your class contains properties that should not be serialized (eg ```get``` properties).
+
+```javascript
+class Pet {
+    // ...
+    serialize() {
+        // manually serialize
+        return {
+            name: this.name
+        }
+    }
+}
+// Bind
+db.types.bind("users/*/pets", Pet); 
+```
+
+If you want to use other methods for instantiation and/or serialization than the defaults, you can manually specify them in the ```bind``` call:
+```javascript
+class Pet {
+    // ...
+    toDatabase(ref) {
+        return {
+            name: this.name
+        }
+    }
+    static fromDatabase(snap) {
+        let obj = snap.val();
+        return new Pet(obj.animal, obj.name);
+    }
+}
+// Bind using Pet.fromDatabase as object creator and Pet.prototype.toDatabase as serializer
+db.types.bind("users/*/pets", Pet, { creator: Pet.fromDatabase, serializer: Pet.prototype.toDatabase }); 
+```
+
+If you want to store native or 3rd party classes and don't want to extend them with (de)serialization functions:
+```javascript
+// Storing native RegExp objects
+db.types.bind(
+    "regular_expressions", 
+    RegExp, { 
+        creator: (snap) => {
+            let obj = snap.val();
+            return new RegExp(obj.pattern, obj.flags);
+        }, 
+        serializer: (ref, regex) => {
+            // NOTE the regex param, we need it because we can't use `this` as reference to the object
+            return { pattern: regex.source, flags: regex.flags };
+        } 
+    }
+);
+```
 
 ## Upgrade notices
+
+v0.6.0 - Changed ```db.types.bind``` method signature. Serialization and creator functions can now also access the ```DataReference``` for the object being serialized/instantiated, this enables the use of path variables.
 
 v0.4.0 - introduced fulltext, geo and array indexes. This required making changes to the index file format, you will have to delete all index files and create them again using ```db.indexes.create```.
 
