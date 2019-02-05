@@ -7,6 +7,7 @@ const { TextEncoder } = require('text-encoding');
 const { DataIndex, ArrayIndex, FullTextIndex, GeoIndex } = require('./data-index');
 const { Node, NodeAddress } = require('./node');
 const { NodeCache } = require('./node-cache');
+const { NodeLocker } = require('./node-lock');
 const textEncoder = new TextEncoder();
 const colors = require('colors');
 
@@ -58,6 +59,7 @@ class Storage extends EventEmitter {
         };
         this.stats = stats;
         this.nodeCache = new NodeCache();
+        this.nodeLocker = new NodeLocker();
 
         const filename = `${this.settings.path}/${this.name}.acebase/data.db`;
         let fd = null;
@@ -165,16 +167,16 @@ class Storage extends EventEmitter {
                             worker.send({ id, result: "ok" });
                         }
                         else if (request.type === "lock") {
-                            promise = storage.lock(request.path, request.tid);
+                            promise = this.nodeLocker.lock(request.path, request.tid, request.forWriting, request.comment, request.options);
                         }
                         else if (request.type === "unlock") {
-                            promise = storage.unlock(request.path, request.tid);
+                            promise = this.nodeLocker.unlock(request.lockId, request.comment, request.processQueue);
                         }
                         else if (request.type === "add_key") {
                             let index = this.KIT.getOrAdd(request.key);
                             worker.send({ id, result: index });
                         }
-                        else if (request.type === "address") {
+                        else if (request.type === "update_address") {
                              // Send it to all other workers
                             this.addressCache.update(request.address, true);
                             cluster.workers.forEach(otherWorker => {
@@ -220,7 +222,7 @@ class Storage extends EventEmitter {
                 if (data.type === "key_added") {
                     this.KIT.keys[data.index] = data.key;
                 }
-                else if (data.type === "address") {
+                else if (data.type === "update_address") {
                     this.addressCache.update(data.address, true);
                 }
             });
@@ -363,7 +365,7 @@ class Storage extends EventEmitter {
                 }
             };
 
-            // // Refactor: use IPC channel between child and master process!
+            // // Refactored: now using IPC channel between child and master process
             // const http = require('http');
             // this.FST = {
             //     allocate(requiredRecords) {

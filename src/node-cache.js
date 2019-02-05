@@ -42,7 +42,7 @@ class NodeCache {
 
         this. _cleanupTimeout = null;
         /** @type {Map<string, NodeCacheEntry>} */
-        this._cache = new Map(); //{ };        
+        this._cache = new Map(); //{ };
     }
 
     _assertCleanupTimeout() {
@@ -69,7 +69,7 @@ class NodeCache {
         if (nodeInfo.path === "") {
             // Don't cache root address, it has to be retrieved from storage.rootAddress
             return;
-        }
+        }      
         let entry = this._cache.get(nodeInfo.path);
         if (entry) {
             if (!overwrite) {

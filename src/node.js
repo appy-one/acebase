@@ -2,6 +2,7 @@
 const { Storage } = require('./storage');
 const { Utils, debug, ID, PathReference, PathInfo } = require('acebase-core');
 const { NodeInfo } = require('./node-info');
+const { NodeLock } = require('./node-lock');
 const { NodeAddress } = require('./node-address');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { numberToBytes, bytesToNumber, concatTypedArrays, cloneObject, compareValues, getChildValues } = Utils;
@@ -14,15 +15,9 @@ const colors = require('colors');
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-const SECOND = 1000;
-const MINUTE = 60000;
-
-const DEBUG_MODE = false;
-const LOCK_TIMEOUT = DEBUG_MODE ? 15 * MINUTE : 90 * SECOND;
 const BINARY_TREE_FILL_FACTOR_50 = 50;
 const BINARY_TREE_FILL_FACTOR_95 = 95;
 
-const UNCHANGED = { unchanged: "this data did not change" };
 const FLAG_WRITE_LOCK = 0x10;
 const FLAG_READ_LOCK = 0x20;
 const FLAG_KEY_TREE = 0x40;
@@ -191,246 +186,6 @@ class NodeChunkTableRange {
     }
 }
 
-/**
- * @type {NodeLock[]}
- */
-const _locks = [];
-
-function _allowLock(path, tid, forWriting) {
-    // Can this lock be granted now or do we have to wait?
-    const pathInfo = PathInfo.get(path);
-    const conflict = _locks
-        .filter(otherLock => otherLock.tid !== tid && otherLock.state === NodeLock.LOCK_STATE.LOCKED)
-        .find(otherLock => {
-            return (
-                // Other lock clashes with requested lock, if:
-                // One (or both) of them is for writing
-                (forWriting || otherLock.forWriting)
-
-                // and requested lock is on the same or deeper path
-                && (
-                    path === otherLock.path
-                    || pathInfo.isDescendantOf(otherLock.path)
-                )
-            );
-        });
-
-    const clashes = typeof conflict !== 'undefined';
-    return { allow: !clashes, conflict };
-}
-
-function _processLockQueue() {
-    const pending = _locks
-        .filter(lock => 
-            lock.state === NodeLock.LOCK_STATE.PENDING
-            && (lock.waitingFor === null || lock.waitingFor.state !== NodeLock.LOCK_STATE.LOCKED)
-        )
-        .sort((a,b) => {
-            // // Writes get higher priority so all reads get the most recent data
-            // if (a.forWriting === b.forWriting) { 
-            //     if (a.requested < b.requested) { return -1; }
-            //     else { return 1; }
-            // }
-            // else if (a.forWriting) { return -1; }
-            if (a.priority && !b.priority) { return -1; }
-            else if (!a.priority && b.priority) { return 1; }
-            return a.requested < b.requested;
-        });
-    pending.forEach(lock => {
-        const check = _allowLock(lock.path, lock.tid, lock.forWriting);
-        lock.waitingFor = check.conflict || null;
-        if (check.allow) {
-            NodeLock.lock(lock)
-            .then(lock.resolve)
-            .catch(lock.reject);
-        }
-    });
-}
-
-class NodeLock {
-
-    static get LOCK_STATE() {
-        return {
-            PENDING: 'pending',
-            LOCKED: 'locked',
-            EXPIRED: 'expired',
-            DONE: 'done'
-        };
-    };
-
-    /**
-     * Constructor for a record lock
-     * @param {Storage} storage 
-     * @param {string} path 
-     * @param {string} tid 
-     * @param {boolean} forWriting 
-     * @param {boolean} priority
-     */
-    constructor(storage, path, tid, forWriting, priority = false) {
-        this.tid = tid;
-        this.path = path;
-        this.forWriting = forWriting;
-        this.priority = priority;
-        this.state = NodeLock.LOCK_STATE.PENDING;
-        this.storage = storage;
-        this.requested = Date.now();
-        this.granted = undefined;
-        this.expires = undefined;
-        this.comment = "";
-        this.waitingFor = null;
-    }
-
-    static list() {
-        return _locks || [];
-    }
-
-    static isAllowed(path, tid, forWriting) {
-        return _allowLock(path, tid, forWriting).allow;
-    }
-
-    release(comment) {
-        //return this.storage.unlock(this.path, this.tid, comment);
-        return NodeLock.unlock(this, comment || this.comment);
-    }
-
-    /**
-     * Locks a path for writing. While the lock is in place, it's value cannot be changed by other transactions.
-     * @param {string} path path being locked
-     * @param {string} tid a unique value to identify your transaction
-     * @param {boolean} forWriting if the record will be written to. Multiple read locks can be granted access at the same time if there is no write lock. Once a write lock is granted, no others can read from or write to it.
-     * @returns {Promise<NodeLock>} returns a promise with the lock object once it is granted. It's .release method can be used as a shortcut to .unlock(path, tid) to release the lock
-     */
-    static lock(path, tid, forWriting = true, comment = '', options = { withPriority: false, noTimeout: false }) {
-        let lock, proceed;
-        if (path instanceof NodeLock) {
-            lock = path;
-            lock.comment = `(retry: ${lock.comment})`;
-            proceed = true;
-        }
-        else if (_locks.findIndex((l => l.tid === tid && l.state === NodeLock.LOCK_STATE.EXPIRED)) >= 0) {
-            return Promise.reject(new Error(`lock on tid ${tid} has expired, not allowed to continue`));
-        }
-        else {
-
-            // // Test the requested lock path
-            // let duplicateKeys = getPathKeys(path)
-            //     .reduce((r, key) => {
-            //         let i = r.findIndex(c => c.key === key);
-            //         if (i >= 0) { r[i].count++; }
-            //         else { r.push({ key, count: 1 }) }
-            //         return r;
-            //     }, [])
-            //     .filter(c => c.count > 1)
-            //     .map(c => c.key);
-            // if (duplicateKeys.length > 0) {
-            //     console.log(`ALERT: Duplicate keys found in path "/${path}"`.dim.bgRed);
-            // }
-
-            lock = new NodeLock(this, path, tid, forWriting, options.withPriority === true);
-            lock.comment = comment;
-            _locks.push(lock);
-            const check = _allowLock(path, tid, forWriting);
-            lock.waitingFor = check.conflict || null;
-            proceed = check.allow;
-        }
-
-        if (proceed) {
-            lock.state = NodeLock.LOCK_STATE.LOCKED;
-            if (typeof lock.granted === "number") {
-                //debug.warn(`lock :: ALLOWING ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
-            }
-            else {
-                lock.granted = Date.now();
-                if (options.noTimeout !== true) {
-                    lock.expires = Date.now() + LOCK_TIMEOUT;
-                    //debug.warn(`lock :: GRANTED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
-                    lock.timeout = setTimeout(() => {
-                        // In the right situation, this timeout never fires. Target: Bugfree code
-
-                        if (lock.state !== NodeLock.LOCK_STATE.LOCKED) { return; }
-                        debug.error(`lock :: ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} took too long, ${lock.comment}`);
-                        lock.state = NodeLock.LOCK_STATE.EXPIRED;
-                        // let allTransactionLocks = _locks.filter(l => l.tid === lock.tid).sort((a,b) => a.requested < b.requested ? -1 : 1);
-                        // let transactionsDebug = allTransactionLocks.map(l => `${l.state} ${l.forWriting ? "WRITE" : "read"} ${l.comment}`).join("\n");
-                        // debug.error(transactionsDebug);
-
-                        _processLockQueue();
-                    }, LOCK_TIMEOUT);
-                }
-            }
-            return Promise.resolve(lock);
-        }
-        else {
-            // Keep pending until clashing lock(s) is/are removed
-            //debug.warn(`lock :: QUEUED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
-            console.assert(lock.state === NodeLock.LOCK_STATE.PENDING);
-            const p = new Promise((resolve, reject) => {
-                lock.resolve = resolve;
-                lock.reject = reject;
-            });
-            return p;
-        }
-    }
-
-    static unlock(lock, comment, processQueue = true) {// (path, tid, comment) {
-        const i = _locks.indexOf(lock); //_locks.findIndex(lock => lock.tid === tid && lock.path === path);
-        if (i < 0) {
-            const msg = `lock on "/${lock.path}" for tid ${lock.tid} wasn't found; ${comment}`;
-            debug.error(`unlock :: ${msg}`);
-            return Promise.reject(new Error(msg));
-        }
-        lock.state = NodeLock.LOCK_STATE.DONE;
-        clearTimeout(lock.timeout);
-        _locks.splice(i, 1);
-        //debug.warn(`unlock :: RELEASED ${lock.forWriting ? "write" : "read" } lock on "/${lock.path}" for tid ${lock.tid}; ${lock.comment}; ${comment}`);
-        processQueue && _processLockQueue();
-        return Promise.resolve(lock);
-    }
-
-    moveToParent() {
-        const parentPath = PathInfo.get(this.path).parentPath; //getPathInfo(this.path).parent;
-        const check = _allowLock(parentPath, this.tid, this.forWriting);
-        if (check.allow) {
-            this.waitingFor = null;
-            this.path = parentPath;
-            this.comment = `moved to parent: ${this.comment}`;
-            return Promise.resolve(this);
-        }
-        else {
-            // Unlock without processing the queue
-            NodeLock.unlock(this, `moveLockToParent: ${this.comment}`, false);
-
-            // Lock parent node with priority to jump the queue
-            return NodeLock.lock(parentPath, this.tid, this.forWriting, `moved to parent (queued): ${this.comment}`, { withPriority: true })
-            .then(newLock => {
-                return newLock;
-            });
-        }
-    }
-
-    moveTo(otherPath, forWriting) {
-        const check = _allowLock(otherPath, this.tid, forWriting);
-        if (check.allow) {
-            this.waitingFor = null;
-            this.path = otherPath;
-            this.forWriting = forWriting;
-            this.comment = `moved to "/${otherPath}": ${this.comment}`;
-            return Promise.resolve(this);
-        }
-        else {
-            // Unlock without processing the queue
-            NodeLock.unlock(this, `moving to "/${otherPath}": ${this.comment}`, false);
-
-            // Lock other node with priority to jump the queue
-            return NodeLock.lock(otherPath, this.tid, forWriting, `moved to "/${otherPath}" (queued): ${this.comment}`, { withPriority: true })
-            .then(newLock => {
-                return newLock;
-            });
-        }
-    }
-
-}
-
 class RecordInfo {
     /**
      * @param {string} path
@@ -552,7 +307,7 @@ class NodeReader {
                     if (address) {
                         // Get child Allocation
                         let childLock;
-                        let promise = NodeLock.lock(child.path, this.lock.tid, false, `NodeReader:getAllocation:child "/${child.path}"`)
+                        let promise = this.storage.nodeLocker.lock(child.path, this.lock.tid, false, `NodeReader:getAllocation:child "/${child.path}"`)
                         .then(l => {
                             childLock = l;
                             const reader = new NodeReader(this.storage, address, childLock, this.updateCache);
@@ -686,7 +441,7 @@ class NodeReader {
                         }
                         if (child.address) {
                             let childLock;
-                            let childValuePromise = NodeLock.lock(child.address.path, this.lock.tid, false, `NodeReader.getValue:child "/${child.address.path}"`)
+                            let childValuePromise = this.storage.nodeLocker.lock(child.address.path, this.lock.tid, false, `NodeReader.getValue:child "/${child.address.path}"`)
                             .then(lock => {
                                 childLock = lock;
 
@@ -1622,7 +1377,7 @@ class Node {
 
         // Achieve a read lock on the parent node and read it
         let lock;
-        return NodeLock.lock(parentPath, tid, false, `Node.getInfo "/${parentPath}"`)
+        return storage.nodeLocker.lock(parentPath, tid, false, `Node.getInfo "/${parentPath}"`)
         .then(l => {
             lock = l;
             return Node.getInfo(storage, parentPath, { tid });
@@ -1662,136 +1417,6 @@ class Node {
     static locate(storage, path, options = { tid: undefined }) {
         return Node.getInfo(storage, path, options);
     }
-
-    // /**
-    //  * Updates or overwrite an existing node, or creates a new node. Handles storing of subnodes, 
-    //  * freeing old node and subnodes allocation, updating/creation of parent nodes, and removing 
-    //  * old cache entries. Triggers event notifications and index updates after the update succeeds.
-    //  * @param {Storage} storage 
-    //  * @param {string} path 
-    //  * @param {any} value Any value will do. If the value is small enough to be stored in a parent record, it will take care of it
-    //  * @param {{ merge?: boolean, tid?: string }} options
-    //  */
-    // static update(storage, path, value, options = { merge: true, tid: undefined, _internal: false }) {
-
-    //     const tid = options.tid;// || ID.generate();
-    //     const pathInfo = PathInfo.get(path); // getPathInfo(path);
-
-    //     if (value === null) {
-    //         // Deletion of node is requested. Update parent
-    //         return Node.update(storage, pathInfo.parentPath, { [pathInfo.key]: null }, { merge: true, tid });
-    //     }
-        
-    //     if (path !== "" && _valueFitsInline(storage, value)) {
-    //         // Simple value, update parent instead
-    //         return Node.update(storage, pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid });
-    //     }
-
-    //     if (typeof value !== 'object' && options.merge) {
-    //         // Make sure merge option is swtiched off if value is not an object
-    //         options.merge = false;
-    //     }
-        
-    //     if (!this._updateSync) { this._updateSync = new Map(); }
-    //     let storageUpdates = this._updateSync.get(storage.name);
-    //     if (!storageUpdates) {
-    //         storageUpdates = { storage, pathUpdates: new Map() };
-    //         this._updateSync.set(storage.name, storageUpdates);
-    //     }
-    //     let pathUpdates = storageUpdates.pathUpdates.get(path);
-    //     if (!pathUpdates) {
-    //         pathUpdates = { postponed: 0, updates: [] };
-    //         storageUpdates.pathUpdates.set(path, pathUpdates);
-    //     }
-    //     else if (pathUpdates.timeout) { // && pathUpdates.postponed < 5
-    //         clearTimeout(pathUpdates.timeout);
-    //         delete pathUpdates.timeout;
-    //         pathUpdates.postponed++;
-    //     }
-
-    //     const merge = () => {
-    //         storageUpdates.pathUpdates.delete(path);
-    //         let mergedValue = {};
-    //         let internal = true;
-    //         let merge = true;
-    //         for(let i = 0; i < pathUpdates.updates.length; i++) {
-    //             let update = pathUpdates.updates[i];
-    //             if (!update.options.merge) {
-    //                 merge = false;
-    //                 mergedValue = update.value;
-    //             }
-    //             else {
-    //                 Object.keys(update.value).forEach(key => {
-    //                     mergedValue[key] = update.value[key];
-    //                 });
-    //             }
-    //             internal = internal && update.options._internal;
-    //         }
-            
-    //         const go = (tid) => {
-    //             pathUpdates.updates.length > 1 && console.log(`Processing ${pathUpdates.updates.length} merged updates on node "/${path}"`);
-    //             let mergedOptions = { _internal: internal, merge, tid };
-    //             return this._update(storage, path, mergedValue, mergedOptions)
-    //             .then(() => {
-    //                 for(let i = 0; i < pathUpdates.updates.length; i++) {
-    //                     let update = pathUpdates.updates[i];
-    //                     update.resolve();
-    //                 }
-    //             });
-    //         }
-
-    //         if (pathUpdates.lockPromise) {
-    //             pathUpdates.lockPromise.then(lock => {
-    //                 go(lock.tid).then(() => lock.release());
-    //             });
-    //         }
-    //         else {
-    //             const findBestTid = () => {
-    //                 const tids = pathUpdates.updates.map(update => update.options && update.options.tid).filter(tid => tid);
-    //                 if (tids.length === 0) { return; }
-    //                 const locks = NodeLock.list().filter(lock => tids.findIndex(tid => tid === lock.tid) >= 0);
-    //                 if (locks.length > 0) {
-    //                     const exact = locks.find(lock => lock.path === path && lock.forWriting && lock.state === NodeLock.LOCK_STATE.LOCKED);
-    //                     if (exact) { return exact.tid; }
-    //                     const best = locks.find(lock => NodeLock.isAllowed(path, lock.tid, true));
-    //                     if (best) { return best.tid; }
-    //                 }
-    //                 const potential = tids.find(tid => NodeLock.isAllowed(path, tid, true));
-    //                 if (potential) { return potential; }
-    //                 return tids[0];
-    //             }                
-    //             go(findBestTid() || ID.generate());
-    //         }
-    //     };
-
-    //     if (pathUpdates.postponed === 10) {
-    //         // Do it now and start afresh
-    //         merge();
-    //         pathUpdates = { postponed: 0, updates: [] };
-    //         storageUpdates.pathUpdates.set(path, pathUpdates);                
-    //     }
-    
-    //     const update = {
-    //         value,
-    //         options,
-    //         resolve: undefined,
-    //         reject: undefined,
-    //     };
-    //     const promise = new Promise((res, rej) => {
-    //         update.resolve = res;
-    //         update.reject = rej;
-    //     });
-    //     pathUpdates.last = Date.now();
-    //     pathUpdates.updates.push(update);
-
-    //     if (!pathUpdates.lockPromise && tid && NodeLock.isAllowed(path, tid, true)) {
-    //         pathUpdates.lockPromise = NodeLock.lock(path, tid, true);
-    //     }
-
-    //     // process.nextTick(merge); 
-    //     pathUpdates.timeout = setTimeout(merge, 0);
-    //     return promise;
-    // }
 
     /**
      * Updates or overwrite an existing node, or creates a new node. Handles storing of subnodes, 
@@ -1847,7 +1472,7 @@ class Node {
         let lock;
         let topEventData;
 
-        return NodeLock.lock(topEventPath, tid, true, `Node.update (get topEventPath "/${topEventPath}")`)
+        return storage.nodeLocker.lock(topEventPath, tid, true, `Node.update (get topEventPath "/${topEventPath}")`)
         .then(l => {
             lock = l;
             return Node.getInfo(storage, topEventPath, { tid });
@@ -2199,10 +1824,17 @@ class Node {
         });
     }
 
+    /**
+     * Gets the value of a node
+     * @param {Storage} storage 
+     * @param {string} path 
+     * @param {object} [options] 
+     * @returns {Promise<any>}
+     */    
     static getValue(storage, path, options = { tid: undefined, include: undefined, exclude: undefined, child_objects: true }) {
         const tid = options.tid || ID.generate();
         var lock;
-        return NodeLock.lock(path, tid, false, `Node.getValue "/${path}"`)
+        return storage.nodeLocker.lock(path, tid, false, `Node.getValue "/${path}"`)
         .then(l => {
             lock = l;
             return Node.getInfo(storage, path, { tid });
@@ -2270,7 +1902,7 @@ class Node {
             const tid = ID.generate();
             let canceled = false;
             var lock;
-            return NodeLock.lock(path, tid, false, `Node.getChildren "/${path}"`)
+            return storage.nodeLocker.lock(path, tid, false, `Node.getChildren "/${path}"`)
             .then(l => {
                 lock = l;
                 return Node.getInfo(storage, path, { tid });
@@ -2333,7 +1965,7 @@ class Node {
             currentValue: null,
             newValue: null
         };
-        return NodeLock.lock(path, tid, true, `Node.getValue "/${path}"`)
+        return storage.nodeLocker.lock(path, tid, true, `Node.getValue "/${path}"`)
         .then(lock => {
             // console.error(`TRANSACTION: got lock for transaction on path "/${path}"`);
             state.lock = lock;
@@ -2370,6 +2002,8 @@ class Node {
 
     /**
      * Check if a node's value matches the passed criteria
+     * @param {Storage} storage
+     * @param {string} path
      * @param {Array<{ key: string, op: string, compare: string }>} criteria criteria to test
      * @returns {Promise<boolean>} returns a promise that resolves with a boolean indicating if it matched the criteria
      */
@@ -2389,7 +2023,7 @@ class Node {
         /** @type {NodeLock} */let lock;
         let isMatch = true;
         let delayedMatchPromises = [];
-        return NodeLock.lock(path, tid, true, `Node.getValue "/${path}"`)
+        return storage.nodeLocker.lock(path, tid, true, `Node.getValue "/${path}"`)
         .then(l => {
             lock = l;
             return Node.getInfo(storage, path, { tid });
@@ -2769,7 +2403,7 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
                 }
 
                 let currentChildValue;
-                const promise = NodeLock.lock(child.address.path, lock.tid, false, `_mergeNode: read child "/${child.address.path}"`)
+                const promise = storage.nodeLocker.lock(child.address.path, lock.tid, false, `_mergeNode: read child "/${child.address.path}"`)
                 .then(childLock => {
                     const childReader = new NodeReader(storage, child.address, childLock, false);
                     return Promise.all([
@@ -3049,7 +2683,7 @@ function _createNode(storage, nodeInfo, newValue, lock, invalidateCache = true) 
  */
 function _lockAndWriteNode(storage, path, value, parentTid) {
     let lock;
-    return NodeLock.lock(path, parentTid, true, `_lockAndWrite "${path}"`)
+    return storage.nodeLocker.lock(path, parentTid, true, `_lockAndWrite "${path}"`)
     .then(l => {
         lock = l;
         return _writeNode(storage, path, value, lock);
