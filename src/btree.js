@@ -1,6 +1,7 @@
 const { Utils } = require('acebase-core');
 const { numberToBytes, bytesToNumber } = Utils;
 const { TextEncoder, TextDecoder } = require('text-encoding');
+const ThreadSafe = require('./thread-safe');
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -12,33 +13,32 @@ const KEY_TYPE = {
     DATE: 4
 };
 
-// const safeCompare = function(val) {
-//     return {
-//         lt: (val2) => { 
-//             if (typeof val === 'undefined') { return typeof val2 !== 'undefined'; }
-//             return val < val2;
-//         },
-//         lte: (val2) => {
-//             if (typeof val === 'undefined') { return true; }
-//             return val <= val2;
-//         },
-//         gt: (val2) => {
-//             if (typeof val === 'undefined') { return false; }
-//             return val > val2;
-//         },
-//         gte: (val2) => {
-//             if (typeof val === 'undefined') { return typeof val2 === 'undefined'; }
-//             return val >= val2;
-//         },
-//         eq: (val2) => {
-//             return val == val2;
-//         }
-//     }
-// };
+const FLAGS = {
+    UNIQUE_KEYS: 1,
+    HAS_METADATA: 2,
+    HAS_FREE_SPACE: 4,
+    HAS_FILL_FACTOR: 8,
+    HAS_SMALL_LEAFS: 16,
+    ENTRY_HAS_EXT_DATA: 128, // leaf entry value's val_length
+    IS_LEAF: 1,
+    LEAF_HAS_EXT_DATA: 2
+};
+
+const WRITE_SMALL_LEAFS = true;
+const MAX_SMALL_LEAF_VALUE_LENGTH = 127;
+const MAX_LEAF_ENTRY_VALUES = Math.pow(2, 32) - 1;
+
+const _appendToArray = (targetArray, arr2) => {
+    let start = 0, n = 255; 
+    while (start < arr2.length) {
+        targetArray.push(...arr2.slice(start, start + n));
+        start += n;
+    }
+};
 
 function _getComparibleValue(val) {
-    if (typeof val === 'undefined') { val = null; }
-    if (val instanceof Date) { val = val.getTime(); }
+    if (typeof val === 'undefined' || val === null) { val = null; }
+    else if (val instanceof Date) { val = val.getTime(); }
     return val;
 }
 
@@ -46,11 +46,13 @@ function _getComparibleValue(val) {
 function _isEqual(val1, val2) {
     val1 = _getComparibleValue(val1);
     val2 = _getComparibleValue(val2);
-    return val1 == val2;
+    if (typeof val1 !== typeof val2) { return false; }
+    return val1 === val2;
 }
 function _isNotEqual(val1, val2) {
     val1 = _getComparibleValue(val1);
     val2 = _getComparibleValue(val2);
+    if (typeof val1 !== typeof val2) { return true; }
     return val1 != val2;
 }
 function _isLess(val1, val2) {
@@ -58,6 +60,7 @@ function _isLess(val1, val2) {
     val2 = _getComparibleValue(val2);
     if (val2 === null) { return false; }
     if (val1 === null) { return val2 !== null; }
+    if (typeof val1 !== typeof val2) { return typeof val1 < typeof val2; } // boolean, number (+Dates), string
     return val1 < val2;
 }
 function _isLessOrEqual(val1, val2) {
@@ -65,6 +68,7 @@ function _isLessOrEqual(val1, val2) {
     val2 = _getComparibleValue(val2);
     if (val1 === null) { return true; }
     else if (val2 === null) { return false; }
+    if (typeof val1 !== typeof val2) { return typeof val1 < typeof val2; } // boolean, number (+Dates), string
     return val1 <= val2;
 }
 function _isMore(val1, val2) {
@@ -72,6 +76,7 @@ function _isMore(val1, val2) {
     val2 = _getComparibleValue(val2);
     if (val1 === null) { return false; }
     else if (val2 === null) { return true; }
+    if (typeof val1 !== typeof val2) { return typeof val1 > typeof val2; } // boolean, number (+Dates), string
     return val1 > val2;
 }
 function _isMoreOrEqual(val1, val2) {
@@ -79,6 +84,7 @@ function _isMoreOrEqual(val1, val2) {
     val2 = _getComparibleValue(val2);
     if (val1 === null) { return val2 === null; }
     else if (val2 === null) { return true; }
+    if (typeof val1 !== typeof val2) { return typeof val1 > typeof val2; } // boolean, number (+Dates), string
     return val1 >= val2;
 }
 function _sortCompare(val1, val2) {
@@ -86,9 +92,28 @@ function _sortCompare(val1, val2) {
     val2 = _getComparibleValue(val2);
     if (val1 === null && val2 !== null) { return -1; }
     if (val1 !== null && val2 === null) { return 1; }
+    if (typeof val1 !== typeof val2) { 
+        // boolean, number (+Dates), string
+        if (typeof val1 < typeof val2) { return -1; }
+        if (typeof val1 > typeof val2) { return 1; }
+    } 
     if (val1 < val2) { return -1; }
     if (val1 > val2) { return 1; }
     return 0;
+}
+
+const _numberRegex = /^[1-9][0-9]*$/;
+/**
+ * @param {string} str 
+ * @returns {boolean}
+ */
+function _isIntString(str) {
+    return typeof str === 'string' && _numberRegex.test(str);
+}
+
+function _normalizeKey(key) {
+    key = _getComparibleValue(key);
+    return key === null ? null : key.toString();
 }
 
 /**
@@ -98,6 +123,58 @@ function _sortCompare(val1, val2) {
  */
 function _compareBinary(val1, val2) {
     return val1.length === val2.length && val1.every((byte, index) => val2[index] === byte);
+}
+
+/**
+ * 
+ * @param {number[]} val1 
+ * @param {number[]} val2 
+ */
+function _compareBinaryDetails(val1, val2) {
+    let smaller = val1.length < val1.length ? val1 : val2;
+    return smaller.reduce((arr, current, index) => {
+        if (val1[index] !== val2[index]) { arr.push({ index, val1: val1[index], val2: val2[index] }); }
+        return arr;
+    }, []);
+}
+
+const _maxSignedNumber = Math.pow(2, 31) - 1;
+function _writeSignedOffset (bytes, index, offset, debugName) {
+    const negative = offset < 0;
+    if (negative) { offset = -offset; }
+    if (offset > _maxSignedNumber) {
+        throw new Error(`reference offset to big to store in 31 bits`);
+    }
+    bytes[index] = ((offset >> 24) & 0x7f) | (negative ? 0x80 : 0);
+    // if (debugName) {
+    //     data[index] = [debugName, data[index]];
+    // }
+    bytes[index+1] = (offset >> 16) & 0xff;
+    bytes[index+2] = (offset >> 8) & 0xff;
+    bytes[index+3] = offset & 0xff;
+    return bytes;
+};
+function _readSignedOffset (bytes, index) {
+    let offset = ((bytes[index] & 0x7f) << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8)  | bytes[index+3];
+    let isNegative = (bytes[index] & 0x80) > 0;
+    if (isNegative) { offset = -offset; }
+    return offset;
+
+};
+
+function _writeByteLength(bytes, index, length) {
+    bytes[index] = (length >> 24) & 0xff;
+    bytes[index+1] = (length >> 16) & 0xff;
+    bytes[index+2] = (length >> 8) & 0xff;
+    bytes[index+3] = length & 0xff;   
+    return bytes; 
+}
+function _readByteLength(bytes, index) {
+    let length = (bytes[index] << 24) 
+        | (bytes[index+1] << 16)
+        | (bytes[index+2] << 8)
+        | bytes[index+3];
+    return length;
 }
 
 class BPlusTreeNodeEntry {
@@ -237,23 +314,24 @@ class BPlusTreeNode {
      */
     toBinary(keepFreeSpace, writer) {
         // EBNF layout:
-        // data                 = byte_length, index_type, max_node_entries, [metadata_keys], root_node
+        // data                 = byte_length, index_type, max_node_entries, [fill_factor], [free_byte_length], [metadata_keys], root_node
         // byte_length          = 4 byte number (byte count)
-        // index_type           = 1 byte = [0,0,0,0,0,0, has_metadata, is_unique]
+        // index_type           = 1 byte = [0, 0, 0, has_small_leafs, has_fill_factor, has_free_space, has_metadata, is_unique]
         // max_node_entries     = 1 byte number
+        // fill_factor          = 1 byte number (max 100)
         // metadata_keys        = has_metadata?
-        //                          0: not present
         //                          1: metadata_length, metadata_key_count, metadata_key, [metadata_key, [metadata_key...]]
+        //                          0: not present
         // metadata_length      = byte_length
         // metadata_key_count   = 1 byte number
         // metadata_key         = metadata_key_length, metadata_key_name
         // metadata_key_length  = 1 byte number
         // metadata_key_name    = [metadata_key_length] bytes (TextEncoded char codes)
         // root_node            = node | leaf
-        // node*                = byte_length, is_leaf, free_byte_length, entries_length, entries, gt_child_ptr, children
-        // is_leaf              = 1 byte
+        // node*                = byte_length***, is_leaf, free_byte_length, entries_length, entries, gt_child_ptr, free_bytes, children
+        // is_leaf              = 1 byte leaf_flags
+        //                          >=1: yes, leaf
         //                          0: no, it's a node
-        //                          1: yes, leaf
         // free_byte_length     = byte_length (how many bytes are free for later additions)
         // entries_length       = 1 byte number
         // entries              = entry, [entry, [entry...]]
@@ -267,34 +345,44 @@ class BPlusTreeNode {
         //                          4: DATE
         // key_length           = 1 byte number
         // key_data             = [key_length] bytes (ASCII chars when key is string)
-        // lt_child_ptr         = 4 byte number (byte offset to node | leaf)
-        // gt_child_ptr         = 4 byte number (byte offset to node | leaf)
+        // lt_child_ptr         = 4 byte signed_number (byte offset to node | leaf)
+        // gt_child_ptr         = 4 byte signed_number (byte offset to node | leaf)
         // children             = node, [node, [node...]] | leaf, [leaf, [leaf...]]
-        // leaf**               = byte_length, is_leaf, free_byte_length, prev_leaf_ptr, next_leaf_ptr, entries_length, leaf_entries
+        // leaf**               = byte_length***, leaf_flags, free_byte_length, prev_leaf_ptr, next_leaf_ptr, [ext_byte_length, ext_free_byte_length], entries_length, leaf_entries, free_bytes, [ext_data]
+        // leaf_flags           = 1 byte = [0, 0, 0, 0, 0, 0, has_ext_data, is_leaf]
         // prev_leaf_ptr        = 4 byte signed_number (byte offset to leaf)
         // next_leaf_ptr        = 4 byte signed_number (byte offset to leaf)
         // leaf_entries         = leaf_entry, [leaf_entry, [leaf_entry...]]
         // leaf_entry           = key, val
-        // signed_number        = 32 bits = [negative_flag, bit{31}]
+        // signed_number        = 32 bits = [negative_flag, bits{31}]
         // val                  = val_length, val_data
-        // val_length           = 4 byte number (byte count)
+        // val_length           = has_small_leafs?
+        //                          1: 1 byte number: [1 bit has_ext_data, 7 bit byte count]
+        //                          0: 4 byte number (byte count)
         // val_data             = is_unique?
-        //                          0: value_list
         //                          1: value
+        //                          0: has_ext_data?
+        //                              1: value_list_length, ext_data_ptr
+        //                              0: value_list
+        // ext_data_ptr         = 4 byte signed_number (byte offset from leaf end to ext_data_block)
         // value_list           = value_list_length, value, [value, [value...]]
         // value_list_length    = 4 byte number
         // value                = value_length, value_data, metadata
         // value_length         = 1 byte number
         // value_data           = [value_length] bytes data
-        // metadata             = metadata_value[metadata_key_count]
+        // metadata             = metadata_value{metadata_key_count}
         // metadata_value       = metadata_value_type, metadata_value_length, metadata_value_data
         // metadata_value_type  = key_type
         // metadata_value_length= key_length
         // metadata_value_data  = key_data
-        // 
+        // ext_data             = ext_data_block, [ext_data_block, [ext_data_block]]
+        // ext_data_block       = ext_block_length, ext_block_free_length, ext_data_ptr, data
+        // ext_block_length     = byte_length
+        // ext_block_free_lengt = free_byte_length
         //
         // * Written by BPlusTreeNode.toBinary
         // ** Written by BPlusTreeLeaf.toBinary
+        // *** including free bytes (BUT excluding size of ext_data blocks for leafs)
 
         let bytes = [];
         const startIndex = writer.length; //bytes.length;
@@ -306,7 +394,7 @@ class BPlusTreeNode {
         bytes.push(0); // (no)
 
         // free_byte_length:
-        bytes.push(0, 0, 0, 0); // Not used for nodes at this time, reserved for future use
+        bytes.push(0, 0, 0, 0); // Now used!
 
         // entries_length:
         bytes.push(this.entries.length);
@@ -329,11 +417,21 @@ class BPlusTreeNode {
         bytes.push(0, 0, 0, 0);
         references.push({ name: `>${this.entries[this.entries.length - 1].key}`, index, node: this.gtChild });
 
+        let freeBytes = 0;
+        if (keepFreeSpace) {
+            // Add free space
+            let avgEntrySize = Math.ceil(bytes.length / this.entries.length);
+            let freeEntries = this.tree.maxEntriesPerNode - this.entries.length;
+            freeBytes = freeEntries * avgEntrySize;
+
+            for(let i = 0; i < freeBytes; i++) { bytes.push(0); }
+
+            // update free_byte_length:
+            _writeByteLength(bytes, 5, freeBytes);
+        }
+
         // update byte_length:
-        bytes[0] = (bytes.length >> 24) & 0xff;
-        bytes[1] = (bytes.length >> 16) & 0xff;
-        bytes[2] = (bytes.length >> 8) & 0xff;
-        bytes[3] = bytes.length & 0xff;
+        _writeByteLength(bytes, 0, bytes.length);
 
         // Flush bytes, continue async
         return writer.append(bytes)
@@ -347,12 +445,7 @@ class BPlusTreeNode {
                 const offset = index - (ref.index + 3);
                 
                 // Update child_ptr
-                const child_ptr = [
-                    (offset >> 24) & 0xff, // BPlusTree.addBinaryDebugString(`child_ptr ${name}`, (offset >> 24) & 0xff),
-                    (offset >> 16) & 0xff,
-                    (offset >> 8) & 0xff,
-                    offset & 0xff
-                ];
+                const child_ptr = _writeSignedOffset([], 0, offset);
 
                 return writer.write(child_ptr, ref.index)  // Update pointer
                 .then(() => {
@@ -420,17 +513,18 @@ class BPlusTreeNode {
                 if (i < 0) { return Promise.resolve(); }
                 let ref = references.splice(i, 1)[0]; // remove it from the references
                 let offset = pointer.index - ref.index;
-                const negative = (offset < 0);
-                if (negative) { offset = -offset; }
-                if (offset > maxOffset) {
-                    throw new Error(`reference offset to big to store in 31 bits`);
-                }
-                const bytes = [
-                    ((offset >> 24) & 0x7f) | (negative ? 0x80 : 0),
-                    (offset >> 16) & 0xff,
-                    (offset >> 8) & 0xff,
-                    offset & 0xff
-                ];
+                // const negative = (offset < 0);
+                // if (negative) { offset = -offset; }
+                // if (offset > maxOffset) {
+                //     throw new Error(`reference offset to big to store in 31 bits`);
+                // }
+                // const bytes = [
+                //     ((offset >> 24) & 0x7f) | (negative ? 0x80 : 0),
+                //     (offset >> 16) & 0xff,
+                //     (offset >> 8) & 0xff,
+                //     offset & 0xff
+                // ];
+                const bytes = _writeSignedOffset([], 0, offset);
                 return writer.write(bytes, ref.index)
                 .then(() => {
                     return nextReference();
@@ -520,6 +614,7 @@ class BPlusTreeLeaf {
      * @returns {BPlusTreeLeafEntry} returns the added leaf entry
      */
     add(key, recordPointer, metadata) {
+        // key = _normalizeKey(key); // if (_isIntString(key)) { key = parseInt(key); }
         if (typeof recordPointer === "string") {
             // For now, allow this. Convert to byte array
             console.warn(`WARNING: converting recordPointer "${recordPointer}" to byte array. This is deprecated, will fail in the future`);
@@ -619,14 +714,18 @@ class BPlusTreeLeaf {
      */
     toBinary(keepFreeSpace = false, writer) {
         // See BPlusTreeNode.toBinary() for data layout
+
+        console.assert(this.entries.every((entry, index, arr) => index === 0 || _isMore(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
+
         const bytes = [];
         const startIndex = writer.length;
 
-        // byte_length
+        // byte_length:
         bytes.push(0, 0, 0, 0);
 
-        // is_leaf:
-        bytes.push(1); // (yes)
+        // leaf_flags:
+        const leafFlagsIndex = bytes.length;
+        bytes.push(FLAGS.IS_LEAF);
 
         // free_byte_length:
         bytes.push(0, 0, 0, 0);
@@ -641,16 +740,34 @@ class BPlusTreeLeaf {
         this.nextLeaf && references.push({ name: `>${this.entries[this.entries.length-1].key}`, target: this.nextLeaf, index: startIndex + bytes.length });
         bytes.push(0, 0, 0, 0);
 
+        // ext_byte_length, ext_free_byte_length: (will be removed when no ext_data is written)
+        const extDataHeaderIndex = bytes.length;
+        bytes.push(
+            0, 0, 0, 0, // ext_byte_length
+            0, 0, 0, 0  // ext_free_byte_length
+        );        
+
         // entries_length:
         bytes.push(this.entries.length);
 
+        const entriesStartIndex = bytes.length;
+        const moreDataBlocks = [];
         this.entries.forEach(entry => {
+
+            console.assert(entry.values.length <= MAX_LEAF_ENTRY_VALUES, 'too many leaf entry values to store in binary');
+
             let keyBytes = BPlusTree.getBinaryKeyData(entry.key);
             bytes.push(...keyBytes);
 
             // val_length:
             const valLengthIndex = bytes.length;
-            bytes.push(0, 0, 0, 0);
+            if (WRITE_SMALL_LEAFS) {
+                bytes.push(0);
+            }
+            else {
+                bytes.push(0, 0, 0, 0);
+            }
+            let valueBytes = [];
 
             /**
              * 
@@ -659,17 +776,20 @@ class BPlusTreeLeaf {
             const writeValue = (entryValue) => {
                 const { recordPointer, metadata } = entryValue;
 
+                // const startIndex = bytes.length;
+                // const target = valueBytes;
+
                 // value_length:
-                bytes.push(recordPointer.length);
+                valueBytes.push(recordPointer.length);
 
                 // value_data:
-                bytes.push(...recordPointer);
+                valueBytes.push(...recordPointer);
 
                 // metadata:
                 this.tree.metadataKeys.forEach(key => {
                     const metadataValue = metadata[key];
-                    const valueBytes = BPlusTree.getBinaryKeyData(metadataValue); // metadata_value has same structure as key, so getBinaryKeyData comes in handy here
-                    bytes.push(...valueBytes);
+                    const mdBytes = BPlusTree.getBinaryKeyData(metadataValue); // metadata_value has same structure as key, so getBinaryKeyData comes in handy here
+                    valueBytes.push(...mdBytes);
                 });
             };
 
@@ -678,49 +798,118 @@ class BPlusTreeLeaf {
                 writeValue(entry.values[0]);
             }
             else {
-                // value_list_length:
-                const valueListLength = entry.values.length;
-                bytes.push((valueListLength >> 24) & 0xff);
-                bytes.push((valueListLength >> 16) & 0xff);
-                bytes.push((valueListLength >> 8) & 0xff);
-                bytes.push(valueListLength & 0xff);
-
                 entry.values.forEach(entryValue => {
                     // value:
                     writeValue(entryValue);
                 });
             }
+            
+            if (WRITE_SMALL_LEAFS && valueBytes.length > MAX_SMALL_LEAF_VALUE_LENGTH) {
+                // Values too big for small leafs
+                // Store value bytes in ext_data block
 
-            // update val_length
-            const valLength = bytes.length - valLengthIndex - 4;
-            bytes[valLengthIndex] = (valLength >> 24) & 0xff;
-            bytes[valLengthIndex+1] = (valLength >> 16) & 0xff;
-            bytes[valLengthIndex+2] = (valLength >> 8) & 0xff;
-            bytes[valLengthIndex+3] = valLength & 0xff;
+                // value_list_length:
+                _writeByteLength(bytes, bytes.length, entry.values.length);
+
+                // ext_data_ptr:
+                const extPointerIndex = bytes.length;
+                bytes.push(0, 0, 0, 0); 
+
+                // update val_length:
+                bytes[valLengthIndex] = FLAGS.ENTRY_HAS_EXT_DATA;
+
+                // add
+                moreDataBlocks.push({ 
+                    pointerIndex: extPointerIndex, 
+                    bytes: valueBytes
+                });
+            }
+            else {
+                // update val_length:
+                const valLength = valueBytes.length; //bytes.length - valLengthIndex - 4;
+                if (WRITE_SMALL_LEAFS) {
+                    bytes[valLengthIndex] = valLength;
+                }
+                else {
+                    _writeByteLength(bytes, valLengthIndex, valLength);
+                }
+
+                // value_list_length:
+                _writeByteLength(bytes, bytes.length, entry.values.length);
+
+                // add value bytes:
+                _appendToArray(bytes, valueBytes);
+            }
+
         });
 
         // Add free space
-        const leafDataSize = bytes.length;
-        const avgBytesPerEntry = Math.ceil(leafDataSize / this.entries.length);
+        const entriesDataSize = bytes.length - entriesStartIndex;
+        const avgBytesPerEntry = Math.ceil(entriesDataSize / this.entries.length);
         const availableEntries = this.tree.maxEntriesPerNode - this.entries.length;
         const freeBytesLength = 
             keepFreeSpace && this.entries.length > 0
-            ? availableEntries * avgBytesPerEntry
+            ? Math.ceil(availableEntries * avgBytesPerEntry * 1.1) // + 10%
             : 0;
         for (let i = 0; i < freeBytesLength; i++) { bytes.push(0); }
 
+        const hasExtData = moreDataBlocks.length > 0;
+        if (hasExtData) {
+            // update leaf_flags:
+            bytes[leafFlagsIndex] |= FLAGS.LEAF_HAS_EXT_DATA;
+        }
+        else {
+            // remove ext_byte_length, ext_free_byte_length
+            bytes.splice(extDataHeaderIndex, 8);
+        }
+
         // update byte_length:
         const totalLeafSize = bytes.length;
-        bytes[0] = (totalLeafSize >> 24) & 0xff;
-        bytes[1] = (totalLeafSize >> 16) & 0xff;
-        bytes[2] = (totalLeafSize >> 8) & 0xff;
-        bytes[3] = totalLeafSize & 0xff;
+        _writeByteLength(bytes, 0, totalLeafSize);
 
         // update free_byte_length
-        bytes[5] = (freeBytesLength >> 24) & 0xff;
-        bytes[6] = (freeBytesLength >> 16) & 0xff;
-        bytes[7] = (freeBytesLength >> 8) & 0xff;
-        bytes[8] = freeBytesLength & 0xff;
+        _writeByteLength(bytes, 5, freeBytesLength);
+
+        // Now, add any ext_data blocks
+        if (hasExtData) {
+            const leafEndIndex = bytes.length;
+
+            moreDataBlocks.forEach(block => {
+                const offset = bytes.length - leafEndIndex; // offset from leaf end index
+                _writeByteLength(bytes, block.pointerIndex, offset); // update ext_data_ptr
+                
+                // Calculate free space
+                const free = keepFreeSpace ? Math.ceil(block.bytes.length * 0.1) : 0;
+                const blockLength = block.bytes.length + free;
+
+                // ext_block_length:
+                _writeByteLength(bytes, bytes.length, blockLength);
+
+                // ext_block_free_length:
+                _writeByteLength(bytes, bytes.length, free);
+
+                // ext_data_ptr: (not implemented yet)
+                bytes.push(0, 0, 0, 0);
+
+                // data:
+                _appendToArray(bytes, block.bytes);
+
+                // Add free space:
+                for (let i = 0; i < free; i++) { bytes.push(0); }
+            });
+
+            const extByteLength = bytes.length - leafEndIndex;
+            const extFreeByteLength = keepFreeSpace ? Math.ceil(extByteLength * 0.1) : 0;
+
+            // update ext_byte_length:
+            _writeByteLength(bytes, extDataHeaderIndex, extByteLength + extFreeByteLength);
+
+            // update ext_free_byte_length:
+            _writeByteLength(bytes, extDataHeaderIndex + 4, extFreeByteLength);
+
+            // Add free space:
+            for (let i = 0; i < extFreeByteLength; i++) { bytes.push(0); }
+        }
 
         return writer.append(bytes)
         .then(() => {
@@ -742,6 +931,7 @@ class BPlusTree {
         this.root = new BPlusTreeLeaf(this);
         this.metadataKeys = metadataKeys || [];
         this.depth = 1;
+        this.fillFactor = 100;
     }
 
     /**
@@ -752,6 +942,7 @@ class BPlusTree {
      * @returns {BPlusTree} returns reference to this tree
      */
     add(key, value, metadata) {
+        // key = _normalizeKey(key); // if (_isIntString(key)) { key = parseInt(key); }
         // Find the leaf to insert to
         let leaf;
         if (this.root instanceof BPlusTreeLeaf) {
@@ -1039,6 +1230,10 @@ class BPlusTree {
         let keyData = bytes.slice(index, index + keyLength); // [];
         index += keyLength;
 
+        if (keyType === KEY_TYPE.NUMBER || keyType === KEY_TYPE.DATE) {
+            keyData = Array.from(keyData);
+        }
+
         let key;
         switch(keyType) {
             case KEY_TYPE.UNDEFINED: {
@@ -1066,10 +1261,14 @@ class BPlusTree {
                 key = new Date(bytesToNumber(keyData));
                 break;
             }
+            default: {
+                throw new Error(`Unknown key type ${keyType}`);
+            }
         }
-        return { key, length: keyLength };
+        return { key, length: keyLength, byteLength: keyLength + 2 };
     }
     static getBinaryKeyData(key) {
+        // TODO: Deprecate, moved to BinaryBPlusTreeBuilder.getKeyBytes
         let keyBytes = [];
         let keyType = KEY_TYPE.UNDEFINED;
         switch(typeof key) {
@@ -1132,21 +1331,30 @@ class BPlusTree {
      * @param {BinaryWriter} writer
      */
     toBinary(keepFreeSpace = false, writer) {
+        // TODO: Refactor to use BinaryBPlusTreeBuilder, .getHeader()
         if (!(writer instanceof BinaryWriter)) {
             throw new Error(`writer argument must be an instance of BinaryWriter`);
         }
         // Return binary data
         const indexTypeFlags = 
-              (this.uniqueKeys ? 1 : 0) 
-            | (this.metadataKeys.length > 0 ? 2 : 0);
+              (this.uniqueKeys ? FLAGS.UNIQUE_KEYS : 0) 
+            | (this.metadataKeys.length > 0 ? FLAGS.HAS_METADATA : 0)
+            | (keepFreeSpace ? FLAGS.HAS_FREE_SPACE : 0)
+            | FLAGS.HAS_FILL_FACTOR
+            | (WRITE_SMALL_LEAFS ? FLAGS.HAS_SMALL_LEAFS : 0);
         const bytes = [
             // byte_length:
             0, 0, 0, 0,
             // index_type:
             indexTypeFlags,
             // max_node_entries:
-            this.maxEntriesPerNode
+            this.maxEntriesPerNode,
+            // fill_factor:
+            this.fillFactor
         ];
+        if (keepFreeSpace) {
+            bytes.push(0, 0, 0, 0); // free_byte_length
+        }
         if (this.metadataKeys.length > 0) {
             // metadata_keys:
             const index = bytes.length;
@@ -1166,10 +1374,12 @@ class BPlusTree {
 
             // update metadata_length:
             const length = bytes.length - index - 4;
-            bytes[index] = (length >> 24) & 0xff;
-            bytes[index+1] = (length >> 16) & 0xff;
-            bytes[index+2] = (length >> 8) & 0xff;
-            bytes[index+3] = length & 0xff;
+            // bytes[index] = (length >> 24) & 0xff;
+            // bytes[index+1] = (length >> 16) & 0xff;
+            // bytes[index+2] = (length >> 8) & 0xff;
+            // bytes[index+3] = length & 0xff;
+            _writeByteLength(bytes, index, length);
+
         }
 
         const headerLength = bytes.length;
@@ -1180,20 +1390,70 @@ class BPlusTree {
         .then(({ references, pointers }) => {
             console.assert(references.length === 0, "All references must be resolved now");
 
+            if (keepFreeSpace) {
+                // Add 10% free space
+                const freeSpaceLength = Math.ceil((writer.length - headerLength) * 0.1);
+                const bytesPerWrite = 1024 * 100; // 100KB per write seems fair?
+                const writes = Math.ceil(freeSpaceLength / bytesPerWrite);
+
+                var writePromise = Promise.resolve();
+                for (let i = 0; i < writes; i++) {
+                    const length = i + 1 < writes
+                        ? bytesPerWrite
+                        : freeSpaceLength % bytesPerWrite;
+                    const zeroes = new Uint8Array(length);
+                    writePromise = writePromise.then(() => {
+                        return writer.append(zeroes);
+                    });
+                }
+                
+                return writePromise.then(() => freeSpaceLength);
+            }
+
+            return 0;
+        })
+        .then(freeBytesLength => {
+
             // update byte_length:
-            const byteLength = writer.length - headerLength;
-            const bytes = [
-                (byteLength >> 24) & 0xff,
-                (byteLength >> 16) & 0xff,
-                (byteLength >> 8) & 0xff,
-                byteLength & 0xff
-            ]
+            const byteLength = writer.length; // - headerLength;
+            // const bytes = [
+            //     (byteLength >> 24) & 0xff,
+            //     (byteLength >> 16) & 0xff,
+            //     (byteLength >> 8) & 0xff,
+            //     byteLength & 0xff
+            // ];
+            const bytes = _writeByteLength([], 0, byteLength);
+
             return writer.write(bytes, 0)
             .then(() => {
-                return writer.end();
+                if (keepFreeSpace) {
+                    // update free_byte_length:
+                    // const bytes = [
+                    //     (freeBytesLength >> 24) & 0xff,
+                    //     (freeBytesLength >> 16) & 0xff,
+                    //     (freeBytesLength >> 8) & 0xff,
+                    //     freeBytesLength & 0xff
+                    // ];
+                    const bytes = _writeByteLength([], 0, freeBytesLength);
+                    return writer.write(bytes, 7);
+                }
             });
+        })
+        .then(() => {
+            return writer.end();
         });
-    }    
+    }
+
+    static get typeSafeComparison() {
+        return {
+            isMore(val1, val2) { return _isMore(val1, val2); },
+            isMoreOrEqual(val1, val2) { return isMoreOrEqual(val1, val2); },
+            isLess(val1, val2) { return _isLess(val1, val2); },
+            isLessOrEqual(val1, val2) { return _isLessOrEqual(val1, val2); },
+            isEqual(val1, val2) { return _isEqual(val1, val2); },
+            isNotEqual(val1, val2) { return _isNotEqual(val1, val2); }
+        };
+    }
 }
 
 function _checkNewEntryArgs(key, recordPointer, metadataKeys, metadata) {
@@ -1246,6 +1506,7 @@ class BPlusTreeBuilder {
      * @param {object} [metadata] 
      */
     add(key, recordPointer, metadata) {
+        // key = _normalizeKey(key); // if (_isIntString(key)) { key = parseInt(key); }
         const err = _checkNewEntryArgs(key, recordPointer, this.metadataKeys, metadata);
         if (err) {
             throw err;
@@ -1272,6 +1533,7 @@ class BPlusTreeBuilder {
      * @param {number[]|Uint8Array} [recordPointer] specific recordPointer to remove. If the tree has unique keys, this can be omitted
      */
     remove(key, recordPointer = undefined) {
+        // key = _normalizeKey(key); // if (_isIntString(key)) { key = parseInt(key); }
         const isEqual = (val1, val2) => {
             if (val1 instanceof Array && val2 instanceof Array) {
                 return val1.every((v,i) => val2[i] === v);
@@ -1318,6 +1580,7 @@ class BPlusTreeBuilder {
         const entriesPerLeaf = Math.max(minNodeSize, Math.floor(entriesPerNode * (this.fillFactor / 100)));
         const minParentEntries = Math.max(1, Math.floor(entriesPerNode / 2));
         const tree = new BPlusTree(entriesPerNode, this.uniqueKeys, this.metadataKeys);
+        tree.fillFactor = this.fillFactor;
 
         const nrOfLeafs = Math.max(1, Math.ceil(list.length / entriesPerLeaf));
         const parentConnections = entriesPerNode+1;  // should be +1 because the > connection
@@ -1557,12 +1820,20 @@ class ChunkReader {
         this.offset = 0;    // offset of loaded data (start index of current chunk in data source)
         this.index = 0;     // current chunk reading index ("cursor" in currently loaded chunk)
     }
+    clone() {
+        const clone = Object.assign(new ChunkReader(this.chunkSize, this.read), this);
+        clone.offset = 0;
+        clone.index = 0;
+        clone.data = [];
+        return clone;
+    }
     init() {
         return this.read(0, this.chunkSize)
         .then(chunk => {
             this.data = chunk;
             this.offset = 0;
             this.index = 0;
+            return this;
         });
     }
     get(byteCount) {
@@ -1579,6 +1850,7 @@ class ChunkReader {
             //this.data.push(...nextChunk);
             //nextChunk.forEach(byte => this.data.push(byte));
             this.data = this.data.concat(Array.from(nextChunk));
+            return this;
         });
     }
     seek(offset) {
@@ -1592,6 +1864,7 @@ class ChunkReader {
             this.data = newChunk;
             this.offset = dataIndex;
             this.index = 0;
+            return this;
         });        
     }
     assert(byteCount) {
@@ -1599,25 +1872,28 @@ class ChunkReader {
             return this.more(Math.ceil(byteCount / this.chunkSize));
         }
         else {
-            return Promise.resolve();
+            return Promise.resolve(this);
         }        
     }
     skip(byteCount) {
         this.index += byteCount;
+        return this;
     }
     rewind(byteCount) {
         this.index -= byteCount;
+        return this;
     }
     go(index) {
         if (this.offset <= index && this.offset + this.data.length > index) {
             this.index = index - this.offset;
-            return Promise.resolve();
+            return Promise.resolve(this);
         }
         return this.read(index, this.chunkSize)
         .then(chunk => {
             this.data = chunk;
             this.offset = index;
             this.index = 0;
+            return this;
         });
     }
     savePosition(offsetCorrection = 0) {
@@ -1640,11 +1916,14 @@ class BinaryBPlusTree {
     /**
      * Provides functionality to read and search in a B+tree from a binary data source
      * @param {Array|(index: number, length: number) => Promise<Array>} readFn byte array, or function that reads from your data source, must return a promise that resolves with a byte array (the bytes read from file/memory)
-     * @param {number} chunkSize numbers of bytes per chunk to read at once
-     * @param {(data: number[], index: number) => Promise<any>} writeFn function that writes to your data source, must return a promise that resolves once write has completed
+     * @param {number} [chunkSize] numbers of bytes per chunk to read at once
+     * @param {(data: number[], index: number) => Promise<any>} [writeFn] function that writes to your data source, must return a promise that resolves once write has completed
+     * @param {string} [id] to edit the tree, pass a unique id to enable "thread-safe" locking
      */
-    constructor(readFn, chunkSize = 1024, writeFn = undefined) {
+    constructor(readFn, chunkSize = 1024, writeFn = undefined, id = undefined) {
         this._chunkSize = chunkSize;
+        this._autoGrow = false;
+        this.id = id;
         if (readFn instanceof Array) {
             let data = readFn;
             if (BPlusTree.debugBinary) {
@@ -1682,6 +1961,19 @@ class BinaryBPlusTree {
         }
     }
 
+    get autoGrow() {
+        return this._autoGrow;
+    }
+    set autoGrow(grow) {
+        this._autoGrow = grow === true;
+        if (this._autoGrow) {
+            console.warn('autoGrow enabled for binary tree');
+        }
+    }
+
+    /**
+     * @returns {Promise<ChunkReader>}
+     */
     _getReader() {
         const reader = new ChunkReader(this._chunkSize, this._readFn);
         return reader.init()
@@ -1689,24 +1981,52 @@ class BinaryBPlusTree {
             return reader.get(6);
         })
         .then(header => {
+            const originalByteLength = (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3];
+            if (!this._originalByteLength) {
+                this._originalByteLength = originalByteLength;
+            }
             this.info = {
                 headerLength: 6,
-                byteLength: (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3],
-                isUnique: (header[4] & 0x1) === 1,
-                hasMetadata: (header[4] & 0x2) === 2,
+                byteLength: originalByteLength,
+                isUnique: (header[4] & FLAGS.UNIQUE_KEYS) > 0,
+                hasMetadata: (header[4] & FLAGS.HAS_METADATA) > 0,
+                hasFreeSpace: (header[4] & FLAGS.HAS_FREE_SPACE) > 0,
+                hasFillFactor: (header[4] & FLAGS.HAS_FILL_FACTOR) > 0,
+                hasSmallLeafs: (header[4] & FLAGS.HAS_SMALL_LEAFS) > 0,
+                freeSpace: 0,
+                get freeSpaceIndex() { return this.hasFillFactor ? 7 : 6; },
                 entriesPerNode: header[5],
+                fillFactor: 100,
                 metadataKeys: []
             };
-            if (this.info.hasMetadata) {
-                // The tree has metadata keys, read them
-                this.info.headerLength += 4;
-                return reader.get(4)
+            let additionalHeaderBytes = 0;
+            if (this.info.hasFillFactor) { additionalHeaderBytes += 1; }
+            if (this.info.hasFreeSpace) { additionalHeaderBytes += 4; }
+            if (this.info.hasMetadata) { additionalHeaderBytes += 4; }
+
+            if (additionalHeaderBytes > 0) {
+                // The tree has fill factor, free space, and/or metadata keys, read them
+                this.info.headerLength += additionalHeaderBytes;
+                return reader.get(additionalHeaderBytes)
                 .then(bytes => {
-                    const length = (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]; 
-                    this.info.headerLength += length;
-                    return reader.get(length);
+                    let i = 0;
+                    if (this.info.hasFillFactor) {
+                        this.info.fillFactor = bytes[i];                         
+                        i++;
+                    }
+                    if (this.info.hasFreeSpace) {
+                        this.info.freeSpace = (bytes[i] << 24) | (bytes[i + 1] << 16) | (bytes[i + 2] << 8) | bytes[i + 3]; 
+                        i += 4;
+                    }
+                    if (this.info.hasMetadata) {
+                        const length = (bytes[i] << 24) | (bytes[i + 1] << 16) | (bytes[i + 2] << 8) | bytes[i + 3]; 
+                        this.info.headerLength += length;
+                        return reader.get(length);
+                    }
                 })
                 .then(bytes => {
+                    if (!bytes) { return reader; }
+
                     const keyCount = bytes[0];
                     let index = 1;
                     for (let i = 0; i < keyCount; i++) {
@@ -1740,16 +2060,19 @@ class BinaryBPlusTree {
         return reader.get(headerLength) // byte_length, is_leaf, free_byte_length
         .then(bytes => {
             const byteLength = (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]; // byte_length
-            const isLeaf = bytes[4] === 1; // is_leaf
+            const isLeaf = (bytes[4] & FLAGS.IS_LEAF) > 0; // is_leaf
+            const hasExtData = (bytes[4] & FLAGS.LEAF_HAS_EXT_DATA) > 0; // has_ext_data
             const freeBytesLength = (bytes[5] << 24) | (bytes[6] << 16) | (bytes[7] << 8) | bytes[8];
 
             // load whole node/leaf for easy processing
-            return reader.get(byteLength - headerLength) // todo: - freeBytesLength, right?
+            return reader.get(byteLength - headerLength - freeBytesLength)
             .then(bytes => {
                 const childInfo = new BinaryBPlusTreeNodeInfo({
                     isLeaf,
+                    hasExtData,
                     bytes,
-                    index,
+                    sourceIndex: index,
+                    dataIndex: index + headerLength,
                     length: byteLength,
                     free: freeBytesLength
                 });
@@ -1760,7 +2083,7 @@ class BinaryBPlusTree {
 
     /**
      * 
-     * @param {BinaryBPlusTreeNodeInfo} leaf 
+     * @param {BinaryBPlusTreeNodeInfo} leafInfo
      * @param {ChunkReader} reader 
      * @param {object} [options]
      * @param {boolean} [options.stats=false]
@@ -1770,24 +2093,56 @@ class BinaryBPlusTree {
         const leaf = new BinaryBPlusTreeLeaf(leafInfo);
         const bytes = leaf.bytes;
         const savedPosition = reader.savePosition(-bytes.length);
-        const getSignedOffset = (bytes, index) => {
-            let offset = ((bytes[index] & 0x7f) << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8)  | bytes[index+3];
-            let isNegative = (bytes[index] & 0x80) > 0;
-            if (isNegative) { offset = -offset; }
-            return offset;
-        };
 
-        const prevLeafOffset = getSignedOffset(bytes, 0); // prev_leaf_ptr
-        const nextLeafOffset = getSignedOffset(bytes, 4); // next_leaf_ptr
+        const prevLeafOffset = _readSignedOffset(bytes, 0); // prev_leaf_ptr
+        const nextLeafOffset = _readSignedOffset(bytes, 4); // next_leaf_ptr
         leaf.prevLeafOffset = prevLeafOffset;
         leaf.nextLeafOffset = nextLeafOffset;
 
-        let entriesLength = bytes[8]; // entries_length
+        let index = 8;
+        if (leafInfo.hasExtData) {
+            leaf.extData.length = _readByteLength(bytes, index);
+            leaf.extData.freeBytes = _readByteLength(bytes, index + 4);
+            index += 8;
 
-        let index = 9;
+            leaf.extData.load = () => {
+                // Load all extData blocks. Needed when eg rebuilding
+                if (leaf.extData.loaded) { 
+                    return Promise.resolve(); 
+                }
+
+                const index = leaf.sourceIndex + leaf.length;
+                const length = leaf.extData.length - leaf.extData.freeBytes;
+                const r = reader.clone();
+                r.chunkSize = length; // So it will be 1 read
+                return r.go(index)
+                .then(() => {
+                    return r.get(length);
+                })
+                .then(bytes => {
+                    leaf.entries.forEach(entry => {
+                        if (entry.extData) {
+                            entry.extData.loadFromExtData(bytes);
+                        }
+                    });
+                    leaf.extData.loaded = true;
+                });
+            }
+        }
+
+        let entriesLength = bytes[index]; // entries_length
+        index++;
 
         const readValue = () => {
+            let result = readEntryValue(bytes, index);
+            index += result.byteLength;
+            return result.entryValue;
+        };
+        const readEntryValue = (bytes, index) => {
+            console.assert(index < bytes.length, 'invalid data');
+            const startIndex = index;
             let valueLength = bytes[index]; // value_length
+            console.assert(index + valueLength < bytes.length, 'not enough data!');
             index++;
             let value = [];
             // value_data:
@@ -1803,19 +2158,27 @@ class BinaryBPlusTree {
                 // NOTE: it seems strange to use getKeyFromBinary to read a value, but metadata_value is stored in the same way as a key, so this comes in handy
                 let valueInfo = BPlusTree.getKeyFromBinary(bytes, index);
                 metadata[key] = valueInfo.key;
-                index += valueInfo.length + 2;
+                index += valueInfo.byteLength;
             });
-            return new BinaryBPlusTreeLeafEntryValue(value, metadata);
+            return {
+                entryValue: new BinaryBPlusTreeLeafEntryValue(value, metadata),
+                byteLength: index - startIndex
+            };
         };
 
         for (let i = 0; i < entriesLength; i++) {
             let keyInfo = BPlusTree.getKeyFromBinary(bytes, index);
             let key = keyInfo.key;
-            index += keyInfo.length + 2;
+            index += keyInfo.byteLength;
 
             // Read value(s) and return
-            const valLength = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // val_length
-            index += 4; 
+            const hasExtData = this.info.hasSmallLeafs && (bytes[index] & FLAGS.ENTRY_HAS_EXT_DATA) > 0;
+            const valLength = this.info.hasSmallLeafs
+                ? hasExtData ? 0 : bytes[index]
+                :  (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // val_length
+            index += this.info.hasSmallLeafs
+                ? 1
+                : 4;
             if (options && options.stats) {
                 // Skip values, only load value count
                 let entry = new BinaryBPlusTreeLeafEntry(key, null);
@@ -1824,9 +2187,10 @@ class BinaryBPlusTree {
                 }
                 else {
                     entry.totalValues = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // value_list_length
+                    index += 4;
                 }
                 leaf.entries.push(entry);
-                index += valLength; // Skip val_length
+                index += hasExtData ? 4 : valLength; // Skip ext_data_ptr or value
             }
             else if (this.info.isUnique) {
                 // Read single value
@@ -1835,42 +2199,405 @@ class BinaryBPlusTree {
             }
             else {
                 // Read value_list_length
-                const valuesLength = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // value_list_length
+                const valuesListLengthIndex = leafInfo.dataIndex + index;
+                let valuesLength = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // value_list_length
                 index += 4;
-                const entryValues = [];
-                for(let i = 0; i < valuesLength; i++) {
-                    const entryValue = readValue();
-                    entryValues.push(entryValue);
+                if (hasExtData) {
+                    // additional data will have to be loaded upon request
+                    // ext_data_ptr:
+                    const extDataOffset = _readSignedOffset(bytes, index);
+                    index += 4;
+                    const extDataBlockIndex = leafInfo.sourceIndex + leafInfo.length + extDataOffset;
+                    const entry = new BinaryBPlusTreeLeafEntry(key, new Array(valuesLength));
+                    const tree = this;
+                    Object.defineProperties(entry, {
+                        values: {
+                            get() { 
+                                return this.extData.values;
+                            }
+                        },
+                        extData: {
+                            value: {
+                                _headerLoaded: false,
+                                _length: -1,
+                                _freeBytes: -1,
+                                _values: null,
+                                _listLengthIndex: valuesListLengthIndex,
+                                get length() { 
+                                    if (this._headerLoaded) { return this._length; } 
+                                    throw new Error(`ext_data header not read yet`);
+                                },
+                                get freeBytes() { 
+                                    if (this._headerLoaded) { return this._freeBytes; } 
+                                    throw new Error(`ext_data header not read yet`);
+                                },
+                                get values() {
+                                    if (this._values !== null) { return this._values; }
+                                    throw new Error('ext_data values were not read yet. use entry.extData.loadValues() first')
+                                },
+                                leafOffset: extDataOffset,
+                                index: extDataBlockIndex,
+                                get totalValues() { return valuesLength; },
+                                set totalValues(n) { valuesLength = n; },
+                                get loaded() { return this._values !== null; },
+                                get _headerLength() { return 12; },
+                                loadValues() {
+                                    // load all values
+                                    reader = reader.clone();
+                                    return this.loadHeader(true)
+                                    .then(lock => {
+                                        return reader.go(this.index + this._headerLength)
+                                        .then(() => {
+                                            return reader.get(this._length - this._freeBytes);
+                                        })
+                                        .then(extData => {
+                                            this._values = [];
+                                            let index = 0;
+                                            for(let i = 0; i < valuesLength; i++) {
+                                                const result = readEntryValue(extData, index);
+                                                index += result.byteLength;
+                                                this._values.push(result.entryValue);
+                                            }
+                                            this.totalValues = valuesLength;
+                                            return this._values;  
+                                        })
+                                        .then(values => {
+                                            lock.release();
+                                            return values;
+                                        });
+                                    });
+                                },
+                                loadHeader(keepLock = false) {
+                                    // if (this._headerLoaded) {
+                                    //     return keepLock ? ThreadSafe.lock(leaf) : Promise.resolve(null);
+                                    // }
+                                    reader = reader.clone();
+                                    // load header
+                                    return ThreadSafe.lock(leaf)
+                                    .then(lock => {
+                                        return reader.go(extDataBlockIndex)
+                                        .then(() => {
+                                            return reader.get(this._headerLength); // ext_data_length, ext_free_byte_length, ext_data_ptr
+                                        })
+                                        .then(extHeader => {
+                                            this._headerLoaded = true;
+                                            this._length = _readByteLength(extHeader, 0);
+                                            this._freeBytes = _readByteLength(extHeader, 4);
+                                            // const nextDataOffset = _readByteLength(extHeader, 8); // not implemented yet
+                                            
+                                            if (keepLock === true) {
+                                                return lock;
+                                            }
+                                            else {
+                                                return lock.release();
+                                            }
+                                        });
+                                    });
+                                },
+                                loadFromExtData(allExtData) {
+                                    this._headerLoaded = true;
+                                    let index = extDataOffset;
+                                    this._length = _readByteLength(allExtData, index);
+                                    this._freeBytes = _readByteLength(allExtData, index + 4);
+                                    // const nextDataOffset = _readByteLength(allExtData, index + 8); // not implemented yet
+                                    index += this._headerLength; // 12
+                                    this._values = [];
+                                    for(let i = 0; i < valuesLength; i++) {
+                                        const result = readEntryValue(allExtData, index);
+                                        index += result.byteLength;
+                                        this._values.push(result.entryValue);
+                                    }
+                                    this.totalValues = valuesLength;
+                                },
+                                addValue(recordPointer, metadata) {
+                                    // add value to it. 
+
+                                    return this.loadHeader(true)
+                                    .then(lock => {
+                                        // We have to add it to ext_data, and update leaf's value_list_length
+                                        // no checking for existing recordPointer
+                                        const builder = new BinaryBPlusTreeBuilder({ metadataKeys: tree.info.metadataKeys });
+                                        const extValueData = builder.getLeafEntryValueBytes(recordPointer, metadata);
+                                        if (extValueData.length > this._freeBytes) {
+                                            // TODO: check if parent ext_data block has free space, maybe we can use that space
+                                            lock.release();
+                                            throw new Error(`No space left to add value to leaf ext_data_block`);
+                                        }
+                                        const extBlockHeader = [];
+                                        // update ext_block_length:
+                                        _writeByteLength(extBlockHeader, 0, this._length);
+                                        // update ext_block_free_length:
+                                        _writeByteLength(extBlockHeader, 4, this._freeBytes - extValueData.length);
+                                        
+                                        const valueListLengthData = _writeByteLength([], 0, this.totalValues + 1);
+
+                                        return Promise.all([
+                                            // write value:
+                                            tree._writeFn(extValueData, this.index + this._headerLength + this._length - this._freeBytes),
+                                            // update ext_block_length, ext_block_free_length
+                                            tree._writeFn(extBlockHeader, this.index),
+                                            // update value_list_length
+                                            tree._writeFn(valueListLengthData, this._listLengthIndex)
+                                        ])
+                                        .catch(err => {
+                                            lock.release();
+                                            throw err;
+                                        })
+                                        .then(() => {
+                                            this._freeBytes -= extValueData.length;
+                                            this.totalValues++;
+                                            lock.release();
+
+                                            // // TEST
+                                            // return this.loadValues()
+                                            // .catch(err => {
+                                            //     console.error(`Values are kaputt for entry '${entry.key}': ${err.message}`);
+                                            // })
+                                            // .then(() => {
+                                            //     console.log(`Values for entry '${entry.key}' successfully updated: ${this.totalValues} values`);
+                                            // });
+
+                                        })
+                                    });
+                                },
+                                removeValue(recordPointer) {
+                                    // remove value
+                                    // load the whole value, then rewrite it
+                                    return this.loadValues()
+                                    .then(values => {
+                                        // LOCK?
+
+                                        let index = values.findIndex(val => _compareBinary(val.recordPointer, recordPointer));
+                                        if (!~index) { return; }
+                                        values.splice(index, 1);
+
+                                        // rebuild ext_data_block
+                                        const bytes = [];
+
+                                        // ext_block_length:
+                                        _writeByteLength(bytes, 0, this._length);
+
+                                        // ext_block_free_length:
+                                        _writeByteLength(bytes, 4, this._length - bytes.length);
+
+                                        // ext_data_ptr: (not used yet)
+                                        bytes.push(0, 0, 0, 0);
+
+                                        // Add all values
+                                        const builder = new BinaryBPlusTreeBuilder({ metadataKeys: tree.info.metadataKeys });
+                                        values.forEach(val => {
+                                            const valData = builder.getLeafEntryValueBytes(val.recordPointer, val.metadata);
+                                            _appendToArray(bytes, valData);
+                                        });
+
+                                        const valueListLengthData = _writeByteLength([], 0, this.totalValues - 1);
+                                        return Promise.all([
+                                            // write ext_data_block
+                                            tree._writeFn(bytes, this.index),
+                                            // update value_list_length
+                                            tree._writeFn(valueListLengthData, this._listLengthIndex)
+                                        ])
+                                        .then(() => {
+                                            this.totalValues--;
+                                            this._freeBytes = this._length - bytes.length;
+                                        });
+                                    })
+                                }
+                            }
+                        },
+                        loadValues() {
+                            return ThreadSafe.lock(leaf)
+                            .then(l => {
+                                lock = l;
+                                return reader.go(extDataBlockIndex);
+                            })
+                            .then(() => {
+                                return reader.get(12); // ext_data_length, ext_free_byte_length, ext_data_ptr
+                            })
+                            .then(extHeader => {
+                                const length = _readByteLength(extHeader, 0);
+                                const freeBytes = _readByteLength(extHeader, 4);
+                                // const nextDataOffset = _readByteLength(extHeader, 8); // not implemented yet
+                                return reader.get(length - freeBytes);
+                            })
+                            .then(data => {
+                                entry._values = [];
+                                let index = 0;
+                                for(let i = 0; i < this.totalValues; i++) {
+                                    const result = readEntryValue(data, index);
+                                    index += result.byteLength;
+                                    entry._values.push(entryValue.entryValue);
+                                }
+                                return entry._values;       
+                            })
+                            .then(values => {
+                                lock.release();
+                                return values;
+                            });
+                        }
+                    });
+                    leaf.entries.push(entry);
                 }
-                leaf.entries.push(new BinaryBPlusTreeLeafEntry(key, entryValues));
+                else {
+                    const entryValues = [];
+                    for(let j = 0; j < valuesLength; j++) {
+                        const entryValue = readValue();
+                        entryValues.push(entryValue);
+                    }
+                    leaf.entries.push(new BinaryBPlusTreeLeafEntry(key, entryValues));
+                }
             }
         }
 
         if (prevLeafOffset !== 0) {
             leaf.getPrevious = () => {
-                return savedPosition.go(prevLeafOffset)
+                const freshReader = reader.clone();
+                // let lock;
+                // return ThreadSafe.lock(leaf)
+                // .then(l => {
+                //     lock = l;
+                //     return savedPosition.go(prevLeafOffset)
+                // })
+                return freshReader.go(leaf.prevLeafIndex) //(leaf.dataIndex + leaf.prevLeafOffset)
                 .then(() => {
-                    return this._readChild(reader)
-                    .then(childInfo => {
-                        console.assert(childInfo.isLeaf, `If this is not the case, debug me`);
-                        return this._getLeaf(childInfo, reader, options);
-                    });
+                    return this._readChild(freshReader);
+                })
+                .then(childInfo => {
+                    console.assert(childInfo.isLeaf, `previous leaf is *not* a leaf. Current leaf index: ${leaf.sourceIndex}, next leaf offset: ${prevLeafOffset}, target index: ${leaf.dataIndex + prevLeafOffset}`);
+                    return this._getLeaf(childInfo, freshReader, options);
+                })
+                .then(leaf => {
+                    // lock.release();
+                    return leaf;
                 });
             };
         }
         if (nextLeafOffset !== 0) {
             leaf.getNext = () => {
-                return savedPosition.go(nextLeafOffset + 4) // +4 because next_leaf_ptr is 4 bytes from savedPosition
+                // const freshReader = reader; // reader.clone();
+                // let lock;
+                // return ThreadSafe.lock(leaf)
+                // .then(l => {
+                //     lock = l;
+                //     return reader.go(leaf.nextLeafIndex); // savedPosition.go(nextLeafOffset + 4) // +4 because next_leaf_ptr is 4 bytes from savedPosition
+                // })
+                // // return freshReader.go(leaf.nextLeafIndex) //(leaf.dataIndex + 4 + leaf.nextLeafOffset)
+                // .then(() => {
+                //     return this._readChild(freshReader);
+                // })
+                // .then(childInfo => {
+                //     console.assert(childInfo.isLeaf, `next leaf is *not* a leaf. Current leaf index: ${leaf.sourceIndex}, next leaf offset: ${nextLeafOffset}, target index: ${leaf.dataIndex + 4 + nextLeafOffset}`);
+                //     return this._getLeaf(childInfo, freshReader, options);
+                // })
+                // .then(nextLeaf => {
+                //     lock.release(); 
+                //     console.assert(_isMore(nextLeaf.entries[0].key, leaf.entries[leaf.entries.length-1].key), 'next leaf has lower keys than previous leaf?!');
+                //     return nextLeaf;
+                // });                
+                const freshReader = reader.clone();
+                // let lock;
+                // return ThreadSafe.lock(leaf)
+                // .then(l => {
+                //     lock = l;
+                //     return reader.go(leaf.nextLeafIndex); // savedPosition.go(nextLeafOffset + 4) // +4 because next_leaf_ptr is 4 bytes from savedPosition
+                // })
+                return freshReader.go(leaf.nextLeafIndex) //(leaf.dataIndex + 4 + leaf.nextLeafOffset)
                 .then(() => {
-                    return this._readChild(reader)
-                    .then(childInfo => {
-                        console.assert(childInfo.isLeaf, `If this is not the case, debug me`);
-                        return this._getLeaf(childInfo, reader, options);
-                    });                    
+                    return this._readChild(freshReader);
+                })
+                .then(childInfo => {
+                    console.assert(childInfo.isLeaf, `next leaf is *not* a leaf. Current leaf index: ${leaf.sourceIndex}, next leaf offset: ${nextLeafOffset}, target index: ${leaf.dataIndex + 4 + nextLeafOffset}`);
+                    return this._getLeaf(childInfo, freshReader, options);
+                })
+                .then(nextLeaf => {
+                    // lock.release(); 
+                    console.assert(_isMore(nextLeaf.entries[0].key, leaf.entries[leaf.entries.length-1].key), 'next leaf has lower keys than previous leaf?!');
+                    return nextLeaf;
                 });
             };
         }
+
+        console.assert(leaf.entries.every((entry, index, arr) => index === 0 || _isMore(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
+
         return leaf;
+    }
+
+    /**
+     * 
+     * @param {BinaryBPlusTreeNode} nodeInfo 
+     * @returns {Promise<void>}
+     */
+    _writeNode(nodeInfo) {
+
+        // Rewrite the node. 
+        // NOTE: not using BPlusTreeNode.toBinary for this, because 
+        // that function writes children too, we don't want that
+
+        console.assert(nodeInfo.entries.length > 0, `node has no entries!`);
+        console.assert(nodeInfo.entries.every((entry, index, arr) => index === 0 || _isMore(entry.key, arr[index-1].key)), 'Node entries are not sorted ok');
+
+        const builder = new BinaryBPlusTreeBuilder({ 
+            uniqueKeys: this.info.isUnique, 
+            maxEntriesPerNode: this.info.entriesPerNode, 
+            metadataKeys: this.info.metadataKeys, 
+            // Not needed:
+            byteLength: this.info.byteLength, 
+            freeBytes: this.info.freeSpace 
+        });
+        const bytes = builder.createNode({
+            index: nodeInfo.index,
+            entries: nodeInfo.entries.map(entry => ({ key: entry.key, ltIndex: entry.ltChildIndex })),
+            gtIndex: nodeInfo.gtChildIndex
+        }, {
+            addFreeSpace: true,
+            maxLength: nodeInfo.length
+        });
+        console.assert(bytes.length <= nodeInfo.length, 'too many bytes allocated for node');
+        return this._writeFn(bytes, nodeInfo.index);
+
+        // const bytes = [
+        //     // byte_length (stays the same)
+        //     (nodeInfo.length >> 24) & 0xff, 
+        //     (nodeInfo.length >> 16) & 0xff, 
+        //     (nodeInfo.length >> 8) & 0xff, 
+        //     nodeInfo.length & 0xff,
+        //     0, // is_leaf (no, node)
+        //     0, 0, 0, 0, // free_byte_length (unknown)
+        //     nodeInfo.entries.length // entries_length   
+        // ];
+
+        // // entries:
+        // nodeInfo.entries.forEach(entry => {
+        //     let keyBytes = BPlusTree.getBinaryKeyData(entry.key);
+        //     bytes.push(...keyBytes);
+
+        //     // lt_child_ptr: recalculate offset
+        //     entry.ltChildOffset = entry.ltChildIndex - 3 - (nodeInfo.index + bytes.length);
+        //     _writeSignedOffset(bytes, bytes.length, entry.ltChildOffset);
+        // });
+
+        // // gt_child_ptr: recalculate offset
+        // nodeInfo.gtChildOffset = nodeInfo.gtChildIndex - 3 - (nodeInfo.index + bytes.length);
+        // _writeSignedOffset(bytes, bytes.length, nodeInfo.gtChildOffset);
+        // // bytes.push((nodeInfo.gtChildOffset >> 24) & 0xff);
+        // // bytes.push((nodeInfo.gtChildOffset >> 16) & 0xff);
+        // // bytes.push((nodeInfo.gtChildOffset >> 8) & 0xff);
+        // // bytes.push(nodeInfo.gtChildOffset & 0xff);
+
+        // // add free bytes
+        // const freeBytesLength = nodeInfo.length - bytes.length;
+        // if (freeBytesLength < 0) {
+        //     throw new Error(`Cannot write node: its data became too big to store in available space`);
+        // }
+        // // for (let i = 0; i < freeBytesLength; i++) { // Not needed!!
+        // //     bytes.push(0);
+        // // }
+        // // update free_byte_length:
+        // _writeByteLength(bytes, 5, freeBytesLength); 
+        
+        // // Write
+        // // let cmp = _compareBinaryDetails(bytes.slice(9), nodeInfo.bytes);
+        // return this._writeFn(bytes, nodeInfo.index);
     }
 
     /**
@@ -1879,98 +2606,197 @@ class BinaryBPlusTree {
      * @returns {Promise<void>}
      */
     _writeLeaf(leafInfo) {
+        console.assert(leafInfo.entries.every((entry, index, arr) => index === 0 || _isMore(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
 
-        const tree = new BPlusTree(this.info.entriesPerNode, this.info.isUnique, this.info.metadataKeys);
-        const leaf = new BPlusTreeLeaf(tree);
-        leafInfo.entries.forEach(entry => {
-            const key = entry.key;
-            const leafEntry = new BPlusTreeLeafEntry(leaf, key);
-            leafEntry.values = entry.values;
-            leaf.entries.push(leafEntry);
-        });
-        // const { bytes } = leaf.toBinary(false); // Let us add the free space ourselves
+        try {
+            const builder = new BinaryBPlusTreeBuilder({ 
+                uniqueKeys: this.info.isUnique, 
+                maxEntriesPerNode: this.info.entriesPerNode, 
+                metadataKeys: this.info.metadataKeys,
+                smallLeafs: this.info.hasSmallLeafs,
+                // Not needed:
+                byteLength: this.info.byteLength, 
+                freeBytes: this.info.freeSpace,
+                fillFactor: this.info.fillFactor 
+            });
+            const extData = leafInfo.extData 
+                ? { 
+                    length: leafInfo.extData.length, 
+                    freeBytes: leafInfo.extData.freeBytes, 
+                    rebuild: leafInfo.extData.loaded 
+                } 
+                : null;
+            const addFreeSpace = true;
+            const writes = [];
+            const pointers = [];
+            const bytes = builder.createLeaf({
+                index: leafInfo.index,
+                prevIndex: leafInfo.prevLeafIndex,
+                nextIndex: leafInfo.nextLeafIndex,
+                entries: leafInfo.entries,
+                extData
+            }, {
+                addFreeSpace,
+                maxLength: leafInfo.length,
+                addExtData: (pointerIndex, data) => {
+                    // Write additional ext_data_block
+                    let extIndex = extData.length - extData.freeBytes;
+                    let fileIndex = leafInfo.sourceIndex + leafInfo.length + extIndex;
+                    const bytes = [];
+                    const minRequired = data.length + 12;
+                    if (extData.freeBytes < minRequired) {
+                        throw new Error('Not enough free space in ext_data');
+                    }
 
-        const bytes = [];
-        return leaf.toBinary(false, BinaryWriter.forArray(bytes)) // Let us add the free space ourselves
-        .then(() => {
-            // Add free space
-            const freeBytesLength = leafInfo.length - bytes.length;
-            if (freeBytesLength < 0) {
-                throw new Error(`Cannot write leaf: its data became too big to store in available space`);
-            }
-            for (let i = 0; i < freeBytesLength; i++) {
-                bytes.push(0);
-            }
-            
-            // update byte_length:
-            bytes[0] = (bytes.length >> 24) & 0xff;
-            bytes[1] = (bytes.length >> 16) & 0xff;
-            bytes[2] = (bytes.length >> 8) & 0xff;
-            bytes[3] = bytes.length & 0xff;
+                    // Calculate free space
+                    const maxFree = extData.freeBytes - minRequired; // Max available free space for new block
+                    const free = addFreeSpace ? Math.min(maxFree, Math.ceil(data.length * 0.1)) : 0;
+                    const length = data.length + free;
 
-            // update free_byte_length
-            bytes[5] = (freeBytesLength >> 24) & 0xff;
-            bytes[6] = (freeBytesLength >> 16) & 0xff;
-            bytes[7] = (freeBytesLength >> 8) & 0xff;
-            bytes[8] = freeBytesLength & 0xff;
+                    // ext_block_length:
+                    _writeByteLength(bytes, bytes.length, length);
 
-            // set pointers to prev/next leafs manually (they stay the same as before)
-            const maxSignedNumber = Math.pow(2, 31) - 1;
-            const writeSignedOffset = (index, offset, debugName) => {
-                const negative = offset < 0;
-                if (negative) { offset = -offset; }
-                if (offset > maxSignedNumber) {
-                    throw new Error(`reference offset to big to store in 31 bits`);
+                    // ext_block_free_length:
+                    _writeByteLength(bytes, bytes.length, free);
+
+                    // ext_data_ptr: (not implemented yet)
+                    bytes.push(0, 0, 0, 0);
+
+                    // data:
+                    _appendToArray(bytes, data);
+
+                    // Add free space:
+                    for (let i = 0; i < free; i++) { bytes.push(0); }
+
+                    // Adjust extData
+                    extData.freeBytes -= bytes.length;
+
+                    let writePromise = this._writeFn(bytes, fileIndex);
+                    writes.push(writePromise);
+                    pointers.push({ pointerIndex, targetIndex: extIndex });
+                    return { extIndex };
                 }
-                bytes[index] = ((offset >> 24) & 0x7f) | (negative ? 0x80 : 0);
-                // if (debugName) {
-                //     data[index] = [debugName, data[index]];
-                // }
-                bytes[index+1] = (offset >> 16) & 0xff;
-                bytes[index+2] = (offset >> 8) & 0xff;
-                bytes[index+3] = offset & 0xff;
-            };
+            });
+            const maxLength = leafInfo.length + (leafInfo.extData ? leafInfo.extData.length : 0);
+            console.assert(bytes.length <= maxLength, 'more bytes needed than allocated for leaf');
 
-            // update prev_leaf_ptr:
-            writeSignedOffset(9, leafInfo.prevLeafOffset);
+            // Adjust pointers to newly created ext_data blocks
+            pointers.forEach(pointer => {
+                _writeByteLength(bytes, pointer.pointerIndex, pointer.targetIndex);
+            });
+            const promise = this._writeFn(bytes, leafInfo.index);
+            writes.push(promise);
+            return Promise.all(writes);
+        }
+        catch(err) {
+            return Promise.reject(err);
+        }
 
-            // update next_leaf_ptr:
-            writeSignedOffset(13, leafInfo.nextLeafOffset);
+        // const tree = new BPlusTree(this.info.entriesPerNode, this.info.isUnique, this.info.metadataKeys);
+        // const leaf = new BPlusTreeLeaf(tree);
+        // leafInfo.entries.forEach(entry => {
+        //     const key = entry.key;
+        //     if (typeof key === 'undefined') {
+        //         throw new Error(`undefined key being written to leaf`);
+        //     }
+        //     const leafEntry = new BPlusTreeLeafEntry(leaf, key);
+        //     leafEntry.values = entry.values;
+        //     leaf.entries.push(leafEntry);
+        // });
+        // // const { bytes } = leaf.toBinary(false); // Let us add the free space ourselves
 
-            return this._writeFn(bytes, leafInfo.index);
-        });
+        // const bytes = [];
+        // return leaf.toBinary(false, BinaryWriter.forArray(bytes)) // Let us add the free space ourselves
+        // .then(() => {
+        //     // Add free space
+        //     const freeBytesLength = leafInfo.length - bytes.length;
+        //     if (freeBytesLength < 0) {
+        //         throw new Error(`Cannot write leaf: its data became too big to store in available space`);
+        //     }
+        //     // for (let i = 0; i < freeBytesLength; i++) {
+        //     //     bytes.push(0);
+        //     // }
+            
+        //     // update byte_length:
+        //     _writeByteLength(bytes, 0, leafInfo.length);
+        //     // bytes[0] = (leafInfo.length >> 24) & 0xff;
+        //     // bytes[1] = (leafInfo.length >> 16) & 0xff;
+        //     // bytes[2] = (leafInfo.length >> 8) & 0xff;
+        //     // bytes[3] = leafInfo.length & 0xff;
+
+        //     // update free_byte_length
+        //     _writeByteLength(bytes, 5, freeBytesLength);
+        //     // bytes[5] = (freeBytesLength >> 24) & 0xff;
+        //     // bytes[6] = (freeBytesLength >> 16) & 0xff;
+        //     // bytes[7] = (freeBytesLength >> 8) & 0xff;
+        //     // bytes[8] = freeBytesLength & 0xff;
+
+        //     // set pointers to prev/next leafs manually (they stay the same as before)
+        //     // const maxSignedNumber = Math.pow(2, 31) - 1;
+        //     // const writeSignedOffset = (index, offset, debugName) => {
+        //     //     const negative = offset < 0;
+        //     //     if (negative) { offset = -offset; }
+        //     //     if (offset > maxSignedNumber) {
+        //     //         throw new Error(`reference offset to big to store in 31 bits`);
+        //     //     }
+        //     //     bytes[index] = ((offset >> 24) & 0x7f) | (negative ? 0x80 : 0);
+        //     //     // if (debugName) {
+        //     //     //     data[index] = [debugName, data[index]];
+        //     //     // }
+        //     //     bytes[index+1] = (offset >> 16) & 0xff;
+        //     //     bytes[index+2] = (offset >> 8) & 0xff;
+        //     //     bytes[index+3] = offset & 0xff;
+        //     // };
+
+        //     // update prev_leaf_ptr:
+        //     _writeSignedOffset(bytes, 9, leafInfo.prevLeafOffset);
+
+        //     // update next_leaf_ptr:
+        //     _writeSignedOffset(bytes, 13, leafInfo.nextLeafOffset);
+
+        //     return this._writeFn(bytes, leafInfo.index);
+        // });
     }
 
     /**
      * 
      * @param {BinaryBPlusTreeNodeInfo} nodeInfo 
      * @param {ChunkReader} reader 
-     * @returns {Promise<BinaryBPlusTreeNode>}
+     * @returns {BinaryBPlusTreeNode}
      */
     _getNode(nodeInfo, reader) {
         // const node = { 
         //     entries: [] 
         // };
+        
         const node = new BinaryBPlusTreeNode(nodeInfo);
         const bytes = node.bytes;
         const entriesLength = bytes[0];
+        console.assert(entriesLength > 0, 'Node read failure: no entries');
         let index = 1;
 
         for (let i = 0; i < entriesLength; i++) {
             let keyInfo = BPlusTree.getKeyFromBinary(bytes, index);
             let key = keyInfo.key;
-            index += keyInfo.length + 2;
+            index += keyInfo.byteLength;
             let entry = new BinaryBPlusTreeNodeEntry(key);
             node.entries.push(entry);
 
             // read lt_child_ptr:
-            let ltChildOffset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // lt_child_ptr
-            if (ltChildOffset > 0) {
+            entry.ltChildOffset = _readSignedOffset(bytes, index); //(bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // lt_child_ptr
+            console.assert(entry.ltChildOffset !== 0, 'Node read failure: invalid ltChildOffset 0');
+            entry.ltChildIndex = node.index + index + 9 + entry.ltChildOffset + 3; // index + 9 header bytes, +3 because offset is from first byte
+            if (entry.ltChildOffset !== 0) {
                 const savedPosition = reader.savePosition(-bytes.length + index + 3); // +3 because offset is from first byte
                 entry.getLtChild = () => {
-                    return savedPosition.go(ltChildOffset)
+                    return savedPosition.go(entry.ltChildOffset)
                     .then(() => {
-                        return this._readChild(reader);
+                        return this._readChild(reader)
+                    })
+                    .then(childNodeInfo => {
+                        childNodeInfo.parentNode = node;
+                        childNodeInfo.parentEntry = entry;
+                        return childNodeInfo;
                     });
                 };
                 // reader.rewind(bytes.length - index); // correct reader's index
@@ -1981,36 +2807,50 @@ class BinaryBPlusTree {
             index += 4;
         }
         // read gt_child_ptr:
-        let gtChildOffset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // gt_child_ptr
-        if (gtChildOffset > 0) {
+        node.gtChildOffset = _readSignedOffset(bytes, index); // (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // gt_child_ptr
+        console.assert(node.gtChildOffset !== 0, 'Node read failure: invalid gtChildOffset 0');
+        node.gtChildIndex = node.index + index + 9 + node.gtChildOffset + 3;  // index + 9 header bytes, +3 because offset is from first byte
+        // if (node.gtChildOffset !== 0) {
             const savedPosition = reader.savePosition(-bytes.length + index + 3); // +3 because offset is from first byte
             node.getGtChild = () => {
-                return savedPosition.go(gtChildOffset)
+                return savedPosition.go(node.gtChildOffset)
                 .then(() => {
                     return this._readChild(reader);
+                })
+                .then(childNodeInfo => {
+                    childNodeInfo.parentNode = node;
+                    childNodeInfo.parentEntry = null;
+                    return childNodeInfo;
                 });
             };
             // reader.rewind(bytes.length - index); // correct reader's index
             // return reader.seek(gtNodeOffset + 3).then(() => {
             //     return readChild();
             // });
-        }
+        // }
         return node;
     }
 
     /**
      * @param {object} [options]
      * @param {boolean} [options.stats] 
+     * @returns {BinaryBPlusTreeLeaf}
      */
     getFirstLeaf(options) {
         let reader;
-        const processChild = (childInfo) => {
-            if (childInfo.isLeaf) {
-                return this._getLeaf(childInfo, reader, options);
+        /**
+         * 
+         * @param {BinaryBPlusTreeNodeInfo} nodeInfo 
+         */
+        const processChild = (nodeInfo) => {
+            if (nodeInfo.isLeaf) {
+                return this._getLeaf(nodeInfo, reader, options);
             }
             else {
-                const node = this._getNode(childInfo, reader);
-                return node.entries[0].getLtChild()
+                const node = this._getNode(nodeInfo, reader);
+                const firstEntry = node.entries[0];
+                console.assert(firstEntry, 'node has no entries!');
+                return firstEntry.getLtChild()
                 .then(processChild);
             }
         };
@@ -2026,22 +2866,21 @@ class BinaryBPlusTree {
      * 
      * @param {object} [options]
      * @param {boolean} [options.stats] 
+     * @returns {BinaryBPlusTreeLeaf}
      */
     getLastLeaf(options) {
         let reader;
         /**
          * 
-         * @param {BinaryBPlusTreeNodeInfo} childInfo 
+         * @param {BinaryBPlusTreeNodeInfo} nodeInfo 
          */
-        const processChild = (childInfo) => {
-            if (childInfo.isLeaf) {
-                return this._getLeaf(childInfo, reader, options);
+        const processChild = (nodeInfo) => {
+            if (nodeInfo.isLeaf) {
+                return this._getLeaf(nodeInfo, reader, options);
             }
             else {
-                return this._getNode(childInfo, reader)
-                .then(node => {
-                    return node.getGtChild();
-                })
+                const node = this._getNode(nodeInfo, reader)
+                return node.getGtChild()
                 .then(processChild);
             }
         };
@@ -2061,71 +2900,123 @@ class BinaryBPlusTree {
      * @returns {Promise<BinaryBPlusTreeLeaf>}
      */
     findLeaf(searchKey, options) {
-        // navigate to the right child
+        // searchKey = _normalizeKey(searchKey); // if (_isIntString(searchKey)) { searchKey = parseInt(searchKey); }
         let reader;
-        const readChild = () => {
-            return this._readChild(reader)
-            .then(childInfo => {
-                if (childInfo.isLeaf) {
-                    return this._getLeaf(childInfo, reader, options);
-                }
-                else {
-                    return readNode(childInfo);
-                }
-            });
-        };
-
-        const readNode = (childInfo) => {
-            const bytes = childInfo.bytes;
-            let entries = bytes[0];
-            let index = 1;
-
-            for (let i = 0; i < entries; i++) {
-                let keyInfo = BPlusTree.getKeyFromBinary(bytes, index);
-                let key = keyInfo.key;
-                index += keyInfo.length + 2;
-
-                if (_isLess(searchKey, key)) {
-                    // Check lesser child node
-                    let offset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // lt_child_ptr
-                    if (offset > 0) {
-                        reader.rewind(bytes.length - index); // correct reader's index
-                        return reader.seek(offset + 3).then(() => {
-                            return readChild();
-                        });
-                    }
-                    else {
-                        return null;
-                    }
-                }
-                else {
-                    // Increase index to point to next entry
-                    index += 4; // skip lt_child_ptr
-                }
-            }
-            // Still here? key > last entry in node
-            let gtNodeOffset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // gt_child_ptr
-            if (gtNodeOffset > 0) {
-                reader.rewind(bytes.length - index); // correct reader's index
-                return reader.seek(gtNodeOffset + 3).then(() => {
-                    return readChild();
-                });
+        /**
+         * 
+         * @param {BinaryBPlusTreeNodeInfo} nodeInfo 
+         */
+        const processChild = (nodeInfo) => {
+            if (nodeInfo.isLeaf) {
+                return this._getLeaf(nodeInfo, reader, options);
             }
             else {
-                return null;
-            }
-        };            
+                const node = this._getNode(nodeInfo, reader);
 
-        // let the reader start after the header bytes
+                // Test ewout, remove:
+                // return node.entries[10].getLtChild()
+                // .then(nodeInfo => {
+                //     return this._getLeaf(nodeInfo, reader, options);
+                // })
+                // .then(leaf => {
+                //     return leaf.getNext();
+                // })
+                // .then(nextLeaf => {
+                //     console.log('debug me');
+                // });
+
+                // console.assert(node.entries.length > 0, `read node has no entries!`);
+                if (node.entries.length === 0) { throw new Error(`read node has no entries!`); }
+
+                const targetEntry = node.entries.find(entry => _isLess(searchKey, entry.key));
+                const p = targetEntry 
+                    ? targetEntry.getLtChild()
+                    : node.getGtChild();
+                return p.then(processChild);
+            }
+        };
         return this._getReader()
         .then(r => {
             reader = r;
-            return reader.go(this.info.headerLength);
-        }) 
-        .then(() => {
-            return readChild();
-        });
+            return this._readChild(reader);
+        })
+        .then(processChild);
     }
+
+    // /**
+    //  * 
+    //  * @param {string|boolean|number|Date} searchKey 
+    //  * @param {object} [options]
+    //  * @param {boolean} [options.stats] 
+    //  * @returns {Promise<BinaryBPlusTreeLeaf>}
+    //  */
+    // findLeaf(searchKey, options) {
+    //     // navigate to the right child
+    //     let reader;
+    //     const readChild = (parentInfo) => {
+    //         return this._readChild(reader)
+    //         .then(childInfo => {
+    //             childInfo.parentInfo = parentInfo;
+    //             if (childInfo.isLeaf) {
+    //                 return this._getLeaf(childInfo, reader, options);
+    //             }
+    //             else {
+    //                 return readNode(childInfo);
+    //             }
+    //         });
+    //     };
+
+    //     const readNode = (childInfo) => {
+    //         c   onst bytes = childInfo.bytes;
+    //         let entries = bytes[0];
+    //         let index = 1;
+
+    //         for (let i = 0; i < entries; i++) {
+    //             let keyInfo = BPlusTree.getKeyFromBinary(bytes, index);
+    //             let key = keyInfo.key;
+    //             index += keyInfo.length + 2;
+
+    //             if (_isLess(searchKey, key)) {
+    //                 // Check lesser child node
+    //                 let offset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // lt_child_ptr
+    //                 if (offset > 0) {
+    //                     reader.rewind(bytes.length - index); // correct reader's index
+    //                     return reader.seek(offset + 3).then(() => {
+    //                         return readChild(childInfo);
+    //                     });
+    //                 }
+    //                 else {
+    //                     return null;
+    //                 }
+    //             }
+    //             else {
+    //                 // Increase index to point to next entry
+    //                 index += 4; // skip lt_child_ptr
+    //             }
+    //         }
+    //         // Still here? key > last entry in node
+    //         let gtNodeOffset = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // gt_child_ptr
+    //         if (gtNodeOffset > 0) {
+    //             reader.rewind(bytes.length - index); // correct reader's index
+    //             return reader.seek(gtNodeOffset + 3).then(() => {
+    //                 return readChild(childInfo);
+    //             });
+    //         }
+    //         else {
+    //             return null;
+    //         }
+    //     };            
+
+    //     // let the reader start after the header bytes
+    //     return this._getReader()
+    //     .then(r => {
+    //         reader = r;
+    //         return reader.go(this.info.headerLength);
+    //     }) 
+    //     .then(() => {
+    //         return readChild();
+    //     });
+    // }
 
     /**
      * Searches the tree
@@ -2184,12 +3075,23 @@ class BinaryBPlusTree {
 
         let totalMatches = 0;
         let totalAdded = 0;
+        const valuePromises = [];
 
         /**
          * @param {BinaryBPlusTreeLeafEntry} entry 
          */
         const add = (entry) => {
             totalMatches += entry.totalValues;
+            const requireValues = filterRecordPointers || include.entries || include.values;
+            if (requireValues && typeof entry.extData === 'object' && !entry.extData.loaded) {
+                // We haven't got its values yet
+                const p = entry.extData.loadValues()
+                .then(() => {
+                    return add(entry); // Do it now
+                });
+                valuePromises.push(p);
+                return p;
+            }
             if (filterRecordPointers) {
                 // Apply filter first, only use what remains
 
@@ -2251,6 +3153,15 @@ class BinaryBPlusTree {
         //     console.log(`tree.search [${op} ${param}] took ${t2-t1}ms, matched ${totalMatches} values, returning ${totalAdded} values in ${results.entries.length} entries`);
         //     return results;
         // };
+        const ret = () => {
+            if (valuePromises.length > 0) {
+                return Promise.all(valuePromises)
+                .then(() => results)
+            }
+            else {
+                return results;
+            }
+        }
 
         if (["<","<="].indexOf(op) >= 0) {
             const processLeaf = (leaf) => {
@@ -2266,7 +3177,7 @@ class BinaryBPlusTree {
                     .then(processLeaf)
                 }
                 else {
-                    return results; //ret(results);
+                    return ret(); //results; //ret(results);
                 }
             }
             return this.getFirstLeaf(getLeafOptions)
@@ -2284,7 +3195,7 @@ class BinaryBPlusTree {
                     .then(processLeaf);
                 }
                 else {
-                    return results; //ret(results);
+                    return ret(); //results; //ret(results);
                 }
             }
             return this.findLeaf(param, getLeafOptions)
@@ -2297,7 +3208,7 @@ class BinaryBPlusTree {
                 if (entry) {
                     add(entry);
                 }
-                return results; //ret(results);
+                return ret(); // results; //ret(results);
             });
         }
         else if (op === "!=") {
@@ -2312,7 +3223,7 @@ class BinaryBPlusTree {
                     .then(processLeaf);
                 }
                 else {
-                    return results; //ret(results);
+                    return ret(); // results; //ret(results);
                 }
             };
             return this.getFirstLeaf(getLeafOptions)
@@ -2342,7 +3253,7 @@ class BinaryBPlusTree {
                     .then(processLeaf);
                 }
                 else {
-                    return results; //ret(results);
+                    return ret(); // results; //ret(results);
                 }
             };
             if (wildcardIndex === 0) {
@@ -2368,7 +3279,7 @@ class BinaryBPlusTree {
                     .then(processLeaf);
                 }
                 else {
-                    return results; //ret(results);
+                    return ret(); // results; //ret(results);
                 }
             };
             return this.getFirstLeaf(getLeafOptions)
@@ -2383,7 +3294,7 @@ class BinaryBPlusTree {
                     if (entry) { add(entry); }
                     searchKey = sorted.shift();
                     if (!searchKey) {
-                        return results; //ret(results);
+                        return ret(); // results; //ret(results);
                     }
                     else if (searchKey > leaf.entries[leaf.entries.length-1].key) {
                         return this.findLeaf(searchKey).then(processLeaf);
@@ -2407,7 +3318,7 @@ class BinaryBPlusTree {
                     .then(processLeaf);
                 }
                 else {
-                    return results; //ret(results);
+                    return ret(); //results; //ret(results);
                 }
             };
             return this.getFirstLeaf(getLeafOptions)
@@ -2430,7 +3341,7 @@ class BinaryBPlusTree {
                         if (_isMore(entry.key, top)) { stop = true; break; }
                     }
                     if (stop || !leaf.getNext) {
-                        return results; //ret(results);
+                        return ret(); // results; //ret(results);
                     }
                     else {
                         return leaf.getNext().then(processLeaf);
@@ -2474,7 +3385,7 @@ class BinaryBPlusTree {
                         if (_isMore(entry.key, top)) { add(entry); }
                     }
                     if (!leaf.getNext) {
-                        return results; //ret(results);
+                        return ret(); // results; //ret(results);
                     }
                     else {
                         return leaf.getNext().then(processLeaf);
@@ -2499,7 +3410,7 @@ class BinaryBPlusTree {
                     .then(processLeaf);
                 }
                 else {
-                    return results; //ret(results);
+                    return ret(); // results; //ret(results);
                 }
             };
             return this.getFirstLeaf(getLeafOptions)
@@ -2515,6 +3426,7 @@ class BinaryBPlusTree {
      * @returns {Promise<BinaryBPlusTreeLeafEntryValue>|Promise<BinaryBPlusTreeLeafEntryValue[]>|Promise<number>} returns a promise that resolves with 1 value (unique keys), a values array or the number of values (options.stats === true)
      */
     find(searchKey, options) {
+        // searchKey = _normalizeKey(searchKey); //if (_isIntString(searchKey)) { searchKey = parseInt(searchKey); }
         return this.findLeaf(searchKey, options)
         .then(leaf => {
             const entry = leaf.entries.find(entry => _isEqual(searchKey, entry.key));
@@ -2522,17 +3434,863 @@ class BinaryBPlusTree {
                 return entry ? entry.totalValues : 0;
             }
             else if (entry) {
-                if (this.info.isUnique) {
-                    return entry.values[0];
+                if (entry.extData) {
+                    return entry.extData.loadValues()
+                    .then(() => {
+                        return this.info.isUnique
+                            ? entry.values[0]
+                            : entry.values;
+                    });
                 }
-                else {
-                    return entry.values;
-                }
+                return this.info.isUnique
+                    ? entry.values[0]
+                    : entry.values;
             }
             else {
                 return null;
             }
         });
+    }
+
+    _growTree(bytesNeeded) {
+        if (!this._autoGrow) {
+            return Promise.reject(new Error('Cannot grow tree - autoGrow not enabled'))
+        }
+        const grow = bytesNeeded - this.info.freeSpace;
+        this.info.byteLength += grow;
+        this.info.freeSpace += grow;
+        // write
+        return Promise.all([
+            // byte_length:
+            this._writeFn(_writeByteLength([], 0, this.info.byteLength), 0),
+            // free_byte_length:
+            this._writeFn(_writeByteLength([], 0, this.info.freeSpace), this.info.freeSpaceIndex)
+        ]);
+        
+    }
+
+    _registerFreeSpace(index, length) {
+        if (!this._fst) { this._fst = []; }
+        if (index + length === this.info.byteLength - this.info.freeSpace) {
+            // Cancel free space allocated at the end of the file
+            this.info.freeSpace += length;
+            return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), this.info.freeSpaceIndex); // free_byte_length
+        }
+        else {
+            this._fst.push({ index, length });
+        }
+    }
+
+    _requestFreeSpace(bytesRequired) {
+        if (!this._fst) { this._fst = []; }
+        let available = this._fst.filter(block => block.length >= bytesRequired);
+        if (available.length > 0) {
+            let best = available.sort((a, b) => a.length < b.length ? -1 : 1)[0];
+            this._fst.splice(this._fst.indexOf(best), 1);
+            return Promise.resolve(best);
+        }
+        else {
+            // Check if there is not too much wasted space
+            const wastedSpace = this._fst.reduce((total, block) => total + block.length, 0);
+            const maxWaste = Math.round(this._originalByteLength * 0.5); // max 50% waste
+            if (wastedSpace > maxWaste) {
+                throw new Error('too much space being wasted. tree rebuild is needed');
+            }
+            const go = () => {
+                const index = this.info.byteLength - this.info.freeSpace;
+                this.info.freeSpace -= bytesRequired;
+                return this._writeFn(
+                    _writeByteLength([], 0, this.info.freeSpace), this.info.freeSpaceIndex
+                )
+                .then(() => {
+                    return { index, length: bytesRequired };
+                });
+            }
+            if (this.info.freeSpace >= bytesRequired) {
+                return go();
+            }
+            else if (this.autoGrow) {
+                return this._growTree(bytesRequired)
+                .then(go);
+            }
+            else {
+                return Promise.reject(new Error('not enough free space available'));
+            }
+            
+        }
+    }
+
+    _rebuildLeaf(leaf, options = { growData: false, growExtData: false, applyChanges: (leaf) => {}, prevLeaf: null, nextLeaf: null }) {
+        // rebuild the leaf
+
+        const newLeafExtDataLength = leaf.extData ? options.growExtData ? Math.ceil(leaf.extData.length * 1.1) : leaf.extData.length : 0;
+        const newLeafLength = options.growData ? Math.ceil(leaf.length * 1.1) : leaf.length;
+        const leafGrows = options.growData || options.growExtData;
+        const bytesNeeded = leafGrows ? newLeafLength + newLeafExtDataLength : 0;
+
+        // if (this.info.freeSpace < bytesNeeded) {
+        //     if (this.autoGrow) {
+        //         return this._growTree(bytesNeeded)
+        //         .then(() => {
+        //             // Do it again
+        //             return this._rebuildLeaf(leaf, options);
+        //         });
+        //     }
+        //     else {
+        //         return Promise.reject(new Error(`Not enough free space left to rebuild leaf`));
+        //     }
+        // }
+
+        // Read additional data needed to rebuild this leaf
+        const reads = [];
+        if (leaf.hasExtData) {
+            if (!leaf.extData.loaded) {
+                // Load all ext_data
+                reads.push(leaf.extData.load());
+            }
+            else if (!leafGrows) {
+                // We're done after rewriting this leaf
+                options.applyChanges && options.applyChanges(leaf);
+                return this._writeLeaf(leaf);
+            }
+        }
+
+        // Growing the next & previous leafs is a wonderful idea, BUT - it can only be done if the their
+        // data is physically stored before/after this current leaf! (which is obviously very often not the case...)
+        // So... we should grow the physical previous/next leafs instead of the logical!!
+        // Impossible for now. Commenting out code that rebuilds prev/next leafs
+
+        // if (leaf.getPrevious && !options.prevLeaf) {
+        //     // Load previous leaf
+        //     const p = leaf.getPrevious()
+        //     .then(prevLeaf => {
+        //         options.prevLeaf = prevLeaf;
+        //         if (prevLeaf.extData) {
+        //             // Also load ext_data because prev leaf will also be rebuilt, gets freed up leaf space
+        //             return prevLeaf.extData.load(); 
+        //         }                        
+        //     });
+        //     reads.push(p);
+        // }
+        // if (leaf.getNext && !options.nextLeaf) {
+        //     // Load next leaf
+        //     const p = leaf.getNext()
+        //     .then(nextLeaf => {
+        //         options.nextLeaf = nextLeaf;
+        //         const moreReads = [];
+        //         if (nextLeaf.extData) {
+        //             // Also load ext_data because leaf will also be rebuilt, gets freed up leaf space
+        //             moreReads.push(nextLeaf.extData.load()); 
+        //         }
+        //         if (leaf.parentEntry) {
+        //             // Set the next leaf's parent node and entry
+        //             // DO WE HAVE TO? (have they not been set by getNext()?)
+        //             nextLeaf.parentNode = leaf.parentNode;
+        //             nextLeaf.parentEntry = leaf.parentNode.entries[leaf.parentNode.entries.indexOf(leaf.parentEntry)+1] || null;
+        //         }
+        //         else {
+        //             // We have to find the parent node of the next leaf to grow the next leaf
+        //             let currentNode = leaf.parentNode;
+        //             let levels = 0;
+        //             const levelUp = () => {
+        //                 levels++;
+        //                 if (currentNode.parentEntry) {
+        //                     // currentNode is not a gtChild of the parent node, so we can travel down the tree now
+        //                     let entryIndex = currentNode.parentNode.entries.indexOf(currentNode.parentEntry) + 1;
+        //                     let getChild;
+        //                     if (entryIndex === currentNode.parentNode.entries.length) {
+        //                         getChild = currentNode.parentNode.getGtChild();
+        //                     }
+        //                     else {
+        //                         getChild = currentNode.parentNode.entries[entryIndex].getLtChild();
+        //                     }
+        //                     levels--;
+        //                     return getChild.then(childNode => {
+        //                         if (levels === 0) { return childNode; }
+        //                         else {
+        //                             const levelDown = () => {
+        //                                 return currentNode.entries[0].getLtChild()
+        //                                 .then(childNode => {
+        //                                     currentNode = childNode;
+        //                                     levels--;
+        //                                     if (levels === 0) {
+        //                                         return currentNode;
+        //                                     }
+        //                                     else {
+        //                                         return levelDown(); // Go deeper in the tree
+        //                                     }
+        //                                 });
+        //                             }
+        //                             return levelDown();
+        //                         }
+        //                     })
+        //                 }
+        //                 else {
+        //                     // go higher up the tree
+        //                     currentNode = currentNode.parentNode;
+        //                     return levelUp();
+        //                 }
+        //             };
+        //             const findNode = levelUp;
+        //             moreReads.push(findNode().then(node => {
+        //                 nextLeaf.parentNode = node;
+        //                 nextLeaf.parentEntry = node.entries[0];
+        //             }));
+        //         }
+
+        //         return Promise.all(moreReads);
+        //     });
+        //     reads.push(p);
+        // }
+
+        if (reads.length > 0) {
+            // Try again after all additional data has been loaded
+            return Promise.all(reads)
+            .then(() => {
+                return this._rebuildLeaf(leaf, options);
+            });
+        }
+
+        return this._requestFreeSpace(bytesNeeded)
+        .then(allocated => {
+
+            // let lock;
+            // return ThreadSafe.lock(this.id)
+            // .then(l => {
+            //     lock = l;
+
+            // TODO: if allocated.length > newLeafLength + newLeafExtDataLength:
+            // add those extra bytes to the leaf!
+
+            // Create new leaf
+            const newLeaf = new BinaryBPlusTreeLeaf({
+                isLeaf: true,
+                index: allocated.index, // (this.info.byteLength - this.info.freeSpace), // + 1
+                length: newLeafLength,
+                // free: leaf.free + (newLeafLength - leaf.length),
+                hasExtData: leaf.hasExtData
+            });
+            newLeaf.prevLeafIndex = leaf.prevLeafIndex;
+            newLeaf.nextLeafIndex = leaf.nextLeafIndex;
+            newLeaf.entries = leaf.entries.map(entry => 
+                new BinaryBPlusTreeLeafEntry(entry.key, entry.values));
+            if (leaf.hasExtData) {
+                newLeaf.extData = {
+                    loaded: true,
+                    length: newLeafExtDataLength,
+                    freeBytes: leaf.extData.freeBytes + (newLeafExtDataLength - leaf.extData.length)
+                };
+            }
+            // Adjust free space lengths & update indexes pointing to this leaf
+            this.info.freeSpace -= newLeafLength + newLeafExtDataLength;
+            if (leaf.parentEntry) {
+                leaf.parentEntry.ltChildIndex = newLeaf.index;
+            }
+            else {
+                leaf.parentNode.gtChildIndex = newLeaf.index;
+            }
+
+            const freedBytes = leaf.length + (leaf.extData ? leaf.extData.length : 0);
+
+            // New previous leaf
+            // let newPrevLeaf;
+            // if (options.prevLeaf) {
+            //     newPrevLeaf = new BinaryBPlusTreeLeaf({
+            //         isLeaf: true,
+            //         index: options.prevLeaf.index,
+            //         length: options.prevLeaf.length,
+            //         free: options.prevLeaf.free,
+            //         hasExtData: options.prevLeaf.hasExtData
+            //     });
+            //     newPrevLeaf.nextLeafIndex = newLeaf.index;
+            //     newPrevLeaf.entries = options.prevLeaf.entries;
+            //     if (options.prevLeaf.extData) {
+            //         newPrevLeaf.extData = {
+            //             loaded: true,
+            //             length: options.prevLeaf.extData.length,
+            //             freeBytes: options.prevLeaf.extData.freeBytes
+            //         };
+            //     }
+
+            //     // Increase available bytes for previous leaf
+            //     const additionalBytes = options.nextLeaf ? Math.floor(freedBytes / 2) : freedBytes;
+            //     if (newPrevLeaf.extData) {
+            //         // Use 70% for growing ext_data
+            //         const growExtData = Math.ceil(additionalBytes * 0.7);
+            //         newPrevLeaf.extData.length += growExtData;
+            //         newPrevLeaf.extData.freeBytes += growExtData;
+            //         // 30% extra for leaf data
+            //         const growData = additionalBytes - growExtData;
+            //         newPrevLeaf.length += growData;
+            //         newPrevLeaf.free += growData;
+            //     }
+            //     else {
+            //         // Grow leaf
+            //         newPrevLeaf.length += additionalBytes;
+            //         newPrevLeaf.free += additionalBytes;
+            //     }
+            // }
+
+            // // New next leaf
+            // Commented out for the same readon as prevLeaf above. See comment
+            // let newNextLeaf;
+            // if (options.nextLeaf) {
+            //     newNextLeaf = new BinaryBPlusTreeLeaf({
+            //         isLeaf: true,
+            //         index: options.nextLeaf.index,
+            //         length: options.nextLeaf.length,
+            //         free: options.nextLeaf.free,
+            //         hasExtData: options.nextLeaf.hasExtData
+            //     });
+            //     newNextLeaf.prevLeafIndex = newLeaf.index;
+            //     newNextLeaf.entries = options.nextLeaf.entries;
+            //     if (options.nextLeaf.extData) {
+            //         newNextLeaf.extData = {
+            //             loaded: true,
+            //             length: options.nextLeaf.extData.length,
+            //             freeBytes: options.nextLeaf.extData.freeBytes
+            //         };
+            //     }
+
+            //     // Increase available bytes for previous leaf
+            //     const additionalBytes = options.prevLeaf ? Math.floor(freedBytes / 2) : freedBytes;
+            //     newNextLeaf.index -= additionalBytes;
+            //     newLeaf.nextLeafIndex = newNextLeaf.index;
+            //     // const parentEntryIndex = leaf.parentNode.entries.indexOf(leaf.parentEntry) + 1;
+            //     // if (parentEntryIndex === leaf.parentNode.entries.length) {
+            //     //     leaf.parentNode.gtChildIndex = newNextLeaf.index;
+            //     // }
+            //     // else {
+            //     //     leaf.parentNode.entries[parentEntryIndex].ltChildIndex = newNextLeaf.index;
+            //     // }
+            //     if (options.nextLeaf.parentEntry) {
+            //         options.nextLeaf.parentEntry.ltChildIndex = newNextLeaf.index;
+            //     }
+            //     else {
+            //         options.nextLeaf.parentNode.gtChildIndex = newNextLeaf.index;
+            //     }
+            //     if (newNextLeaf.extData) {
+            //         // Use 70% for growing ext_data
+            //         const growExtData = Math.ceil(additionalBytes * 0.7);
+            //         newNextLeaf.extData.length += growExtData;
+            //         newNextLeaf.extData.freeBytes += growExtData;
+            //         // 30% extra for leaf data
+            //         const growData = additionalBytes - growExtData;
+            //         newNextLeaf.length += growData;
+            //         newNextLeaf.free += growData;
+            //     }
+            //     else {
+            //         // Grow leaf 
+            //         newNextLeaf.length += additionalBytes;
+            //         newNextLeaf.free += additionalBytes;
+            //     }
+            // }
+            
+            console.log(`Rebuilding leaf for entries "${leaf.entries[0].key}" to "${leaf.entries[leaf.entries.length-1].key}"`);
+            options.applyChanges && options.applyChanges(newLeaf);
+
+            // Start transaction
+            const tx = new TX();
+
+            // // Update free space info:
+            // tx.queue({
+            //     name: 'free space',
+            //     action: () => {
+            //         return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), this.info.freeSpaceIndex);
+            //     },
+            //     rollback: () => {
+            //         this.info.freeSpace += newLeafLength + newLeafExtDataLength;
+            //         return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), this.info.freeSpaceIndex);
+            //     }
+            // });
+
+            // Write new leaf:
+            tx.queue({
+                name: 'new leaf',
+                action: () => {
+                    return this._writeLeaf(newLeaf)
+                    .then(result => {
+                        console.log(`new leaf for entries "${newLeaf.entries[0].key}" to "${newLeaf.entries.slice(-1)[0].key}" was written successfully at index ${newLeaf.index}`);
+                        return `${result.length} leaf writes`;
+                    })
+                    .catch(err => {
+                        console.error(`failed to write new leaf: ${err.message}`);
+                        throw err;
+                    });
+                },
+                rollback: () => {
+                    // release allocated space again
+                    console.error(`failed to write new leaf: ${err.message}`);
+                    return this._registerFreeSpace(allocated.index, allocated.length);
+                }
+            });
+
+            // // Rewrite previous leaf:
+            // newPrevLeaf && tx.queue({
+            //     name: 'prev leaf',
+            //     action: () => {
+            //         return this._writeLeaf(newPrevLeaf);
+            //     },
+            //     rollback: () => {
+            //         return this._writeLeaf(options.prevLeaf); // rewrite original prevLeaf
+            //     }
+            // });
+
+            // Adjust previous leaf's next_leaf_ptr:
+            if (leaf.getPrevious) {
+                const prevLeaf = {
+                    nextPointerIndex: leaf.prevLeafIndex + BinaryBPlusTreeLeaf.nextLeafPtrIndex,
+                    oldOffset: BinaryBPlusTreeLeaf.getNextLeafOffset(leaf.prevLeafIndex, leaf.index),
+                    newOffset: BinaryBPlusTreeLeaf.getNextLeafOffset(leaf.prevLeafIndex, newLeaf.index)
+                };
+                tx.queue({
+                    name: 'prev leaf next_leaf_ptr',
+                    action: () => {
+                        const bytes = _writeSignedOffset([], 0, prevLeaf.newOffset);
+                        return this._writeFn(bytes, prevLeaf.nextPointerIndex);
+                    },
+                    rollback: () => {
+                        const bytes = _writeSignedOffset([], 0, prevLeaf.oldOffset);
+                        return this._writeFn(bytes, prevLeaf.nextPointerIndex);
+                    }
+                });
+            }
+
+            // // Rewrite next leaf:
+            // newNextLeaf && tx.queue({
+            //     name: 'next leaf',
+            //     action: () => {
+            //         return this._writeLeaf(newNextLeaf);
+            //     },
+            //     rollback: () => {
+            //         return this._writeLeaf(options.nextLeaf);  // rewrite original nextLeaf
+            //     }
+            // });
+
+            // Adjust previous leaf's next_leaf_ptr:
+            if (leaf.getNext) {
+                const nextLeaf = {
+                    prevPointerIndex: leaf.nextLeafIndex + BinaryBPlusTreeLeaf.prevLeafPtrIndex,
+                    oldOffset: BinaryBPlusTreeLeaf.getPrevLeafOffset(leaf.nextLeafIndex, leaf.index),
+                    newOffset: BinaryBPlusTreeLeaf.getPrevLeafOffset(leaf.nextLeafIndex, newLeaf.index)
+                };
+                tx.queue({
+                    name: 'next leaf prev_leaf_ptr',
+                    action: () => {
+                        const bytes = _writeSignedOffset([], 0, nextLeaf.newOffset);
+                        return this._writeFn(bytes, nextLeaf.prevPointerIndex);
+                    },
+                    rollback: () => {
+                        const bytes = _writeSignedOffset([], 0, nextLeaf.oldOffset);
+                        return this._writeFn(bytes, nextLeaf.prevPointerIndex);
+                    }
+                });
+            }
+
+            // Rewrite parent node
+            tx.queue({
+                name: 'parent node',
+                action: () => {
+                    return this._writeNode(leaf.parentNode);
+                },
+                rollback: () => {
+                    // Set the target leaf indexes back to the originals
+                    if (leaf.parentEntry) {
+                        leaf.parentEntry.ltChildIndex = leaf.index;
+                    }
+                    else {
+                        leaf.parentNode.gtChildIndex = leaf.index;
+                    }
+                    if (options.nextLeaf.parentNode === leaf.parentNode) {
+                        if (options.nextLeaf.parentEntry) {
+                            options.nextLeaf.parentEntry.ltChildIndex = options.nextLeaf.index;
+                        }
+                        else {
+                            options.nextLeaf.parentNode.gtChildIndex = options.nextLeaf.index;
+                        }
+                    }
+                    return this._writeNode(leaf.parentNode);
+                }
+            });
+
+            // // If the next leaf has an other parent node, rewrite it
+            // options.nextLeaf.parentNode !== leaf.parentNode && tx.queue({
+            //     name: 'next leaf parent node',
+            //     action: () => {
+            //         return this._writeNode(options.nextLeaf.parentNode);
+            //     },
+            //     rollback: () => {
+            //         // Set target leaf index back to original
+            //         if (options.nextLeaf.parentEntry) {
+            //             options.nextLeaf.parentEntry.ltChildIndex = options.nextLeaf.index;
+            //         }
+            //         else {
+            //             options.nextLeaf.parentNode.gtChildIndex = options.nextLeaf.index;
+            //         }                
+            //     }
+            // });
+
+            return tx.execute(true)
+            .then(results => {
+                console.log('All rebuild writes were successful', results);
+                return this._registerFreeSpace(leaf.index, freedBytes);
+            })            
+        })
+        .catch(err => {
+            throw new Error(`Not enough free space left to rebuild leaf: ${err.message}`);
+        });
+
+        // // Update free space info
+        // return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), 6)
+        // .then(() => {
+        //     // Add rollback step
+        //     rollbackSteps.push(() => {
+        //         this.info.freeSpace += newLeafLength + newLeafExtDataLength;
+        //         return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), 6);
+        //     });
+
+        //     // Write new leaf
+        //     return this._writeLeaf(newLeaf);
+        // })
+        // .then(() => {
+        //     // No need to add rollback step to remove new leaf. It'll be overwritten later    
+        //     if (newPrevLeaf) {
+        //         // Rewrite previous leaf
+        //         return this._writeLeaf(newPrevLeaf);
+        //     }
+        // })
+        // .then(() => {
+        //     // Add rollback step
+        //     newPrevLeaf && rollbackSteps.push(() => {
+        //         return this._writeLeaf(options.prevLeaf); // rewrite original prevLeaf
+        //     });
+
+        //     if (newNextLeaf) {
+        //         // Rewrite next leaf
+        //         return this._writeLeaf(newNextLeaf);
+        //     }
+        // })
+        // .then(() => {
+        //     // Add rollback step
+        //     newNextLeaf && rollbackSteps.push(() => {
+        //         return this._writeLeaf(options.nextLeaf);  // rewrite original nextLeaf
+        //     });
+
+        //     // Rewrite parent node
+        //     return this._writeNode(leaf.parentNode);
+        // })
+        // .then(() => {
+        //     // Add rollback step
+        //     rollbackSteps.push(() => {
+        //         // Set the target leaf indexes back to the originals
+        //         if (leaf.parentEntry) {
+        //             leaf.parentEntry.ltChildIndex = leaf.index;
+        //         }
+        //         else {
+        //             leaf.parentNode.gtChildIndex = leaf.index;
+        //         }
+        //         if (options.nextLeaf.parentNode === leaf.parentNode) {
+        //             if (options.nextLeaf.parentEntry) {
+        //                 options.nextLeaf.parentEntry.ltChildIndex = options.nextLeaf.index;
+        //             }
+        //             else {
+        //                 options.nextLeaf.parentNode.gtChildIndex = options.nextLeaf.index;
+        //             }
+        //         }
+        //         return this._writeNode(leaf.parentNode);
+        //     })
+
+        //     if (options.nextLeaf.parentNode !== leaf.parentNode) {
+        //         // Next leaf has other parent node, rewrite it
+        //         return this._writeNode(options.nextLeaf.parentNode);
+        //     }
+        // })
+        // .catch(rollback);
+        // })
+        // .then(() => {
+        //     lock.release();
+        // })
+        // .catch(err => {
+        //     lock.release();
+        //     throw err;
+        // });
+    }
+
+    _splitLeaf(leaf, options = { nextLeaf: null, maxEntries: 0, cancelCallback: null }) {
+        // split leaf if it could not be written.
+        // There needs to be enough free space to store another leaf the size of current leaf,
+        // and the parent node must not be full.
+
+        console.assert(
+            typeof options.cancelCallback === 'function', 
+            'specify options.cancelCallback to undo any changes when a rollback needs to be performed'
+        );
+        
+        if (leaf.parentNode.entries.length >= this.info.entriesPerNode) {
+            // TODO: split parent node! 
+            // return this._splitNode(leaf.parentNode).then(({ node1, node2 }) => {
+            //      // find out if leaf is now a child of node1 or node2, update properties and try again
+            // })
+            return Promise.reject(new Error(`Cannot split leaf because parent node is full`));
+        }
+
+        if (typeof options.maxEntries !== 'number' || options.maxEntries === 0) {
+            options.maxEntries = Math.floor(leaf.entries.length / 2);
+        }
+
+        // Check if additional data has to be loaded before proceeding
+        const reads = [];
+        if (!options.nextLeaf && leaf.getNext) {
+            // Load next leaf first
+            reads.push(
+                leaf.getNext()
+                .then(nextLeaf => {
+                    options.nextLeaf = nextLeaf;
+                })
+            );
+        }
+        if (leaf.hasExtData && !leaf.extData.loaded) {
+            // load all ext_data before proceeding with split
+            reads.push(leaf.extData.load());
+        }
+        if (reads.length > 0) {
+            return Promise.all(reads)
+            .then(() => { 
+                return this._splitLeaf(leaf, options); 
+            });
+        }
+
+        const movingEntries = leaf.entries.slice(-options.maxEntries);
+        // const movingExtDataLength =  movingEntry.extData ? Math.ceil((movingEntry.extData.length - movingEntry.extData.freeBytes) * 1.1) : 0;
+        const movingExtDataLength = Math.ceil(movingEntries.reduce((length, entry) => {
+            return length + (entry.extData ? entry.extData.length - entry.extData.freeBytes : 0);
+        }, 0)  / movingEntries.length * this.info.entriesPerNode);
+
+        const newLeafExtDataLength = Math.ceil(movingExtDataLength * 1.1);
+        const newLeafLength = leaf.length; // Use same length as current leaf
+
+        // if (this.info.freeSpace < newLeafLength + newLeafExtDataLength) {
+        //     if (this.autoGrow) {
+        //         return this._growTree(newLeafLength + newLeafExtDataLength)
+        //         .then(() => {
+        //             // Do it again
+        //             return this._splitLeaf(leaf, options);
+        //         });
+        //     }
+        //     else {
+        //         return Promise.reject(new Error(`Not enough free space left to split leaf`));
+        //     }
+        // }
+
+        return this._requestFreeSpace(newLeafLength + newLeafExtDataLength)
+        .then(allocated => {
+
+            // let lock;
+            // return ThreadSafe.lock(this.id)
+            // .then(l => {
+            //     lock = l;
+
+            console.log(`Splitting leaf "${leaf.entries[0].key}" to "${leaf.entries.slice(-1)[0].key}", cutting at "${movingEntries[0].key}"`);
+
+            const nextLeaf = options.nextLeaf;
+
+            // Create new leaf
+            const newLeaf = new BinaryBPlusTreeLeaf({
+                isLeaf: true,
+                length: newLeafLength,
+                index: allocated.index //(this.info.byteLength - this.info.freeSpace) //+ 1,
+            });
+            if (newLeafExtDataLength > 0) {
+                newLeaf.extData = {
+                    loaded: true,
+                    length: newLeafExtDataLength,
+                    freeBytes: newLeafExtDataLength - movingExtDataLength
+                };
+            }
+
+            // Adjust free space length and prev & next offsets
+            // this.info.freeSpace -= newLeafLength + newLeafExtDataLength;
+            newLeaf.prevLeafIndex = leaf.index;
+            newLeaf.nextLeafIndex = nextLeaf ? nextLeaf.index : 0;
+            leaf.nextLeafIndex = newLeaf.index;
+            if (nextLeaf) {
+                nextLeaf.prevLeafIndex = newLeaf.index;
+            }
+
+            // move entries
+            leaf.entries.splice(-options.maxEntries);
+            newLeaf.entries.push(...movingEntries);
+            // console.log(`Creating new leaf for ${movingEntries.length} entries`);
+
+            // Update parent node entry pointing to this leaf
+            const oldParentNode = new BinaryBPlusTreeNode({
+                isLeaf: false,
+                index: leaf.parentNode.index,
+                length: leaf.parentNode.length,
+                free: leaf.parentNode.free
+            })
+            oldParentNode.gtChildIndex = leaf.parentNode.gtChildIndex;
+            oldParentNode.entries = leaf.parentNode.entries.map(entry => { 
+                let newEntry = new BinaryBPlusTreeNodeEntry(entry.key);
+                newEntry.ltChildIndex = entry.ltChildIndex;
+                return newEntry;
+            });
+
+            if (leaf.parentEntry !== null) {
+                // Current leaf is a parent node entry's ltChild
+                leaf.parentEntry.key = movingEntries[0].key;
+                // Add new node entry for created leaf
+                const insertIndex = leaf.parentNode.entries.indexOf(leaf.parentEntry)+1;
+                const newNodeEntry = new BinaryBPlusTreeNodeEntry(nextLeaf.entries[0].key);
+                newNodeEntry.ltChildIndex = newLeaf.index; // Set the target index, so _writeNode knows it must calculate the target offset
+                leaf.parentNode.entries.splice(insertIndex, 0, newNodeEntry);
+            }
+            else {
+                // Current leaf is parent node's gtChild
+                const newNodeEntry = new BinaryBPlusTreeNodeEntry(movingEntries[0].key);
+                newNodeEntry.ltChildIndex = leaf.index;
+                leaf.parentNode.entries.push(newNodeEntry);
+                leaf.parentNode.gtChildIndex = newLeaf.index;
+            }
+
+            // Start transaction
+            const tx = new TX();
+
+            // // Update free space info:
+            // tx.queue({
+            //     action: () => {
+            //         return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), this.info.freeSpaceIndex)
+            //     },
+            //     rollback: () => {
+            //         // Rollback
+            //         this.info.freeSpace += newLeafLength + newLeafExtDataLength;
+            //         return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), this.info.freeSpaceIndex);
+            //     }
+            // });
+
+            // Write new leaf:
+            tx.queue({
+                action: () => {
+                    return this._writeLeaf(newLeaf);
+                },
+                rollback: () => {
+                    // Release allocated space again
+                    return this._registerFreeSpace(allocated.index, allocated.length);
+                }
+                // No need to add rollback step to remove new leaf. It'll be overwritten later
+            });
+
+            // Rewrite next leaf:
+            nextLeaf && tx.queue({
+                action: () => {
+                    return this._writeLeaf(nextLeaf);
+                },
+                rollback: () => {
+                    nextLeaf.prevLeafIndex = leaf.index;
+                    return this._writeLeaf(nextLeaf);                
+                }
+            });
+
+            // Rewrite this leaf:
+            tx.queue({
+                action: () => {
+                    return this._writeLeaf(leaf);
+                },
+                rollback: () => {
+                    leaf.entries.push(...movingEntries);
+                    leaf.nextLeafIndex = nextLeaf ? nextLeaf.index : 0;
+                    let p = options.cancelCallback();
+                    if (p instanceof Promise) {
+                        return p.then(() => {
+                            return this._writeLeaf(leaf);
+                        });
+                    }
+                    return this._writeLeaf(leaf);
+                }
+            });
+
+            // Rewrite parent node:
+            tx.queue({
+                action: () => {
+                    return this._writeNode(leaf.parentNode);
+                },
+                rollback: () => {
+                    // this is the last step, we don't need to rollback if we are running the tx sequentially. 
+                    // Because we run parallel, we need rollback code here:
+                    return this._writeNode(oldParentNode);
+                }
+            });
+        
+            return tx.execute(true); // run parallel
+        })
+        .catch(err => {
+            throw new Error(`Not enough free space left to split leaf: ${err.message}`);
+        });
+
+        // // Update free space info
+        // return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), 6)
+        // .then(() => {
+        //     // Add rollback step
+        //     rollbackSteps.push(() => {
+        //         this.info.freeSpace += newLeafLength + newLeafExtDataLength;
+        //         return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), 6);
+        //     });
+
+        //     // Write new leaf
+        //     return this._writeLeaf(newLeaf);
+        // })
+        // .then(() => {
+        //     // No need to add rollback step to remove new leaf. It'll be overwritten later    
+        //     if (nextLeaf) {
+        //         // Rewrite next leaf
+        //         return this._writeLeaf(nextLeaf);
+        //     }
+        // })
+        // .then(() => {
+        //     // Add rollback step
+        //     nextLeaf && rollbackSteps.push(() => {
+        //         // nextLeaf.prevLeafOffset = leaf.index - (nextLeaf.index + 9);
+        //         nextLeaf.prevLeafIndex = leaf.index;
+        //         return this._writeLeaf(nextLeaf);
+        //     });
+
+        //     // Rewrite this leaf
+        //     return this._writeLeaf(leaf);
+        // })
+        // .then(() => {
+        //     // Add rollback step
+        //     rollbackSteps.push(() => {
+        //         leaf.entries.push(moveEntry);
+        //         // leaf.nextLeafOffset = nextLeaf ? nextLeaf.index - (leaf.index + 13) : 0;
+        //         leaf.nextLeafIndex = nextLeaf ? nextLeaf.index : 0;
+        //         let p = this._writeLeaf(leaf);
+        //         undoAdd();
+        //         return p;
+        //     });
+
+        //     // Update parent node entry pointing to this leaf
+        //     if (leaf.parentEntry !== null) {
+        //         // Current leaf is a parent node entry's ltChild
+        //         leaf.parentEntry.key = moveEntry.key;
+        //         // Add new node entry for created leaf
+        //         const insertIndex = leaf.parentNode.entries.indexOf(leaf.parentEntry)+1;
+        //         const newNodeEntry = new BinaryBPlusTreeNodeEntry(nextLeaf.entries[0].key);
+        //         newNodeEntry.ltChildIndex = newLeaf.index; // Set the target index, so _writeNode knows it must calculate the target offset
+        //         leaf.parentNode.entries.splice(insertIndex, 0, newNodeEntry);
+        //     }
+        //     else {
+        //         // Current leaf is parent node's gtChild
+        //         const newNodeEntry = new BinaryBPlusTreeNodeEntry(moveEntry.key);
+        //         newNodeEntry.ltChildIndex = leaf.index;
+        //         leaf.parentNode.entries.push(newNodeEntry);
+        //         leaf.parentNode.gtChildIndex = newLeaf.index;
+        //     }
+
+        //     // Rewrite parent node
+        //     return this._writeNode(leaf.parentNode);
+        // })
+        // .catch(rollback);
+
     }
 
     /**
@@ -2541,14 +4299,27 @@ class BinaryBPlusTree {
      * @param {object} [metadata] 
      */
     add(key, recordPointer, metadata) {
+        // key = _normalizeKey(key); //if (_isIntString(key)) { key = parseInt(key); }
         const err = _checkNewEntryArgs(key, recordPointer, this.metadataKeys, metadata);
         if (err) {
             throw err;
         }
         const entryValue = new BinaryBPlusTreeLeafEntryValue(recordPointer, metadata);
-        return this.findLeaf(key)
+        var lock;
+        if (!this.id) {
+            throw new Error(`To edit tree, set the id property to something unique for locking purposes`);
+        }
+        return ThreadSafe.lock(this.id, { timeout: 15 * 60 * 1000 }) // 15 minutes for debugging: 
+        // return this.findLeaf(key)
+        // .then(leaf => {
+        //     // This is the leaf the key should be added to
+        //     return ThreadSafe.lock(`leaf@${leaf.index}`, { target: leaf }); // LOCK THE LEAF for editing
+        // })
+        .then(l => {
+            lock = l;
+            return this.findLeaf(key);
+        })
         .then(leaf => {
-            // This is the leaf the key should be added to
             const entryIndex = leaf.entries.findIndex(entry => _isEqual(key, entry.key));
             let addNew = false;
             if (this.info.isUnique) {
@@ -2561,40 +4332,469 @@ class BinaryBPlusTree {
             }
             else {
                 if (~entryIndex) {
-                    leaf.entries[entryIndex].values.push(entryValue);
+                    const entry = leaf.entries[entryIndex];
+                    if (entry.extData) {
+                        return entry.extData.addValue(recordPointer, metadata)
+                        .catch(err => {
+                            // Something went wrong adding the value. ext_data_block is probably full
+                            // and needs to grow
+                            console.log(`Leaf rebuild necessary - unable to add value to key "${key}": ${err.message}`)
+                            return this._rebuildLeaf(leaf, { 
+                                growExtData: true,
+                                applyChanges: (leaf) => {
+                                    const entry = leaf.entries[entryIndex];
+                                    entry.values.push(new BinaryBPlusTreeLeafEntryValue(recordPointer, metadata));
+                                }
+                            });
+                        });
+                    }
+
+                    entry.values.push(entryValue);
                 }
                 else {
                     addNew = true;
                 }
             }
 
-            if (addNew) {
-                if (leaf.entries.length + 1 > this.info.entriesPerNode) {
-                    throw new Error(`Cannot add key "${key}": leaf is full`);
+            if (!addNew) {
+                return this._writeLeaf(leaf)
+                .catch(err => {
+                    // Leaf got too small? Try rebuilding it
+                    // const entry = leaf.entries[entryIndex];
+                    // const hasExtData = typeof entry.extData === 'object';
+                    const extDataError = err.message.match(/ext_data/) !== null;
+                    return this._rebuildLeaf(leaf, {
+                        growData: !extDataError, 
+                        growExtData: extDataError 
+                    });
+                })
+                .catch(err => {
+                    throw new Error(`Can't add key '${key}': ${err.message}`);
+                });
+            }
+
+            // If we get here, we have to add a new leaf entry
+
+            // Check if prev/next leaf have the same parent node
+            // if they don't, we don't know who their parent is because
+            // they were loaded using the prev/next leaf offsets
+            const context = {
+                previousLeaf: {
+                    exists: typeof leaf.getPrevious === 'function',
+                    hasSameParent: (function() {
+                        if (typeof leaf.getPrevious !== 'function') { return false; }
+                        return leaf.parentNode.entries[0] !== leaf.parentEntry; // leaf is first parent entry's ltChild
+                        // const firstLeafEntry = leaf.entries[0];
+                        // const firstParentEntry = leaf.parentNode.entries[0];
+                        // if (!firstLeafEntry) {
+                        //     console.error(`No first leaf entry @previous leaf`);
+                        //     process.exit();
+                        // }
+                        // if (!firstParentEntry) {
+                        //     console.error(`No first parent node entry @previous leaf`);
+                        //     process.exit();
+                        // }
+                        // return _isLessOrEqual(firstParentEntry.key, firstLeafEntry.key);
+                    })(),
+                    get load() {
+                        return this.exists && this.hasSameParent;
+                    }
+                },
+                nextLeaf: {
+                    exists: typeof leaf.getNext === 'function',
+                    hasSameParent: (function() {
+                        if (typeof leaf.getNext !== 'function') { return false; /* no next leaf */ }
+                        if (leaf.parentEntry === null) { return false; /* leaf is gtChild of parent */ }
+                        return true;
+
+                        // const firstLeafEntry = leaf.entries[0];
+                        // const lastParentEntry = leaf.parentNode.entries[leaf.parentNode.entries.length - 1];
+                        // if (!firstLeafEntry) {
+                        //     console.error(`No first leaf entry @next leaf`);
+                        //     process.exit();
+                        // }
+                        // if (!lastParentEntry) {
+                        //     console.error(`No last parent node entry @next leaf`);
+                        //     process.exit();
+                        // }
+                        // return _isMore(lastParentEntry.key, firstLeafEntry.key);
+                    })(),
+                    get load() {
+                        return this.exists && this.hasSameParent;
+                    }                            
                 }
+            }
 
-                // Create entry
-                // const entry = { 
-                //     key, 
-                //     value, 
-                //     values: [value] 
-                // };
-                const entry = new BinaryBPlusTreeLeafEntry(key, [entryValue]);
+            // Create new entry
+            const entry = new BinaryBPlusTreeLeafEntry(key, [entryValue]);
 
-                // Insert it
-                const insertBeforeIndex = leaf.entries.findIndex(entry => _isMore(entry.key, key));
-                if (insertBeforeIndex < 0) { 
-                    leaf.entries.push(entry);
+            // Insert it
+            let insertBeforeIndex = leaf.entries.findIndex(entry => _isMore(entry.key, key));
+            if (insertBeforeIndex < 0) { 
+                leaf.entries.push(entry);
+            }
+            else {
+                leaf.entries.splice(insertBeforeIndex, 0, entry);    
+            }
+            
+            if (leaf.entries.length <= this.info.entriesPerNode) {
+                return this._writeLeaf(leaf)
+                .catch(err => {
+                    // Leaf had no space left, rebuild it
+                    return this._rebuildLeaf(leaf, { 
+                        growData: true, 
+                        growExtData: true
+                    })
+                    .catch(err => {
+                        throw new Error(`Can't add key '${key}': ${err.message}`);
+                    });
+                });
+            }
+ 
+            // If we get here, our leaf has too many entries
+            if (!leaf.parentNode) {
+                undoAdd();
+                throw new Error(`Cannot add key "${key}", no space left in single leaf tree`);
+            }
+
+            const undoAdd = () => {
+                if (insertBeforeIndex === null) {
+                    return; // Already undone, prevent double action
+                }
+                if (insertBeforeIndex < 0) {
+                    leaf.entries.pop();
                 }
                 else {
-                    leaf.entries.splice(insertBeforeIndex, 0, entry);    
-                }            
+                    leaf.entries.splice(insertBeforeIndex, 1);
+                }
+                insertBeforeIndex = null;            
             }
-            return this._writeLeaf(leaf);
+
+            // OVERRIDE everything else below
+            return this._splitLeaf(leaf, { cancelCallback: undoAdd })
+            .catch(err => {
+                throw new Error(`Can't add key '${key}': ${err.message}`);
+            });
+
+            // Prepare rollback steps
+            const rollbackSteps = [];
+            const rollback = err => {
+                return Promise.all(rollbackSteps.map(fn => fn()))
+                .catch(err2 => {
+                    console.error(`Critical: could not rollback changes to tree, it might be broken now. Error: ${err2.message}`)
+                    err.rollbackError = err2;
+                    throw err;
+                })
+                .then(() => {
+                    undoAdd();
+                    throw err;
+                });                
+                // let i = rollbackSteps.length - 1;
+                // const next = () => {
+                //     let res = rollbackSteps[i]();
+                //     let p = res instanceof Promise ? res : Promise.resolve(res);
+                //     return p.then(() => {
+                //         i--;
+                //         if (i === 0) { return; }
+                //         return next();
+                //     });
+                // }
+                // return next()
+                // .catch(err2 => {
+                //     console.error(`Critical: could not rollback changes to tree, it might be broken now. Error: ${err2.message}`)
+                //     err.rollbackError = err2;
+                //     throw err;
+                // })
+                // .then(() => {
+                //     undoAdd();
+                //     throw err;
+                // });
+            };
+
+            // const requestStorage = (req) => {
+            //     if (typeof storageRequestCallback !== 'function') {
+            //         if (req.reason === 'out_of_space') {
+            //             return Promise.reject(new Error(`Cannot add key "${key}", more storage needed but no storageRequestCallback is passed`));
+            //         }
+            //         else {
+            //             // Not critical (yet)
+            //             return Promise.resolve();
+            //         }
+            //     }
+            //     let p = storageRequestCallback(req);
+            //     if (!(p instanceof Promise)) {
+            //         return Promise.reject(new Error(`storageRequestCallback did not return a promise`));
+            //     }
+            //     return p;
+            // };
+
+            // if (!leaf.parentNode) {
+            //     // This is a 1 leaf tree, leaf needs to split, new parent node has to be created
+
+            //     // We can get away with a quick rebuild here
+            //     // if (this.info.freeSpace >= leaf.length * 2)
+            //     return requestStorage({ reason: 'out_of_space', bytes: leaf.length })
+            //     .then(() => {
+            //         // Create new tree by simple rebuild
+            //         let builder = new BPlusTreeBuilder(this.info.isUnique, 95, this.info.metadataKeys);
+            //         leaf.entries.forEach(entry => {
+            //             entry.values.forEach(val => {
+            //                 builder.add(entry.key, val.recordPointer, val.metadata);
+            //             });
+            //         });
+            //         return builder.create().toBinary(true, this._writeFn);
+            //     });
+            // }
+
+            // Decide if we're going to move an entry to the previous or next leaf
+            // TODO: handle OR prevent moving entries with an ext_data_block (they are large)
+            return Promise.all([
+                context.previousLeaf.exists ? leaf.getPrevious() : null, //leaf.getPrevious ? leaf.getPrevious() : null,
+                context.nextLeaf.exists ? leaf.getNext() : null //leaf.getNext ? leaf.getNext() : null
+            ])
+            .catch(err => {
+                undoAdd();
+                throw err;
+            })
+            .then(leafs => {
+                const prevLeaf = leafs[0];
+                const nextLeaf = leafs[1];
+
+                if (prevLeaf // previous leaf exists
+                    && context.previousLeaf.hasSameParent  // previous leaf has the same parent node
+                    && prevLeaf.entries.length < this.info.entriesPerNode // previous leaf has space for more entries
+                    && (
+                        !context.nextLeaf.exists // no next leaf
+                        || !context.nextLeaf.hasSameParent // next leaf has other parent node
+                        || prevLeaf.entries.length <= nextLeaf.entries.length // next leaf has more entries than previous
+                    )
+                    && !leaf.entries[0].extData // prevent moving entries with ext_data_block, they are large and there is a fair chance they won't fit in the previous leaf.
+                ) {
+                    // Move to previous leaf
+
+                    // Remove the first entry from this leaf
+                    const moveEntry = leaf.entries.shift();
+                    console.log(`Moving leaf entry "${moveEntry.key}" to previous leaf`);
+                    rollbackSteps.push(() => { leaf.entries.unshift(moveEntry); })
+
+                    // Add moving entry to previous leaf
+                    prevLeaf.entries.push(moveEntry); // Becomes last entry
+                    return this._writeLeaf(prevLeaf)
+                    .then(() => {
+                        // Add rollback step
+                        rollbackSteps.push(() => {
+                            prevLeaf.entries.pop(); // Remove moved entry
+                            return this._writeLeaf(prevLeaf);
+                        });
+
+                        // Now rewrite this leaf
+                        return this._writeLeaf(leaf);
+                    })
+                    .then(() => {
+                        // Add rollback step
+                        rollbackSteps.push(() => {
+                            leaf.entries.unshift(moveEntry);
+                            undoAdd();
+                            return this._writeLeaf(leaf);
+                        });
+
+                        // // Update parent node entry pointing to this leaf
+                        // // const parentNodeEntryIndex = leaf.parentNode.entries.findIndex(nodeEntry => _isMoreOrEqual(nodeEntry.key, moveEntry.key));
+                        // // const parentNodeEntry = parentNodeEntryIndex < 0 
+                        // //     ? leaf.parentNode.entries[leaf.parentNode.entries.length - 1]
+                        // //     : leaf.parentNode.entries[parentNodeEntryIndex];
+                        // const parentNodeEntry = leaf.parentEntry || leaf.parentNode.entries[leaf.parentNode.entries.length - 1];
+                        // const newFirstEntry = leaf.entries[0];
+                        // parentNodeEntry.key = newFirstEntry.key;
+
+                        // Update parent node entry pointing to previous leaf
+                        const parentNodeEntry = leaf.parentNode.entries.find(nodeEntry => _isMoreOrEqual(nodeEntry.key, moveEntry.key));
+                        const newFirstEntry = leaf.entries[0];
+                        parentNodeEntry.key = newFirstEntry.key;
+
+                        // Rewrite parent node
+                        return this._writeNode(leaf.parentNode);
+                    })
+                    .catch(rollback);
+                }
+                else if (
+                    nextLeaf // next leaf exists
+                    && context.nextLeaf.hasSameParent // next leaf has same parent node
+                    && nextLeaf.entries.length < this.info.entriesPerNode // next leaf has space for more entries
+                    && !leaf.entries[leaf.entries.length-1].extData // prevent moving entries with ext_data_block, they are large and there is a fair chance they won't fit in the next leaf.
+                ) {
+                    // Move to next leaf
+
+                    // Remove the last entry from this leaf
+                    const moveEntry = leaf.entries.pop();
+                    console.log(`Moving leaf entry "${moveEntry.key}" to next leaf`);
+                    rollbackSteps.push(() => { leaf.entries.push(moveEntry); })
+
+                    // Add moving entry to next leaf
+                    nextLeaf.entries.unshift(moveEntry); // Becomes first entry
+                    return this._writeLeaf(nextLeaf)
+                    .then(() => {
+                        // Add rollback step
+                        rollbackSteps.push(() => {
+                            nextLeaf.entries.shift(); // Remove moved entry
+                            return this._writeLeaf(nextLeaf);
+                        });
+
+                        // Now rewrite this leaf
+                        return this._writeLeaf(leaf);
+                    })
+                    .then(() => {
+                        // Add rollback step
+                        rollbackSteps.push(() => {
+                            leaf.entries.push(moveEntry);
+                            undoAdd();
+                            return this._writeLeaf(leaf);
+                        });
+
+                        // Update parent node entry pointing to this leaf
+                        const parentNodeEntry = leaf.parentNode.entries.find(nodeEntry => _isMore(nodeEntry.key, moveEntry.key));
+                        parentNodeEntry.key = moveEntry.key;
+
+                        // Rewrite parent node
+                        return this._writeNode(leaf.parentNode);
+                    })
+                    .catch(rollback);
+                }
+                else if (leaf.parentNode.entries.length < this.info.entriesPerNode) {
+                    // TODO: Refactor to splitLeaf function
+
+                    // Parent node has room for another entry
+                    // If there is enough free space, create a new leaf
+                    const newLeafLength = leaf.length; // Use same length as current leaf
+                    if (this.info.freeSpace < newLeafLength) {
+                        undoAdd();
+                        throw new Error(`Cannot add key "${key}": no free space left to create new leaf`);
+                    }
+                        
+                    console.log('Creating new leaf and parent node entry');
+
+                    // Create new leaf
+                    let newLeaf = new BinaryBPlusTreeLeaf({
+                        isLeaf: true,
+                        length: newLeafLength,
+                        index: (this.info.byteLength - this.info.freeSpace) //+ 1,
+                    });
+
+                    // Adjust free space length and prev & next offsets
+                    this.info.freeSpace -= newLeaf.length;
+                    // newLeaf.prevLeafOffset = leaf.index - (newLeaf.index + 9);
+                    // newLeaf.nextLeafOffset = 0;
+                    newLeaf.prevLeafIndex = leaf.index;
+                    newLeaf.nextLeafIndex = 0;
+
+                    // leaf.nextLeafOffset = newLeaf.index - (leaf.index + 13);
+                    leaf.nextLeafIndex = newLeaf.index;
+                    if (nextLeaf) {
+                        // newLeaf.nextLeafOffset = nextLeaf.index - (newLeaf.index + 13);
+                        // nextLeaf.prevLeafOffset = newLeaf.index - (nextLeaf.index + 9);
+                        newLeaf.nextLeafIndex = nextLeaf.index;
+                        nextLeaf.prevLeafIndex = newLeaf.index;
+                    }
+
+                    // move minimal amount of entries (1!)
+                    const moveEntry = leaf.entries.pop();
+                    console.log(`Creating new leaf for entry key "${moveEntry.key}"`);                    
+                    rollbackSteps.push(() => { leaf.entries.push(moveEntry); })
+                    newLeaf.entries.push(moveEntry);
+
+                    // Update free space info
+                    return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), 6)
+                    .then(() => {
+                        // Add rollback step
+                        rollbackSteps.push(() => {
+                            this.info.freeSpace += newLeaf.length;
+                            return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), 6);
+                        });
+
+                        // Write new leaf
+                        return this._writeLeaf(newLeaf);
+                    })
+                    .then(() => {
+                        // No need to add rollback step to remove new leaf. It'll be overwritten later    
+                        if (nextLeaf) {
+                            // Rewrite next leaf
+                            return this._writeLeaf(nextLeaf);
+                        }
+                    })
+                    .then(() => {
+                        // Add rollback step
+                        nextLeaf && rollbackSteps.push(() => {
+                            // nextLeaf.prevLeafOffset = leaf.index - (nextLeaf.index + 9);
+                            nextLeaf.prevLeafIndex = leaf.index;
+                            return this._writeLeaf(nextLeaf);
+                        });
+
+                        // Rewrite this leaf
+                        return this._writeLeaf(leaf);
+                    })
+                    .then(() => {
+                        // Add rollback step
+                        rollbackSteps.push(() => {
+                            leaf.entries.push(moveEntry);
+                            // leaf.nextLeafOffset = nextLeaf ? nextLeaf.index - (leaf.index + 13) : 0;
+                            leaf.nextLeafIndex = nextLeaf ? nextLeaf.index : 0;
+                            let p = this._writeLeaf(leaf);
+                            undoAdd();
+                            return p;
+                        });
+
+                        // Update parent node entry pointing to this leaf
+                        if (leaf.parentEntry !== null) {
+                            // Current leaf is a parent node entry's ltChild
+                            leaf.parentEntry.key = moveEntry.key;
+                            // Add new node entry for created leaf
+                            const insertIndex = leaf.parentNode.entries.indexOf(leaf.parentEntry)+1;
+                            const newNodeEntry = new BinaryBPlusTreeNodeEntry(nextLeaf.entries[0].key);
+                            newNodeEntry.ltChildIndex = newLeaf.index; // Set the target index, so _writeNode knows it must calculate the target offset
+                            leaf.parentNode.entries.splice(insertIndex, 0, newNodeEntry);
+                        }
+                        else {
+                            // Current leaf is parent node's gtChild
+                            const newNodeEntry = new BinaryBPlusTreeNodeEntry(moveEntry.key);
+                            newNodeEntry.ltChildIndex = leaf.index;
+                            leaf.parentNode.entries.push(newNodeEntry);
+                            leaf.parentNode.gtChildIndex = newLeaf.index;
+                        }
+
+                        // Rewrite parent node
+                        return this._writeNode(leaf.parentNode);
+                    })
+                    .catch(rollback);                                
+                }
+                else {
+                    undoAdd();
+                    throw new Error(`Cannot add key "${key}": leaf(s) and parent node are full`);
+                }
+            });                    
         })
         .catch(err => {
+            lock.release();
             throw err;
-        });
+        })
+        .then(() => {
+            lock.release();
+        })
+        // .then(() => {
+        //     // TEST the tree adjustments by getting the leaf with the added key, 
+        //     // and then previous and next leafs!
+        //     console.warn(`TESTING leaf adjustment after adding "${key}". Remove code when all is well!`);
+        //     return this.findLeaf(key);
+        // })
+        // .then(leaf => {
+        //     let prev = leaf.getPrevious ? leaf.getPrevious() : null;
+        //     let next = leaf.getNext ? leaf.getNext() : null;
+        //     return Promise.all([leaf, prev, next]);
+        // })
+        // .then(results => {
+        //     let leaf = results[0];
+        //     let prev = results[1];
+        //     let next = results[2];
+        // });
     }
 
     /**
@@ -2602,6 +4802,7 @@ class BinaryBPlusTree {
      * @param {number[]|Uint8Array} recordPointer 
      */
     remove(key, recordPointer = undefined) {
+        // key = _normalizeKey(key); //if (_isIntString(key)) { key = parseInt(key); }
         return this.findLeaf(key)
         .then(leaf => {
             // This is the leaf the key should be in
@@ -2609,6 +4810,9 @@ class BinaryBPlusTree {
             if (!~entryIndex) { return; }
             if (this.info.isUnique || typeof recordPointer === "undefined" || leaf.entries[entryIndex].values.length === 1) {
                 leaf.entries.splice(entryIndex, 1);
+            }
+            else if (leaf.entries[entryIndex].extData) {
+                return leaf.entries[entryIndex].extData.removeValue(recordPointer);
             }
             else {
                 let valueIndex = leaf.entries[entryIndex].values.findIndex(val => _compareBinary(val.recordPointer, recordPointer));
@@ -2629,6 +4833,7 @@ class BinaryBPlusTree {
      * @param {object} [newMetadata]
      */
     update(key, newRecordPointer, currentRecordPointer = undefined, newMetadata) {
+        // key = _normalizeKey(key); // if (_isIntString(key)) { key = parseInt(key); }
         if (currentRecordPointer === null) { currentRecordPointer = undefined; }
         const newEntryValue = new BPlusTreeLeafEntryValue(newRecordPointer, newMetadata);
         return this.findLeaf(key)
@@ -2745,19 +4950,1188 @@ class BinaryBPlusTree {
             return treeBuilder;
         });
     }
+
+    /**
+     * BinaryBPlusTree.rebuild
+     * @param {BinaryWriter} writer
+     * @param {object} [options]
+     * @param {number} [options.allocatedBytes] bytes that have been pre-allocated, enforces a max writable byte length
+     * @param {number} [options.fillFactor=95] number between 0-100 indicating the percentage of node and leaf filling, leaves room for later adds to the tree. Default is 95
+     * @param {boolean} [options.keepFreeSpace=true] whether free space for later node/leaf creation is kept or added. If allocatedBytes is not given (or 0), 10% free space will be used. Default is true
+     * @param {boolean|number} [options.increaseMaxEntries=true] whether to increase the max amount of node/leaf entries (usually rebuilding is needed because of growth, so this might be a good idea). Default is true, will increase max entries with 10% (until the max of 255 is reached)
+     * @param {{ byteLength?: number, totalEntries?: number, totalValues?: number, totalLeafs?: number, depth?: number, entriesPerNode?: number }} [options.treeStatistics] object that will be updated with statistics as the tree is written
+     */
+    rebuild(writer, options = { allocatedBytes: 0, fillFactor: 95, keepFreeSpace: true, increaseMaxEntries: true }) {
+        
+        if (!(writer instanceof BinaryWriter)) {
+            throw new Error(`writer argument must be an instance of BinaryWriter`);
+        }
+
+        if (!this.info) {
+            // Hasn't been initialized yet. Populate the info
+            return this._getReader()
+            .then(reader => {
+                return this.rebuild(writer, options);
+            })
+        }
+
+        const originalChunkSize = this._chunkSize;
+        // this._chunkSize = 1024 * 1024; // Read 1MB at a time to speed up IO
+        
+        options = options || {};
+        options.fillFactor = options.fillFactor || this.info.fillFactor || 95;
+        options.keepFreeSpace = options.keepFreeSpace !== false;
+        options.increaseMaxEntries = options.increaseMaxEntries !== false;
+        options.treeStatistics = options.treeStatistics || { byteLength: 0, totalEntries: 0, totalValues: 0, totalLeafs: 0, depth: 0, entriesPerNode: 0 }
+        if (typeof options.allocatedBytes === 'number') {
+            options.treeStatistics.byteLength = options.allocatedBytes;
+        }
+
+        let maxEntriesPerNode = this.info.entriesPerNode;
+        if (options.increaseMaxEntries && maxEntriesPerNode < 255) {
+            // Increase nr of entries per node with 10%
+            maxEntriesPerNode = Math.min(255, Math.round(maxEntriesPerNode * 1.1));
+        }
+        options.treeStatistics.entriesPerNode = maxEntriesPerNode;
+        // let entriesPerLeaf = Math.round(maxEntriesPerNode * (options.fillFactor / 100));
+        // let entriesPerNode = entriesPerLeaf;
+
+        // How many entries does the tree have in total?
+        // TODO: store this in this.info.totalEntries (and in binary file)
+        const leafStats = {
+            // debugEntries: [],
+            totalEntries: 0,
+            totalValues: 0,
+            totalEntryBytes: 0,
+            totalKeyBytes: 0,
+            readLeafs: 0,
+            readEntries: 0,
+            writtenLeafs: 0,
+            writtenEntries: 0,
+            get averageEntryLength() {
+                return Math.ceil(this.totalEntryBytes / this.totalEntries);
+            },
+            get averageKeyLength() {
+                return Math.ceil(this.totalKeyBytes / this.totalEntries);
+            }
+        };
+        const getKeySize = (key) => {
+            if (typeof key === 'number' || key instanceof Date) { return 4; }
+            if (typeof key === 'string') { return key.length; }
+            if (typeof key === 'boolean') { return 1; }
+        }
+        let lock;
+        let leafsSeen = 0;
+        console.log('Starting tree rebuild');
+        return ThreadSafe.lock(this.id, { timeout: 15 * 60 * 1000 })
+        .then(l => {
+            lock = l;
+
+            const getLeafStartKeys = (entriesPerLeaf) => {
+                let leafStartKeys = [];
+                let entriesFromLastLeafStart = 0;
+                /** @param {BinaryBPlusTreeLeaf} leaf */
+                function processLeaf(leaf) {
+                    leafsSeen++;
+                    // console.log(`Processing leaf with ${leaf.entries.length} entries, total=${totalEntries}`);
+                    // leafStats.debugEntries.push(...leaf.entries);
+                    leafStats.totalEntries += leaf.entries.length;
+                    leafStats.totalValues += leaf.entries.reduce((total, entry) => total + entry.totalValues, 0);
+                    leafStats.totalEntryBytes += leaf.length;
+                    leafStats.totalKeyBytes += leaf.entries.reduce((total, entry) => total + getKeySize(entry.key), 0);
+    
+                    if (leafStartKeys.length === 0 || entriesFromLastLeafStart === entriesPerLeaf) {
+                        // This is the first leaf being processed, or last leaf entries filled whole new leaf
+                        leafStartKeys.push(leaf.entries[0].key);
+                        entriesFromLastLeafStart = 0;
+                    }
+    
+                    if (entriesFromLastLeafStart + leaf.entries.length <= entriesPerLeaf) {
+                        // All entries fit into current leaf
+                        entriesFromLastLeafStart += leaf.entries.length;
+                    }
+                    else {
+                        // some of the entries fit in current leaf
+                        let cutIndex = entriesPerLeaf - entriesFromLastLeafStart;
+                        // new leaf starts at cutIndex
+                        let firstLeafEntry = leaf.entries[cutIndex];
+                        leafStartKeys.push(firstLeafEntry.key);
+                        // How many entries for the new leaf do we have already?
+                        entriesFromLastLeafStart = leaf.entries.length - cutIndex;
+                        while (entriesFromLastLeafStart > entriesPerLeaf) {
+                            // Too many for 1 leaf
+                            cutIndex += entriesPerLeaf;
+                            firstLeafEntry = leaf.entries[cutIndex];
+                            leafStartKeys.push(firstLeafEntry.key);
+                            entriesFromLastLeafStart = leaf.entries.length - cutIndex;
+                        }
+                    }
+    
+                    console.log(`Processed ${leafsSeen} leafs in source tree`);
+                    if (leaf.getNext) {
+                        return leaf.getNext()
+                        .then(processLeaf);
+                    }
+                }
+                // Start processing leafs
+                return this.getFirstLeaf()
+                .then(processLeaf)
+                .then(() => {
+                    return leafStartKeys;
+                });    
+            }
+
+            let lastLeaf = null;
+            const getEntries = n => {
+                // get next leaf entries, n can be ignored
+                const processLeaf = leaf => {
+                    // If leaf has extData, load it first
+                    if (leaf.hasExtData && !leaf.extData.loaded) {
+                        return leaf.extData.load()
+                        .then(() => {
+                            // Retry
+                            return processLeaf(leaf);
+                        });
+                    }
+                    lastLeaf = leaf;
+                    leafStats.readLeafs++;
+                    leafStats.readEntries += leaf.entries.length;
+                    return leaf.entries;
+                }
+                if (!lastLeaf) {
+                    return this.getFirstLeaf()
+                    .then(processLeaf);
+                }
+                else if (lastLeaf && lastLeaf.getNext) {
+                    return lastLeaf.getNext()
+                    .then(processLeaf);
+                }
+                else {
+                    return [];
+                }
+            }
+
+            return BinaryBPlusTree.create({
+                getLeafStartKeys,
+                getEntries,
+                writer,
+                treeStatistics: options.treeStatistics,
+                fillFactor: options.fillFactor,
+                maxEntriesPerNode,
+                isUnique: this.info.isUnique,
+                metadataKeys: this.info.metadataKeys,
+                allocatedBytes: options.allocatedBytes,
+                keepFreeSpace: options.keepFreeSpace
+            });
+
+        })
+        .then(() => {
+            lock.release();
+
+            options.treeStatistics.totalLeafs = leafStats.writtenLeafs;;
+            options.treeStatistics.totalEntries = leafStats.totalEntries;
+            options.treeStatistics.totalValues = leafStats.totalValues;
+
+            this._chunkSize = originalChunkSize; // Reset chunk size to original
+        })
+
+        // .then(l => {
+        //     lock = l;
+
+        //     let leafStartKeys = [];
+        //     let entriesFromLastLeafStart = 0;
+        //     /** @param {BinaryBPlusTreeLeaf} leaf */
+        //     function processLeaf(leaf) {
+        //         leafsSeen++;
+        //         // console.log(`Processing leaf with ${leaf.entries.length} entries, total=${totalEntries}`);
+        //         // leafStats.debugEntries.push(...leaf.entries);
+        //         leafStats.totalEntries += leaf.entries.length;
+        //         leafStats.totalValues += leaf.entries.reduce((total, entry) => total + entry.totalValues, 0);
+        //         leafStats.totalEntryBytes += leaf.length;
+        //         leafStats.totalKeyBytes += leaf.entries.reduce((total, entry) => total + getKeySize(entry.key), 0);
+
+        //         if (leafStartKeys.length === 0 || entriesFromLastLeafStart === entriesPerLeaf) {
+        //             // This is the first leaf being processed, or last leaf entries filled whole new leaf
+        //             leafStartKeys.push(leaf.entries[0].key);
+        //             entriesFromLastLeafStart = 0;
+        //         }
+
+        //         if (entriesFromLastLeafStart + leaf.entries.length <= entriesPerLeaf) {
+        //             // All entries fit into current leaf
+        //             entriesFromLastLeafStart += leaf.entries.length;
+        //         }
+        //         else {
+        //             // some of the entries fit in current leaf
+        //             let cutIndex = entriesPerLeaf - entriesFromLastLeafStart;
+        //             // new leaf starts at cutIndex
+        //             let firstLeafEntry = leaf.entries[cutIndex];
+        //             leafStartKeys.push(firstLeafEntry.key);
+        //             // How many entries for the new leaf do we have already?
+        //             entriesFromLastLeafStart = leaf.entries.length - cutIndex;
+        //             while (entriesFromLastLeafStart > entriesPerLeaf) {
+        //                 // Too many for 1 leaf
+        //                 cutIndex += entriesPerLeaf;
+        //                 firstLeafEntry = leaf.entries[cutIndex];
+        //                 leafStartKeys.push(firstLeafEntry.key);
+        //                 entriesFromLastLeafStart = leaf.entries.length - cutIndex;
+        //             }
+        //         }
+
+        //         console.log(`Processed ${leafsSeen} leafs in source tree`);
+        //         if (leaf.getNext) {
+        //             return leaf.getNext()
+        //             .then(processLeaf);
+        //         }
+        //     }
+        //     // Start processing leafs
+        //     return this.getFirstLeaf()
+        //     .then(processLeaf);
+        // })
+        // .then(() => {
+        //     // Now we know how many leafs we will be building and what their first key values are
+        //     let createLeafs = leafStartKeys.length;
+        //     options.treeStatistics.totalLeafs = createLeafs;
+        //     options.treeStatistics.totalEntries = leafStats.totalEntries;
+        //     options.treeStatistics.totalValues = leafStats.totalValues;
+
+        //     if (createLeafs === 1) {
+        //         // Easy rebuild. Leaf only
+        //         // TODO
+        //         throw new Error('Not implemented');
+        //     }
+
+        //     // Determine all parent node entry keys per level
+        //     // example:
+        //     // [1,2,3,4,5], [6,7,8,9,10], [11,12,13,14,15], [16,17,18,19,20], [21,22,23,24,25]
+        //     // will get parent node:
+        //     // [6,11,16,21]
+        //     // A parent node has an entry for max [entriesPerNode+1] child node/leaf
+        //     // We can use the 1st entries of the 2nd to [entriesPerNode]nd child nodes/leafs
+
+        //     // example 2:
+        //     // leafs: [1,2,3], [4,5,6], [7,8,9], [10,11,12]
+        //     // nodes 1:    [4,>= (<7)], [10,>= (<infinity)]
+        //     // nodes 0:         [7,>= (<infinity)]
+
+        //     // example 3:
+        //     // leafs: [1,2,3], [4,5,6], [7,8,9], [10,11,12], [13,14,15], [16,17,18], [19,20,21], [22,23,24], [25,26,27]
+        //     // nodes 1:    [4,7,10,>= (<13)], [16,19,>= (<22)], [25,>= (<infinity)] 
+        //     // nodes 0:         [13,22,>= (<infinity)]
+
+        //     // First, create nodes pointing to the leafs and as many parent level nodes as needed
+        //     let childLevelNodes = leafStartKeys;
+        //     const levels = [];
+        //     while (childLevelNodes.length > 1) {
+        //         // Create another level
+            
+        //         childLevelNodes = childLevelNodes.reduce((nodes, child, index, arr) => {
+        //             let entriesLeft = arr.length - index;
+        //             var currentNode = nodes[nodes.length-1];
+        //             let isLast = 
+        //                 index === arr.length - 1 // Literally the last child
+        //                 || currentNode.entries.length === entriesPerNode // gt connection of this node
+        //                 || (entriesLeft === 3 && currentNode.entries.length + entriesLeft > entriesPerNode); // early chop off gt connection to save entries for next node
+             
+        //             if (isLast) {
+        //                 // gt connection
+        //                 let key = typeof child === 'object'
+        //                     ? child.gtMaxKey // child is node
+        //                     : arr[index+1]; // child is leaf start key
+        //                 currentNode.gtMaxKey = key;
+        //                 currentNode.gtChildIndex = index;
+        //                 if (index < arr.length - 1) {
+        //                     // More to come..
+        //                     currentNode = { entries: [], gtChildIndex: -1, gtMaxKey: null };
+        //                     nodes.push(currentNode);
+        //                 }
+        //                 connections = 0;
+        //             }
+        //             else {
+        //                 // lt connection
+        //                 let key = typeof child === 'object'
+        //                     ? child.gtMaxKey // child is node
+        //                     : arr[index+1]; // child is leaf start key
+        //                 currentNode.entries.push({ key, ltChildIndex: index });
+        //                 connections++;
+        //             }
+        //             return nodes;
+        //         }, [{ entries: [], gtChildIndex: -1, gtMaxKey: null }]);
+        //         levels.push(childLevelNodes);
+        //     }
+            
+        //     options.treeStatistics.depth = levels.length;
+
+        //     // Now that we have the keys for each node level, we can start building the actual tree
+        //     // Do this efficiently by reusing the level keys array, reducing them in size as we go
+
+        //     // Write in this order:
+        //     // 1) header
+        //     // 2) a dummy root node large enough to be replaced by the real one later, 
+        //     // 3) all leafs,
+        //     // 4) nodes at lowest level,
+        //     // 5) nodes at higher level, 
+        //     // 6) repeat 5) until root node is about to be written
+        //     // 7) overwrite dummy root node with the real thing
+        //     // 8) overwrite header with real data
+
+        //     const builder = new BinaryBPlusTreeBuilder({
+        //         uniqueKeys: this.info.isUnique,
+        //         byteLength: options.allocatedBytes,
+        //         maxEntriesPerNode,
+        //         freeBytes: options.keepFreeSpace ? 1 : 0,
+        //         metadataKeys: this.info.metadataKeys,
+        //         smallLeafs: WRITE_SMALL_LEAFS,
+        //         fillFactor: options.fillFactor
+        //     });
+
+        //     // Create header
+        //     let header = builder.getHeader();
+        //     let index = header.length;
+        //     const rootNodeIndex = index;
+        //     const leafIndexes = [];
+
+        //     return writer.append(header)
+        //     .then(() => {
+        //         // // Create root node without lt & gt pointers
+        //         // let rootLevelNode = keysPerLevel[keysPerLevel.length - 1][0];
+        //         // let rootNode = builder.createNode(
+        //         //     { 
+        //         //         index, 
+        //         //         gtIndex: 0, 
+        //         //         entries: rootLevelNode.entries.map(entry => ({ key: entry.key, ltIndex: 0 })) 
+        //         //     }, 
+        //         //     { addFreeSpace: options.keepFreeSpace }
+        //         // );
+        //         // index += rootNode.length;
+        //         // return writer.append(rootNode);
+
+        //         // Write all node levels for the first time 
+        //         // (lt/gt child index pointers won't make sense yet)
+        //         let l = levels.length;
+        //         const nextLevel = () => {
+        //             l--;
+        //             let nodes = levels[l];
+        //             let writes = [];
+        //             nodes.forEach(node => {
+        //                 node.index = index; //writer.length;
+        //                 let bytes = builder.createNode(
+        //                     {
+        //                         index: node.index,
+        //                         entries: node.entries.map(entry => ({ key: entry.key, ltIndex: 0 })),
+        //                         gtIndex: 0
+        //                     },
+        //                     { addFreeSpace: options.keepFreeSpace, allowMissingChildIndexes: true }
+        //                 );
+        //                 node.byteLength = bytes.length;
+        //                 index += bytes.length;
+        //                 let p = writer.append(bytes);
+        //                 writes.push(p);
+        //             });
+        //             return Promise.all(writes)
+        //             .then(() => {
+        //                 if (l > 0) { return nextLevel(); }
+        //             });
+        //         }
+        //         return nextLevel();
+        //     })
+        //     .then(() => {
+        //         // Write all leafs
+        //         let newLeafEntries = [];
+        //         let prevIndex = 0;
+        //         let currentLeafIndex = 0;
+        //         let totalWrittenEntries = 0;
+        //         const writeLeaf = (entries) => {
+        //             // For debugging:
+        //             // if (entries[0].key <= 75032 && entries[entries.length-1].key >= 75032 && entries.findIndex(entry => entry.key === 75032) < 0) {
+        //             //     console.log('we lost it!');
+        //             // }
+        //             console.assert(entries.every((entry, index, arr) => index === 0 || entry.key >= arr[index-1].key), 'Leaf entries are not sorted ok');
+
+        //             // console.log(`Writing leaf with ${entries.length} entries at index ${index}, keys range: ["${entries[0].key}", "${entries[entries.length-1].key}"]`)
+        //             let i = leafIndexes.length;
+        //             console.assert(leafStartKeys[i] === entries[0].key, 'wrong!');
+        //             // /debugging
+
+        //             leafIndexes.push(index);
+        //             const isLastLeaf = leafIndexes.length === leafStartKeys.length;
+        //             const newLeaf = builder.createLeaf(
+        //                 { index, prevIndex, nextIndex: isLastLeaf ? 0 : 'adjacent', entries },
+        //                 { addFreeSpace: options.keepFreeSpace }
+        //             );
+        //             prevIndex = index;
+        //             index += newLeaf.length;
+        //             totalWrittenEntries += entries.length;
+        //             return writer.append(newLeaf);
+        //         }
+
+        //         const flush = (flushAll = false) => {
+        //             if (newLeafEntries.length < 0) { 
+        //                 console.assert(totalWrittenEntries === leafStats.totalEntries, 'Written entries does not match nr of read entries!')
+        //                 return; 
+        //             }
+        //             let cutEntryKey = leafStartKeys[currentLeafIndex+1];
+        //             let entries;
+        //             if (typeof cutEntryKey === 'undefined') {
+        //                  // Last batch
+        //                  if (flushAll) {
+        //                      console.assert(newLeafEntries.length <= entriesPerLeaf, 'check logic');
+        //                      entries = newLeafEntries.splice(0);
+        //                  }
+        //                  else {
+        //                      return; // Wait for remaining entries
+        //                  }
+        //             }
+        //             else {
+        //                 let cutEntryIndex = newLeafEntries.findIndex(entry => entry.key === cutEntryKey);
+        //                 if (cutEntryIndex === -1) {
+        //                     // Not enough entries yet
+        //                     console.assert(!flushAll, 'check logic');
+        //                     console.assert(newLeafEntries.length <= entriesPerLeaf, 'check logic!');
+        //                     return;
+        //                 }
+        //                 entries = newLeafEntries.splice(0, cutEntryIndex);
+        //             }
+
+        //             leafStats.writtenLeafs++;
+        //             leafStats.writtenEntries += entries.length;
+        //             currentLeafIndex++;
+        //             return writeLeaf(entries)
+        //             .then(() => {
+        //                 // Write more
+        //                 if (newLeafEntries.length >= entriesPerLeaf || (flushAll && newLeafEntries.length > 0)) {
+        //                     return flush(flushAll);
+        //                 }
+        //             })
+        //         };
+
+        //         /**
+        //          * 
+        //          * @param {BinaryBPlusTreeLeaf} leaf 
+        //          */
+        //         const processLeaf = (leaf) => {
+        //             // If leaf has extData, load it first
+        //             if (leaf.hasExtData && !leaf.extData.loaded) {
+        //                 return leaf.extData.load()
+        //                 .then(() => {
+        //                     // Retry
+        //                     return processLeaf(leaf);
+        //                 });
+        //             }
+
+        //             leafStats.readLeafs++;
+        //             leafStats.readEntries += leaf.entries.length;
+
+        //             console.assert(leaf.entries.every((entry, index, arr) => index === 0 || entry.key >= arr[index-1].key), 'Leaf entries are not sorted ok');
+        //             console.assert(newLeafEntries.length === 0 || leaf.entries[0].key > newLeafEntries[newLeafEntries.length-1].key, 'adding entries will corrupt sort order');
+        //             newLeafEntries.push(...leaf.entries);
+        //             // if (newLeafEntries.length >= entriesPerLeaf) {
+        //             // Enough entries to write leaf
+        //             const isLast = typeof leaf.getNext !== 'function';
+        //             let writePromise = flush(isLast);
+        //             let readNextPromise = leaf.getNext ? leaf.getNext() : Promise.resolve(null);
+        //             return Promise.all([readNextPromise, writePromise])
+        //             .then(results => {
+        //                 let nextLeaf = results[0];
+        //                 if (nextLeaf) {
+        //                     return processLeaf(nextLeaf);
+        //                 }
+        //                 else {
+        //                     console.log(`read: ${leafStats.readLeafs} leafs / ${leafStats.readEntries} entries, written: ${leafStats.writtenLeafs} leafs / ${leafStats.writtenEntries} entries, average: ${Math.round(leafStats.writtenEntries / leafStats.writtenLeafs)} entries per leaf`);
+        //                     console.assert(leafIndexes.length === leafStartKeys.length, 'There must be just as many leafs written as anticipated');
+        //                 }
+        //             });
+        //             // }
+        //             // else if (leaf.getNext) {
+        //             //     // Get more entries from next leaf
+        //             //     return leaf.getNext()
+        //             //     .then(processLeaf);
+        //             // }
+        //             // else {
+        //             //     // Write last entries
+        //             //     return flush(true);
+        //             // }
+        //         }
+        //         return this.getFirstLeaf()
+        //         .then(processLeaf);
+        //     })
+        //     // .then(() => {
+        //     //     // // DEbug tree writing
+        //     //     // let debugTree = levels.map(nodes => nodes.slice()); // copy
+        //     //     // debugTree.forEach((nodes, levelIndex) => {
+        //     //     //     debugTree[levelIndex] = nodes.map(node => {
+        //     //     //         return { 
+        //     //     //             node,
+        //     //     //             gtChild: levelIndex === 0 
+        //     //     //                 ? leafStartKeys[node.gtChildIndex]
+        //     //     //                 : debugTree[levelIndex-1][node.gtChildIndex],
+        //     //     //             entries: node.entries.map(entry => {
+        //     //     //                 return {
+        //     //     //                     key: entry.key, 
+        //     //     //                     ltChild: levelIndex === 0 
+        //     //     //                         ? leafStartKeys[entry.ltChildIndex]
+        //     //     //                         : debugTree[levelIndex-1][entry.ltChildIndex]
+        //     //     //                 };
+        //     //     //             })
+        //     //     //         };
+        //     //     //     });
+        //     //     // });
+        //     //     // debugTree.reverse(); // Now top-down
+        //     //     // console.error(debugTree);
+        //     //     // debugTree.forEach((nodes, levelIndex) => {
+        //     //     //     let allEntries = nodes.map(node => `[${node.entries.map(entry => entry.key).join(',')}]`).join(' | ')
+        //     //     //     console.error(`node level ${levelIndex}: ${allEntries}`);
+        //     //     // });
+        //     //     // console.error(`leafs: [${leafStartKeys.join(`..] | [`)}]`);
+        //     // })
+        //     .then(() => {
+        //         // Now adjust the header data & write free bytes
+        //         let byteLength = index;
+        //         let freeBytes = 0;
+        //         if (options.allocatedBytes > 0) {
+        //             freeBytes = options.allocatedBytes - byteLength;
+        //             byteLength = options.allocatedBytes;
+        //         }
+        //         else {
+        //             freeBytes = Math.ceil(byteLength * 0.1);
+        //             byteLength += freeBytes;
+        //         }
+
+        //         // Rebuild header
+        //         builder.byteLength = byteLength; // - header.length;
+        //         builder.freeBytes = freeBytes;
+        //         header = builder.getHeader();
+
+        //         options.treeStatistics.byteLength = byteLength;
+        //         options.treeStatistics.freeBytes = freeBytes;
+
+        //         // Append free space bytes
+        //         const bytesPerWrite = 1024 * 100; // 100KB per write seems fair?
+        //         const writes = Math.ceil(builder.freeBytes / bytesPerWrite);
+
+        //         var writePromise = Promise.resolve();
+        //         for (let i = 0; i < writes; i++) {
+        //             const length = i + 1 < writes
+        //                 ? bytesPerWrite
+        //                 : builder.freeBytes % bytesPerWrite;
+        //             const zeroes = new Uint8Array(length);
+        //             writePromise = writePromise.then(() => {
+        //                 return writer.append(zeroes);
+        //             });
+        //         }
+                
+        //         return writePromise;
+        //     })
+        //     .then(() => {
+        //         // Done appending data, close stream
+        //         return writer.end();
+        //     })
+        //     .then(() => {
+        //         // Overwrite header
+        //         let writes = [
+        //             writer.write(header, 0)
+        //         ];
+
+        //         // Assign all nodes' child indexes to the real file indexes
+        //         levels.forEach((nodes, index) => {
+        //             nodes.forEach(node => {
+        //                 if (index === 0) {
+        //                     // first level references leafs
+        //                     node.gtChildIndex = leafIndexes[node.gtChildIndex];
+        //                     node.entries.forEach(entry => {
+        //                         entry.ltChildIndex = leafIndexes[entry.ltChildIndex];
+        //                     });
+        //                 }
+        //                 else {
+        //                     // use node index on next (lower) level
+        //                     node.gtChildIndex = levels[index-1][node.gtChildIndex].index;
+        //                     node.entries.forEach(entry => {
+        //                         entry.ltChildIndex = levels[index-1][entry.ltChildIndex].index;
+        //                     });
+        //                 }
+        //                 // Regenerate bytes
+        //                 let bytes = builder.createNode(
+        //                     {
+        //                         index: node.index,
+        //                         entries: node.entries.map(entry => ({ key: entry.key, ltIndex: entry.ltChildIndex })),
+        //                         gtIndex: node.gtChildIndex
+        //                     },
+        //                     { addFreeSpace: options.keepFreeSpace, maxLength: node.byteLength }
+        //                 );
+        //                 // And overwrite them in the file                        
+        //                 let p = writer.write(bytes, node.index);
+        //                 writes.push(p);
+        //             });
+        //         });
+
+        //         return Promise.all(writes);
+        //     })
+
+        // })
+        // .then(() => {
+        //     lock.release();
+        //     this._chunkSize = originalChunkSize; // Reset chunk size to original
+
+        //     // DEBUG. test all entries
+        //     // return leafStats.debugEntries;
+        // });
+    }
+
+    /**
+     * 
+     * @param {object} options 
+     * @param {(entriesPerLeaf: NumberConstructor) => Promise<any[]>} options.getLeafStartKeys
+     * @param {(n: number) => Promise<{ key: any, values: any[]}[]>} options.getEntries
+     * @param {BinaryWriter} options.writer
+     * @param {object} options.treeStatistics
+     * @param {number} [options.fillFactor = 100]
+     * @param {number} [options.maxEntriesPerNode = 255]
+     * @param {boolean} options.isUnique
+     * @param {string[]} [options.metadataKeys]
+     * @param {number} options.allocatedBytes
+     * @param {boolean} [options.keepFreeSpace = true]
+     */
+    static create(options) {
+        const writer = options.writer;
+
+        if (typeof options.maxEntriesPerNode !== 'number') { options.maxEntriesPerNode = 255; }
+        if (typeof options.fillFactor !== 'number') { options.fillFactor = 100; }
+        let entriesPerLeaf = Math.round(options.maxEntriesPerNode * (options.fillFactor / 100));
+        let entriesPerNode = entriesPerLeaf;
+
+        return options.getLeafStartKeys(entriesPerLeaf)
+        .then(leafStartKeys => {
+            // Now we know how many leafs we will be building and what their first key values are
+            const createLeafs = leafStartKeys.length;
+            options.treeStatistics.totalLeafs = createLeafs;
+
+            if (createLeafs === 1) {
+                // Easy rebuild. Leaf only
+                // TODO
+                throw new Error('Not implemented');
+            }
+
+            // Determine all parent node entry keys per level
+            // example:
+            // [1,2,3,4,5], [6,7,8,9,10], [11,12,13,14,15], [16,17,18,19,20], [21,22,23,24,25]
+            // will get parent node:
+            // [6,11,16,21]
+            // A parent node has an entry for max [entriesPerNode+1] child node/leaf
+            // We can use the 1st entries of the 2nd to [entriesPerNode]nd child nodes/leafs
+
+            // example 2:
+            // leafs: [1,2,3], [4,5,6], [7,8,9], [10,11,12]
+            // nodes 1:    [4,>= (<7)], [10,>= (<infinity)]
+            // nodes 0:         [7,>= (<infinity)]
+
+            // example 3:
+            // leafs: [1,2,3], [4,5,6], [7,8,9], [10,11,12], [13,14,15], [16,17,18], [19,20,21], [22,23,24], [25,26,27]
+            // nodes 1:    [4,7,10,>= (<13)], [16,19,>= (<22)], [25,>= (<infinity)] 
+            // nodes 0:         [13,22,>= (<infinity)]
+
+            // First, create nodes pointing to the leafs and as many parent level nodes as needed
+            let childLevelNodes = leafStartKeys;
+            const levels = [];
+            while (childLevelNodes.length > 1) {
+                // Create another level
+                childLevelNodes = childLevelNodes.reduce((nodes, child, index, arr) => {
+                    let entriesLeft = arr.length - index;
+                    var currentNode = nodes[nodes.length-1];
+                    let isLast = 
+                        index === arr.length - 1 // Literally the last child
+                        || currentNode.entries.length === entriesPerNode // gt connection of this node
+                        || (entriesLeft === 3 && currentNode.entries.length + entriesLeft > entriesPerNode); // early chop off gt connection to save entries for next node
+             
+                    if (isLast) {
+                        // gt connection
+                        let key = typeof child === 'object'
+                            ? child.gtMaxKey // child is node
+                            : arr[index+1]; // child is leaf start key
+                        currentNode.gtMaxKey = key;
+                        currentNode.gtChildIndex = index;
+                        if (index < arr.length - 1) {
+                            // More to come..
+                            currentNode = { entries: [], gtChildIndex: -1, gtMaxKey: null };
+                            nodes.push(currentNode);
+                        }
+                        // connections = 0;
+                    }
+                    else {
+                        // lt connection
+                        let key = typeof child === 'object'
+                            ? child.gtMaxKey // child is node
+                            : arr[index+1]; // child is leaf start key
+                        currentNode.entries.push({ key, ltChildIndex: index });
+                        // connections++;
+                    }
+                    return nodes;
+                }, [{ entries: [], gtChildIndex: -1, gtMaxKey: null }]);
+                levels.push(childLevelNodes);
+            }
+            
+            options.treeStatistics.depth = levels.length;
+            options.treeStatistics.writtenLeafs = 0;
+            options.treeStatistics.writtenEntries = 0;
+
+            // Now that we have the keys for each node level, we can start building the actual tree
+            // Do this efficiently by reusing the level keys array, reducing them in size as we go
+
+            // Write in this order:
+            // 1) header
+            // 2) all nodes, 
+            // 3) all leafs,
+            // 4) all nodes again with the right child pointers (or just the pointers),
+            // 5) overwrite header with real data
+
+            const builder = new BinaryBPlusTreeBuilder({
+                uniqueKeys: options.isUnique,
+                byteLength: options.allocatedBytes,
+                maxEntriesPerNode: options.maxEntriesPerNode,
+                freeBytes: options.keepFreeSpace ? 1 : 0,
+                metadataKeys: options.metadataKeys,
+                smallLeafs: WRITE_SMALL_LEAFS,
+                fillFactor: options.fillFactor
+            });
+
+            // Create header
+            let header = builder.getHeader();
+            let index = header.length;
+            const rootNodeIndex = index;
+            const leafIndexes = [];
+
+            return writer.append(header)
+            .then(() => {
+
+                // Write all node levels for the first time 
+                // (lt/gt child index pointers won't make sense yet)
+                let l = levels.length;
+                const nextLevel = () => {
+                    l--;
+                    let nodes = levels[l];
+                    let writes = [];
+                    nodes.forEach(node => {
+                        node.index = index; //writer.length;
+                        let bytes = builder.createNode(
+                            {
+                                index: node.index,
+                                entries: node.entries.map(entry => ({ key: entry.key, ltIndex: 0 })),
+                                gtIndex: 0
+                            },
+                            { addFreeSpace: options.keepFreeSpace, allowMissingChildIndexes: true }
+                        );
+                        node.byteLength = bytes.length;
+                        index += bytes.length;
+                        let p = writer.append(bytes);
+                        writes.push(p);
+                    });
+                    return Promise.all(writes)
+                    .then(() => {
+                        if (l > 0) { return nextLevel(); }
+                    });
+                }
+                return nextLevel();
+            })
+            .then(() => {
+                // Write all leafs
+                let newLeafEntries = [];
+                let prevIndex = 0;
+                let currentLeafIndex = 0;
+                let totalWrittenEntries = 0;
+                const writeLeaf = (entries) => {
+                    // For debugging:
+                    // if (entries[0].key <= 75032 && entries[entries.length-1].key >= 75032 && entries.findIndex(entry => entry.key === 75032) < 0) {
+                    //     console.log('we lost it!');
+                    // }
+                    console.assert(entries.every((entry, index, arr) => index === 0 || entry.key >= arr[index-1].key), 'Leaf entries are not sorted ok');
+
+                    // console.log(`Writing leaf with ${entries.length} entries at index ${index}, keys range: ["${entries[0].key}", "${entries[entries.length-1].key}"]`)
+                    let i = leafIndexes.length;
+                    console.assert(leafStartKeys[i] === entries[0].key, 'wrong!');
+                    // /debugging
+
+                    leafIndexes.push(index);
+                    const isLastLeaf = leafIndexes.length === leafStartKeys.length;
+                    const newLeaf = builder.createLeaf(
+                        { index, prevIndex, nextIndex: isLastLeaf ? 0 : 'adjacent', entries },
+                        { addFreeSpace: options.keepFreeSpace }
+                    );
+                    prevIndex = index;
+                    index += newLeaf.length;
+                    totalWrittenEntries += entries.length;
+                    return writer.append(newLeaf);
+                }
+
+                const flush = (flushAll = false) => {
+                    if (newLeafEntries.length < 0) { 
+                        console.assert(totalWrittenEntries === leafStats.totalEntries, 'Written entries does not match nr of read entries!')
+                        return; 
+                    }
+                    let cutEntryKey = leafStartKeys[currentLeafIndex+1];
+                    let entries;
+                    if (typeof cutEntryKey === 'undefined') {
+                         // Last batch
+                         if (flushAll) {
+                             console.assert(newLeafEntries.length <= entriesPerLeaf, 'check logic');
+                             entries = newLeafEntries.splice(0);
+                         }
+                         else {
+                             return; // Wait for remaining entries
+                         }
+                    }
+                    else {
+                        let cutEntryIndex = newLeafEntries.findIndex(entry => entry.key === cutEntryKey);
+                        if (cutEntryIndex === -1) {
+                            // Not enough entries yet
+                            console.assert(!flushAll, 'check logic');
+                            console.assert(newLeafEntries.length <= entriesPerLeaf, 'check logic!');
+                            return;
+                        }
+                        entries = newLeafEntries.splice(0, cutEntryIndex);
+                    }
+
+                    options.treeStatistics.writtenLeafs++;
+                    options.treeStatistics.writtenEntries += entries.length;
+
+                    currentLeafIndex++;
+                    return writeLeaf(entries)
+                    .then(() => {
+                        // Write more
+                        if (newLeafEntries.length >= entriesPerLeaf || (flushAll && newLeafEntries.length > 0)) {
+                            return flush(flushAll);
+                        }
+                    })
+                };
+
+                const processEntries = (entries) => {
+                    if (entries.length === 0) { 
+                        return flush(true); // done!
+                    }
+                    // options.treeStatistics.readEntries += entries.length;
+
+                    console.assert(entries.every((entry, index, arr) => index === 0 || entry.key >= arr[index-1].key), 'Leaf entries are not sorted ok');
+                    console.assert(newLeafEntries.length === 0 || entries[0].key > newLeafEntries[newLeafEntries.length-1].key, 'adding entries will corrupt sort order');
+                    newLeafEntries.push(...entries);
+
+                    let writePromise = flush(false);
+                    let readNextPromise = options.getEntries(options.maxEntriesPerNode);
+                    return Promise.all([readNextPromise, writePromise])
+                    .then(results => {
+                        let entries = results[0];
+                        return processEntries(entries);
+                    });
+                }
+                
+                return options.getEntries(options.maxEntriesPerNode)
+                .then(processEntries);
+            })
+            // .then(() => {
+            //     // // DEbug tree writing
+            //     // let debugTree = levels.map(nodes => nodes.slice()); // copy
+            //     // debugTree.forEach((nodes, levelIndex) => {
+            //     //     debugTree[levelIndex] = nodes.map(node => {
+            //     //         return { 
+            //     //             node,
+            //     //             gtChild: levelIndex === 0 
+            //     //                 ? leafStartKeys[node.gtChildIndex]
+            //     //                 : debugTree[levelIndex-1][node.gtChildIndex],
+            //     //             entries: node.entries.map(entry => {
+            //     //                 return {
+            //     //                     key: entry.key, 
+            //     //                     ltChild: levelIndex === 0 
+            //     //                         ? leafStartKeys[entry.ltChildIndex]
+            //     //                         : debugTree[levelIndex-1][entry.ltChildIndex]
+            //     //                 };
+            //     //             })
+            //     //         };
+            //     //     });
+            //     // });
+            //     // debugTree.reverse(); // Now top-down
+            //     // console.error(debugTree);
+            //     // debugTree.forEach((nodes, levelIndex) => {
+            //     //     let allEntries = nodes.map(node => `[${node.entries.map(entry => entry.key).join(',')}]`).join(' | ')
+            //     //     console.error(`node level ${levelIndex}: ${allEntries}`);
+            //     // });
+            //     // console.error(`leafs: [${leafStartKeys.join(`..] | [`)}]`);
+            // })
+            .then(() => {
+                // Now adjust the header data & write free bytes
+                let byteLength = index;
+                let freeBytes = 0;
+                if (options.allocatedBytes > 0) {
+                    freeBytes = options.allocatedBytes - byteLength;
+                    byteLength = options.allocatedBytes;
+                }
+                else {
+                    freeBytes = Math.ceil(byteLength * 0.1);
+                    byteLength += freeBytes;
+                }
+
+                // Rebuild header
+                builder.byteLength = byteLength; // - header.length;
+                builder.freeBytes = freeBytes;
+                header = builder.getHeader();
+
+                options.treeStatistics.byteLength = byteLength;
+                options.treeStatistics.freeBytes = freeBytes;
+
+                // Append free space bytes
+                const bytesPerWrite = 1024 * 100; // 100KB per write seems fair?
+                const writes = Math.ceil(builder.freeBytes / bytesPerWrite);
+
+                var writePromise = Promise.resolve();
+                for (let i = 0; i < writes; i++) {
+                    const length = i + 1 < writes
+                        ? bytesPerWrite
+                        : builder.freeBytes % bytesPerWrite;
+                    const zeroes = new Uint8Array(length);
+                    writePromise = writePromise.then(() => {
+                        return writer.append(zeroes);
+                    });
+                }
+                
+                return writePromise;
+            })
+            .then(() => {
+                // Done appending data, close stream
+                return writer.end();
+            })
+            .then(() => {
+                // Overwrite header
+                let writes = [
+                    writer.write(header, 0)
+                ];
+
+                // Assign all nodes' child indexes to the real file indexes
+                levels.forEach((nodes, index) => {
+                    nodes.forEach(node => {
+                        if (index === 0) {
+                            // first level references leafs
+                            node.gtChildIndex = leafIndexes[node.gtChildIndex];
+                            node.entries.forEach(entry => {
+                                entry.ltChildIndex = leafIndexes[entry.ltChildIndex];
+                            });
+                        }
+                        else {
+                            // use node index on next (lower) level
+                            node.gtChildIndex = levels[index-1][node.gtChildIndex].index;
+                            node.entries.forEach(entry => {
+                                entry.ltChildIndex = levels[index-1][entry.ltChildIndex].index;
+                            });
+                        }
+                        // Regenerate bytes
+                        let bytes = builder.createNode(
+                            {
+                                index: node.index,
+                                entries: node.entries.map(entry => ({ key: entry.key, ltIndex: entry.ltChildIndex })),
+                                gtIndex: node.gtChildIndex
+                            },
+                            { addFreeSpace: options.keepFreeSpace, maxLength: node.byteLength }
+                        );
+                        // And overwrite them in the file                        
+                        let p = writer.write(bytes, node.index);
+                        writes.push(p);
+                    });
+                });
+
+                return Promise.all(writes);
+            });
+        });
+    }
+
+    /**
+     * Creates a binary tree from a stream of entries.
+     * An entry stream must be a binary data stream containing only leaf entries
+     * a leaf entry can be created using BinaryBPlusTree.createStreamEntry(key, values)
+     * @param {BinaryReader} reader 
+     * @param {BinaryWriter} writer 
+     * @param {object} options
+     * @param {object} options.treeStatistics
+     * @param {number} [options.fillFactor = 100]
+     * @param {number} [options.maxEntriesPerNode = 255]
+     * @param {boolean} options.isUnique
+     * @param {string[]} [options.metadataKeys]
+     * @param {number} options.allocatedBytes
+     * @param {boolean} [options.keepFreeSpace = true]
+     */
+    static createFromEntryStream(reader, writer, options) {
+        // Steps:
+        // 1 - loop through all entries to calculate leaf start keys
+        // 2 - create nodes
+        // 3 - create leafs
+        // const entriesPerLeaf = Math.round(options.maxEntriesPerNode * (options.fillFactor / 100));
+
+        const getLeafStartKeys = (entriesPerLeaf) => {
+            options.treeStatistics.totalEntries = 0; 
+            return reader.init()
+            .then(() => {
+                const leafStartKeys = [];
+                const readNext = () => {
+                    options.treeStatistics.totalEntries++;
+                    const entryIndex = reader.sourceIndex;
+                    return reader.getUint32()
+                    .then(entryLength => {
+                        if (options.treeStatistics.totalEntries % entriesPerLeaf === 1) {
+                            return reader.getValue()
+                            .then(key => {
+                                leafStartKeys.push(key);
+                                return reader.go(entryIndex + entryLength)
+                                .then(readNext);
+                            })
+                        }
+                        else {
+                            // skip reading this entry's key
+                            return reader.go(entryIndex + entryLength)
+                            .then(readNext);
+                        }
+                    })
+                    .catch(err => {
+                        // EOF?
+                        if (err.code !== 'EOF') {
+                            throw err;
+                        }
+                    });
+                };
+                return readNext()
+                .then(() => {
+                    return reader.go(0); // Reset
+                })
+                .then(() => {
+                    return leafStartKeys;
+                });
+            });
+        };
+
+        const getEntries = n => {
+            // read n entries
+            const entries = [];
+            const readNext = () => {
+                // read entry_length:
+                return reader.getUint32()
+                .then(entryLength => {
+                    return reader.get(entryLength - 4); // -4 because entry_length is 4 bytes
+                })
+                .then(buffer => {
+                    // read key:
+                    let k = BinaryReader.readValue(buffer, 0);
+                    const entry = {
+                        key: k.value,
+                        values: []
+                    };
+                    let index = k.byteLength;
+                    // read values_length
+                    const totalValues = BinaryReader.readUint32(buffer, index);
+                    index += 4;
+                    for(let i = 0; i < totalValues; i++) {
+                        // read value_length
+                        const valueLength = BinaryReader.readUint32(buffer, index);
+                        index += 4;
+                        const val = buffer.slice(index, index + valueLength);
+                        index += valueLength;
+                        // val contains rp_length, rp_data, metadata
+                        const rpLength = val[0]; // rp_length
+                        const recordPointer = val.slice(1, 1 + rpLength); // rp_data
+                        // metadata:
+                        let valIndex = 1 + rpLength;
+                        const metadata = {};
+                        for (let j = 0; j < options.metadataKeys.length; j++) {
+                            const mdKey = options.metadataKeys[j];
+                            const mdValue = BinaryReader.readValue(val, valIndex);
+                            metadata[mdKey] = mdValue.value;
+                            valIndex += mdValue.byteLength;
+                        }
+                        const value = {
+                            recordPointer,
+                            metadata
+                        };
+                        entry.values.push(value);
+                    }
+                    entries.push(entry);
+                    if (entries.length < n) {
+                        return readNext();
+                    }
+                })
+                .catch(err => {
+                    // EOF?
+                    if (err.code !== 'EOF') {
+                        throw err;
+                    }
+                });
+            };
+            return readNext()
+            .then(() => {
+                return entries;
+            });
+        };
+
+        return BinaryBPlusTree.create({ 
+            getLeafStartKeys,
+            getEntries,
+            writer,
+            treeStatistics: options.treeStatistics,
+            fillFactor: options.fillFactor,
+            allocatedBytes: options.allocatedBytes,
+            isUnique: options.isUnique,
+            keepFreeSpace: options.keepFreeSpace,
+            maxEntriesPerNode: options.maxEntriesPerNode,
+            metadataKeys: options.metadataKeys
+        });
+
+        //     const getLeafStartKeys = () => {
+        //         return readNext()
+        //         .then(() => {
+        //             return { leafStartKeys, entries };
+        //         });
+        //     }
+        //     return getLeafStartKeys();
+        // })
+        // .then(result => {
+        //     // step 2: create nodes tree
+        //     const levels = this.createNodesFromLeafStartKeys(result.leafStartKeys);
+
+        //     // start writing
+        //     return this.writeTree(writer, )
+        // })
+    }
+
 }
 
 class BinaryBPlusTreeNodeInfo {
+    // @param {{ isLeaf: boolean, bytes: number[], index: number, length: number, free: number, parentNode?: BinaryBPlusTreeNode, parentEntry?: BinaryBPlusTreeNodeEntry  }} info 
     /**
      * 
-     * @param {{ isLeaf: boolean, bytes: number[], index: number, length: number, free: number }} info 
+     * @param {object} info
+     * @param {boolean} info.isLeaf whether this is a leaf or node
+     * @param {boolean} info.hasExtData whether this leaf has some external data
+     * @param {number[]} info.bytes data bytes, excluding header & free bytes
+     * @param {number} [info.index] deprecated: use sourceIndex instead
+     * @param {number} info.dataIndex index relative to the start of data bytes
+     * @param {number} info.length total byte length of the node, including header & free bytes
+     * @param {number} info.free number of free bytes at the end of the data
+     * @param {number} info.sourceIndex start index of the node/leaf
+     * @param {BinaryBPlusTreeNode} [info.parentNode]
+     * @param {BinaryBPlusTreeNodeEntry} [info.parentEntry]
      */
     constructor(info) {
         this.isLeaf = info.isLeaf;
+        this.hasExtData = info.hasExtData || false;
         this.bytes = info.bytes;
-        this.index = info.index;
+        if (typeof info.sourceIndex === 'undefined') {
+            info.sourceIndex = info.index;
+        }
+        this.sourceIndex = info.sourceIndex;
+        if (typeof info.dataIndex === 'undefined') {
+            info.dataIndex = this.sourceIndex + 9; // node/leaf header is 9 bytes
+        }
+        this.dataIndex = info.dataIndex;
         this.length = info.length;
         this.free = info.free;
+        this.parentNode = info.parentNode;
+        this.parentEntry = info.parentEntry;
+    }
+    get index() {
+        return this.sourceIndex;
+    }
+    set index(value) {
+        this.sourceIndex = value;
     }
 }
 
@@ -2771,6 +6145,8 @@ class BinaryBPlusTreeNode extends BinaryBPlusTreeNodeInfo {
 
         /** @type {BinaryBPlusTreeNodeEntry[]} */
         this.entries = [];
+        /** @type {number} */
+        this.gtChildOffset = null;
 
         /** @type {() => Promise<BinaryBPlusTreeNodeInfo} */
         this.getGtChild = () => {
@@ -2782,10 +6158,13 @@ class BinaryBPlusTreeNode extends BinaryBPlusTreeNodeInfo {
 class BinaryBPlusTreeNodeEntry {
     /**
      * 
-     * @param {string|number|boolean|Date} key 
+     * @param {string|number|boolean|Date} key
      */
     constructor(key) {
         this.key = key;
+
+        /** @type {number} */
+        this.ltChildOffset = null;
 
         /** @type {() => Promise<BinaryBPlusTreeNodeInfo} */
         this.getLtChild = () => {
@@ -2802,14 +6181,61 @@ class BinaryBPlusTreeLeaf extends BinaryBPlusTreeNodeInfo {
         super(nodeInfo);
         
         this.prevLeafOffset = 0;
-        this.nextLeafOffset = 0;        
+        this.nextLeafOffset = 0;
+        this.extData = {
+            length: 0,
+            freeBytes: 0,
+            loaded: false,
+            load() {
+                // Make sure all extData blocks are read. Needed when eg rebuilding
+                throw new Error('BinaryBPlusTreeLeaf.extData.load must be overriden');
+            }
+        };
+
         /** @type {BinaryBPlusTreeLeafEntry[]} */
         this.entries = [];
 
         /** @type {() => Promise<BinaryBPlusTreeLeaf>?} only present if there is a previous leaf */
         this.getPrevious = undefined;
-        /** @type {function?} only present if there is a next leaf */
+        /** @type {() => Promise<BinaryBPlusTreeLeaf>?} only present if there is a next leaf */
         this.getNext = undefined;
+    }
+
+    static get prevLeafPtrIndex() { return 9; }
+    static get nextLeafPtrIndex() { return 13; }
+
+    static getPrevLeafOffset(leafIndex, prevLeafIndex) {
+        return prevLeafIndex > 0 
+            ? prevLeafIndex - leafIndex - 9
+            : 0;
+    }
+
+    static getNextLeafOffset(leafIndex, nextLeafIndex) {
+        return nextLeafIndex > 0 
+            ? nextLeafIndex - leafIndex - 13 
+            : 0;
+    }
+
+    get prevLeafIndex() {
+        return this.prevLeafOffset !== 0 
+            ? this.index + 9 + this.prevLeafOffset 
+            : 0;
+    }
+    set prevLeafIndex(newIndex) {
+        this.prevLeafOffset = newIndex > 0 
+            ? newIndex - this.index  - 9
+            : 0;
+    }
+
+    get nextLeafIndex() {
+        return this.nextLeafOffset !== 0 
+            ? this.index + 13 + this.nextLeafOffset 
+            : 0;
+    }
+    set nextLeafIndex(newIndex) {
+        this.nextLeafOffset = newIndex > 0 
+            ? newIndex - this.index - 13 
+            : 0;
     }
 
     findEntryIndex(key) {
@@ -2858,6 +6284,7 @@ class BinaryBPlusTreeLeafEntry {
 
     get totalValues() {
         if (typeof this._totalValues === 'number') { return this._totalValues; }
+        if (this.extData) { return this.extData.totalValues; }
         return this.values.length;
     }
 
@@ -2868,6 +6295,7 @@ class BinaryBPlusTreeLeafEntry {
 
 class BinaryBPlusTreeTransactionOperation {
     constructor(operation) {
+        // operation.key = _normalizeKey(operation.key); // if (_isIntString(operation.key)) { operation.key = parseInt(operation.key); }
         /** @type {string} */
         this.type = operation.type;
         /** @type {string|number|boolean|Date|undefined} */
@@ -2922,9 +6350,9 @@ class BinaryWriter {
      * @param {fs.WriteStream} stream 
      * @param {((data: number[]|Uint8Array, position: number) => Promise<void>)} writeFn
      */
-    constructor(stream, writeCallback) {
+    constructor(stream, writeFn) {
         this._stream = stream;
-        this._write = writeCallback;
+        this._write = writeFn;
         this._written = 0;
     }
 
@@ -2941,11 +6369,102 @@ class BinaryWriter {
             }
         };
         const writer = new BinaryWriter(stream, (data, position) => {
+            for(let i = bytes.length; i < position; i++) {
+                bytes[i] = 0; // prevent "undefined" bytes when writing to a position greater than current array length
+            }
             for(let i = 0; i < data.byteLength; i++) {
                 bytes[position + i] = data[i];
             }
             return Promise.resolve();
         });  
+        return writer;      
+    }
+
+    static forFunction(writeFn) {
+        const _maxSimultaniousWrites = 50;
+        let _currentPosition = 0;
+        let _pendingWrites = 0;
+        let _drainCallbacks = [];
+        let _endCallback = null;
+        let _ended = false;
+        // let _currentWrite;
+        // let stream = {
+        //     write(data) {
+        //         // Append data
+        //         let go = () => {
+        //             return writeFn(data, _currentPosition)
+        //             .then(() => {
+        //                 _endCallback && _endCallback();
+        //             });
+        //         };
+        //         _currentWrite = _currentWrite ? _currentWrite.then(go) : go();
+        //         return true;
+        //     },
+        //     end(callback) {
+        //         if (_ended) { throw new Errow(`end can only be called once`); }
+        //         _ended = true;
+        //         _endCallback = callback;
+        //         _currentWrite = _currentWrite.then(callback);
+        //     },
+        //     once(event, callback) {
+        //         console.assert(event === 'drain', 'Custom stream can only handle "drain" event');
+        //         // _drainCallbacks.push(callback);
+        //         _currentWrite = _currentWrite.then(callback);
+        //     }            
+        // };
+        // const writer = new BinaryWriter(stream, (data, position) => {
+        //     let go = () => {
+        //         return writeFn(data, position);
+        //     };
+        //     _currentWrite = _currentWrite ? _currentWrite.then(go) : go();
+        //     return _currentWrite;
+        // });
+
+        let stream = {
+            write(data) {
+                console.assert(!_ended, `streaming was ended already!`);
+                if (_pendingWrites === _maxSimultaniousWrites) {
+                    console.warn('Warning: you should wait for "drain" event before writing new data!');
+                }
+                // console.assert(_pendingWrites < _maxSimultaniousWrites, 'Wait for "drain" event before writing new data!');
+                _pendingWrites++;
+                const success = () => {
+                    _pendingWrites--;
+                    if (_ended && _pendingWrites === 0) {
+                        _endCallback();
+                    }
+                    let drainCallback = _drainCallbacks.shift();
+                    drainCallback && drainCallback();
+                };
+                const fail = (err) => {
+                    console.error(`Failed to write to stream: ${err.message}`);
+                    success();
+                }
+
+                writeFn(data, _currentPosition)
+                .then(success)
+                .catch(fail);
+
+                _currentPosition += data.byteLength;
+                let ok = _pendingWrites < _maxSimultaniousWrites;
+                return ok; // let caller know if its ok to continue writing
+            },
+            end(callback) {
+                if (_ended) { throw new Errow(`end can only be called once`); }
+                _ended = true;
+                _endCallback = callback;
+                if (_pendingWrites === 0) {
+                    callback();
+                }
+            },
+            once(event, callback) {
+                console.assert(event === 'drain', 'Custom stream can only handle "drain" event');
+                _drainCallbacks.push(callback);
+            }
+        };
+        const writer = new BinaryWriter(stream, (data, position) => {
+            return writeFn(data, position);
+        });
         return writer;      
     }
 
@@ -2967,7 +6486,7 @@ class BinaryWriter {
                 this._stream.once('drain', resolve);
             }
             else {
-                process.nextTick(resolve);
+                resolve(); // process.nextTick(resolve);
             }
         });
     }
@@ -2985,12 +6504,869 @@ class BinaryWriter {
             // writer.stream.on('finish', resolve);
         });
     }
+
+    static getBytes(value) {
+        return BinaryBPlusTreeBuilder.getKeyBytes(value);
+    }
+    static numberToBytes(number) {
+        return numberToBytes(number);
+    }
+    static bytesToNumber(bytes) {
+        return bytesToNumber(bytes);
+    }
+    static writeUint32(number, bytes, index) {
+        return _writeByteLength(bytes, index, number);
+    }
+    static writeInt32(signedNumber, bytes, index) {
+        return _writeSignedOffset(bytes, index, signedNumber);
+    }
 }
+
+class BinaryBPlusTreeBuilder {
+    constructor(options = { uniqueKeys: true, smallLeafs: WRITE_SMALL_LEAFS, maxEntriesPerNode: 3, fillFactor: 95, metadataKeys: [], byteLength: 0, freeBytes: 0 }) {
+        this.uniqueKeys = options.uniqueKeys;
+        this.maxEntriesPerNode = options.maxEntriesPerNode;
+        this.metadataKeys = options.metadataKeys;
+        this.byteLength = options.byteLength;
+        this.freeBytes = options.freeBytes;
+        this.smallLeafs = options.smallLeafs;
+        this.fillFactor = options.fillFactor;
+    }
+
+    getHeader() {
+        const indexTypeFlags = 
+              (this.uniqueKeys ? FLAGS.UNIQUE_KEYS : 0) 
+            | (this.metadataKeys.length > 0 ? FLAGS.HAS_METADATA : 0)
+            | (this.freeBytes > 0 ? FLAGS.HAS_FREE_SPACE : 0)
+            | (typeof this.fillFactor === 'number' && this.fillFactor > 0 && this.fillFactor <= 100 ? FLAGS.HAS_FILL_FACTOR : 0)
+            | (this.smallLeafs === true ? FLAGS.HAS_SMALL_LEAFS : 0);
+        const bytes = [
+            // byte_length:
+            0, 0, 0, 0,
+            // index_type:
+            indexTypeFlags,
+            // max_node_entries:
+            this.maxEntriesPerNode
+        ];
+        // update byte_length:
+        _writeByteLength(bytes, 0, this.byteLength);
+
+        if (this.fillFactor > 0 && this.fillFactor <= 100) {
+            // fill_factor:
+            bytes.push(this.fillFactor);
+        }
+
+        if (this.freeBytes > 0) {
+            // free_byte_length:
+            _writeByteLength(bytes, bytes.length, this.freeBytes);
+        }
+
+        if (this.metadataKeys.length > 0) {
+            // metadata_keys:
+            const index = bytes.length;
+            bytes.push(0, 0, 0, 0); // metadata_length
+
+            // metadata_key_count:
+            bytes.push(this.metadataKeys.length);
+
+            this.metadataKeys.forEach(key => {
+                // metadata_key:
+                bytes.push(key.length); // metadata_key_length
+                // metadata_key_name:
+                for (let i=0; i < key.length; i++) {
+                    bytes.push(key.charCodeAt(i));
+                }
+            });
+
+            // update metadata_length:
+            const length = bytes.length - index - 4;
+            _writeByteLength(bytes, index, length);
+        }
+
+        return bytes;
+    }
+
+    /**
+     * 
+     * @param {{ index: number, gtIndex: number, entries: { key: any, ltIndex: number }[]}} info 
+     * @param {{ addFreeSpace: boolean, maxLength?: number, allowMissingChildIndexes: false }} options 
+     */
+    createNode(info, options = { addFreeSpace: true, maxLength: 0 }) {
+
+        console.assert(info.entries.length > 0, `node has no entries!`);
+
+        let bytes = [
+            // byte_length:
+            0, 0, 0, 0,
+            0, // is_leaf (no)
+            // free_byte_length:
+            0, 0, 0, 0
+        ];
+        
+        // entries_length:
+        bytes.push(info.entries.length);
+
+        // entries:
+        info.entries.forEach(entry => {
+            let keyBytes = BinaryBPlusTreeBuilder.getKeyBytes(entry.key);
+            bytes.push(...keyBytes);
+
+            // lt_child_ptr: recalculate offset
+            let ltChildOffset = entry.ltIndex === 0 ? 0 : entry.ltIndex - 3 - (info.index + bytes.length);
+            console.assert(options.allowMissingChildIndexes || ltChildOffset !== 0, `A node entry's ltChildOffset must ALWAYS be set!`);
+            _writeSignedOffset(bytes, bytes.length, ltChildOffset);
+        });
+        
+        // gt_child_ptr: calculate offset
+        let gtChildOffset = info.gtIndex === 0 ? 0 : info.gtIndex - 3 - (info.index + bytes.length);
+        console.assert(options.allowMissingChildIndexes || gtChildOffset !== 0, `A node's gtChildOffset must ALWAYS be set!`);
+        _writeSignedOffset(bytes, bytes.length, gtChildOffset);
+
+        let byteLength = bytes.length;
+        if (options.maxLength > 0 && byteLength > options.maxLength) {
+            throw new Error(`Node byte size grew above maximum of ${options.maxLength}`);
+        }
+
+        if (options.addFreeSpace) {
+            let freeSpace = 0;
+            if (options.maxLength > 0) {
+                freeSpace = options.maxLength - byteLength;
+                byteLength = options.maxLength;
+            }
+            else {
+                let freeEntries = this.maxEntriesPerNode - info.entries.length;
+                let avgEntrySize = Math.ceil((byteLength - 14) / info.entries.length);
+                // freeSpace = freeEntries * avgEntrySize;
+                freeSpace = Math.ceil(freeEntries * avgEntrySize * 1.1) // + 10%
+                byteLength += freeSpace;
+            }
+
+            // Add free space zero bytes
+            for (let i = 0; i < freeSpace; i++) {
+                bytes.push(0);
+            }
+
+            // update free_byte_length:
+            _writeByteLength(bytes, 5, freeSpace);
+        }
+
+        // update byte_length:
+        _writeByteLength(bytes, 0, byteLength);
+
+        return bytes;
+    }
+
+    /**
+     * 
+     * @param {{ index: number, prevIndex: number, nextIndex: number|'adjacent', entries: BinaryBPlusTreeLeafEntry[], extData: { length: number, freeBytes: number, rebuild?: boolean } }} info 
+     * @param {{ addFreeSpace: boolean, maxLength?: number, addExtData: (pointerIndex: number, data: number[]) => void }} options 
+     */
+    createLeaf(info, options = { addFreeSpace: true }) {
+        const tree = new BPlusTree(this.maxEntriesPerNode, this.uniqueKeys, this.metadataKeys);
+        const leaf = new BPlusTreeLeaf(tree);
+        info.entries.forEach(entry => {
+            const key = entry.key;
+            if (typeof key === 'undefined') {
+                console.warn(`undefined key being written to leaf`);
+            }
+            // const leafEntry = new BPlusTreeLeafEntry(leaf, key);
+            // leafEntry.values = entry.values;
+            // leaf.entries.push(leafEntry);
+            leaf.entries.push(entry);
+        });
+
+        let hasExtData = typeof info.extData === 'object' && info.extData.length > 0;
+        const bytes = [
+            0, 0, 0, 0, // byte_length
+            FLAGS.IS_LEAF | (hasExtData ? FLAGS.LEAF_HAS_EXT_DATA : 0), // leaf_flags: has_ext_data, is_leaf (yes)
+            0, 0, 0, 0, // free_byte_length
+        ];
+        const leafFlagsIndex = 4;
+
+        // prev_leaf_ptr:
+        let prevLeafOffset = info.prevIndex === 0 ? 0 : info.prevIndex - (info.index + 9);
+        _writeSignedOffset(bytes, bytes.length, prevLeafOffset);
+
+        // next_leaf_ptr:
+        let nextLeafOffset = info.nextIndex === 0 ? 0 : info.nextIndex === 'adjacent' ? 0 : info.nextIndex - (info.index + 13);
+        _writeSignedOffset(bytes, bytes.length, nextLeafOffset);
+
+        const extDataHeaderIndex = bytes.length;
+        bytes.push(
+            0, 0, 0, 0, // ext_byte_length
+            0, 0, 0, 0  // ext_free_byte_length
+        );
+
+        // entries_length:
+        bytes.push(info.entries.length);
+
+        const moreDataBlocks = [];
+
+        // entries:
+        info.entries.forEach(entry => {
+            let keyBytes = BinaryBPlusTreeBuilder.getKeyBytes(entry.key);
+            bytes.push(...keyBytes);
+
+            // val_length:
+            const valLengthIndex = bytes.length;
+            if (hasExtData && info.extData.rebuild && entry.extData && !entry.extData.loaded) {
+                throw new Error(`extData cannot be rebuilt if an entry's extData isn't loaded`)
+            }
+            if (hasExtData && entry.extData && !info.extData.rebuild) {
+                // this entry has external value data (leaf is being overwritten), 
+                // use existing details
+
+                // val_length:
+                bytes.push(FLAGS.ENTRY_HAS_EXT_DATA);
+
+                // value_list_length:
+                _writeByteLength(bytes, bytes.length, entry.extData.totalValues);
+
+                // ext_data_ptr:
+                _writeByteLength(bytes, bytes.length, entry.extData.leafOffset);
+
+                return; // next!
+            }
+            else if (this.smallLeafs) {
+                // val_length: (small)
+                bytes.push(0);
+            }
+            else {
+                // val_length: (large)
+                bytes.push(0, 0, 0, 0);
+            }
+
+            const valueBytes = [];
+
+            /**
+             * 
+             * @param {BPlusTreeLeafEntryValue} entryValue 
+             */
+            const addValue = (entryValue) => {
+                const { recordPointer, metadata } = entryValue;
+
+                // value_length:
+                valueBytes.push(recordPointer.length);
+
+                // value_data:
+                valueBytes.push(...recordPointer);
+
+                // metadata:
+                this.metadataKeys.forEach(key => {
+                    const metadataValue = metadata[key];
+                    const mdBytes = BinaryBPlusTreeBuilder.getKeyBytes(metadataValue); // metadata_value has same structure as key, so getBinaryKeyData comes in handy here
+                    valueBytes.push(...mdBytes);
+                });
+            };
+
+            if (this.uniqueKeys) {
+                // value:
+                addValue(entry.values[0]);
+            }
+            else {
+                // // value_list_length:
+                // const valueListLength = entry.values.length;
+                // _writeByteLength(bytes, bytes.length, valueListLength);
+
+                entry.values.forEach(entryValue => {
+                    // value:
+                    addValue(entryValue);
+                });
+            }
+
+            // // update val_length
+            // const valLength = bytes.length - valLengthIndex - 4;
+            // _writeByteLength(bytes, valLengthIndex, valLength);
+
+            if (this.smallLeafs && valueBytes.length > MAX_SMALL_LEAF_VALUE_LENGTH) {
+                // Values too big for small leafs
+                // Store value bytes in ext_data block
+
+                // value_list_length:
+                _writeByteLength(bytes, bytes.length, entry.values.length);
+
+                // ext_data_ptr:
+                const extPointerIndex = bytes.length;
+                bytes.push(0, 0, 0, 0); 
+
+                // update val_length:
+                bytes[valLengthIndex] = FLAGS.ENTRY_HAS_EXT_DATA;
+
+                // add the data
+                if (hasExtData && !info.extData.rebuild) {
+                    // adding ext_data_block to existing leaf is impossible here, 
+                    // because we don't have existing ext_data 
+                    // addExtData function must be supplied to handle writing
+                    console.assert(typeof options.addExtData === 'function', 'to add ext_data to existing leaf, provide addExtData function to options');
+                    options.addExtData(extPointerIndex, valueBytes);
+                }
+                else {
+                    // add to in-memory block, leaf output will include ext_data
+                    moreDataBlocks.push({ 
+                        pointerIndex: extPointerIndex, 
+                        bytes: valueBytes
+                    });                    
+                }
+            }
+            else {
+                // update val_length:
+                const valLength = valueBytes.length; //bytes.length - valLengthIndex - 4;
+                if (this.smallLeafs) {
+                    bytes[valLengthIndex] = valLength;
+                }
+                else {
+                    _writeByteLength(bytes, valLengthIndex, valLength);
+                }
+
+                // value_list_length:
+                _writeByteLength(bytes, bytes.length, entry.values.length);
+
+                // add value bytes:
+                _appendToArray(bytes, valueBytes);
+            }
+        });
+
+        if (moreDataBlocks.length > 0) {
+            // additional ext_data block will be written
+
+            if (!hasExtData && typeof options.maxLength === 'number' && options.maxLength > 0) {
+                // Try if ext_data_block can be added to the leaf by shrinking the leaf size 
+                // (using its free space for ext_data block)
+                const minExtDataLength = options.addFreeSpace
+                    ? Math.ceil(moreDataBlocks.reduce((length, block) => length + 12 + Math.ceil(block.bytes.length * 1.1), 0) * 1.1)
+                    : moreDataBlocks.reduce((length, block) => length + 12 + block.bytes.length, 0);
+
+                const freeBytes = options.maxLength - bytes.length;
+                if (freeBytes < minExtDataLength) {
+                    throw new Error(`leaf needs rebuild: not enough free space to extend it with ext_data`);
+                }
+                // Move free space to ext_data:
+                options.maxLength -= minExtDataLength;
+                info.extData = {
+                    length: minExtDataLength
+                };
+            }
+
+            hasExtData = true;
+            // update leaf_flags:
+            bytes[leafFlagsIndex] |= FLAGS.LEAF_HAS_EXT_DATA;
+        }
+        if (!hasExtData) {
+            // update leaf_flags:
+            if ((bytes[leafFlagsIndex] & FLAGS.LEAF_HAS_EXT_DATA) > 0) { bytes[leafFlagsIndex] ^= FLAGS.LEAF_HAS_EXT_DATA }; // has_ext_data (no)
+            // remove ext_byte_length, ext_free_byte_length
+            bytes.splice(extDataHeaderIndex, 8);
+        }
+
+        let byteLength = bytes.length;
+        if (options.maxLength > 0 && byteLength > options.maxLength) {
+            throw new Error(`leaf byte size grew above maximum of ${options.maxLength}`);
+        }
+
+        if (options.addFreeSpace) {
+            let freeSpace = 0;
+            if (options.maxLength > 0) {
+                freeSpace = options.maxLength - byteLength;
+                byteLength = options.maxLength;
+            }
+            else {
+                let freeEntries = this.maxEntriesPerNode - info.entries.length;
+                let avgEntrySize = Math.ceil((byteLength - 18) / info.entries.length);
+                // freeSpace = (freeEntries * avgEntrySize) + (avgEntrySize * 2);
+                freeSpace = Math.ceil(freeEntries * avgEntrySize * 1.1) // + 10%
+                byteLength += freeSpace;
+            }
+
+            // Add free space zero bytes
+            for (let i = 0; i < freeSpace; i++) {
+                bytes.push(0);
+            }
+
+            // update free_byte_length:
+            _writeByteLength(bytes, 5, freeSpace);
+        }
+
+        // update byte_length:
+        _writeByteLength(bytes, 0, byteLength);
+
+        // Now, add any ext_data blocks
+        if (moreDataBlocks.length > 0) {
+            // Can only happen when this is a new leaf, or when it's being rebuilt
+            const leafEndIndex = bytes.length;
+
+            moreDataBlocks.forEach(block => {
+                const offset = bytes.length - leafEndIndex; // offset from leaf end index
+                _writeSignedOffset(bytes, block.pointerIndex, offset); // update ext_data_ptr
+                
+                // Calculate free space
+                const free = options.addFreeSpace ? Math.ceil(block.bytes.length * 0.1) : 0;
+                const blockLength = block.bytes.length + free;
+
+                // ext_block_length:
+                _writeByteLength(bytes, bytes.length, blockLength);
+
+                // ext_block_free_length:
+                _writeByteLength(bytes, bytes.length, free);
+
+                // ext_data_ptr: (not implemented yet)
+                bytes.push(0, 0, 0, 0);
+
+                // data:
+                _appendToArray(bytes, block.bytes);
+
+                // Add free space:
+                for (let i = 0; i < free; i++) { bytes.push(0); }
+            });
+
+            const extByteLength = bytes.length - leafEndIndex;
+            if (info.extData && info.extData.rebuild && info.extData.length < extByteLength) {
+                throw new Error(`leaf ext_data grew larger than the ${info.extData.length} bytes available to it`);
+            }
+            const extFreeByteLength = info.extData && info.extData.rebuild
+                ? info.extData.length - extByteLength
+                : options.addFreeSpace ? Math.ceil(extByteLength * 0.1) : 0;
+
+            // update extData info
+            hasExtData = true;
+            if (info.extData) {
+                info.extData.freeBytes = extFreeByteLength;
+            }
+            else {
+                info.extData = {
+                    length: extByteLength + extFreeByteLength,
+                    freeBytes: extFreeByteLength
+                }
+            }
+
+            // Add free space:
+            for (let i = 0; i < extFreeByteLength; i++) { bytes.push(0); }
+
+            // adjust byteLength
+            byteLength = bytes.length;
+        }
+        else if (hasExtData) {
+            byteLength += info.extData.length;
+        }
+
+        if (hasExtData) {
+            // update leaf_flags:
+            bytes[leafFlagsIndex] |= FLAGS.LEAF_HAS_EXT_DATA; // has_ext_data (yes)
+            // update ext_byte_length:
+            _writeByteLength(bytes, extDataHeaderIndex, info.extData.length);
+            // update ext_free_byte_length:
+            _writeByteLength(bytes, extDataHeaderIndex + 4, info.extData.freeBytes);
+        }
+
+        if (info.nextIndex === 'adjacent') {
+            // update next_leaf_ptr
+            nextLeafOffset = byteLength - 13;
+            _writeSignedOffset(bytes, 13, nextLeafOffset);
+        }
+
+        return bytes;
+    }
+
+    getLeafEntryValueBytes(recordPointer, metadata) {
+        const bytes = [];
+
+        // value_length:
+        bytes.push(recordPointer.length);
+
+        // value_data:
+        bytes.push(...recordPointer);
+
+        // metadata:
+        this.metadataKeys.forEach(key => {
+            const metadataValue = metadata[key];
+            const valueBytes = BPlusTree.getBinaryKeyData(metadataValue); // metadata_value has same structure as key, so getBinaryKeyData comes in handy here
+            bytes.push(...valueBytes);
+        });
+
+        return bytes;
+    }
+
+    static getKeyBytes(key) {
+        let keyBytes = [];
+        let keyType = KEY_TYPE.UNDEFINED;
+        switch(typeof key) {
+            case "undefined": {
+                keyType = KEY_TYPE.UNDEFINED;
+                break;
+            }                
+            case "string": {
+                keyType = KEY_TYPE.STRING;
+                keyBytes = Array.from(textEncoder.encode(key));
+                // for (let i = 0; i < key.length; i++) {
+                //     keyBytes.push(key.charCodeAt(i));
+                // }
+                break;
+            }
+            case "number": {
+                keyType = KEY_TYPE.NUMBER;
+                keyBytes = numberToBytes(key);
+                // Remove trailing 0's to reduce size for smaller and integer values
+                while (keyBytes[keyBytes.length-1] === 0) { keyBytes.pop(); }
+                break;
+            }
+            case "boolean": {
+                keyType = KEY_TYPE.BOOLEAN;
+                keyBytes = [key ? 1 : 0];
+                break;
+            }
+            case "object": {
+                if (key instanceof Date) {
+                    keyType = KEY_TYPE.DATE;
+                    keyBytes = numberToBytes(key.getTime());
+                }
+                else {
+                    throw new Error(`Unsupported key type`);
+                }
+                break;
+            }
+            default: {
+                throw new Error(`Unsupported key type: ${typeof key}`);
+            }
+        }
+
+        const bytes = [];
+
+        // key_type:
+        bytes.push(keyType);
+
+        // key_length:
+        bytes.push(keyBytes.length);
+
+        // key_data:
+        bytes.push(...keyBytes);
+
+        return bytes;
+    }    
+}
+
+class BinaryReader {
+    /**
+     * BinaryReader is a helper class to make reading binary data easier and faster
+     * @param {string|number|(index: number, length: number) => Promise<Buffer>|number} file file name, file descriptor, or an open file, or read function that returns a promise
+     * @param {number} [chunkSize=4096] how many bytes per read. default is 4KB
+     */
+    constructor(file, chunkSize = 4096) {
+        this.chunkSize = chunkSize;
+
+        if (typeof file === 'function') {
+            // Use the passed function for reads
+            this.read = file;
+        }
+        else {
+            let fd;
+            if (typeof file === 'number') {
+                // Use the passed file descriptor
+                fd = file;
+            }
+            else if (typeof file === 'string') {
+                // Read from passed file name 
+                // Override this.init to open the file first
+                let init = this.init.bind(this);
+                this.init = () => {
+                    return new Promise((resolve, reject) => {
+                        // Open file now
+                        fs.open(file, 'r', (err, fileDescriptor) => {
+                            if (err) { return reject(err); }
+                            fd = fileDescriptor;
+                            // Run original this.init
+                            init().then(resolve).catch(reject);
+                        });
+                    });
+                };
+                this.close = () => {
+                    return new Promise((resolve, reject) => {
+                        fs.close(fd, err => {
+                            if (err) { reject(err); }
+                            else { resolve(); }
+                        });
+                    });
+                }
+            }
+            else {
+                throw new Error('invalid file argument');
+            }
+
+            this.read = (index, length) => {
+                return new Promise((resolve, reject) => {
+                    const buffer = new Buffer(length);
+                    fs.read(fd, buffer, 0, length, index, (err, bytesRead) => {
+                        if (err) { reject(err); }
+                        else if (bytesRead < length) { resolve(buffer.slice(0, bytesRead)); }
+                        else { resolve(buffer); }
+                    });
+                });
+            };
+        }
+
+        /** @type {Buffer} */
+        this.data = null;
+        this.offset = 0;    // offset of loaded data (start index of current chunk in data source)
+        this.index = 0;     // current chunk reading index ("cursor" in currently loaded chunk)
+    }
+    /**
+     * @returns {Promise<void>} 
+     */
+    init() {
+        return this.read(0, this.chunkSize)
+        .then(chunk => {
+            this.data = chunk;
+            this.offset = 0;
+            this.index = 0;
+        });
+    }
+    /**
+     * 
+     * @param {number} byteCount 
+     * @returns {Promise<Buffer>}
+     */
+    get(byteCount) {
+        return this.assert(byteCount)
+        .then(() => {
+            // const bytes = this.data.slice(this.index, this.index + byteCount);
+            let slice = Buffer.from(this.data.buffer, this.index, byteCount);
+            this.index += byteCount;
+            return slice;
+        });
+    }
+    getInt32() {
+        return this.get(4)
+        .then(buffer => {
+            return _readSignedOffset(buffer, 0);
+        });
+    }
+    getUint32() {
+        return this.get(4)
+        .then(buffer => {
+            return _readByteLength(buffer, 0);
+        });
+    }
+    getValue() {
+        return this.get(2)
+        .then(b => {
+            let bytes = Array.from(b);
+            return this.get(bytes[1])
+            .then(b => {
+                _appendToArray(bytes, Array.from(b));
+                return BinaryReader.readValue(Buffer.from(bytes), 0).value;
+            });
+        });
+    }
+    more(chunks = 1) {
+        const length = chunks * this.chunkSize;
+        return this.read(this.offset + this.data.length, length)
+        .then(nextChunk => {
+            // Let go of old data before current index:
+            this.data = this.data.slice(this.index);
+            this.offset += this.index;
+            this.index = 0;
+
+            // Append new data
+            const newData = new Buffer(this.data.byteLength + nextChunk.byteLength);
+            newData.set(this.data, 0);
+            newData.set(nextChunk, this.data.byteLength);
+            this.data = newData;
+        });
+    }
+    seek(offset) {
+        if (this.index + offset < this.data.length) {
+            this.index += offset;
+            return Promise.resolve();
+        }
+        let dataIndex = this.offset + this.index + offset;
+        return this.read(dataIndex, this.chunkSize)
+        .then(newChunk => {
+            this.data = newChunk;
+            this.offset = dataIndex;
+            this.index = 0;
+        });        
+    }
+    assert(byteCount) {
+        if (this.index + byteCount > this.data.byteLength) {
+            return this.more(Math.ceil(byteCount / this.chunkSize))
+            .then(() => {
+                if (this.index + byteCount > this.data.byteLength) {
+                    let err = new Error('end of file');
+                    err.code = 'EOF';
+                    throw err;
+                }
+            });
+        }
+        else {
+            return Promise.resolve();
+        }        
+    }
+    skip(byteCount) {
+        this.index += byteCount;
+    }
+    rewind(byteCount) {
+        this.index -= byteCount;
+    }
+    /**
+     * 
+     * @param {number} index 
+     * @returns {Promise<void>}
+     */
+    go(index) {
+        if (this.offset <= index && this.offset + this.data.byteLength > index) {
+            this.index = index - this.offset;
+            return Promise.resolve();
+        }
+        return this.read(index, this.chunkSize)
+        .then(chunk => {
+            this.data = chunk;
+            this.offset = index;
+            this.index = 0;
+        });
+    }
+    savePosition(offsetCorrection = 0) {
+        let savedIndex = this.offset + this.index + offsetCorrection;
+        let go = (offset = 0) => {
+            let index = savedIndex + offset;
+            return this.go(index);
+        }
+        return {
+            go,
+            index: savedIndex
+        };
+    }
+    get sourceIndex() {
+        return this.offset + this.index;
+    }
+
+    static readValue(buffer, index) {
+        const val = BPlusTree.getKeyFromBinary(buffer, index);
+        return { value: val.key, byteLength: val.byteLength };
+    }
+    static bytesToNumber(buffer) {
+        return bytesToNumber(buffer);
+    }
+    static readUint32(buffer, index) {
+        return _readSignedOffset(buffer, index);
+    }
+    static readInt32(buffer, index) {
+        return _readByteLength(buffer, index, signedNumber);
+    }    
+}
+
+class TX {
+    constructor() {
+        this._queue = [];
+        this._rollbackSteps = [];
+    }
+    // For sequential transactions:
+    run(action, rollback) {
+        console.assert(this._queue.length === 0, 'queue must be empty');
+        typeof rollback === 'function' && this._rollbackSteps.push(rollback);
+        let p = action instanceof Promise ? action : action();
+        return p.catch(err => {
+            console.error(`TX.run error: ${err.message}. Initiating rollback`)
+            // rollback
+            let steps = this._rollbackSteps.map(step => step());
+            return Promise.all(steps)
+            .then(() => {
+                // rollback successful
+                throw err; // run().catch will fire with the original error
+            })
+            .catch(err2 => {
+                // rollback failed!!
+                console.error(`Critical: could not rollback changes. Error: ${err2.message}`)
+                err.rollbackError = err2;
+                throw err;
+            });
+        })
+    }
+    // For parallel transactions:
+    queue(step = { name: null, action: () => {}, rollback: () => {} }) {
+        this._queue.push({ 
+            name: step.name || `Step ${this._queue.length+1}`, 
+            action: step.action, rollback: 
+            step.rollback, 
+            state: 'idle', 
+            error: null 
+        });
+    }
+    execute(parallel = true) {
+        if (!parallel) {
+            // Sequentially run actions in queue
+            let rollbackSteps = [];
+            const next = (prevResult) => {
+                let step = this._queue.shift();
+                if (!step) { 
+                    // Done
+                    return prevResult; 
+                }
+                rollbackSteps.push(step.rollback);
+                return step.action(prevResult)
+                .then(result => {
+                    return next(result);
+                })
+                .catch(err => {
+                    // rollback
+                    let actions = rollbackSteps.map(step => step());
+                    return Promise.all(actions)
+                    .then(() => {
+                        // rollback successful
+                        throw err; // execute().catch will fire with the original error
+                    })
+                    .catch(err2 => {
+                        // rollback failed!!
+                        console.error(`Critical: could not rollback changes. Error: ${err2.message}`)
+                        err.rollbackError = err2;
+                        throw err;
+                    });
+                });
+            }
+            const runSteps = next;
+            return runSteps();
+        }
+
+        // Run actions in parallel:
+        let actions = this._queue.map(step => {
+            const p = step.action();
+            if (!(p instanceof Promise)) {
+                throw new Error(`step "${step.name}" must return a promise`);
+            }
+            return p.then(result => {
+                step.state = 'success';
+                step.result = result;
+                return result;
+            })
+            .catch(err => {
+                step.state = 'failed';
+                step.error = err;
+                throw err;
+            });
+        });
+        return Promise.all(actions)
+        .catch(err => {
+            // Rollback
+            console.warn(`Rolling back tx: ${err.message}`);
+            let rollbackSteps = this._queue.map(step => step.state === 'failed' || typeof step.rollback !== 'function' ? null : step.rollback());
+            return Promise.all(rollbackSteps)
+            .then(() => {
+                // rollback successful
+                throw err; // execute().catch will fire with the original error
+            })
+            .catch(err2 => {
+                // rollback failed!!
+                console.error(`Critical: could not rollback changes. Error: ${err2.message}`)
+                err.rollbackError = err2;
+                throw err;
+            });
+        });
+    }
+}
+
 
 module.exports = { 
     BPlusTree,
     BinaryBPlusTree,
     BinaryBPlusTreeLeafEntry,
     BPlusTreeBuilder,
-    BinaryWriter
+    BinaryWriter,
+    BinaryReader
 };

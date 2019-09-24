@@ -2,7 +2,7 @@
 
 const { Storage } = require('./storage');
 const { Node } = require('./node');
-const { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryWriter, BinaryBPlusTreeLeafEntry } = require('./btree');
+const { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryWriter, BinaryBPlusTreeLeafEntry, BinaryReader } = require('./btree');
 const { PathInfo, Utils, ID, debug } = require('acebase-core');
 const { compareValues, getChildValues, numberToBytes, bytesToNumber } = Utils;
 const Geohash = require('./geohash');
@@ -11,6 +11,7 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const pfs = require('./promise-fs');
 const fs = require('fs');
+const ThreadSafe = require('./thread-safe');
 
 const DISK_BLOCK_SIZE = 4096; // use 512 for older disks
 const FILL_FACTOR = 50; // leave room for inserts
@@ -408,6 +409,86 @@ class DataIndex {
 
     _updateTree(path, oldValue, newValue, oldRecordPointer, newRecordPointer, metadata) {
         const canBeIndexed = ['number','boolean','string'].indexOf(typeof newValue) >= 0 || newValue instanceof Date;
+        const operations = [];
+        if (oldValue !== null) {
+            let op = BinaryBPlusTree.TransactionOperation.remove(oldValue, oldRecordPointer);
+            operations.push(op);
+        }
+        if (newValue !== null && canBeIndexed) {
+            let op = BinaryBPlusTree.TransactionOperation.add(newValue, newRecordPointer, metadata);
+            operations.push(op);
+        }
+
+        return this._processTreeOperations(path, operations);
+    }
+
+    /**
+     * @param {BinaryBPlusTree} tree
+     */
+    _rebuild() {
+        // NEW: Rebuild with streams
+        const newIndexFile = this.fileName + '.tmp';
+        return pfs.open(newIndexFile, pfs.flags.write)
+        .then(fd => {
+            const treeStatistics = {};
+            const headerStats = {
+                written: false,
+                length: 0,
+                promise: null
+            };
+
+            const writer = (data, index) => { 
+                let go = () => {
+                    return pfs.write(fd, data, 0, data.length, headerStats.length + index);
+                };
+                if (!headerStats.written) {
+                    // Write header first, or wait until done
+                    let promise = 
+                        headerStats.promise
+                        || this._writeIndexHeader(fd, treeStatistics)
+                        .then(result => {
+                            headerStats.written = true;
+                            headerStats.length = result.length;
+                            headerStats.updateTreeLength = result.treeLengthCallback;
+                        });
+                    headerStats.promise = promise.then(go); // Chain to original promise
+                    return headerStats.promise;
+                }
+                else {
+                    return go();
+                }
+            }
+            return this._getTree()
+            .then(idx => {
+                return idx.tree.rebuild(
+                    BinaryWriter.forFunction(writer), 
+                    { treeStatistics }
+                )
+                .then(() => {
+                    idx.close(true);
+                    return headerStats.updateTreeLength(treeStatistics.byteLength);
+                })
+                .then(() => {
+                    return pfs.close(fd);
+                })
+                .then(() => {
+                    // rename new file, overwriting the old file
+                    return pfs.rename(newIndexFile, this.fileName);
+                })
+                // .then(() => {
+                //     // (optional) truncate the file
+                //     let totalSize = headerStats.length + treeStatistics.byteLength;
+                //     pfs.truncate(this.fileName, totalSize);
+                // });
+            })
+        });
+    }
+
+    /**
+     * @param {string} path
+     * @param {BinaryBPlusTreeTransactionOperation[]}
+     */
+    _processTreeOperations(path, operations) {
         const startTime = Date.now();
         let lock;
         return this._lock(true, `index.handleRecordUpdate "/${path}"`)
@@ -422,62 +503,62 @@ class DataIndex {
              */
             const tree = idx.tree;
             // const oldEntry = tree.find(keyValues.oldValue);
-            const operations = [];
-            if (oldValue !== null) {
-                let op = BinaryBPlusTree.TransactionOperation.remove(oldValue, oldRecordPointer);
-                operations.push(op);
-            }
-            if (newValue !== null && canBeIndexed) {
-                let op = BinaryBPlusTree.TransactionOperation.add(newValue, newRecordPointer, metadata);
-                operations.push(op);
-            }
+            
             return tree.transaction(operations)
             .then(() => {
                 // Index updated
                 idx.close();
-                return false; // not rebuilt
+                return false; // "not rebuilt"
             })
             .catch(err => {
                 // Could not update index --> leaf full?
                 debug.log(`Could not update index ${this.description}: ${err.message}`.yellow);
 
-                // Rebuild it by getting current content
-                return tree.toTreeBuilder(FILL_FACTOR) 
-                .then(builder => {
-                    idx.close();
-
-                    // Process left-over operations:
-                    operations.forEach(op => {
-                        if (op.type === 'add') {
-                            builder.add(op.key, op.recordPointer, op.metadata);
-                        }
-                        else if (op.type === 'update') {
-                            builder.remove(op.key, op.recordPointer);
-                            builder.add(op.key, op.recordPointer, op.metadata);
-                        }
-                        else if (op.type === 'remove') {
-                            builder.remove(op.key, op.recordPointer);
-                        }
-                    });
-                    return this._writeIndex(builder);
-                })
+                idx.close();
+                return this._rebuild()
                 .then(() => {
-                    return true; // rebuilt
-                })
-                .catch(err => {
-                    debug.error(err);
-                    throw err;
+                    return true; // "rebuilt"
                 });
+
+                // // OLD: Rebuild it by getting current content
+                // return tree.toTreeBuilder(FILL_FACTOR) 
+                // .then(builder => {
+                //     idx.close();
+
+                //     // Process left-over operations:
+                //     operations.forEach(op => {
+                //         if (op.type === 'add') {
+                //             builder.add(op.key, op.recordPointer, op.metadata);
+                //         }
+                //         else if (op.type === 'update') {
+                //             builder.remove(op.key, op.recordPointer);
+                //             builder.add(op.key, op.recordPointer, op.metadata);
+                //         }
+                //         else if (op.type === 'remove') {
+                //             builder.remove(op.key, op.recordPointer);
+                //         }
+                //     });
+                //     return this._writeIndex(builder);
+                // })
+                // .then(() => {
+                //     return true; // rebuilt
+                // })
+                // .catch(err => {
+                //     debug.error(err);
+                //     throw err;
+                // });
             })
-            .then(rebuilt => {
-                const doneTime = Date.now();
-                const duration = Math.round((doneTime - startTime) / 1000);
-                debug.log(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration} seconds`.green);
-            });
         })
-        .then(() => {
+        .then(rebuilt => {
             // debug.log(`Released update lock on index ${this.description}`.blue);
             lock.release();
+            const doneTime = Date.now();
+            const duration = Math.round((doneTime - startTime) / 1000);
+            debug.log(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration} seconds`.green);
+            if (operations.length > 0) {
+                // Process left-over operations
+                return this._processTreeOperations(path, operations);
+            }
         });
     }
 
@@ -489,7 +570,11 @@ class DataIndex {
      */
     handleRecordUpdate(path, oldValue, newValue, indexMetadata) {
 
-        const keyValues = getChildValues(this.key, oldValue, newValue);
+        const pathKey = PathInfo.get(path).key;
+        const keyValues = this.key === '{key}' 
+            ? { oldValue: oldValue === null ? null : pathKey, newValue: newValue === null ? null : pathKey }
+            : getChildValues(this.key, oldValue, newValue);
+
         const includedValues = this.includeKeys.map(key => getChildValues(key, oldValue, newValue));
         if (!this.caseSensitive) {
             // Convert to locale aware lowercase
@@ -511,6 +596,7 @@ class DataIndex {
         const recordPointer = _createRecordPointer(wildcardKeys, updatedKey);
         const metadata = (() => {
             const obj = {};
+            indexMetadata && Object.assign(obj, indexMetadata);
             this.includeKeys.forEach(key => obj[key] = newValue[key]);
             return obj;
         })();
@@ -950,7 +1036,8 @@ class DataIndex {
         const nrOfWildcards = hasWildcards ? /\*/g.exec(this.path).length : 0;
         const wildcardsPattern = '^' + path.replace(/\*/g, "([a-z0-9\-_$]+)") + '/';
         const wildcardRE = new RegExp(wildcardsPattern, 'i');
-        const tree = new BPlusTreeBuilder(false, FILL_FACTOR, this.includeKeys.concat(this.indexMetadataKeys)); //(30, false);
+        let treeBuilder = new BPlusTreeBuilder(false, FILL_FACTOR, this.includeKeys.concat(this.indexMetadataKeys)); //(30, false);
+        let idx; // Once using binary file to write to
         const tid = ID.generate();
         const keys = PathInfo.getPathKeys(path);
         const indexableTypes = [Node.VALUE_TYPES.STRING, Node.VALUE_TYPES.NUMBER, Node.VALUE_TYPES.BOOLEAN, Node.VALUE_TYPES.DATETIME];
@@ -959,152 +1046,968 @@ class DataIndex {
             : indexableTypes;
         debug.log(`Index build ${this.description} started`.blue);
         let indexedValues = 0;
-        const getAll = (currentPath, keyIndex) => {
-            // "users/*/posts" 
-            // --> Get all children of "users", 
-            // --> get their "posts" children,
-            // --> get their children to index
+        let addPromise;
+        let flushed = false;
 
-            let path = currentPath;
-            while (keys[keyIndex] && keys[keyIndex] !== '*') {
-                path = PathInfo.getChildPath(path, keys[keyIndex]); // += keys[keyIndex];
-                keyIndex++;
+        const __DEV_UNIQUE_SET = new Set();
+        const __DEV_CHECK_UNIQUE = (key) => {
+            if (__DEV_UNIQUE_SET.has(key)) {
+                console.warn(`Duplicate key: ${key}`);
             }
-            const isTargetNode = keyIndex === keys.length;
-            
-            const getChildren = () => {
-                let children = [];
+            else {
+                __DEV_UNIQUE_SET.add(key);
+            }
+        };
 
-                return Node.getChildren(this.storage, path)
-                .next(child => {
-                    let keyOrIndex = typeof child.key === 'string' ? child.key : child.index;
-                    if (!child.address || child.type !== Node.VALUE_TYPES.OBJECT) { //if (child.storageType !== "record" || child.valueType !== VALUE_TYPES.OBJECT) {
-                        return; // This child cannot be indexed because it is not an object with properties
+        const buildFile = this.fileName + '.build';
+        const createBuildFile = () => {
+            return new Promise((resolve, reject) => {
+                const buildWriteStream = fs.createWriteStream(buildFile, { flags: pfs.flags.readAndAppendAndCreate });
+                const streamState = { wait: false, chunks: [] };
+                buildWriteStream.on('error', (err) => {
+                    console.error(err);
+                    reject(err);
+                });
+                buildWriteStream.on('open', () => {
+                    return getAll('', 0)
+                    .then(() => {
+                        console.log(`done writing values`);
+                        if (streamState.wait) {
+                            buildWriteStream.once('drain', () => {
+                                buildWriteStream.end(resolve);
+                            });
+                        }
+                        else {
+                            buildWriteStream.end(resolve);
+                        }
+                    });                    
+                });                
+                buildWriteStream.on('drain', () => {
+                    // Write queued chunks
+                    let totalBytes = streamState.chunks.reduce((total, bytes) => total + bytes.length, 0);
+                    let buffer = new Uint8Array(totalBytes);
+                    let offset = 0;
+                    streamState.chunks.forEach(bytes => {
+                        buffer.set(bytes, offset);
+                        offset += bytes.length;
+                    });
+                    // Write!
+                    streamState.chunks = [];
+                    streamState.wait = !buildWriteStream.write(buffer, err => {
+                        console.assert(!err, `Failed to write to stream: ${err && err.message}`);
+                    });
+                });
+                const writeToStream = bytes => {
+                    if (streamState.wait) {
+                        streamState.chunks.push(bytes);
+                        console.assert(streamState.chunks.length < 100000, 'Something going wrong here');
                     }
                     else {
-                        children.push(keyOrIndex);
+                        streamState.wait = !buildWriteStream.write(Buffer.from(bytes), err => {
+                            console.assert(!err, `Failed to write to stream: ${err && err.message}`);
+                        });
                     }
-                })
-                .catch(reason => {
-                    // Record doesn't exist? No biggy
-                    debug.warn(`Could not load record "/${path}": ${reason.message}`);
-                })
-                .then(() => {
+                }
+                const getAll = (currentPath, keyIndex) => {
+                    // "users/*/posts" 
+                    // --> Get all children of "users", 
+                    // --> get their "posts" children,
+                    // --> get their children to index
 
-                    // Iterate through the children in batches of max n nodes
-                    // should be determined by amount of * wildcards - If there are 0, 100 are ok, if there is 1, 10 (sqrt of 100), if there are 2, 3.somethign 
-                    // Algebra refresh:
-                    // a = Math.pow(b, c)
-                    // c = Math.log(a) / Math.log(b)
-                    // b = Math.pow(a, Math.pow(0.5, c))
-                    // a is our max batch size, we'll use 100
-                    // c is our depth (nrOfWildcards) so we know this
-                    // b is our unknown start number
-                    const maxBatchSize = Math.round(Math.pow(500, Math.pow(0.5, nrOfWildcards))); 
-                    let batches = [];
-                    while (children.length > 0) {
-                        let batchChildren = children.splice(0, maxBatchSize);
-                        batches.push(batchChildren);
+                    let path = currentPath;
+                    while (keys[keyIndex] && keys[keyIndex] !== '*') {
+                        path = PathInfo.getChildPath(path, keys[keyIndex]); // += keys[keyIndex];
+                        keyIndex++;
                     }
+                    const isTargetNode = keyIndex === keys.length;
                     
-                    const nextBatch = () => {
-                        const batch = batches.shift();
-                        return Promise.all(batch.map(childKey => {
-                            const childPath = PathInfo.getChildPath(path, childKey);
-                            // do it
-                            if (!isTargetNode) {
-                                // Go deeper
-                                return getAll(childPath, keyIndex+1);
+                    const getChildren = () => {
+                        let children = [];
+
+                        return Node.getChildren(this.storage, path)
+                        .next(child => {
+                            let keyOrIndex = typeof child.index === 'number' ? child.index : child.key;
+                            if (!child.address || child.type !== Node.VALUE_TYPES.OBJECT) { //if (child.storageType !== "record" || child.valueType !== VALUE_TYPES.OBJECT) {
+                                return; // This child cannot be indexed because it is not an object with properties
                             }
                             else {
-                                // We have to index this child, get all required values for the entry
-                                const keyFilter = [this.key].concat(this.includeKeys);
-                                let keyValue = null; // initialize to null so we can check if it had a valid indexable value
-                                const metadata = (() => {
-                                    // create properties for each included key, if they are not set by the loop they will still be in the metadata (which is required for B+Tree metadata)
-                                    const obj = {};
-                                    this.includeKeys.forEach(key => obj[key] = undefined);
-                                    return obj;
-                                })();
-                                const addValue = (key, value) => {
-                                    if (typeof value === 'string' && value.length > 255) {
-                                        value = value.slice(0, 255);
-                                    }
-                                    if (typeof value === 'string' && !this.caseSensitive) {
-                                        value = value.toLocaleLowerCase(this.textLocale);
-                                    }
-                                    if (key === this.key) { keyValue = value; }
-                                    else { metadata[key] = value; };
-                                };
-                                const keyPromises = [];
-                                const seenKeys = [];
-                                return Node.getChildren(this.storage, childPath, keyFilter)
-                                .next(childInfo => {
-                                    // What can be indexed? 
-                                    // strings, numbers, booleans, dates, undefined
-                                    seenKeys.push(childInfo.key);
-                                    if (childInfo.key === this.key && allowedKeyValueTypes.indexOf(childInfo.valueType) < 0) {
-                                        // Key value isn't allowed to be this type, mark it as null so it won't be indexed
-                                        keyValue = null;
-                                        return;
-                                    }
-                                    else if (childInfo.key !== this.key && indexableTypes.indexOf(childInfo.valueType) < 0) {
-                                        // Metadata that can't be indexed because it has the wrong type
-                                        return;
-                                    }
-                                    // Index this value
-                                    if (childInfo.address) {
-                                        const p = Node.getValue(this.storage, childInfo.address.path, { tid })
-                                            .then(value => addValue(childInfo.key, value));
-                                        keyPromises.push(p);
-                                    }
-                                    else {
-                                        addValue(childInfo.key, childInfo.value);
-                                    }
-                                })
-                                .then(() => {
-                                    // If the key value wasn't present, set it to undefined (so it'll be indexed)
-                                    if (seenKeys.indexOf(this.key) < 0) { keyValue = undefined; }
-                                    return Promise.all(keyPromises);
-                                })
-                                .then(() => {
-                                    if (keyValue !== null) {
-                                        // Add it to the index, using value as the index key, a record pointer as the value
-                                        // Create record pointer
-                                        let wildcards = [];
-                                        if (hasWildcards) {
-                                            const match = wildcardRE.exec(childPath);
-                                            wildcards = match.slice(1);
-                                        }
-                                        const recordPointer = _createRecordPointer(wildcards, childKey); //, child.address);
-                                        // const entryValue = new BinaryBPlusTree.EntryValue(recordPointer, metadata)
-                                        // Add it to the index
-                                        if (options && options.addCallback) {
-                                            keyValue = options.addCallback(tree, keyValue, recordPointer, metadata, { path: childPath, wildcards, key: childKey });
-                                        }
-                                        else {
-                                            tree.add(keyValue, recordPointer, metadata);
-                                        }
-                                        debug.log(`Indexed "/${childPath}/${this.key}" value: '${keyValue}' (${typeof keyValue})`.cyan);
-                                        indexedValues++;
-                                    }
-                                });
-                            }
-                        }))
-                        .then(() => {
-                            if (batches.length > 0) { 
-                                return nextBatch(); 
+                                children.push(keyOrIndex);
                             }
                         })
-                    }; // nextBatch
+                        .catch(reason => {
+                            // Record doesn't exist? No biggy
+                            debug.warn(`Could not load record "/${path}": ${reason.message}`);
+                        })
+                        .then(() => {
+                            // Iterate through the children in batches of max n nodes
+                            // should be determined by amount of * wildcards - If there are 0, 100 are ok, if there is 1, 10 (sqrt of 100), if there are 2, 3.somethign 
+                            // Algebra refresh:
+                            // a = Math.pow(b, c)
+                            // c = Math.log(a) / Math.log(b)
+                            // b = Math.pow(a, Math.pow(0.5, c))
+                            // a is our max batch size, we'll use 100
+                            // c is our depth (nrOfWildcards) so we know this
+                            // b is our unknown start number
+                            const maxBatchSize = Math.round(Math.pow(500, Math.pow(0.5, nrOfWildcards))); 
+                            let batches = [];
+                            while (children.length > 0) {
+                                let batchChildren = children.splice(0, maxBatchSize);
+                                batches.push(batchChildren);
+                            }
 
-                    if (batches.length > 0) {
-                        return nextBatch();
+                            const nextBatch = () => {
+                                const batch = batches.shift();
+                                return Promise.all(batch.map(childKey => {
+                                    const childPath = PathInfo.getChildPath(path, childKey);
+                                    // do it
+                                    if (!isTargetNode) {
+                                        // Go deeper
+                                        return getAll(childPath, keyIndex+1);
+                                    }
+                                    else {
+                                        // We have to index this child, get all required values for the entry
+                                        const keyFilter = [this.key].concat(this.includeKeys);
+                                        let keyValue = null; // initialize to null so we can check if it had a valid indexable value
+                                        const metadata = (() => {
+                                            // create properties for each included key, if they are not set by the loop they will still be in the metadata (which is required for B+Tree metadata)
+                                            const obj = {};
+                                            this.includeKeys.forEach(key => obj[key] = undefined);
+                                            return obj;
+                                        })();
+                                        const addValue = (key, value) => {
+                                            // if (typeof value === 'string' && value.length > 255) {
+                                            //     value = value.slice(0, 255);
+                                            // }
+                                            if (typeof value === 'string' && !this.caseSensitive) {
+                                                value = value.toLocaleLowerCase(this.textLocale);
+                                            }
+                                            if (key === this.key) { keyValue = value; }
+                                            else { metadata[key] = value; };
+                                        };
+                                        let valuePromise;
+                                        if (this.key === '{key}' && (!this.includedKeys || this.includedKeys.length === 0)) {
+                                            // Index this child's key only, no need to fetch their value
+                                            keyValue = childKey;
+                                            valuePromise = Promise.resolve();
+                                        }
+                                        else {
+                                            // Get child values
+                                            const keyPromises = [];
+                                            const seenKeys = [];
+                                            if (this.key === '{key}') {
+                                                keyFilter.splice(0, 1); // Remove from selection
+                                                seenKeys.push(this.key);
+                                                keyValue = childKey;
+                                            }
+                                            valuePromise = Node.getChildren(this.storage, childPath, keyFilter)
+                                            .next(childInfo => {
+                                                // What can be indexed? 
+                                                // strings, numbers, booleans, dates, undefined
+                                                seenKeys.push(childInfo.key);
+                                                if (childInfo.key === this.key && allowedKeyValueTypes.indexOf(childInfo.valueType) < 0) {
+                                                    // Key value isn't allowed to be this type, mark it as null so it won't be indexed
+                                                    keyValue = null;
+                                                    return;
+                                                }
+                                                else if (childInfo.key !== this.key && indexableTypes.indexOf(childInfo.valueType) < 0) {
+                                                    // Metadata that can't be indexed because it has the wrong type
+                                                    return;
+                                                }
+                                                // Index this value
+                                                if (childInfo.address) {
+                                                    const p = Node.getValue(this.storage, childInfo.address.path, { tid })
+                                                        .then(value => {
+                                                            addValue(childInfo.key, value);
+                                                        });
+                                                    keyPromises.push(p);
+                                                }
+                                                else {
+                                                    addValue(childInfo.key, childInfo.value);
+                                                }
+                                            })
+                                            .then(() => {
+                                                // If the key value wasn't present, set it to undefined (so it'll be indexed)
+                                                if (seenKeys.indexOf(this.key) < 0) { keyValue = undefined; }
+                                                return Promise.all(keyPromises);
+                                            });
+                                        }
+
+                                        return valuePromise.then(() => {
+                                            const addIndexValue = (key, recordPointer, metadata) => {
+
+                                                // NEW: write value to buildStream
+                                                const bytes = [
+                                                    0, 0, 0, 0, // entry_length
+                                                    0 // processed
+                                                ];
+
+                                                // key:
+                                                let keyBytes = BinaryWriter.getBytes(key);
+                                                bytes.push(...keyBytes);
+                        
+                                                // rp_length:
+                                                bytes.push(recordPointer.length);
+
+                                                // rp_data:
+                                                bytes.push(...recordPointer);
+
+                                                // metadata:
+                                                this.includeKeys && this.includeKeys.forEach(key => {
+                                                    const metadataValue = metadata[key];
+                                                    const valueBytes = BinaryWriter.getBytes(metadataValue); // metadata_value
+                                                    bytes.push(...valueBytes);
+                                                });
+
+                                                // update entry_length:
+                                                BinaryWriter.writeUint32(bytes.length, bytes, 0);
+
+                                                writeToStream(bytes);
+                                                indexedValues++;
+                                            }
+
+                                            // const addIndexValue = (key, recordPointer, metadata) => {
+                                            //     indexedValues++;
+                                            //     if (!flushed) {
+                                            //         if (indexedValues <= 1000000) { // max 1 million (max 255MB) of values in-memory
+                                            //             // Add to tree builder
+                                            //             treeBuilder.add(key, recordPointer, metadata);
+                                            //         }
+                                            //         else {
+                                            //             // Switch from tree builder to binary tree writer
+                                            //             flushed = true;
+                                            //             addPromise = this._writeIndex(treeBuilder)
+                                            //             .then(() => {
+                                            //                 return this._getTree();
+                                            //             })
+                                            //             .then(i => {
+                                            //                 idx = i;
+                                            //                 treeBuilder = null;
+                                            //                 return idx.tree.add(key, recordPointer, metadata);
+                                            //             });
+                                            //         }
+                                            //     }
+                                            //     else {
+                                            //         const proceed = () => {
+                                            //             return idx.tree.add(key, recordPointer, metadata)
+                                            //             .then(() => {
+                                            //                 console.log(`added '${key}'`);
+                                            //             })
+                                            //             .catch(err => {
+                                            //                 return rebuild(err)
+                                            //                 .then(() => {
+                                            //                     return idx.tree.add(key, recordPointer, metadata);
+                                            //                 });
+                                            //             });
+                                            //         }
+                                            //         // Chain to addPromise
+                                            //         addPromise = addPromise ? addPromise.then(proceed) : proceed();
+                                            //     }
+                                            // }
+                                            // const rebuild = err => {
+                                            //     // Could not update index --> leaf full?
+                                            //     debug.log(`Could not update index ${this.description}: ${err.message}`.yellow);
+
+                                            //     // NEW: Rebuild with streams
+                                            //     const newIndexFile = this.fileName + '.tmp';
+                                            //     return pfs.open(newIndexFile, pfs.flags.write)
+                                            //     .then(fd => {
+                                            //         const treeStatistics = {};
+                                            //         const headerStats = {
+                                            //             written: false,
+                                            //             length: 0,
+                                            //             promise: null
+                                            //         };
+
+                                            //         const writer = (data, index) => { 
+                                            //             let go = () => {
+                                            //                 return pfs.write(fd, data, 0, data.length, headerStats.length + index);
+                                            //             };
+                                            //             if (!headerStats.written) {
+                                            //                 // Write header first, or wait until done
+                                            //                 let promise = 
+                                            //                     headerStats.promise
+                                            //                     || this._writeIndexHeader(fd, treeStatistics)
+                                            //                     .then(result => {
+                                            //                         headerStats.written = true;
+                                            //                         headerStats.length = result.length;
+                                            //                         headerStats.updateTreeLength = result.treeLengthCallback;
+                                            //                     });
+                                            //                 headerStats.promise = promise.then(go); // Chain to original promise
+                                            //                 return headerStats.promise;
+                                            //             }
+                                            //             else {
+                                            //                 return go();
+                                            //             }
+                                            //         }
+                                            //         return idx.tree.rebuild(
+                                            //             BinaryWriter.forFunction(writer), 
+                                            //             { fillFactor: FILL_FACTOR, keepFreeSpace: true, increaseMaxEntries: true, treeStatistics }
+                                            //         )
+                                            //         .then(() => {
+                                            //             idx.close();
+                                            //             return headerStats.updateTreeLength(treeStatistics.byteLength);
+                                            //         })
+                                            //         .then(() => {
+                                            //             return pfs.close(fd);
+                                            //         })
+                                            //         .then(() => {
+                                            //             // rename new file, overwriting the old file
+                                            //             return pfs.rename(newIndexFile, this.fileName);
+                                            //         })
+                                            //     })
+                                            //     .then(() => {
+                                            //         return this._getTree();
+                                            //     })
+                                            //     .then(i => {
+                                            //         idx = i;
+                                            //     });
+                                            // };
+
+                                            if (typeof keyValue !== 'undefined' && keyValue !== null) {
+                                                // Add it to the index, using value as the index key, a record pointer as the value
+                                                // Create record pointer
+                                                let wildcards = [];
+                                                if (hasWildcards) {
+                                                    const match = wildcardRE.exec(childPath);
+                                                    wildcards = match.slice(1);
+                                                }
+                                                const recordPointer = _createRecordPointer(wildcards, childKey); //, child.address);
+                                                // const entryValue = new BinaryBPlusTree.EntryValue(recordPointer, metadata)
+                                                // Add it to the index
+                                                if (options && options.addCallback) {
+                                                    keyValue = options.addCallback(addIndexValue, keyValue, recordPointer, metadata, { path: childPath, wildcards, key: childKey });
+                                                }
+                                                else {
+                                                    if (typeof keyValue === 'string' && keyValue.length > 255) {
+                                                        // Make sure strings are not too large to store
+                                                        keyValue = keyValue.slice(0, 255);
+                                                    }
+                                                    addIndexValue(keyValue, recordPointer, metadata);
+                                                }
+                                                debug.log(`Indexed "/${childPath}/${this.key}" value: '${keyValue}' (${typeof keyValue})`.cyan);
+                                            }
+                                            // return addPromise; // Do we really have to wait for this?
+                                        });
+                                    }
+                                }))
+                                .then(() => {
+                                    if (batches.length > 0) { 
+                                        return nextBatch(); 
+                                    }
+                                })
+                            }; // nextBatch
+
+                            if (batches.length === 0) { return; }
+                            return nextBatch();
+                        });
+                    };
+
+                    return getChildren();            
+                };              
+            });
+        };
+
+        const mergeFile = `${buildFile}.merge`;
+        const createMergeFile = () => {
+            // start by grouping the keys:
+            // take the first n keys in the .build file, read through the entire file 
+            // to find other occurences of the same key. 
+            // Group them and write to .build.n files in batches of 10.000 keys
+            return pfs.exists(mergeFile)
+            .then(exists => {
+                if (exists) { 
+                    const err = new Error('File already exists');
+                    err.code = 'EEXIST';
+                    throw err;
+                }
+                
+                return pfs.open(buildFile, pfs.flags.readAndWrite);
+            })
+            .then(fd => {
+                let writer = new BinaryWriter(null, (data, position) => {
+                    let buffer = data instanceof Buffer ? data : Buffer.from(data);
+                    return pfs.write(fd, buffer, 0, buffer.byteLength, position);
+                })
+                let reader = new BinaryReader(fd, 512 * 1024); // Read 512KB chunks
+                return reader.init()
+                .then(() => ({ fd, writer, reader }));
+            })
+            .then(({ fd, writer, reader }) => {
+                // const maxKeys = 10000; // Work with max 10.000 in-memory keys at a time
+                const maxValues = 100000; // Max 100K in-memory values
+    
+                // // TEMP:
+                // // See how well index with small leafs performs in 1 by 1 adds
+                // const tempBuildIndex = () => {
+                //     let builder = new BPlusTreeBuilder(false, 50, this.includeKeys);
+                //     /** @type {BinaryBPlusTree} */
+                //     let binaryTree
+                //     let closeTree;
+                //     let adds = 0;
+                //     const proceed = () => {
+                //         return readNext()
+                //         .then(next => {
+                //             if (!next) { return; } // done
+    
+                //             const rpLength = next.value[0];
+                //             const recordPointer = Array.from(next.value.slice(1, rpLength + 1));
+                //             const metadataBytes = Array.from(next.value.slice(rpLength + 1));
+                //             let mdIndex = 0;
+                //             const metadata = {};
+                //             this.includeKeys && this.includeKeys.forEach(key => {
+                //                 let mdItem = BPlusTree.getKeyFromBinary(metadataBytes, mdIndex);
+                //                 mdIndex += mdItem.byteLength;
+                //                 metadata[key] = mdItem.key;
+                //             });
+    
+                //             adds++;
+                //             if (adds < maxValues) { 
+                //                 builder.add(next.key, recordPointer, metadata);
+                //                 return proceed();
+                //             }
+                //             else if (adds === maxValues) {
+                //                 console.log(`Builder: switching to binary tree`);
+                //                 builder.add(next.key, recordPointer, metadata);
+                //                 return this._writeIndex(builder)
+                //                 .catch(err => {
+                //                     console.error(err);
+                //                 })
+                //                 .then(() => {
+                //                     builder = null;
+                //                     return this._getTree();
+                //                 })
+                //                 .then(idx => {
+                //                     binaryTree = idx.tree;
+                //                     binaryTree.autoGrow = true;
+                //                     closeTree = idx.close;
+                //                     return proceed();
+                //                 })
+                //             }
+                //             else {
+                //                 console.log(`Adding key "${next.key}"`);
+                //                 return binaryTree.add(next.key, recordPointer, metadata)
+                //                 .catch(err => {
+                //                     // const bytes = [];
+                //                     // return binaryTree.rebuild(BinaryWriter.forArray(bytes))
+                //                     // .then(() => {
+                //                     //     closeTree();
+                //                     //     return pfs.writeFile(this.fileName, Buffer.from(bytes));
+                //                     // })
+                //                     // .then(() => {
+                //                     //     bytes = null;
+                //                     // })
+    
+                //                     // // TEMP debugging node entry pointing to wrong leaf:
+                //                     // // entry "baptiste" points to sourceIndex:3150161
+                //                     // // key:"baptiste"
+                //                     // // ltChildIndex:3150161
+                //                     // // ltChildOffset:3150013
+                //                     // if (next.key === "ball") {
+                //                     //     return binaryTree.getFirstLeaf().then(leaf => {
+                //                     //         let checkLeaf = (leaf) => {
+                //                     //             const firstKey = leaf.entries[0].key;
+                //                     //             const lastKey = leaf.entries.slice(-1)[0].key;
+                //                     //             console.log(`Checking leaf "${firstKey}" to "${lastKey}"`);
+                //                     //             if (firstKey <= next.key && lastKey >= next.key) {
+                //                     //                 console.log('Found leaf:', leaf);
+                //                     //             }
+                //                     //             else if (leaf.getNext) {
+                //                     //                 return leaf.getNext().then(checkLeaf);
+                //                     //             }
+                //                     //             else {
+                //                     //                 console.log('Not found!');
+                //                     //             }
+                //                     //         }
+                //                     //         return checkLeaf(leaf);
+                //                     //     })
+                //                     //     .catch(err => {
+                //                     //         console.error(err);
+                //                     //     });
+                //                     // }
+    
+                //                     closeTree();
+                //                     return this._rebuild()
+                //                     .then(() => {
+                //                         return this._getTree();
+                //                     })
+                //                     .then(idx => {
+                //                         binaryTree = idx.tree;
+                //                         closeTree = idx.close;
+                //                         // try again
+                //                         binaryTree.autoGrow = true;
+                //                         return binaryTree.add(next.key, recordPointer, metadata); // Try again
+                //                     });
+                //                 })
+                //                 // .then(() => {
+                //                 //     // Test the entry
+                //                 //     return binaryTree.findLeaf(next.key)
+                //                 //     .then(leaf => {
+                //                 //         return Promise.all([
+                //                 //             leaf.getPrevious ? leaf.getPrevious() : null,
+                //                 //             leaf.getNext ? leaf.getNext() : null,
+                //                 //         ]);
+                //                 //     })
+                //                 //     .then(surroundingLeafs => {
+                //                 //         let prev = surroundingLeafs[0];
+                //                 //         let next = surroundingLeafs[1];
+                //                 //         return Promise.all([
+                //                 //             prev ? binaryTree.find(prev.entries[0].key) : null,
+                //                 //             next ? binaryTree.find(next.entries[0].key) : null
+                //                 //         ])
+                //                 //     })
+                //                 //     .catch(err => {
+                //                 //         console.error(`OOPS: ${err.message}`);
+                //                 //         throw err;
+                //                 //     });
+                //                 // })
+                //                 // .then(() => {
+                //                 //     // Test the whole tree
+                //                 //     let checked = 0;
+                //                 //     const lookupLeafEntries = (leaf) => {
+                //                 //         const firstEntry = leaf.entries[0];
+                //                 //         const lastEntry = leaf.entries.slice(-1)[0];
+                //                 //         // console.log(`Testing leaf "${firstEntry.key}" to "${lastEntry.key}"`);
+                //                 //         const lookupEntry = (entry) => {
+                //                 //             return binaryTree.find(entry.key);
+                //                 //         }
+                //                 //         return Promise.all([
+                //                 //             lookupEntry(firstEntry),
+                //                 //             lookupEntry(lastEntry)
+                //                 //         ])
+                //                 //         .catch(err => {
+                //                 //             console.error(`NOT GOOD: ${err.message}`);
+                //                 //             throw err;
+                //                 //         })
+                //                 //         .then(() => {
+                //                 //             checked += 2;
+                //                 //             if (leaf.getNext) {
+                //                 //                 return leaf.getNext().then(lookupLeafEntries);
+                //                 //             }
+                //                 //             else {
+                //                 //                 return console.log(`Tree testing done, tested ${checked} entries`);
+                //                 //             }
+                //                 //         });
+    
+                //                 //         // let i = 0;
+                //                 //         // const nextEntry = () => {
+                //                 //         //     let entry = leaf.entries[i++];
+                //                 //         //     checked++;
+                //                 //         //     if (!entry) {
+                //                 //         //         if (leaf.getNext) {
+                //                 //         //             return leaf.getNext().then(lookupLeafEntries);
+                //                 //         //         }
+                //                 //         //         else {
+                //                 //         //             return console.log(`Tree testing done, tested ${checked} entries`);
+                //                 //         //         }
+                //                 //         //     }
+                //                 //         //     return binaryTree.find(entry.key)
+                //                 //         //     .then(nextEntry)
+                //                 //         //     .catch(err => {
+                //                 //         //         console.error(`NOT GOOD: ${err.message}`);
+                //                 //         //         throw err;
+                //                 //         //     })
+                //                 //         // }
+                //                 //         // return nextEntry();
+                //                 //     }
+                //                 //     const lookupAllEntries = () => {
+                //                 //         return binaryTree.getFirstLeaf()
+                //                 //         .then(lookupLeafEntries);
+                //                 //     }
+                //                 //     return lookupAllEntries();
+                //                 // })                  
+                //                 .then(() => {
+                //                     return proceed();
+                //                 });
+                //             }
+                //         })
+                //     };
+    
+                //     return proceed()
+                //     .then(() => {
+                //         console.log(`Done! Added ${adds} entries to the index`);
+                //     });
+                // }
+    
+                const _processedEntries = new Set();
+    
+                const readNext = () => {
+                    // Read next from file
+                    const entryIndex = reader.sourceIndex;
+                    return reader.getUint32() // entry_length
+                    .catch(err => {
+                        console.assert(err.code === 'EOF');
+                        err.message = 'No more unprocessed entries';
+                        throw err;
+                    })
+                    .then(entryLength => {
+                        return reader.get(entryLength - 4);
+                    })
+                    .then(buffer => {
+                        // processed:
+                        let processed = buffer[0] === 1 || _processedEntries.has(entryIndex);
+                        if (processed) { 
+                            // this one has been processed
+                            return readNext();
+                        }
+    
+                        // key:
+                        let index = 1;
+                        let keyValue = BinaryReader.readValue(buffer, index);
+                        index += keyValue.byteLength;
+    
+                        // value: (combine rp_length, rp_data, metadata)
+                        const len = buffer.byteLength - index;
+                        let val = buffer.slice(index, index + len); // Buffer.from(buffer.buffer, index, len);
+                        return {
+                            key: keyValue.value,
+                            value: val,
+                            index: entryIndex,
+                            length: buffer.byteLength + 4,
+                            flagProcessed() { 
+                                buffer[0] = 1;
+                                buffer = null;
+                                // TODO: refactor back to use file flagging:
+                                // _processedEntries.add(this.index);
+                                return writer.write([1], this.index + 4); // flag file
+                            }
+                            // flagProcessed() { 
+    
+                            //     // __DEV_CHECK_UNIQUE(this.index);
+    
+                            //     buffer[0] = 1; // make sure the in-memory cache is also flagged
+                            //     buffer = null; // release memory if not referenced anywhere else
+                            //     return writer.write([1], this.index + 4); // flag file
+                            // }
+                        }
+                    })
+                    .catch(err => {
+                        if (err.code === 'EOF') { return null; }
+                        throw err;
+                    });
+                }
+    
+                // return tempBuildIndex();
+    
+                const flagProcessed = (entry) => {
+                    // set entry's processed flag to 1 so it'll be skipped in next batch
+                    // return writer.write([1], entry.index + 4);
+                    return entry.flagProcessed();
+                };
+    
+                let batchNr = 1;
+                let nextBatchStartEntry = null;
+                let nextBatch = () => {
+                    let map = new Map();
+                    let more = false;
+                    let processedValues = 0;
+                    let nextEntry = () => {
+                        return readNext()
+                        .then(next => {
+                            if (!next) { return; }
+    
+                            processedValues++;
+                            let values = map.get(next.key);
+                            if (values) {
+                                // const nv = next.value.join(',');
+                                // console.assert(values.findIndex(v => v.join(',') === nv) === -1)
+                                values.push(next.value);
+                                flagProcessed(next);
+                            }
+                            // else if (map.size < maxKeys) {
+                            //     map.set(next.key, [next.value]);
+                            //     flagProcessed(next);
+                            // }
+                            // else {
+                            //     // save for next batch
+                            //     // IDEA: this could be refactored to start reading next batch in parallel
+                            //     if (!more) {
+                            //         more = true;
+                            //         nextBatchStartEntry = next;
+                            //     }
+                            // }
+                            else if (processedValues < maxValues) {
+                                map.set(next.key, [next.value]);
+                                flagProcessed(next);
+                            }
+                            else {
+                                more = true;
+                                nextBatchStartEntry = next;
+                                return; // Stop this batch
+                            }
+                            return nextEntry();
+                        });
+                    };
+    
+                    const getBatchEntries = () => {
+                        if (nextBatchStartEntry !== null) {
+                            // Skip already processed entries
+                            return reader.go(nextBatchStartEntry.index)
+                            .then(() => {
+                                nextBatchStartEntry = null;
+                                return nextEntry();
+                            });
+                        }
+                        else {
+                            return nextEntry();
+                        }
+                    };
+    
+                    return getBatchEntries()
+                    .then(() => {
+    
+                        // sort the map keys
+                        let sortedKeys = quickSort(map.keys(), (a, b) => {
+                            if (BPlusTree.typeSafeComparison.isLess(a, b)) { return -1; }
+                            if (BPlusTree.typeSafeComparison.isMore(a, b)) { return 1; }
+                            return 0;
+                        });
+    
+                        // write batch
+                        let batchStream = fs.createWriteStream(`${buildFile}.${batchNr}`, { flags: pfs.flags.appendAndCreate });
+                        // TODO: async writing
+                        for (let i = 0; i < sortedKeys.length; i++) {
+                            const key = sortedKeys[i];
+                            const values = map.get(key);
+                            
+                            let bytes = [
+                                0, 0, 0, 0 // entry_length
+                            ];
+    
+                            // key:
+                            let b = BinaryWriter.getBytes(key);
+                            bytes.push(...b);
+    
+                            // // values_byte_length:
+                            // const valuesByteLengthIndex = bytes.length;
+                            // bytes.push(0, 0, 0, 0);
+    
+                            // values_length:
+                            b = BinaryWriter.writeUint32(values.length, [0, 0, 0, 0], 0);
+                            bytes.push(...b);
+    
+                            for (let j = 0; j < values.length; j++) {
+                                let value = values[j];
+                                // value_length:
+                                b = BinaryWriter.writeUint32(value.length, [0, 0, 0, 0], 0);
+                                bytes.push(...b);
+    
+                                // value:
+                                bytes.push(...value);
+                            }
+    
+                            // // update values_byte_length:
+                            // const valuesByteLength = bytes.length - valuesByteLengthIndex
+                            // BinaryWriter.writeUint32(valuesByteLength, bytes, valuesByteLengthIndex);
+    
+                            // Update entry_length:
+                            BinaryWriter.writeUint32(bytes.length, bytes, 0);
+    
+                            let ok = batchStream.write(Buffer.from(bytes));
+                            // TODO: check ok
+                        }
+                        return new Promise(resolve => {
+                            batchStream.end(resolve);
+                        })
+                        .then(() => {
+                            if (more) {
+                                // Proceed with next batch
+                               batchNr++;
+                               return nextBatch();
+                           }
+                        });
+                    });
+                };
+    
+                const createBatches = () => {
+                    return nextBatch();
+                }
+    
+                return createBatches()
+                .then(() => {
+                    // Now merge-sort all keys, by reading keys from each batch, 
+                    // taking the smallest value from each batch a time
+                    const batches = batchNr;
+    
+                    // create write stream for merged data
+                    const outputStream = fs.createWriteStream(`${mergeFile}`, { flags: pfs.flags.appendAndCreate });
+                    
+                    // open readers
+                    const readers = new Array(batches);
+                    const readyPromises = [];
+                    const bufferChunkSize = Math.max(10240, Math.round((10 * 1024 * 1024) / readers.length)); // 10MB dedicated memory to divide between readers, with a minimum of 10KB per reader
+                    for (let i = 0; i < readers.length; i++) {
+                        let reader = new BinaryReader(`${buildFile}.${i+1}`, bufferChunkSize);
+                        readers[i] = reader;
+                        let p = reader.init();
+                        readyPromises.push(p);
                     }
-                });
-            };
+    
+                    const entriesPerBatch = new Array(batches);
+                    let sortedEntryIndexes = [];
+                    const loadEntry = (batchIndex) => {
+                        const reader = readers[batchIndex];
+    
+                        // entry_length:
+                        return reader.getUint32()
+                        .catch(err => {
+                            // EOF
+                            console.assert(err.code === 'EOF');
+                            err.message = 'No more entries in batch file';
+                            throw err;
+                        })
+                        .then(entryLength => {
+                            return reader.get(entryLength - 4);
+                        })
+                        .then(buffer => {
+                            // key:
+                            const keyValue = BinaryReader.readValue(buffer, 0);
+                            const key = keyValue.value;
+                            const values = buffer.slice(keyValue.byteLength); //Buffer.from(buffer.buffer, keyValue.byteLength, buffer.byteLength - keyValue.byteLength);
 
-            return getChildren();            
+                            // Check if another batch has entry with the same key
+                            const existing = entriesPerBatch.find(entry => entry && entry.key === key);
+                            if (existing) {
+                                // Append values to existing
+                                // First 4 bytes of values contains values_length
+                                const currentValues = BinaryReader.readUint32(existing.values, 0);
+                                const additionalValues = BinaryReader.readUint32(values, 0);
+
+                                const concatenated = new Buffer(existing.values.byteLength + values.byteLength - 4);
+                                concatenated.set(existing.values, 0);
+                                concatenated.set(values.slice(4), existing.values.byteLength);
+
+                                // Update values_length to total
+                                BinaryWriter.writeUint32(currentValues + additionalValues, concatenated, 0);
+                                existing.values = concatenated;
+                                return loadEntry(batchIndex);
+                            }
+
+                            // Create new entry
+                            const entry = { key, values };
+                            entriesPerBatch[batchIndex] = entry;
+    
+                            // update sortedEntryIndexes (only if it has been populated already, not when loading start values)
+                            if (sortedEntryIndexes.length > 0) {
+                                // remove the old entry
+                                const oldSortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => sortEntry.index === batchIndex);
+                                sortedEntryIndexes.splice(oldSortEntryIndex, 1);
+                                // create new entry, insert at right sorted location
+                                // const newSortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => BPlusTree.typeSafeComparison.isMore(sortEntry.key, entry.key));
+                                let newSortEntryIndex = oldSortEntryIndex; // The newly read value >= previous value, because they are stored sorted in the batch file
+                                while(
+                                    newSortEntryIndex < sortedEntryIndexes.length 
+                                    && BPlusTree.typeSafeComparison.isMore(entry.key, sortedEntryIndexes[newSortEntryIndex].key)) 
+                                {
+                                    newSortEntryIndex++;
+                                }
+                                const newSortEntry = { index: batchIndex, key: entry.key };
+                                sortedEntryIndexes.splice(newSortEntryIndex, 0, newSortEntry);
+                            }
+                            return entry;
+                        })
+                        .catch(err => {
+                            if (err.code === 'EOF') {
+                                // set this batch's entry to null
+                                entriesPerBatch[batchIndex] = null;
+                                // remove from sortedEntryIndexes
+                                console.assert(sortedEntryIndexes.length > 0);
+                                const sortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => sortEntry.index === batchIndex);
+                                sortedEntryIndexes.splice(sortEntryIndex, 1);
+                            }
+                            else {
+                                throw err;
+                            }
+                        });
+                    }
+    
+                    const loadEntries = () => {
+                        let promises = [];
+                        for (let i = 0; i < readers.length; i++) {
+                            let p = loadEntry(i);
+                            promises.push(p);
+                        }
+    
+                        return Promise.all(promises)
+                        .then(() => {
+                            // Populate sortedEntryIndexes
+                            sortedEntryIndexes = entriesPerBatch.map((entry, index) => ({ index, key: entry.key }))
+                            .sort((a, b) => {
+                                if (BPlusTree.typeSafeComparison.isLess(a.key, b.key)) { return -1; }
+                                if (BPlusTree.typeSafeComparison.isMore(a.key, b.key)) { return 1; }
+                                return 0; // happens when a key had too many values (and were split into multiple batches)
+                            });
+                        });
+                    }
+    
+                    const writeSmallestEntry = () => {
+                        if (sortedEntryIndexes.length === 0) {
+                            // done!
+                            return new Promise(resolve => {
+                                outputStream.end(resolve);
+                            }); 
+                        }
+                        // take smallest (always at index 0 in sorted array)
+                        const smallestDetails = sortedEntryIndexes[0];
+                        const batchIndex = smallestDetails.index;
+                        const smallestEntry = entriesPerBatch[batchIndex];
+
+                        const bytes = [
+                            0, 0, 0, 0 // entry_length
+                        ];
+                        // key:
+                        const keyBytes = BinaryWriter.getBytes(smallestEntry.key);
+                        bytes.push(...keyBytes);
+    
+                        // update entry_length
+                        const byteLength = bytes.length + smallestEntry.values.byteLength;
+                        BinaryWriter.writeUint32(byteLength, bytes, 0);
+    
+                        // build buffer
+                        const buffer = new Buffer(byteLength);
+                        buffer.set(bytes, 0);
+                        // values:
+                        buffer.set(smallestEntry.values, bytes.length);
+    
+                        // write to stream
+                        const ok = outputStream.write(buffer, err => {
+                            console.assert(!err, 'Error while writing. All is lost')
+                        });
+                        // TODO: handle !ok
+                        return loadEntry(batchIndex)
+                        .then(writeSmallestEntry);
+                    };
+    
+                    const writeEntries = () => {
+                        return writeSmallestEntry();
+                    }
+    
+                    return Promise.all(readyPromises)
+                    .then(loadEntries)
+                    .then(() => {
+                        return writeEntries();
+                    })
+                    .then(() => {
+                        // readers.forEach(reader => reader.close());
+                        // write stream has already been closed
+                        const promises = readers.map(reader => reader.close());
+                        return Promise.all(promises);
+                    })
+                    .then(() => {
+                        // Delete all batch files
+                        const promises = [];    
+                        for(let i = 1; i <= batches; i++) {
+                            promises.push(pfs.rm(`${buildFile}.${i}`));
+                        }
+                        return Promise.all(promises);
+                    });
+                });
+            })
+            .catch(err => {
+                // EEXIST error is ok because that means the .merge file was already built
+                if (err.code !== 'EEXIST') {
+                    throw err;
+                }
+            });
         };
 
         const startTime = Date.now();
@@ -1112,11 +2015,83 @@ class DataIndex {
         return this._lock(true, `index.build ${this.description}`)
         .then(l => {
             lock = l;
-            return getAll("", 0);
+            return createBuildFile();
+        })
+        .catch(err => {
+            // If the .build file already existed, use it!
+            if (err.code !== 'EEXIST') { throw err; }
         })
         .then(() => {
-            // All child objects have been indexed. save the index
-            return this._writeIndex(tree);
+            // Done writing values to build file. 
+            // Now we have to group all values per key, sort them.
+            // then create the binary B+tree.
+            console.log(`done writing build file`);
+            return createMergeFile();
+        })
+        .then(() => {
+            // Open merge file for reading, index file for writing
+            console.log(`done writing merge file`);
+            return Promise.all([
+                pfs.open(mergeFile, pfs.flags.read),
+                pfs.open(this.fileName, pfs.flags.write),
+                pfs.rm(buildFile)
+            ]);
+        })
+        .then(([ readFD, writeFD ]) => {
+            // create index from entry stream
+            const treeStatistics = {};
+            const headerStats = { 
+                written: false, 
+                updateTreeLength: () => { 
+                    throw new Error(`header hasn't been written yet`); 
+                },
+                length: DISK_BLOCK_SIZE
+            };
+            const reader = new BinaryReader(readFD);
+            // const writeStream = fs.createWriteStream(this.fileName, { fd: writeFD, autoClose: false, start: headerStats.length });
+            // const writer = new BinaryWriter(writeStream, (data, index) => {
+            const writer = BinaryWriter.forFunction((data, index) => {
+                let go = () => {
+                    return pfs.write(writeFD, data, 0, data.length, headerStats.length + index);
+                };
+                if (!headerStats.written) {
+                    // Write header first, or wait until done
+                    let promise = 
+                        headerStats.promise
+                        || this._writeIndexHeader(writeFD, treeStatistics)
+                        .then(result => {
+                            headerStats.written = true;
+                            headerStats.length = result.length;
+                            headerStats.updateTreeLength = result.treeLengthCallback;
+                        });
+                    headerStats.promise = promise.then(go); // Chain to original promise
+                    return headerStats.promise;
+                }
+                else {
+                    return go();
+                }
+            });
+            return BinaryBPlusTree.createFromEntryStream(
+                reader, 
+                writer, 
+                { 
+                    treeStatistics, 
+                    fillFactor: FILL_FACTOR, //50, 
+                    maxEntriesPerNode: 255, 
+                    isUnique: false, 
+                    keepFreeSpace: true, 
+                    metadataKeys: this.includeKeys 
+                }
+            )
+            .then(() => {
+                return Promise.all([
+                    pfs.close(writeFD),
+                    pfs.close(readFD)
+                ]);
+            });
+        })
+        .then(() => {
+            return pfs.rm(mergeFile);
         })
         .then(() => {
             const doneTime = Date.now();
@@ -1124,11 +2099,196 @@ class DataIndex {
             debug.log(`Index ${this.description} was built successfully, took ${duration} minutes`.green);
         })
         .catch(err => {
-            debug.error(`Error building index ${this.description}: ${err.message}`);
+            debug.error(`Error building index ${this.description}: ${err.message}`, err);
         })
         .then(() => {
             lock.release(); // release index lock
             return this;    
+        });
+    }
+
+    /**
+     * 
+     * @param {number} fd
+     * @param {{ totalEntries: number, totalValues: number }} treeStatistics
+     */
+    _writeIndexHeader(fd, treeStatistics) {
+        const indexEntries = treeStatistics.totalEntries;
+        const indexedValues = treeStatistics.totalValues;
+
+        const addNameBytes = (bytes, name) => {
+            // name_length:
+            bytes.push(name.length);
+            // name_data:
+            for(let i = 0; i < name.length; i++) {
+                bytes.push(name.charCodeAt(i));
+            }
+        }
+        const addValueBytes = (bytes, value) => {
+            let valBytes = [];
+            if (typeof value === 'undefined') {
+                // value_type:
+                bytes.push(0);
+                // no value_length or value_data
+                return;
+            }
+            else if (typeof value === 'string') {
+                // value_type:
+                bytes.push(1);
+                valBytes = Array.from(textEncoder.encode(value));
+            }
+            else if (typeof value === 'number') {
+                // value_type:
+                bytes.push(2);
+                valBytes = numberToBytes(value);
+            }
+            else if (typeof value === 'boolean') {
+                // value_type:
+                bytes.push(3);
+                // no value_length
+                // value_data:
+                bytes.push(value ? 1 : 0);
+                // done
+                return;
+            }
+            else if (value instanceof Array) {
+                // value_type:
+                bytes.push(4);
+                // value_length:
+                if (value.length > 0xffff) {
+                    throw new Error(`Array is too large to store. Max length is 0xffff`)
+                }
+                bytes.push((value.length >> 8) & 0xff);
+                bytes.push(value.length & 0xff);
+                // value_data:
+                value.forEach(val => {
+                    addValueBytes(bytes, val);
+                });
+                // done
+                return;
+            }
+            else {
+                throw new Error(`Invalid value type "${typeof value}"`);
+            }
+            // value_length:
+            bytes.push((valBytes.length >> 8) & 0xff);
+            bytes.push(valBytes.length & 0xff);
+            // value_data:
+            bytes.push(...valBytes);
+        }
+        const addInfoBytes = (bytes, obj) => {
+            const keys = Object.keys(obj);
+            // info_count:
+            bytes.push(keys.length);
+            // info, [info, [info...]]
+            keys.forEach(key => {
+                addNameBytes(bytes, key); // name
+
+                const value = obj[key];
+                // if (value instanceof Array) {
+                //     bytes.push(1); // is_array
+                //     bytes.push(value.length); // values_count
+                //     value.forEach(val => {
+                //         addValueBytes(bytes, val); // value
+                //     });
+                // }
+                // else {
+                //     bytes.push(0); // is_array
+                //     addValueBytes(bytes, value); // value
+                // }
+                addValueBytes(bytes, value);
+            });
+        };
+
+        const header = [
+            // signature:
+            65, 67, 69, 66, 65, 83, 69, 73, 68, 88, // 'ACEBASE'
+            // layout_version:
+            1,
+            // header_length:
+            0, 0, 0, 0
+        ];
+        // info:
+        const indexInfo = {
+            type: this.type,
+            version: 1, // TODO: implement this.versionNr
+            path: this.path,
+            key: this.key,
+            include: this.includeKeys,
+            cs: this.caseSensitive,
+            locale: this.textLocale,
+        };
+        addInfoBytes(header, indexInfo);
+
+        // const treeNames = Object.keys(this.trees);
+        // trees_info:
+        header.push(1); // trees_count
+        const treeName = 'default';
+        const treeDetails = this.trees[treeName];
+        
+        // tree_info:
+        addNameBytes(header, treeName); // tree_name
+        
+        const treeRefIndex = header.length;
+        header.push(0, 0, 0, 0); // file_index
+        header.push(0, 0, 0, 0); // byte_length
+
+        treeDetails.entries = indexEntries;
+        treeDetails.values = indexedValues;
+        const extraTreeInfo = {
+            class: treeDetails.class, // 'BPlusTree',
+            version: treeDetails.version, // TODO: implement tree.version
+            entries: indexEntries,
+            values: indexedValues
+        };
+        addInfoBytes(header, extraTreeInfo);
+
+        // align header bytes to block size
+        while (header.length % DISK_BLOCK_SIZE !== 0) {
+            header.push(0);
+        }
+
+        // end of header
+
+        const headerLength = header.length;
+        treeDetails.fileIndex = headerLength;
+        // treeDetails.byteLength = binary.length;
+
+        // Update header_length:
+        header[11] = (headerLength >> 24) & 0xff;
+        header[12] = (headerLength >> 16) & 0xff;
+        header[13] = (headerLength >> 8) & 0xff;
+        header[14] = headerLength & 0xff;       
+
+        // Update default tree file_index:
+        header[treeRefIndex] = (headerLength >> 24) & 0xff;
+        header[treeRefIndex+1] = (headerLength >> 16) & 0xff;
+        header[treeRefIndex+2] = (headerLength >> 8) & 0xff;
+        header[treeRefIndex+3] = headerLength & 0xff;
+
+        // // Update default tree byte_length:
+        // header[treeRefIndex+4] = (binary.byteLength >> 24) & 0xff;
+        // header[treeRefIndex+5] = (binary.byteLength >> 16) & 0xff;
+        // header[treeRefIndex+6] = (binary.byteLength >> 8) & 0xff;
+        // header[treeRefIndex+7] = binary.byteLength & 0xff;
+
+        // anything else?
+
+        return pfs.write(fd, Buffer.from(header))
+        .then(() => {
+            return {
+                length: headerLength,
+                treeLengthCallback: (treeByteLength) => {
+                    const bytes = [
+                        (treeByteLength >> 24) & 0xff,
+                        (treeByteLength >> 16) & 0xff,
+                        (treeByteLength >> 8) & 0xff,
+                        treeByteLength & 0xff
+                    ];
+                    // treeDetails.byteLength = treeByteLength;
+                    return pfs.write(fd, Buffer.from(bytes), 0, bytes.length, treeRefIndex+4);
+                }
+            };
         });
     }
 
@@ -1266,7 +2426,7 @@ class DataIndex {
 
             const header = [
                 // signature:
-                65, 67, 69, 66, 65, 83, 69, 73, 68, 88, // 'ACEBASE'
+                65, 67, 69, 66, 65, 83, 69, 73, 68, 88, // 'ACEBASEIDX'
                 // layout_version:
                 1,
                 // header_length:
@@ -1377,7 +2537,7 @@ class DataIndex {
             })
             .then(() => {
                 return pfs.close(fd);
-            })                
+            })
             .catch(err => {
                 debug.error(err);
                 throw err;
@@ -1386,35 +2546,56 @@ class DataIndex {
     }
 
     _getTree () {
-        return pfs.open(this.fileName, pfs.flags.readAndWrite)
-        .then(fd => {
-            const reader = (index, length) => {
-                const binary = new Uint8Array(length);
-                const buffer = Buffer.from(binary.buffer);
-                return pfs.read(fd, buffer, 0, length, this.trees.default.fileIndex + index)
-                .then(result => {
-                    // Convert Uint8Array to byte array
-                    return Array.from(binary);
-                });
-            };
-            const writer = (data, index) => {
-                const binary = Uint8Array.from(data);
-                const buffer = Buffer.from(binary.buffer);
-                return pfs.write(fd, buffer, 0, data.length, this.trees.default.fileIndex + index)
-                .then(result => {
-                    return;
-                });                    
-            };
-            const tree = new BinaryBPlusTree(reader, DISK_BLOCK_SIZE, writer);
-            return { 
-                tree,
-                close: () => {
-                    pfs.close(fd)
-                    .catch(err => {
-                        debug.warn(`Could not close index file "${this.fileName}":`, err);
+        if (this._idx) {
+            this._idx.open++;
+            return Promise.resolve(this._idx);
+        }
+        return ThreadSafe.lock(this.fileName)
+        .then(lock => { 
+            if (this._idx) {
+                this._idx.open++;
+                lock.release();
+                return Promise.resolve(this._idx);
+            }
+            return pfs.open(this.fileName, pfs.flags.readAndWrite)
+            .then(fd => {
+                const reader = (index, length) => {
+                    const binary = new Uint8Array(length);
+                    const buffer = Buffer.from(binary.buffer);
+                    return pfs.read(fd, buffer, 0, length, this.trees.default.fileIndex + index)
+                    .then(result => {
+                        // Convert Uint8Array to byte array
+                        return Array.from(binary);
                     });
-                }
-            };
+                };
+                const writer = (data, index) => {
+                    const binary = Uint8Array.from(data);
+                    const buffer = Buffer.from(binary.buffer);
+                    return pfs.write(fd, buffer, 0, data.length, this.trees.default.fileIndex + index)
+                    .then(result => {
+                        return;
+                    });                    
+                };
+                const tree = new BinaryBPlusTree(reader, DISK_BLOCK_SIZE, writer);
+                tree.id = this.fileName; // For tree locking
+                const idx = { 
+                    open: 1,
+                    tree,
+                    close: () => {
+                        idx.open--;
+                        if (idx.open === 0) {
+                            this._idx = null;
+                            pfs.close(fd)
+                            .catch(err => {
+                                debug.warn(`Could not close index file "${this.fileName}":`, err);
+                            });
+                        }
+                    }
+                };
+                this._idx = idx;
+                lock.release();
+                return idx;
+            });
         });
     }
 }
@@ -1528,6 +2709,7 @@ class IndexQueryResults extends Array {
  */
 class ArrayIndex extends DataIndex {
     constructor(storage, path, key, options) {
+        if (key === '{key}') { throw new Error('Cannot create array index on node keys'); }
         super(storage, path, key, options);
     }
 
@@ -1572,13 +2754,13 @@ class ArrayIndex extends DataIndex {
     }
 
     build() {
-        const addCallback = (tree, array, recordPointer, metadata) => {
+        const addCallback = (add, array, recordPointer, metadata) => {
             if (!(array instanceof Array)) { return []; }
             // if (array.length === 0) {
             //     debug.warn(`No entries found to index array`);
             // }
             array.forEach(entry => {
-                tree.add(entry, recordPointer, metadata);
+                add(entry, recordPointer, metadata);
             });
             return array;
         }
@@ -1635,7 +2817,7 @@ class WordInfo {
     }
 }
 
-const _wordsRegex = /[\w']+/g; // TODO: should use a better pattern that supports non-latin characters
+const _wordsRegex = /[\w']+/gm; // TODO: should use a better pattern that supports non-latin characters
 class TextInfo {
     /**
      * 
@@ -1645,6 +2827,9 @@ class TextInfo {
     constructor(text, locale) {
         this.text = text; // Be gone later...
         this.locale = locale;
+        /** @type {WordInfo[]} */
+        this.words = [];
+        if (text === null) { return; }
 
         /** @type {Map<string, WordInfo>} */
         let words = new Map();
@@ -1672,8 +2857,6 @@ class TextInfo {
             wordIndex++;
         }
 
-        /** @type {WordInfo[]} */
-        this.words = [];
         words.forEach(word => this.words.push(word));
 
         this.getWordInfo = (word) => {
@@ -1699,6 +2882,7 @@ class TextInfo {
  */
 class FullTextIndex extends DataIndex {
     constructor(storage, path, key, options) {
+        if (key === '{key}') { throw new Error('Cannot create fulltext index on node keys'); }
         super(storage, path, key, options);
         // this.enableReverseLookup = true;
         this.indexMetadataKeys = ['_occurs_']; //,'_indexes_'
@@ -1719,8 +2903,17 @@ class FullTextIndex extends DataIndex {
      * @param {any} newValue 
      */
     handleRecordUpdate(path, oldValue, newValue) {
-        const oldTextInfo = new TextInfo(oldValue[this.key]);
-        const newTextInfo = new TextInfo(newValue[this.key]);
+        let oldText = oldValue === null ? null : oldValue[this.key],
+            newText = newValue === null ? null : newValue[this.key];
+        if (typeof oldText === 'object' && oldText instanceof Array) {
+            oldText = oldText.join(' ');
+        }
+        if (typeof newText === 'object' && newText instanceof Array) {
+            newText = newText.join(' ');
+        }
+
+        const oldTextInfo = new TextInfo(oldText);
+        const newTextInfo = new TextInfo(newText);
 
         // super._updateReverseLookupKey(
         //     path, 
@@ -1765,7 +2958,10 @@ class FullTextIndex extends DataIndex {
     }
 
     build() {
-        const addCallback = (tree, text, recordPointer, metadata, env) => {
+        const addCallback = (add, text, recordPointer, metadata, env) => {
+            if (typeof text === 'object' && text instanceof Array) {
+                text = text.join(' ');
+            }
             const textInfo = new TextInfo(text, this.textLocale);
             const words = textInfo.words; //_getWords(text);
             if (words.length === 0) {
@@ -1783,10 +2979,10 @@ class FullTextIndex extends DataIndex {
 
                 // IDEA: Following up on previous idea: being able to backtrack nodes within an index would
                 // help to speed up sorting queries on an indexed key, 
-                // eg: query .take(10).where('rating','>=', 8).order('title')
+                // eg: query .take(10).filter('rating','>=', 8).sort('title')
                 // does not filter on key 'title', but can then use an index on 'title' for the sorting:
                 // it can take the results from the 'rating' index and backtrack the nodes' titles to quickly
-                // get a sorted top 10. We'd have to store a seperate tree 'backtrack' that uses recordPointers
+                // get a sorted top 10. We'd have to store a seperate 'backtrack' tree that uses recordPointers
                 // as the key, and 'title' values as recordPointers. Caveat: max string length for sorting would 
                 // then be 255 ASCII chars, because that's the recordPointer size limit.
                 // The same boost can currently only be achieved by creating an index that includes 'title' in 
@@ -1801,7 +2997,7 @@ class FullTextIndex extends DataIndex {
                     '_occurs_': wordInfo.indexes.join(',')
                 };
                 Object.assign(wordMetadata, metadata);
-                tree.add(wordInfo.word, recordPointer, wordMetadata);
+                add(wordInfo.word, recordPointer, wordMetadata);
             });
             return words.map(info => info.word);
         }
@@ -2218,6 +3414,7 @@ function _hashesInRadius(lat, lon, radiusM, precision) {
 
 class GeoIndex extends DataIndex {
     constructor(storage, path, key, options) {
+        if (key === '{key}') { throw new Error('Cannot create geo index on node keys'); }
         super(storage, path, key, options);
     }
 
@@ -2249,13 +3446,13 @@ class GeoIndex extends DataIndex {
     }
 
     build() {
-        const addCallback = (tree, obj, recordPointer, metadata) => {
+        const addCallback = (add, obj, recordPointer, metadata) => {
             if (typeof obj.lat !== 'number' || typeof obj.long !== 'number') {
                 debug.warn(`Cannot index location because lat (${obj.lat}) or long (${obj.long}) are invalid`)
                 return;
             }
             const geohash = _getGeoHash(obj);
-            tree.add(geohash, recordPointer, metadata);
+            add(geohash, recordPointer, metadata);
             return geohash;
         }
         return super.build({ addCallback, valueTypes: [Node.VALUE_TYPES.OBJECT] });
@@ -2297,6 +3494,65 @@ class GeoIndex extends DataIndex {
 
 }
 
+// Got quicksort implementation from https://github.com/CharlesStover/quicksort-js/blob/master/src/quicksort.ts
+// modified to work with Maps instead
+const defaultComparator = (a, b) => {
+    if (a < b) { return -1; }
+    if (a > b) { return 1; }
+    return 0;
+};
+
+const quickSort = (unsortedArray, comparator = defaultComparator) => {
+
+  // Create a sortable array to return.
+  const sortedArray = [ ...unsortedArray ];
+
+  // Recursively sort sub-arrays.
+  const recursiveSort = (start, end) => {
+
+    // If this sub-array is empty, it's sorted.
+    if (end - start < 1) {
+      return;
+    }
+
+    const pivotValue = sortedArray[end];
+    let splitIndex = start;
+    for (let i = start; i < end; i++) {
+      const sort = comparator(sortedArray[i], pivotValue);
+
+      // This value is less than the pivot value.
+      if (sort === -1) {
+
+        // If the element just to the right of the split index,
+        //   isn't this element, swap them.
+        if (splitIndex !== i) {
+          const temp = sortedArray[splitIndex];
+          sortedArray[splitIndex] = sortedArray[i];
+          sortedArray[i] = temp;
+        }
+
+        // Move the split index to the right by one,
+        //   denoting an increase in the less-than sub-array size.
+        splitIndex++;
+      }
+
+      // Leave values that are greater than or equal to
+      //   the pivot value where they are.
+    }
+
+    // Move the pivot value to between the split.
+    sortedArray[end] = sortedArray[splitIndex];
+    sortedArray[splitIndex] = pivotValue;
+
+    // Recursively sort the less-than and greater-than arrays.
+    recursiveSort(start, splitIndex - 1);
+    recursiveSort(splitIndex + 1, end);
+  };
+
+  // Sort the entire array.
+  recursiveSort(0, sortedArray.length - 1);
+  return sortedArray;
+};
 
 module.exports = { 
     DataIndex,

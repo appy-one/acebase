@@ -130,7 +130,7 @@ class NodeLocker {
                         // In the right situation, this timeout never fires. Target: Bugfree code
 
                         if (lock.state !== LOCK_STATE.LOCKED) { return; }
-                        debug.error(`lock :: ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} took too long, ${lock.comment}`);
+                        console.error(`lock :: ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} took too long, ${lock.comment}`);
                         lock.state = LOCK_STATE.EXPIRED;
                         // let allTransactionLocks = _locks.filter(l => l.tid === lock.tid).sort((a,b) => a.requested < b.requested ? -1 : 1);
                         // let transactionsDebug = allTransactionLocks.map(l => `${l.state} ${l.forWriting ? "WRITE" : "read"} ${l.comment}`).join("\n");
@@ -168,7 +168,7 @@ class NodeLocker {
 
         if (i < 0) {
             const msg = `lock on "/${lock.path}" for tid ${lock.tid} wasn't found; ${comment}`;
-            debug.error(`unlock :: ${msg}`);
+            // debug.error(`unlock :: ${msg}`);
             return Promise.reject(new Error(msg));
         }
         lock.state = LOCK_STATE.DONE;

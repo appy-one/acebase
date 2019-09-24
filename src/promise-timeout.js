@@ -1,6 +1,6 @@
 function promiseTimeout(ms, promise, comment) {
     let id;
-
+    if (!promise) { promise = new Promise(() => { /* never resolves */}); }
     let timeout = new Promise((resolve, reject) => {
       id = setTimeout(() => {
         reject(`Promise timed out after ${ms}ms: ${comment}`)

@@ -72,6 +72,7 @@ class Storage extends EventEmitter {
                 // convert it to a Buffer instance or fs.write will FAIL.
                 buffer = Buffer.from(buffer.buffer);
             }
+            console.assert(buffer instanceof Buffer, 'buffer argument must be a Buffer or Uint8Array');
             if (length === -1) {
                 length = buffer.byteLength;
             }
@@ -351,6 +352,11 @@ class Storage extends EventEmitter {
         
         if (cluster.enabled && !cluster.isMaster) {
             this.FST = {
+                /**
+                 * 
+                 * @param {number} requiredRecords 
+                 * @returns {Promise<Array<{ pageNr: number, recordNr: number, length: number }>>}
+                 */
                 allocate(requiredRecords) {
                     return cluster.request({ type: "allocate", records: requiredRecords })
                     // .then(result => {
@@ -450,6 +456,8 @@ class Storage extends EventEmitter {
                         let l2 = b.end - b.start;
                         if (l1 < l2) { return 1; }
                         if (l1 > l2) { return -1; }
+                        if (a.page < b.page) { return -1; }
+                        if (a.page > b.page) { return 1; }
                         return 0;
                     });
 
@@ -916,6 +924,7 @@ class Storage extends EventEmitter {
              * @param {boolean} [options.rebuild=false]
              * @param {string} [options.type] special index to create: 'array', 'fulltext' or 'geo'
              * @param {string[]} [options.include] keys to include in index
+             * @returns {Promise<DataIndex>}
              */
             create(path, key, options = { rebuild: false, type: undefined, include: undefined }) { //, refresh = false) {
                 path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
@@ -950,10 +959,22 @@ class Storage extends EventEmitter {
                 });
             },
 
+            /**
+             * Returns indexes at a path, or a specific index on a key in that path
+             * @param {string} path 
+             * @param {string} [key=null] 
+             * @returns {DataIndex[]}
+             */
             get(path, key = null) {
                 return _indexes.filter(index => index.path === path && (key === null || key === index.key));
             },
 
+            /**
+             * Returns all indexes on a target path, optionally includes indexes on child paths
+             * @param {string} targetPath 
+             * @param {boolean} [childPaths=true] 
+             * @returns {DataIndex[]}
+             */
             getAll(targetPath, childPaths = true) {
                 const pathKeys = PathInfo.getPathKeys(targetPath);
                 return _indexes.filter(index => {
@@ -966,10 +987,17 @@ class Storage extends EventEmitter {
                 });
             },
 
+            /**
+             * Returns all indexes
+             * @returns {DataIndex[]}
+             */
             list() {
                 return _indexes.slice();
             },
 
+            /**
+             * Discovers and populates all created indexes
+             */
             load() {
                 _indexes.splice(0);
                 // return new Promise((resolve, reject) => {

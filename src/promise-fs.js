@@ -20,11 +20,11 @@ pfs.flags = {
     /** @description 'a' - Open file for appending. The file is created if it does not exist. */
     get append() { return 'a'; },
     /** @description 'ax' - Like append ('a') but fails if the path exists. */
-    get appendExisting() { return 'ax'; },
+    get appendAndCreate() { return 'ax'; },
     /** @description 'a+' - Open file for reading and appending. The file is created if it does not exist. */
     get readAndAppend() { return 'a+'; },
     /** @description 'ax+' - Like readAndAppend ('a+') but fails if the path exists. */
-    get readAndAppendExisting() { return 'ax+'; },
+    get readAndAppendAndCreate() { return 'ax+'; },
     /** @description 'as' - Open file for appending in synchronous mode. The file is created if it does not exist. */
     get appendSynchronous() { return 'as'; },
     /** @description 'as+' - Open file for reading and appending in synchronous mode. The file is created if it does not exist. */
@@ -94,7 +94,10 @@ function write(fd, buffer, offset, length, position) {
 
     return new Promise((resolve, reject) => {
         fs.write(fd, buffer, offset, length, position, (err, bytesWritten, buffer) => {
-            if (err) { reject(err); }
+            if (err) { 
+                err.args = { fd, buffer, offset, length, position };
+                reject(err);
+            }
             else { resolve({ bytesWritten, buffer }); }
         });
     });
@@ -138,7 +141,10 @@ function read(fd, buffer, offset, length, position) {
 
     return new Promise((resolve, reject) => {
         fs.read(fd, buffer, offset, length, position, (err, bytesRead, buffer) => {
-            if (err) { reject(err); }
+            if (err) { 
+                err.args = { fd, buffer, offset, length, position };
+                reject(err); 
+            }
             else { resolve({ bytesRead, buffer }); }
         });
     });
@@ -230,5 +236,41 @@ function mkdir(path, options) {
     });
 }
 pfs.mkdir = mkdir;
+
+/**
+ * Asynchronously removes a file or symbolic link
+ * @param {string|Buffer|URL} path 
+ * @returns {Promise<void>} returns a promise that resolves once the file has been removed
+ */
+function unlink(path) {
+    return new Promise((resolve, reject) => {
+        fs.unlink(path, (err) => {
+            if (err) { reject(err); }
+            else { resolve(); }
+        });
+    })
+}
+
+pfs.unlink = pfs.rm = unlink;
+
+/**
+ * Asynchronously rename file at oldPath to the pathname provided as newPath. 
+ * In the case that newPath already exists, it will be overwritten. If there is 
+ * a directory at newPath, an error will be raised instead
+ * @param {string|Buffer|URL} oldPath 
+ * @param {string|Buffer|URL} newPath 
+ * @returns {Promise<void>} returns a promise that resolves once the file has been renamed
+ */
+function rename(oldPath, newPath) {
+    return new Promise((resolve, reject) => {
+        fs.rename(oldPath, newPath, (err) => {
+            if (err) { reject(err); }
+            else { resolve(); }
+        });
+    })
+}
+
+pfs.rename = rename;
+
 
 module.exports = pfs;

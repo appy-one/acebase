@@ -2,6 +2,7 @@ const { Api } = require('acebase-core');
 const { LocalAceBase } = require('./acebase-local');
 const { Storage, StorageSettings } = require('./storage');
 const { Node } = require('./node');
+const { DataIndex } = require('./data-index');
 
 class LocalApi extends Api {
     // All api methods for local database instance
@@ -570,6 +571,7 @@ class LocalApi extends Api {
      * @param {string} path
      * @param {string} key
      * @param {object} [options]
+     * @returns {Promise<DataIndex>}
      */
     createIndex(path, key, options) {
         return this.storage.indexes.create(path, key, options);
@@ -577,6 +579,7 @@ class LocalApi extends Api {
 
     /**
      * Gets all indexes
+     * @returns {Promise<DataIndex[]>}
      */
     getIndexes() {
         return Promise.resolve(this.storage.indexes.list());
