@@ -2262,7 +2262,7 @@ class BinaryBPlusTree {
                     index += 4;
                 }
                 leaf.entries.push(entry);
-                index += hasExtData ? 4 : valLength; // Skip ext_data_ptr or value
+                index += hasExtData ? 4 : valLength - 4; // Skip ext_data_ptr or value
             }
             else if (this.info.isUnique) {
                 // Read single value
