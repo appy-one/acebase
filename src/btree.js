@@ -2259,10 +2259,14 @@ class BinaryBPlusTree {
                 }
                 else {
                     entry.totalValues = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // value_list_length
-                    index += 4;
+                    if (this.info.hasFillFactor) {
+                        // using this to detect if tree was written before or after rewrites that changed
+                        // val_length not to include the 4 value_list_length bytes
+                        index += 4;
+                    }
                 }
                 leaf.entries.push(entry);
-                index += hasExtData ? 4 : valLength - 4; // Skip ext_data_ptr or value
+                index += hasExtData ? 4 : valLength; // Skip ext_data_ptr or value
             }
             else if (this.info.isUnique) {
                 // Read single value
