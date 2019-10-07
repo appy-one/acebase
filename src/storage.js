@@ -924,6 +924,7 @@ class Storage extends EventEmitter {
              * @param {boolean} [options.rebuild=false]
              * @param {string} [options.type] special index to create: 'array', 'fulltext' or 'geo'
              * @param {string[]} [options.include] keys to include in index
+             * @param {object} [options.config] additional index-specific configuration settings 
              * @returns {Promise<DataIndex>}
              */
             create(path, key, options = { rebuild: false, type: undefined, include: undefined }) { //, refresh = false) {
@@ -943,10 +944,10 @@ class Storage extends EventEmitter {
                 }
                 const index = existingIndex || (() => {
                     switch (indexType) {
-                        case 'array': return new ArrayIndex(storage, path, key, { include: options.include });
-                        case 'fulltext': return new FullTextIndex(storage, path, key, { include: options.include });
-                        case 'geo': return new GeoIndex(storage, path, key, { include: options.include });
-                        default: return new DataIndex(storage, path, key, { include: options.include });
+                        case 'array': return new ArrayIndex(storage, path, key, { include: options.include, config: options.config });
+                        case 'fulltext': return new FullTextIndex(storage, path, key, { include: options.include, config: options.config });
+                        case 'geo': return new GeoIndex(storage, path, key, { include: options.include, config: options.config });
+                        default: return new DataIndex(storage, path, key, { include: options.include, config: options.config });
                     }
                 })();
                 return index.build()
