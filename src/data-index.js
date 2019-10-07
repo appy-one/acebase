@@ -144,6 +144,10 @@ class DataIndex {
         };
     }
 
+    get allMetadataKeys() {
+        return this.includeKeys.concat(this.indexMetadataKeys);
+    }
+
     setCacheTimeout(seconds, sliding = false) {
         this._cacheTimeoutSettings = {
             duration: seconds * 1000,
@@ -1036,7 +1040,7 @@ class DataIndex {
         const nrOfWildcards = hasWildcards ? /\*/g.exec(this.path).length : 0;
         const wildcardsPattern = '^' + path.replace(/\*/g, "([a-z0-9\-_$]+)") + '/';
         const wildcardRE = new RegExp(wildcardsPattern, 'i');
-        let treeBuilder = new BPlusTreeBuilder(false, FILL_FACTOR, this.includeKeys.concat(this.indexMetadataKeys)); //(30, false);
+        let treeBuilder = new BPlusTreeBuilder(false, FILL_FACTOR, this.allMetadataKeys); //(30, false);
         let idx; // Once using binary file to write to
         const tid = ID.generate();
         const keys = PathInfo.getPathKeys(path);
@@ -1140,12 +1144,16 @@ class DataIndex {
                         })
                         .then(() => {
                             // Iterate through the children in batches of max n nodes
-                            // should be determined by amount of * wildcards - If there are 0, 100 are ok, if there is 1, 10 (sqrt of 100), if there are 2, 3.somethign 
+                            // should be determined by amount of * wildcards in index path
+                            // If there are 0 wildcards, batch size of 500 is ok
+                            // if there is 1 wildcard, use batch size 22 (sqrt of 500, 500^0.5), 
+                            // 2 wildcards: batch size 5 (2v500 or 500^0.25), 
+                            // 3 wildcards: batch size 2 (3v500 or 500^00.125)
                             // Algebra refresh:
                             // a = Math.pow(b, c)
                             // c = Math.log(a) / Math.log(b)
                             // b = Math.pow(a, Math.pow(0.5, c))
-                            // a is our max batch size, we'll use 100
+                            // a is our max batch size, we'll use 500
                             // c is our depth (nrOfWildcards) so we know this
                             // b is our unknown start number
                             const maxBatchSize = Math.round(Math.pow(500, Math.pow(0.5, nrOfWildcards))); 
@@ -1235,6 +1243,12 @@ class DataIndex {
                                         return valuePromise.then(() => {
                                             const addIndexValue = (key, recordPointer, metadata) => {
 
+                                                if (typeof key === 'string' && key.length > 255) {
+                                                    // Make sure strings are not too large to store. Use first 255 chars only
+                                                    console.warn(`Truncating key value "${key}" because it is too large to index`);
+                                                    key = key.slice(0, 255);
+                                                }
+
                                                 // NEW: write value to buildStream
                                                 const bytes = [
                                                     0, 0, 0, 0, // entry_length
@@ -1252,8 +1266,15 @@ class DataIndex {
                                                 bytes.push(...recordPointer);
 
                                                 // metadata:
-                                                this.includeKeys && this.includeKeys.forEach(key => {
-                                                    const metadataValue = metadata[key];
+                                                this.allMetadataKeys && this.allMetadataKeys.forEach(key => {
+                                                    let metadataValue = metadata[key];
+
+                                                    if (typeof metadataValue === 'string' && metadataValue.length > 255) {
+                                                        // Make sure strings are not too large to store. Use first 255 chars only
+                                                        console.warn(`Truncating "${key}" metadata value "${metadataValue}" because it is too large to index`);
+                                                        metadataValue = metadataValue.slice(0, 255);
+                                                    }
+
                                                     const valueBytes = BinaryWriter.getBytes(metadataValue); // metadata_value
                                                     bytes.push(...valueBytes);
                                                 });
@@ -1378,10 +1399,6 @@ class DataIndex {
                                                     keyValue = options.addCallback(addIndexValue, keyValue, recordPointer, metadata, { path: childPath, wildcards, key: childKey });
                                                 }
                                                 else {
-                                                    if (typeof keyValue === 'string' && keyValue.length > 255) {
-                                                        // Make sure strings are not too large to store
-                                                        keyValue = keyValue.slice(0, 255);
-                                                    }
                                                     addIndexValue(keyValue, recordPointer, metadata);
                                                 }
                                                 debug.log(`Indexed "/${childPath}/${this.key}" value: '${keyValue}' (${typeof keyValue})`.cyan);
@@ -1424,7 +1441,7 @@ class DataIndex {
                 return pfs.open(buildFile, pfs.flags.readAndWrite);
             })
             .then(fd => {
-                let writer = new BinaryWriter(null, (data, position) => {
+                let writer = BinaryWriter.forFunction((data, position) => {
                     let buffer = data instanceof Buffer ? data : Buffer.from(data);
                     return pfs.write(fd, buffer, 0, buffer.byteLength, position);
                 })
@@ -1764,8 +1781,7 @@ class DataIndex {
     
                         // write batch
                         let batchStream = fs.createWriteStream(`${buildFile}.${batchNr}`, { flags: pfs.flags.appendAndCreate });
-                        // TODO: async writing
-                        for (let i = 0; i < sortedKeys.length; i++) {
+                        const writeKey = i => {
                             const key = sortedKeys[i];
                             const values = map.get(key);
                             
@@ -1794,7 +1810,7 @@ class DataIndex {
                                 // value:
                                 bytes.push(...value);
                             }
-    
+                            
                             // // update values_byte_length:
                             // const valuesByteLength = bytes.length - valuesByteLengthIndex
                             // BinaryWriter.writeUint32(valuesByteLength, bytes, valuesByteLengthIndex);
@@ -1802,12 +1818,32 @@ class DataIndex {
                             // Update entry_length:
                             BinaryWriter.writeUint32(bytes.length, bytes, 0);
     
-                            let ok = batchStream.write(Buffer.from(bytes));
-                            // TODO: check ok
-                        }
-                        return new Promise(resolve => {
-                            batchStream.end(resolve);
-                        })
+                            let ok = batchStream.write(Uint8Array.from(bytes));
+
+                            const proceed = () => {
+                                if (i + 1 < sortedKeys.length) {
+                                    return writeKey(i + 1);
+                                }
+                                else {
+                                    return new Promise(resolve => {
+                                        batchStream.end(resolve);
+                                    });
+                                }
+                            };
+                            if (!ok) {
+                                return new Promise(resolve => {
+                                    batchStream.once('drain', resolve);
+                                })
+                                .then(() => {
+                                    return proceed();
+                                });
+                            }
+                            return proceed();
+                        };
+                        const writeBatchKeys = () => {
+                            return writeKey(0);
+                        };
+                        return writeBatchKeys()
                         .then(() => {
                             if (more) {
                                 // Proceed with next batch
@@ -1819,17 +1855,47 @@ class DataIndex {
                 };
     
                 const createBatches = () => {
-                    return nextBatch();
+                    return pfs.exists(`${buildFile}.1`)
+                    .then(exists => {
+                        if (!exists) {
+                            // Start building batches
+                            return nextBatch();
+                        }
+
+                        // Find out how many batches there are already
+                        const path = buildFile.slice(0, buildFile.lastIndexOf('/'));
+                        return pfs.readdir(path)
+                        .then(entries => {
+                            let high = 0;
+                            const checkFile = buildFile.slice(path.length + 1) + '.';
+                            entries.forEach(entry => {
+                                if (typeof entry === 'string' && entry.startsWith(checkFile)) {
+                                    const match = /\.([0-9]+)$/.exec(entry);
+                                    if (!match) { return; }
+                                    const nr = parseInt(match[1]);
+                                    high = Math.max(high, nr);
+                                }
+                            });
+                            batchNr = high;
+                        })
+                    })
+                    
                 }
     
                 return createBatches()
-                .then(() => {
+                // .then(() => {
+                //     return pfs.open(mergeFile, pfs.flags.writeAndCreate);
+                // })
+                .then(fd => {
                     // Now merge-sort all keys, by reading keys from each batch, 
                     // taking the smallest value from each batch a time
                     const batches = batchNr;
     
                     // create write stream for merged data
-                    const outputStream = fs.createWriteStream(`${mergeFile}`, { flags: pfs.flags.appendAndCreate });
+                    const outputStream = fs.createWriteStream(mergeFile, { flags: pfs.flags.writeAndCreate });
+                    // const outputStream = BinaryWriter.forFunction((data, position) => {
+                    //     return pfs.write(fd, data, 0, data.byteLength, position);
+                    // });
                     
                     // open readers
                     const readers = new Array(batches);
@@ -1872,7 +1938,7 @@ class DataIndex {
                                 const currentValues = BinaryReader.readUint32(existing.values, 0);
                                 const additionalValues = BinaryReader.readUint32(values, 0);
 
-                                const concatenated = new Buffer(existing.values.byteLength + values.byteLength - 4);
+                                const concatenated = new Uint8Array(existing.values.byteLength + values.byteLength - 4);
                                 concatenated.set(existing.values, 0);
                                 concatenated.set(values.slice(4), existing.values.byteLength);
 
@@ -1945,6 +2011,7 @@ class DataIndex {
                             return new Promise(resolve => {
                                 outputStream.end(resolve);
                             }); 
+                            // return outputStream.end();
                         }
                         // take smallest (always at index 0 in sorted array)
                         const smallestDetails = sortedEntryIndexes[0];
@@ -1963,18 +2030,44 @@ class DataIndex {
                         BinaryWriter.writeUint32(byteLength, bytes, 0);
     
                         // build buffer
-                        const buffer = new Buffer(byteLength);
+                        const buffer = new Uint8Array(byteLength);
                         buffer.set(bytes, 0);
                         // values:
                         buffer.set(smallestEntry.values, bytes.length);
-    
+
                         // write to stream
+                        // console.log(`writing entry "${smallestEntry.key}"`);
+                        // return outputStream.append(buffer)
+                        // .then(() => {
+                        //     return loadEntry(batchIndex);
+                        // })
+                        // .then(writeSmallestEntry);
+
                         const ok = outputStream.write(buffer, err => {
                             console.assert(!err, 'Error while writing. All is lost')
                         });
-                        // TODO: handle !ok
-                        return loadEntry(batchIndex)
-                        .then(writeSmallestEntry);
+
+                        // proceed with next entry
+                        const proceed = () => {
+                            return loadEntry(batchIndex)
+                            .then(writeSmallestEntry);
+                        };
+
+                        if (!ok) {
+                            console.log('waiting for merge output stream to drain');
+                            return new Promise(resolve => {
+                                outputStream.once('drain', () => {
+                                    console.log('drained!');
+                                    resolve();
+                                });
+                            })
+                            .then(() => {
+                                return proceed();
+                            });
+                        }
+                        else {
+                            return proceed();
+                        }
                     };
     
                     const writeEntries = () => {
@@ -1989,6 +2082,8 @@ class DataIndex {
                     .then(() => {
                         // readers.forEach(reader => reader.close());
                         // write stream has already been closed
+                        // const promises = [pfs.close(fd)];
+                        // promises.concat(readers.map(reader => reader.close()));
                         const promises = readers.map(reader => reader.close());
                         return Promise.all(promises);
                     })
@@ -2080,7 +2175,7 @@ class DataIndex {
                     maxEntriesPerNode: 255, 
                     isUnique: false, 
                     keepFreeSpace: true, 
-                    metadataKeys: this.includeKeys 
+                    metadataKeys: this.allMetadataKeys
                 }
             )
             .then(() => {
@@ -2817,16 +2912,72 @@ class WordInfo {
     }
 }
 
-const _wordsRegex = /[\w']+/gm; // TODO: should use a better pattern that supports non-latin characters
+// const _wordsRegex = /[\w']+/gmi; // TODO: should use a better pattern that supports non-latin characters
 class TextInfo {
+    static get locales() {
+        return {
+            "default": {
+                pattern: '[A-Za-z0-9\']+',
+                flags: 'gmi'
+            },
+            "en": {
+                // English stoplist from https://gist.github.com/sebleier/554280
+                stoplist: ["i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours", "yourself", "yourselves", "he", "him", "his", "himself", "she", "her", "hers", "herself", "it", "its", "itself", "they", "them", "their", "theirs", "themselves", "what", "which", "who", "whom", "this", "that", "these", "those", "am", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "having", "do", "does", "did", "doing", "a", "an", "the", "and", "but", "if", "or", "because", "as", "until", "while", "of", "at", "by", "for", "with", "about", "against", "between", "into", "through", "during", "before", "after", "above", "below", "to", "from", "up", "down", "in", "out", "on", "off", "over", "under", "again", "further", "then", "once", "here", "there", "when", "where", "why", "how", "all", "any", "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "s", "t", "can", "will", "just", "don", "should", "now"]
+            },
+            get(locale) {
+                const settings = this.default;
+                if (typeof this[locale] === 'undefined' && locale.indexOf('-') > 0) {
+                    locale = locale.split('-')[1];
+                }
+                if (typeof this[locale] === 'undefined') { 
+                    return settings;
+                }
+                Object.keys(this[locale]).forEach(key => {
+                    settings[key] = this[locale][key];
+                });
+                return settings;
+            }
+        }
+    }
+
     /**
      * 
      * @param {string} text 
-     * @param {string} [locale="en"] 
+     * @param {object} [options]
+     * @param {string} [options.locale="en"] Set the text locale to accurately convert words to lowercase
+     * @param {RegExp|string} [options.pattern="[\\w']+"] Overrides the default RegExp pattern used
+     * @param {string} [options.flags='gmi'] Overrides the default RegExp flags (gmi) used 
+     * @param {(word:string, locale:string) => string} [options.stemming] Optional callback function that is able to perform word stemming. Will be executed before performing criteria checks
+     * @param {number} [options.minLength=1] minimum length of words to include
+     * @param {number} [options.maxLength=25] maxLength should be increased if you expect words in your texts like "antidisestablishmentarianism" (28), "floccinaucinihilipilification" (29) or "pneumonoultramicroscopicsilicovolcanoconiosis" (45)
+     * @param {string[]} [options.blacklist] words to ignore. You can use a default stoplist from TextInfo.locales
+     * @param {string[]} [options.whitelist] words to include even if they do not meet the min & maxLength criteria
+     * @param {boolean} [options.useStoplist=true] whether to use a default stoplist to blacklist words (if available for locale)
      */
-    constructor(text, locale) {
-        this.text = text; // Be gone later...
-        this.locale = locale;
+    constructor(text, options) {
+        // this.text = text; // Be gone later...
+        this.locale = options.locale || "en";
+        const localeSettings = TextInfo.locales.get(this.locale);
+        let pattern = localeSettings.pattern;
+        if (options.pattern && options.pattern instanceof RegExp) {
+            pattern = options.pattern.source;
+        }
+        else if (typeof options.pattern === 'string') {
+            pattern = options.pattern;
+        }
+        let flags = localeSettings.flags;
+        if (typeof options.flags === 'string') {
+            flags = options.flags;
+        }
+        const re = new RegExp(pattern, flags);
+        const minLength = typeof options.minLength === 'number' ? options.minLength : 1;
+        const maxLength = typeof options.maxLength === 'number' ? options.maxLength : 25;
+        let blacklist = options.blacklist instanceof Array ? options.blacklist : [];
+        if (localeSettings.stoplist instanceof Array && options.useStoplist !== false) {
+            blacklist = blacklist.concat(localeSettings.stoplist);
+        }
+        const whitelist = options.whitelist instanceof Array ? options.whitelist : [];
+
         /** @type {WordInfo[]} */
         this.words = [];
         if (text === null) { return; }
@@ -2838,12 +2989,33 @@ class TextInfo {
         // const wordsRegex = /[\w']+/gu;
         let wordIndex = 0;
         while(true) {
-            const match = _wordsRegex.exec(text);
+            const match = re.exec(text);
             if (match === null) { break; }
             let word = match[0];
 
             // TODO: use stemming such as snowball (https://www.npmjs.com/package/snowball-stemmers)
-            word = word.toLocaleLowerCase(locale);
+            // to convert words like "having" to "have", and "cycles", "cycle", "cycling" to "cycl"
+            if (typeof options.stemming === 'function') {
+                // Let callback function perform word stemming
+                const stemmed = options.stemming(word, this.locale);
+                if (typeof stemmed !== 'string') {
+                    // Ignore this word
+                    // Do not increase wordIndex
+                    continue; 
+                }
+                word = stemmed;
+            }
+
+            word = word.toLocaleLowerCase(this.locale);
+
+            if (word.length < minLength || word.length > maxLength || ~blacklist.indexOf(word)) {
+                // Word does not meet set criteria
+                if (!~whitelist.indexOf(word)) {
+                    // Not whitelisted either
+                    // Do not increase wordIndex
+                    continue;
+                }
+            }
 
             let wordInfo = words.get(word);
             if (wordInfo) {
@@ -2881,11 +3053,28 @@ class TextInfo {
  * Each word will be stored and searched in lowercase
  */
 class FullTextIndex extends DataIndex {
+
+    /**
+     * 
+     * @param {Storage} storage 
+     * @param {string} path 
+     * @param {string} key 
+     * @param {object} options 
+     * @param {object} [options.config]
+     * @param {(word: string, locale:string) => string} [options.config.transform] callback function that transforms (or filters) words being indexed
+     * @param {string[]} [options.config.blacklist] words to be ignored
+     * @param {boolean} [options.config.useStoplist=true] uses a locale specific stoplist to automatically blacklist words
+     * @param {string[]} [options.config.whitelist] words to be included if they did not match other criteria
+     * @param {string} [options.config.localeKey] uses the value of a specific key as locale. Allows different languages to be indexed correctly, overrides options.textLocale
+     * @param {number} [options.config.minLength] minimum length for words to be indexed (after transform)
+     * @param {number} [options.config.maxLength] maximum length for words to be indexed (after transform)
+     */
     constructor(storage, path, key, options) {
         if (key === '{key}') { throw new Error('Cannot create fulltext index on node keys'); }
         super(storage, path, key, options);
         // this.enableReverseLookup = true;
         this.indexMetadataKeys = ['_occurs_']; //,'_indexes_'
+        this.config = options.config || {};
     }
 
     // get fileName() {
@@ -2905,6 +3094,9 @@ class FullTextIndex extends DataIndex {
     handleRecordUpdate(path, oldValue, newValue) {
         let oldText = oldValue === null ? null : oldValue[this.key],
             newText = newValue === null ? null : newValue[this.key];
+        let oldLocale = oldValue === null ? this.textLocale : this.config.localeKey && oldValue[this.config.localeKey] ? oldValue[this.config.localeKey] : oldValue[this.textLocale],
+            newLocale = newValue === null ? this.textLocale : this.config.localeKey && newValue[this.config.localeKey] ? newValue[this.config.localeKey] : newValue[this.textLocale];
+
         if (typeof oldText === 'object' && oldText instanceof Array) {
             oldText = oldText.join(' ');
         }
@@ -2912,8 +3104,8 @@ class FullTextIndex extends DataIndex {
             newText = newText.join(' ');
         }
 
-        const oldTextInfo = new TextInfo(oldText);
-        const newTextInfo = new TextInfo(newText);
+        const oldTextInfo = new TextInfo(oldText, { locale: oldLocale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
+        const newTextInfo = new TextInfo(newText, { locale: newLocale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
 
         // super._updateReverseLookupKey(
         //     path, 
@@ -2922,8 +3114,8 @@ class FullTextIndex extends DataIndex {
         //     metadata
         // );
 
-        const oldWords = oldTextInfo.words.map(w => w.word); // _getWords(oldText);
-        const newWords = newTextInfo.words.map(w => w.word); // _getWords(newText);
+        const oldWords = oldTextInfo.words.map(w => w.word);
+        const newWords = newTextInfo.words.map(w => w.word);
         
         let removed = oldWords.filter(word => newWords.indexOf(word) < 0);
         let added = newWords.filter(word => oldWords.indexOf(word) < 0);
@@ -2950,8 +3142,15 @@ class FullTextIndex extends DataIndex {
             //     '_occurs_': wordInfo.occurs,
             //     '_indexes_': wordInfo.indexes.join(',')
             // };
+
+            let occurs = wordInfo.indexes.join(',');
+            if (occurs.length > 255) {
+                console.warn(`FullTextIndex ${this.description}: word "${word}" occurs too many times in "${path}/${this.key}" to store in index metadata. Truncating occurrences`);
+                const cutIndex = occurs.lastIndexOf(',', 255);
+                occurs = occurs.slice(0, cutIndex);
+            }
             const indexMetadata = {
-                '_occurs_': wordInfo.indexes.join(',')
+                '_occurs_': occurs
             };
             super.handleRecordUpdate(path, { [this.key]: null }, mutated, indexMetadata);
         });
@@ -2962,7 +3161,8 @@ class FullTextIndex extends DataIndex {
             if (typeof text === 'object' && text instanceof Array) {
                 text = text.join(' ');
             }
-            const textInfo = new TextInfo(text, this.textLocale);
+            const locale = env.locale || this.textLocale;
+            const textInfo = new TextInfo(text, { locale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
             const words = textInfo.words; //_getWords(text);
             if (words.length === 0) {
                 debug.warn(`No words found to fulltext index "${env.path}"`);
@@ -2993,8 +3193,15 @@ class FullTextIndex extends DataIndex {
                 //     '_occurs_': wordInfo.occurs,
                 //     '_indexes_': wordInfo.indexes.join(',')
                 // };
+
+                let occurs = wordInfo.indexes.join(',');
+                if (occurs.length > 255) {      
+                    console.warn(`FullTextIndex ${this.description}: word "${wordInfo.word}" occurs too many times to store in index metadata. Truncating occurrences`);
+                    const cutIndex = occurs.lastIndexOf(',', 255);
+                    occurs = occurs.slice(0, cutIndex);
+                }
                 const wordMetadata = {
-                    '_occurs_': wordInfo.indexes.join(',')
+                    '_occurs_': occurs
                 };
                 Object.assign(wordMetadata, metadata);
                 add(wordInfo.word, recordPointer, wordMetadata);
