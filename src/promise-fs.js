@@ -38,7 +38,7 @@ pfs.flags = {
     /** @description 'w' - Open file for writing. The file is created (if it does not exist) or truncated (if it exists). */
     get write() { return 'w'; },
     /** @description 'wx' - Like write ('w') but fails if the path exists. */
-    get writeExisting() { return 'wx'; },
+    get writeAndCreate() { return 'wx'; },
     /** @description 'w+' - Open file for reading and writing. The file is created (if it does not exist) or truncated (if it exists). */
     get readAndWriteAndCreateOrOverwrite() { return 'w+'; },
     /** @description 'wx+' - Like readAndWriteAndCreateOrOverwrite ('w+') but fails if the path exists. */
