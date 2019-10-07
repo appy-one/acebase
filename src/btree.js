@@ -5316,9 +5316,6 @@ class BinaryBPlusTreeBuilder {
             bytes.push(...keyBytes);
 
             // lt_child_ptr: recalculate offset
-            if (entry.key === "vitamin") {
-                console.log(entry);
-            }
             console.assert(entry.ltIndex >= 0, `node entry "${entry.key}" has ltIndex < 0: ${entry.ltIndex}`);
             let ltChildOffset = entry.ltIndex === 0 ? 0 : entry.ltIndex - 5 - (info.index + bytes.length);
             console.assert(options.allowMissingChildIndexes || ltChildOffset !== 0, `A node entry's ltChildOffset must ALWAYS be set!`);
@@ -5368,8 +5365,12 @@ class BinaryBPlusTreeBuilder {
      * 
      * @param {{ index: number, prevIndex: number, nextIndex: number|'adjacent', entries: BinaryBPlusTreeLeafEntry[], extData: { length: number, freeBytes: number, rebuild?: boolean } }} info 
      * @param {{ addFreeSpace: boolean, maxLength?: number, addExtData: (pointerIndex: number, data: number[]) => void }} options 
+     * @returns {Uint8Array} bytes
      */
     createLeaf(info, options = { addFreeSpace: true }) {
+
+        // console.log(`Creating leaf for entries "${info.entries[0].key}" to "${info.entries.slice(-1)[0].key}" (${info.entries.length} entries, ${info.entries.reduce((total, entry) => total + entry.values.length, 0)} values)`);
+
         const tree = new BPlusTree(this.maxEntriesPerNode, this.uniqueKeys, this.metadataKeys);
         const leaf = new BPlusTreeLeaf(tree);
         info.entries.forEach(entry => {
@@ -5384,20 +5385,20 @@ class BinaryBPlusTreeBuilder {
         });
 
         let hasExtData = typeof info.extData === 'object' && info.extData.length > 0;
-        const bytes = [
+        const bytes = new Uint8ArrayBuilder([
             0, 0, 0, 0, // byte_length
             FLAGS.IS_LEAF | (hasExtData ? FLAGS.LEAF_HAS_EXT_DATA : 0), // leaf_flags: has_ext_data, is_leaf (yes)
             0, 0, 0, 0, // free_byte_length
-        ];
+        ]);
         const leafFlagsIndex = 4;
 
         // prev_leaf_ptr:
         let prevLeafOffset = info.prevIndex === 0 ? 0 : info.prevIndex - (info.index + 9);
-        _writeSignedOffset(bytes, bytes.length, prevLeafOffset, true);
+        bytes.writeInt48(prevLeafOffset); // _writeSignedOffset(bytes, bytes.length, prevLeafOffset, true);
 
         // next_leaf_ptr:
         let nextLeafOffset = info.nextIndex === 0 ? 0 : info.nextIndex === 'adjacent' ? 0 : info.nextIndex - (info.index + 15);
-        _writeSignedOffset(bytes, bytes.length, nextLeafOffset, true);
+        bytes.writeInt48(nextLeafOffset); //_writeSignedOffset(bytes, bytes.length, nextLeafOffset, true);
 
         const extDataHeaderIndex = bytes.length;
         bytes.push(
@@ -5428,10 +5429,10 @@ class BinaryBPlusTreeBuilder {
                 bytes.push(FLAGS.ENTRY_HAS_EXT_DATA);
 
                 // value_list_length:
-                _writeByteLength(bytes, bytes.length, entry.extData.totalValues);
+                bytes.writeUint32(entry.extData.totalValues); // _writeByteLength(bytes, bytes.length, entry.extData.totalValues);
 
                 // ext_data_ptr:
-                _writeByteLength(bytes, bytes.length, entry.extData.leafOffset);
+                bytes.writeUint32(entry.extData.leafOffset); // _writeByteLength(bytes, bytes.length, entry.extData.leafOffset);
 
                 return; // next!
             }
@@ -5444,7 +5445,7 @@ class BinaryBPlusTreeBuilder {
                 bytes.push(0, 0, 0, 0);
             }
 
-            const valueBytes = [];
+            const valueBytes = new Uint8ArrayBuilder([]);
 
             /**
              * 
@@ -5457,13 +5458,13 @@ class BinaryBPlusTreeBuilder {
                 valueBytes.push(recordPointer.length);
 
                 // value_data:
-                valueBytes.push(...recordPointer);
+                valueBytes.append(recordPointer); // valueBytes.push(...recordPointer);
 
                 // metadata:
                 this.metadataKeys.forEach(key => {
                     const metadataValue = metadata[key];
                     const mdBytes = BinaryBPlusTreeBuilder.getKeyBytes(metadataValue); // metadata_value has same structure as key, so getBinaryKeyData comes in handy here
-                    valueBytes.push(...mdBytes);
+                    valueBytes.append(mdBytes); // valueBytes.push(...mdBytes);
                 });
             };
 
@@ -5491,14 +5492,14 @@ class BinaryBPlusTreeBuilder {
                 // Store value bytes in ext_data block
 
                 // value_list_length:
-                _writeByteLength(bytes, bytes.length, entry.values.length);
+                bytes.writeUint32(entry.values.length); // _writeByteLength(bytes, bytes.length, entry.values.length);
 
                 // ext_data_ptr:
                 const extPointerIndex = bytes.length;
                 bytes.push(0, 0, 0, 0); 
 
                 // update val_length:
-                bytes[valLengthIndex] = FLAGS.ENTRY_HAS_EXT_DATA;
+                bytes.data[valLengthIndex] = FLAGS.ENTRY_HAS_EXT_DATA;
 
                 // add the data
                 if (hasExtData && !info.extData.rebuild) {
@@ -5520,17 +5521,17 @@ class BinaryBPlusTreeBuilder {
                 // update val_length:
                 const valLength = valueBytes.length; //bytes.length - valLengthIndex - 4;
                 if (this.smallLeafs) {
-                    bytes[valLengthIndex] = valLength;
+                    bytes.data[valLengthIndex] = valLength;
                 }
                 else {
-                    _writeByteLength(bytes, valLengthIndex, valLength);
+                    bytes.writeUint32(valLength, valLengthIndex); // _writeByteLength(bytes, valLengthIndex, valLength);
                 }
 
                 // value_list_length:
-                _writeByteLength(bytes, bytes.length, entry.values.length);
+                bytes.writeUint32(entry.values.length); // _writeByteLength(bytes, bytes.length, entry.values.length);
 
                 // add value bytes:
-                _appendToArray(bytes, valueBytes);
+                bytes.append(valueBytes); // _appendToArray(bytes, valueBytes);
             }
         });
 
@@ -5557,11 +5558,11 @@ class BinaryBPlusTreeBuilder {
 
             hasExtData = true;
             // update leaf_flags:
-            bytes[leafFlagsIndex] |= FLAGS.LEAF_HAS_EXT_DATA;
+            bytes.data[leafFlagsIndex] |= FLAGS.LEAF_HAS_EXT_DATA;
         }
         if (!hasExtData) {
             // update leaf_flags: 
-            bytes[leafFlagsIndex] &= ~FLAGS.LEAF_HAS_EXT_DATA; // if ((bytes[leafFlagsIndex] & FLAGS.LEAF_HAS_EXT_DATA) > 0) { bytes[leafFlagsIndex] ^= FLAGS.LEAF_HAS_EXT_DATA }; // has_ext_data (no)            
+            bytes.data[leafFlagsIndex] &= ~FLAGS.LEAF_HAS_EXT_DATA; // if ((bytes[leafFlagsIndex] & FLAGS.LEAF_HAS_EXT_DATA) > 0) { bytes[leafFlagsIndex] ^= FLAGS.LEAF_HAS_EXT_DATA }; // has_ext_data (no)            
             // remove ext_byte_length, ext_free_byte_length
             bytes.splice(extDataHeaderIndex, 8);
         }
@@ -5591,37 +5592,42 @@ class BinaryBPlusTreeBuilder {
             }
 
             // update free_byte_length:
-            _writeByteLength(bytes, 5, freeSpace);
+            bytes.writeUint32(freeSpace, 5); // _writeByteLength(bytes, 5, freeSpace);
         }
 
         // update byte_length:
-        _writeByteLength(bytes, 0, byteLength);
+        bytes.writeUint32(byteLength, 0); // _writeByteLength(bytes, 0, byteLength);
 
         // Now, add any ext_data blocks
         if (moreDataBlocks.length > 0) {
             // Can only happen when this is a new leaf, or when it's being rebuilt
             const leafEndIndex = bytes.length;
 
-            moreDataBlocks.forEach(block => {
+            const fbm = options.addFreeSpace ? 1.1 : 1; // fmb -> free bytes multiplier
+            const estimatedExtDataSize = Math.ceil(moreDataBlocks.reduce((total, block) => total + Math.ceil(block.bytes.length * fbm), 0) * fbm);
+            bytes.reserve(estimatedExtDataSize);
+            while (moreDataBlocks.length > 0) { // moreDataBlocks.forEach(block => {
+                const block = moreDataBlocks.shift();
                 const offset = bytes.length - leafEndIndex; // offset from leaf end index
-                _writeByteLength(bytes, block.pointerIndex, offset); // update ext_data_ptr
+                bytes.writeUint32(offset, block.pointerIndex); // _writeByteLength(bytes, block.pointerIndex, offset); // update ext_data_ptr
                 
                 // Calculate free space
                 const free = options.addFreeSpace ? Math.ceil(block.bytes.length * 0.1) : 0;
                 const blockLength = block.bytes.length + free;
 
                 // ext_block_length:
-                _writeByteLength(bytes, bytes.length, blockLength);
+                bytes.writeUint32(blockLength); // _writeByteLength(bytes, bytes.length, blockLength);
 
                 // ext_block_free_length:
-                _writeByteLength(bytes, bytes.length, free);
+                bytes.writeUint32(free); // _writeByteLength(bytes, bytes.length, free);
 
                 // data:
-                _appendToArray(bytes, block.bytes);
+                bytes.append(block.bytes.data); // _appendToArray(bytes, block.bytes);
 
                 // Add free space:
-                for (let i = 0; i < free; i++) { bytes.push(0); }
-            });
+                // for (let i = 0; i < free; i++) { bytes.push(0); }
+                bytes.append(new Uint8Array(free)); // Uin8Array is initialized with 0's
+            } //);
 
             const extByteLength = bytes.length - leafEndIndex;
             if (info.extData && info.extData.rebuild && info.extData.length < extByteLength) {
@@ -5644,7 +5650,8 @@ class BinaryBPlusTreeBuilder {
             }
 
             // Add free space:
-            for (let i = 0; i < extFreeByteLength; i++) { bytes.push(0); }
+            // for (let i = 0; i < extFreeByteLength; i++) { bytes.push(0); }
+            bytes.append(new Uint8Array(extFreeByteLength)); // Uin8Array is initialized with 0's
 
             // adjust byteLength
             byteLength = bytes.length;
@@ -5655,20 +5662,21 @@ class BinaryBPlusTreeBuilder {
 
         if (hasExtData) {
             // update leaf_flags:
-            bytes[leafFlagsIndex] |= FLAGS.LEAF_HAS_EXT_DATA; // has_ext_data (yes)
+            bytes.data[leafFlagsIndex] |= FLAGS.LEAF_HAS_EXT_DATA; // has_ext_data (yes)
             // update ext_byte_length:
-            _writeByteLength(bytes, extDataHeaderIndex, info.extData.length);
+            bytes.writeUint32(info.extData.length, extDataHeaderIndex); // _writeByteLength(bytes, extDataHeaderIndex, info.extData.length);
             // update ext_free_byte_length:
-            _writeByteLength(bytes, extDataHeaderIndex + 4, info.extData.freeBytes);
+            bytes.writeUint32(info.extData.freeBytes, extDataHeaderIndex + 4); // _writeByteLength(bytes, extDataHeaderIndex + 4, info.extData.freeBytes);
         }
 
         if (info.nextIndex === 'adjacent') {
             // update next_leaf_ptr
             nextLeafOffset = byteLength - 15;
-            _writeSignedOffset(bytes, 15, nextLeafOffset, true);
+            bytes.writeInt48(nextLeafOffset, 15); //_writeSignedOffset(bytes, 15, nextLeafOffset, true);
         }
 
-        return bytes;
+        // console.log(`Created leaf, ${bytes.length} bytes generated`);
+        return bytes.data;
     }
 
     getLeafEntryValueBytes(recordPointer, metadata) {
@@ -6068,6 +6076,104 @@ class TX {
     }
 }
 
+class Uint8ArrayBuilder {
+    static get blockSize() { 
+        return 4096; 
+    }
+    constructor(bytes = null) {
+        /** @type {Uint8Array} */
+        this._data = new Uint8Array();
+        this._length = 0;
+        bytes && this.append(bytes);
+    }
+    reserve(byteCount) {
+        const addBytes = Uint8ArrayBuilder.blockSize * Math.ceil(byteCount / Uint8ArrayBuilder.blockSize);
+        const newLength = this._data.byteLength + addBytes;
+        // this._data = new Uint8Array(this._data.buffer, 0, newLength);
+        const newData = new Uint8Array(newLength);
+        newData.set(this._data, 0);
+        this._data = newData;
+    }
+    append(bytes) {
+        if (bytes instanceof Uint8ArrayBuilder) {
+            bytes = bytes.data;
+        }
+        const freeBytes = this._data.byteLength - this._length;
+        if (freeBytes < bytes.length) {
+            // Won't fit
+            const bytesShort = bytes.length - freeBytes;
+            const addBytes = Uint8ArrayBuilder.blockSize * Math.ceil((bytesShort * 1.1) / Uint8ArrayBuilder.blockSize);
+            const newLength = this._data.byteLength + addBytes;
+            // this._data = new Uint8Array(this._data.buffer, 0, newLength);
+            const newData = new Uint8Array(newLength);
+            newData.set(this._data, 0);
+            this._data = newData;
+        }
+        // Add bytes
+        this._data.set(bytes, this._length);
+        this._length += bytes.length;
+        return this;        
+    }
+    push(...bytes) {
+        if (bytes.length === 0) {
+            console.warn('WARNING: pushing 0 bytes to Uint8ArrayBuilder!');
+        }
+        return this.append(bytes);
+    }
+    writeUint32(positiveNumber, index = undefined) {
+        let bytes = _writeByteLength([], 0, positiveNumber);
+        if (index >= 0) {
+            this._data.set(bytes, index);
+            return this;
+        }
+        return this.append(bytes);
+    }
+    writeInt32(signedNumber, index = undefined) {
+        let bytes = _writeSignedNumber([], 0, signedNumber);
+        if (index >= 0) {
+            this._data.set(bytes, index);
+            return this;
+        }
+        return this.append(bytes);
+    }
+    writeInt48(signedNumber, index = undefined) {
+        let bytes = _writeSignedOffset([], 0, signedNumber, true);
+        if (index >= 0) {
+            this._data.set(bytes, index);
+            return this;
+        }
+        return this.append(bytes);
+    }
+    /** @type {Uint8Array} */
+    get data() {
+        return this._data.subarray(0, this._length);
+    }
+    get length() {
+        return this._length;
+    }
+    slice(begin, end) {
+        if (begin < 0) { 
+            return this._data.subarray(this._length + begin, this._length); 
+        }
+        else { 
+            return this._data.subarray(begin, end || this._length);
+        }
+    }
+    splice(index, remove) {
+        if (typeof remove !== 'number') { 
+            remove = this.length - index; 
+        }
+        let removed = this._data.slice(index, index + remove);
+        if (index + remove >= this.length) {
+            this._length = index;
+        }
+        else {
+            this._data.copyWithin(index, index + remove, this._length);
+            this._length -= remove;
+        }
+        return removed;
+    }
+}
 
 module.exports = { 
     BPlusTree,
