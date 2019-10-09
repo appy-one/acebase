@@ -3753,9 +3753,6 @@ class BinaryBPlusTree {
      * @param {object} [metadata] 
      */
     add(key, recordPointer, metadata) {
-        if (!this.info.hasLargePtrs) {
-            throw new Error('small ptrs have deprecated, tree will have to be rebuilt');
-        }
         const err = _checkNewEntryArgs(key, recordPointer, this.metadataKeys, metadata);
         if (err) {
             throw err;
@@ -3776,6 +3773,10 @@ class BinaryBPlusTree {
             return this.findLeaf(key);
         })
         .then(leaf => {
+            if (!this.info.hasLargePtrs) {
+                throw new Error('small ptrs have deprecated, tree will have to be rebuilt');
+            }
+    
             const entryIndex = leaf.entries.findIndex(entry => _isEqual(key, entry.key));
             let addNew = false;
             if (this.info.isUnique) {
@@ -3908,11 +3909,7 @@ class BinaryBPlusTree {
             }
  
             // If we get here, our leaf has too many entries
-            if (!leaf.parentNode) {
-                undoAdd();
-                throw new Error(`Cannot add key "${key}", no space left in single leaf tree`);
-            }
-
+ 
             const undoAdd = () => {
                 if (insertBeforeIndex === null) {
                     return; // Already undone, prevent double action
@@ -3924,6 +3921,12 @@ class BinaryBPlusTree {
                     leaf.entries.splice(insertBeforeIndex, 1);
                 }
                 insertBeforeIndex = null;            
+            };
+
+            if (!leaf.parentNode) {
+                // No parent, so this is a 1 leaf "tree"
+                undoAdd();
+                throw new Error(`Cannot add key "${key}", no space left in single leaf tree`);
             }
 
             // Split leaf
@@ -3964,12 +3967,12 @@ class BinaryBPlusTree {
      */
     remove(key, recordPointer = undefined) {
         // key = _normalizeKey(key); //if (_isIntString(key)) { key = parseInt(key); }
-        if (!this.info.hasLargePtrs) {
-            throw new Error('small ptrs have deprecated, tree will have to be rebuilt');
-        }
         return this.findLeaf(key)
         .then(leaf => {
             // This is the leaf the key should be in
+            if (!this.info.hasLargePtrs) {
+                throw new Error('small ptrs have deprecated, tree will have to be rebuilt');
+            }
             const entryIndex = leaf.entries.findIndex(entry => _isEqual(key, entry.key));
             if (!~entryIndex) { return; }
             if (this.info.isUnique || typeof recordPointer === "undefined" || leaf.entries[entryIndex].values.length === 1) {
@@ -4328,12 +4331,6 @@ class BinaryBPlusTree {
             const createLeafs = leafStartKeys.length;
             options.treeStatistics.totalLeafs = createLeafs;
 
-            if (createLeafs === 1) {
-                // Easy rebuild. Leaf only
-                // TODO
-                throw new Error('Not implemented');
-            }
-
             // Determine all parent node entry keys per level
             // example:
             // [1,2,3,4,5], [6,7,8,9,10], [11,12,13,14,15], [16,17,18,19,20], [21,22,23,24,25]
@@ -4451,8 +4448,15 @@ class BinaryBPlusTree {
                     .then(() => {
                         if (l > 0) { return nextLevel(); }
                     });
+                };
+                const writeNodes = () => {
+                    if (levels.length === 0) {
+                        // Small tree, there's only 1 leaf, no parent nodes
+                        return; 
+                    }
+                    return nextLevel();
                 }
-                return nextLevel();
+                return writeNodes();
             })
             .then(() => {
                 // Write all leafs
