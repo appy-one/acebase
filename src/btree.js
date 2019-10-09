@@ -386,7 +386,8 @@ class BPlusTreeNode {
     toBinary(keepFreeSpace, writer) {
         // EBNF layout:
         // data                 = byte_length, index_type, max_node_entries, [fill_factor], [free_byte_length], [metadata_keys], root_node
-        // byte_length          = 4 byte number (byte count)
+        // byte_length          = 4 byte number (byte count) 
+        // data_byte_length     = byte_length: NEVER INCLUDES ITS OWN BYTE SIZE OR OTHER HEADER BYTE SIZES
         // index_type           = 1 byte = [0, 0, has_large_ptrs, has_small_leafs, has_fill_factor, has_free_space, has_metadata, is_unique]
         // max_node_entries     = 1 byte number
         // fill_factor          = 1 byte number (max 100)
@@ -453,8 +454,8 @@ class BPlusTreeNode {
         // metadata_value_data  = key_data
         // ext_data             = ext_data_block, [ext_data_block, [ext_data_block]]
         // ext_data_block       = ext_block_length, ext_block_free_length, data
-        // ext_block_length     = byte_length
-        // ext_block_free_lengt = free_byte_length
+        // ext_block_length     = data_byte_length
+        // ext_block_free_length= free_byte_length
         //
         // * Written by BPlusTreeNode.toBinary
         // ** Written by BPlusTreeLeaf.toBinary
@@ -873,8 +874,10 @@ class BPlusTreeLeaf {
                 // Values too big for small leafs
                 // Store value bytes in ext_data block
 
-                // value_list_length:
-                _writeByteLength(bytes, bytes.length, entry.values.length);
+                if (!this.tree.uniqueKeys) {
+                    // value_list_length:
+                    _writeByteLength(bytes, bytes.length, entry.values.length);
+                }
 
                 // ext_data_ptr:
                 const extPointerIndex = bytes.length;
@@ -891,7 +894,7 @@ class BPlusTreeLeaf {
             }
             else {
                 // update val_length:
-                const valLength = valueBytes.length; //bytes.length - valLengthIndex - 4;
+                const valLength = valueBytes.length + (this.uniqueKeys ? 0 : 4); // +4 to include value_list_length bytes //bytes.length - valLengthIndex - 4;
                 if (WRITE_SMALL_LEAFS) {
                     bytes[valLengthIndex] = valLength;
                 }
@@ -899,8 +902,10 @@ class BPlusTreeLeaf {
                     _writeByteLength(bytes, valLengthIndex, valLength);
                 }
 
-                // value_list_length:
-                _writeByteLength(bytes, bytes.length, entry.values.length);
+                if (!this.tree.uniqueKeys) {
+                    // value_list_length:
+                    _writeByteLength(bytes, bytes.length, entry.values.length);
+                }
 
                 // add value bytes:
                 _appendToArray(bytes, valueBytes);
@@ -2245,7 +2250,7 @@ class BinaryBPlusTree {
 
             // Read value(s) and return
             const hasExtData = this.info.hasSmallLeafs && (bytes[index] & FLAGS.ENTRY_HAS_EXT_DATA) > 0;
-            const valLength = this.info.hasSmallLeafs
+            let valLength = this.info.hasSmallLeafs
                 ? hasExtData ? 0 : bytes[index]
                 :  (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // val_length
             index += this.info.hasSmallLeafs
@@ -2259,14 +2264,14 @@ class BinaryBPlusTree {
                 }
                 else {
                     entry.totalValues = (bytes[index] << 24) | (bytes[index+1] << 16) | (bytes[index+2] << 8) | bytes[index+3]; // value_list_length
-                    if (this.info.hasFillFactor) {
-                        // using this to detect if tree was written before or after rewrites that changed
-                        // val_length not to include the 4 value_list_length bytes
-                        index += 4;
-                    }
                 }
                 leaf.entries.push(entry);
-                index += hasExtData ? 4 : valLength; // Skip ext_data_ptr or value
+                if (hasExtData) {
+                    index += this.info.isUnique ? 4 : 8; // skip ext_data_ptr (and value_list_length if not unique)
+                }
+                else {
+                    index += valLength; // skip value
+                }
             }
             else if (this.info.isUnique) {
                 // Read single value
@@ -5432,8 +5437,10 @@ class BinaryBPlusTreeBuilder {
                 // val_length:
                 bytes.push(FLAGS.ENTRY_HAS_EXT_DATA);
 
-                // value_list_length:
-                bytes.writeUint32(entry.extData.totalValues); // _writeByteLength(bytes, bytes.length, entry.extData.totalValues);
+                if (!this.uniqueKeys) {
+                    // value_list_length:
+                    bytes.writeUint32(entry.extData.totalValues); // _writeByteLength(bytes, bytes.length, entry.extData.totalValues);
+                }
 
                 // ext_data_ptr:
                 bytes.writeUint32(entry.extData.leafOffset); // _writeByteLength(bytes, bytes.length, entry.extData.leafOffset);
@@ -5462,13 +5469,13 @@ class BinaryBPlusTreeBuilder {
                 valueBytes.push(recordPointer.length);
 
                 // value_data:
-                valueBytes.append(recordPointer); // valueBytes.push(...recordPointer);
+                valueBytes.append(recordPointer);
 
                 // metadata:
                 this.metadataKeys.forEach(key => {
                     const metadataValue = metadata[key];
                     const mdBytes = BinaryBPlusTreeBuilder.getKeyBytes(metadataValue); // metadata_value has same structure as key, so getBinaryKeyData comes in handy here
-                    valueBytes.append(mdBytes); // valueBytes.push(...mdBytes);
+                    valueBytes.append(mdBytes);
                 });
             };
 
@@ -5477,26 +5484,20 @@ class BinaryBPlusTreeBuilder {
                 addValue(entry.values[0]);
             }
             else {
-                // // value_list_length:
-                // const valueListLength = entry.values.length;
-                // _writeByteLength(bytes, bytes.length, valueListLength);
-
                 entry.values.forEach(entryValue => {
                     // value:
                     addValue(entryValue);
                 });
             }
 
-            // // update val_length
-            // const valLength = bytes.length - valLengthIndex - 4;
-            // _writeByteLength(bytes, valLengthIndex, valLength);
-
             if (this.smallLeafs && valueBytes.length > MAX_SMALL_LEAF_VALUE_LENGTH) {
                 // Values too big for small leafs
                 // Store value bytes in ext_data block
 
-                // value_list_length:
-                bytes.writeUint32(entry.values.length); // _writeByteLength(bytes, bytes.length, entry.values.length);
+                if (!this.uniqueKeys) {
+                    // value_list_length:
+                    bytes.writeUint32(entry.values.length); // _writeByteLength(bytes, bytes.length, entry.values.length);
+                }
 
                 // ext_data_ptr:
                 const extPointerIndex = bytes.length;
@@ -5523,7 +5524,7 @@ class BinaryBPlusTreeBuilder {
             }
             else {
                 // update val_length:
-                const valLength = valueBytes.length; //bytes.length - valLengthIndex - 4;
+                const valLength = valueBytes.length + (this.uniqueKeys ? 0 : 4); // +4 to include value_list_length bytes //bytes.length - valLengthIndex - 4;
                 if (this.smallLeafs) {
                     bytes.data[valLengthIndex] = valLength;
                 }
@@ -5531,8 +5532,10 @@ class BinaryBPlusTreeBuilder {
                     bytes.writeUint32(valLength, valLengthIndex); // _writeByteLength(bytes, valLengthIndex, valLength);
                 }
 
-                // value_list_length:
-                bytes.writeUint32(entry.values.length); // _writeByteLength(bytes, bytes.length, entry.values.length);
+                if (!this.uniqueKeys) {
+                    // value_list_length:
+                    bytes.writeUint32(entry.values.length); // _writeByteLength(bytes, bytes.length, entry.values.length);
+                }
 
                 // add value bytes:
                 bytes.append(valueBytes); // _appendToArray(bytes, valueBytes);
@@ -5591,9 +5594,10 @@ class BinaryBPlusTreeBuilder {
             }
 
             // Add free space zero bytes
-            for (let i = 0; i < freeSpace; i++) {
-                bytes.push(0);
-            }
+            bytes.append(new Uint8Array(freeSpace)); // Uint8Array is initialized with 0's
+            // for (let i = 0; i < freeSpace; i++) {
+            //     bytes.push(0);
+            // }
 
             // update free_byte_length:
             bytes.writeUint32(freeSpace, 5); // _writeByteLength(bytes, 5, freeSpace);
