@@ -99,6 +99,17 @@ function _parseRecordPointer(path, recordPointer) {
 }
 
 class DataIndex {
+
+    static get STATE() {
+        return {
+            INIT: 'init',
+            READY: 'ready',
+            BUILD: 'build',
+            REBUILD: 'rebuild',
+            ERROR: 'error'
+        }
+    };
+
     /**
      * Creates a new index
      * @param {Storage} storage
@@ -107,6 +118,7 @@ class DataIndex {
      * @param {object} [options]
      * @param {boolean} [options.caseSensitive=false] if strings in the index should be indexed case-sensitive. defaults to false
      * @param {string} [options.textLocale="en"] locale to use when comparing case insensitive string values. Can be a language code ("nl", "en" etc), or LCID ("en-us", "en-au" etc). Defaults to English ("en")
+     * @param {string} [options.textLocaleKey] to allow multiple languages to be indexed, you can specify the name of the key in the source records that contains the locale. When this key is not present in the data, the specified textLocale will be used as default. Eg with textLocaleKey: 'locale', 1 record might contain { text: 'Hello World', locale: 'en' } (text will be indexed with English locale), and another { text: 'Hallo Wereld', locale: 'nl' } (Dutch locale)
      * @param {string[]} [options.include] other keys' data to include in the index, for faster sorting topN (.limit.order) query results
      */
     constructor(storage, path, key, options = {}) {
@@ -117,14 +129,18 @@ class DataIndex {
             options.include = [options.include];
         }
 
+        this.state = DataIndex.STATE.INIT;
         this.storage = storage;
         this.path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
         this.key = key;
         this.caseSensitive = options.caseSensitive === true;
         this.textLocale = options.textLocale || "en";
+        this.textLocaleKey = options.textLocaleKey;
         this.includeKeys = options.include || [];
         // this.enableReverseLookup = false;
         this.indexMetadataKeys = [];
+        this._buildError = null;
+        this._updateQueue = [];
     
         /**
          * @type {Map<string, Map<any, BinaryBPlusTreeLeafEntry>}
@@ -464,6 +480,7 @@ class DataIndex {
             }
             return this._getTree()
             .then(idx => {
+                this.state = DataIndex.STATE.REBUILD;
                 return idx.tree.rebuild(
                     BinaryWriter.forFunction(writer), 
                     { treeStatistics }
@@ -479,12 +496,15 @@ class DataIndex {
                     // rename new file, overwriting the old file
                     return pfs.rename(newIndexFile, this.fileName);
                 })
-                // .then(() => {
-                //     // (optional) truncate the file
-                //     let totalSize = headerStats.length + treeStatistics.byteLength;
-                //     pfs.truncate(this.fileName, totalSize);
-                // });
-            })
+                .then(() => {
+                    this.state = DataIndex.STATE.READY;
+                })
+                .catch(err => {
+                    this.state = DataIndex.STATE.ERROR;
+                    this._buildError = err;
+                    throw err;
+                });
+            });
         });
     }
 
@@ -495,9 +515,13 @@ class DataIndex {
     _processTreeOperations(path, operations) {
         const startTime = Date.now();
         let lock;
-        return this._lock(true, `index.handleRecordUpdate "/${path}"`)
+        return this._lock(true, `index._processTreeOperations "/${path}"`)
         .then(l => {
             // debug.log(`Got update lock on index ${this.description}`.blue, l);
+            if (this._buildError) {
+                l.release();
+                throw new Error('Cannot update index because there was an error building it');
+            }
             lock = l;
             return this._getTree();
         })
@@ -563,7 +587,21 @@ class DataIndex {
                 // Process left-over operations
                 return this._processTreeOperations(path, operations);
             }
+            else {
+                // Process any queued updates
+                return this._processUpdateQueue();
+            }
         });
+    }
+
+    _processUpdateQueue() {
+        const queue = this._updateQueue.splice(0);
+        if (queue.length === 0) { return Promise.resolve(); }
+        // Invalidate query cache
+        this._cache.clear();
+        // Process all queued items
+        const promises = queue.map(update => this._updateTree(update.path, update.oldValue, update.newValue, update.recordPointer, update.recordPointer, update.metadata));
+        return Promise.all(promises);
     }
 
     /**
@@ -605,10 +643,22 @@ class DataIndex {
             return obj;
         })();
 
-        // Invalidate query cache
-        this._cache.clear();
+        if (this.state === DataIndex.STATE.READY) {
+            // Invalidate query cache
+            this._cache.clear();
+            // Update the tree
+            return this._updateTree(path, keyValues.oldValue, keyValues.newValue, recordPointer, recordPointer, metadata);
+        }
 
-        return this._updateTree(path, keyValues.oldValue, keyValues.newValue, recordPointer, recordPointer, metadata);
+        // Queue the update
+        this._updateQueue.push({ 
+            path, 
+            oldValue: keyValues.oldValue, 
+            newValue: keyValues.newValue, 
+            recordPointer, 
+            metadata 
+        });
+        return Promise.resolve();
     }
 
     _lock(forWriting, comment) {
@@ -1031,17 +1081,24 @@ class DataIndex {
     
     /**
      * @param {object} [options]
-     * @param {(tree: BPlusTreeBuilder, value: any, recordPointer: number[], metadata?: object, env: { path: string, wildcards: string[], key: string }) => void} [options.addCallback] 
+     * @param {(tree: BPlusTreeBuilder, value: any, recordPointer: number[], metadata?: object, env: { path: string, wildcards: string[], key: string, locale: string }) => void} [options.addCallback] 
      * @param {number[]} [options.valueTypes]
      */
     build(options) {
+        if (~[DataIndex.STATE.BUILD, DataIndex.STATE.REBUILD].indexOf(this.state)) {
+            return Promise.reject(new Error(`Index is already being built`));
+        }
+        this.state = this.state === DataIndex.STATE.READY
+            ? DataIndex.STATE.REBUILD  // Existing index file has to be overwritten in the last phase
+            : DataIndex.STATE.BUILD;
+        this._buildError = null;
         const path = this.path;
         const hasWildcards = path.indexOf('*') >= 0;
         const nrOfWildcards = hasWildcards ? /\*/g.exec(this.path).length : 0;
         const wildcardsPattern = '^' + path.replace(/\*/g, "([a-z0-9\-_$]+)") + '/';
         const wildcardRE = new RegExp(wildcardsPattern, 'i');
-        let treeBuilder = new BPlusTreeBuilder(false, FILL_FACTOR, this.allMetadataKeys); //(30, false);
-        let idx; // Once using binary file to write to
+        // let treeBuilder = new BPlusTreeBuilder(false, FILL_FACTOR, this.allMetadataKeys); //(30, false);
+        // let idx; // Once using binary file to write to
         const tid = ID.generate();
         const keys = PathInfo.getPathKeys(path);
         const indexableTypes = [Node.VALUE_TYPES.STRING, Node.VALUE_TYPES.NUMBER, Node.VALUE_TYPES.BOOLEAN, Node.VALUE_TYPES.DATETIME];
@@ -1050,18 +1107,18 @@ class DataIndex {
             : indexableTypes;
         debug.log(`Index build ${this.description} started`.blue);
         let indexedValues = 0;
-        let addPromise;
-        let flushed = false;
+        // let addPromise;
+        // let flushed = false;
 
-        const __DEV_UNIQUE_SET = new Set();
-        const __DEV_CHECK_UNIQUE = (key) => {
-            if (__DEV_UNIQUE_SET.has(key)) {
-                console.warn(`Duplicate key: ${key}`);
-            }
-            else {
-                __DEV_UNIQUE_SET.add(key);
-            }
-        };
+        // const __DEV_UNIQUE_SET = new Set();
+        // const __DEV_CHECK_UNIQUE = (key) => {
+        //     if (__DEV_UNIQUE_SET.has(key)) {
+        //         console.warn(`Duplicate key: ${key}`);
+        //     }
+        //     else {
+        //         __DEV_UNIQUE_SET.add(key);
+        //     }
+        // };
 
         const buildFile = this.fileName + '.build';
         const createBuildFile = () => {
@@ -1075,6 +1132,18 @@ class DataIndex {
                 buildWriteStream.on('open', () => {
                     return getAll('', 0)
                     .then(() => {
+                        if (indexedValues === 0) {
+                            const err = new Error('No values found to index');
+                            err.code = 'NO_DATA';
+                            buildWriteStream.close(() => {
+                                pfs.rm(buildFile)
+                                .then(() => {
+                                    reject(err);
+                                })
+                                return reject(err);
+                            });
+                            return;
+                        }
                         console.log(`done writing values`);
                         if (streamState.wait) {
                             buildWriteStream.once('drain', () => {
@@ -1437,7 +1506,7 @@ class DataIndex {
                     err.code = 'EEXIST';
                     throw err;
                 }
-                
+
                 return pfs.open(buildFile, pfs.flags.readAndWrite);
             })
             .then(fd => {
@@ -1711,9 +1780,10 @@ class DataIndex {
                     return entry.flagProcessed();
                 };
     
-                let batchNr = 1;
+                let batchNr = 0;
                 let nextBatchStartEntry = null;
                 let nextBatch = () => {
+                    batchNr++;
                     let map = new Map();
                     let more = false;
                     let processedValues = 0;
@@ -1771,7 +1841,12 @@ class DataIndex {
     
                     return getBatchEntries()
                     .then(() => {
-    
+                        if (map.size === 0) {
+                            // no entries
+                            batchNr--;
+                            return;
+                        }
+
                         // sort the map keys
                         let sortedKeys = quickSort(map.keys(), (a, b) => {
                             if (BPlusTree.typeSafeComparison.isLess(a, b)) { return -1; }
@@ -1847,7 +1922,6 @@ class DataIndex {
                         .then(() => {
                             if (more) {
                                 // Proceed with next batch
-                               batchNr++;
                                return nextBatch();
                            }
                         });
@@ -1890,6 +1964,11 @@ class DataIndex {
                     // Now merge-sort all keys, by reading keys from each batch, 
                     // taking the smallest value from each batch a time
                     const batches = batchNr;
+
+                    if (batches === 0) {
+                        // No batches -> no indexed entries
+                        return;
+                    }
     
                     // create write stream for merged data
                     const outputStream = fs.createWriteStream(mergeFile, { flags: pfs.flags.writeAndCreate });
@@ -2158,6 +2237,9 @@ class DataIndex {
                             headerStats.written = true;
                             headerStats.length = result.length;
                             headerStats.updateTreeLength = result.treeLengthCallback;
+                            if (this.state === DataIndex.STATE.REBUILD) {
+                                return pfs.truncate(this.fileName, headerStats.length);
+                            }
                         });
                     headerStats.promise = promise.then(go); // Chain to original promise
                     return headerStats.promise;
@@ -2192,13 +2274,16 @@ class DataIndex {
             const doneTime = Date.now();
             const duration = Math.round((doneTime - startTime) / 1000 / 60);
             debug.log(`Index ${this.description} was built successfully, took ${duration} minutes`.green);
+            this.state = DataIndex.STATE.READY;
+            lock.release(); // release index lock
+            return this;
         })
         .catch(err => {
-            debug.error(`Error building index ${this.description}: ${err.message}`, err);
-        })
-        .then(() => {
+            debug.error(`Error building index ${this.description}: ${err.message}`);
+            this.state = DataIndex.STATE.ERROR;
+            this._buildError = err;
             lock.release(); // release index lock
-            return this;    
+            throw err;
         });
     }
 
@@ -3370,7 +3455,8 @@ class FullTextIndex extends DataIndex {
                     return nextWord();
                 });
             }
-            return nextWord().then(() => {
+            return nextWord()
+            .then(() => {
                 if (options.phrase === true && allWords.length > 1) {
                     // Check which results have the words in the right order
                     results = results.reduce((matches, match) => {

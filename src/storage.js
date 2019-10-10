@@ -950,13 +950,20 @@ class Storage extends EventEmitter {
                         default: return new DataIndex(storage, path, key, { include: options.include, config: options.config });
                     }
                 })();
+                if (!existingIndex) {
+                    _indexes.push(index);
+                }
                 return index.build()
                 .then(() => {
-                    if (!existingIndex) {
-                        _indexes.push(index);
-                        //_keepIndexUpdated(path, key);
-                    }
                     return index;
+                })
+                .catch(err => {
+                    debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.red);
+                    if (!existingIndex) {
+                        // Only remove index if we added it. Build may have failed because someone tried creating the index more than once, or rebuilding it while it was building...
+                        _indexes.splice(_indexes.indexOf(index), 1);
+                    }
+                    throw err;
                 });
             },
 
