@@ -1503,200 +1503,7 @@ class DataIndex {
             })
             .then(({ fd, writer, reader }) => {
                 // const maxKeys = 10000; // Work with max 10.000 in-memory keys at a time
-                const maxValues = 100000; // Max 100K in-memory values
-    
-                // // TEMP:
-                // // See how well index with small leafs performs in 1 by 1 adds
-                // const tempBuildIndex = () => {
-                //     let builder = new BPlusTreeBuilder(false, 50, this.includeKeys);
-                //     /** @type {BinaryBPlusTree} */
-                //     let binaryTree
-                //     let closeTree;
-                //     let adds = 0;
-                //     const proceed = () => {
-                //         return readNext()
-                //         .then(next => {
-                //             if (!next) { return; } // done
-    
-                //             const rpLength = next.value[0];
-                //             const recordPointer = Array.from(next.value.slice(1, rpLength + 1));
-                //             const metadataBytes = Array.from(next.value.slice(rpLength + 1));
-                //             let mdIndex = 0;
-                //             const metadata = {};
-                //             this.includeKeys && this.includeKeys.forEach(key => {
-                //                 let mdItem = BPlusTree.getKeyFromBinary(metadataBytes, mdIndex);
-                //                 mdIndex += mdItem.byteLength;
-                //                 metadata[key] = mdItem.key;
-                //             });
-    
-                //             adds++;
-                //             if (adds < maxValues) { 
-                //                 builder.add(next.key, recordPointer, metadata);
-                //                 return proceed();
-                //             }
-                //             else if (adds === maxValues) {
-                //                 console.log(`Builder: switching to binary tree`);
-                //                 builder.add(next.key, recordPointer, metadata);
-                //                 return this._writeIndex(builder)
-                //                 .catch(err => {
-                //                     console.error(err);
-                //                 })
-                //                 .then(() => {
-                //                     builder = null;
-                //                     return this._getTree();
-                //                 })
-                //                 .then(idx => {
-                //                     binaryTree = idx.tree;
-                //                     binaryTree.autoGrow = true;
-                //                     closeTree = idx.close;
-                //                     return proceed();
-                //                 })
-                //             }
-                //             else {
-                //                 console.log(`Adding key "${next.key}"`);
-                //                 return binaryTree.add(next.key, recordPointer, metadata)
-                //                 .catch(err => {
-                //                     // const bytes = [];
-                //                     // return binaryTree.rebuild(BinaryWriter.forArray(bytes))
-                //                     // .then(() => {
-                //                     //     closeTree();
-                //                     //     return pfs.writeFile(this.fileName, Buffer.from(bytes));
-                //                     // })
-                //                     // .then(() => {
-                //                     //     bytes = null;
-                //                     // })
-    
-                //                     // // TEMP debugging node entry pointing to wrong leaf:
-                //                     // // entry "baptiste" points to sourceIndex:3150161
-                //                     // // key:"baptiste"
-                //                     // // ltChildIndex:3150161
-                //                     // // ltChildOffset:3150013
-                //                     // if (next.key === "ball") {
-                //                     //     return binaryTree.getFirstLeaf().then(leaf => {
-                //                     //         let checkLeaf = (leaf) => {
-                //                     //             const firstKey = leaf.entries[0].key;
-                //                     //             const lastKey = leaf.entries.slice(-1)[0].key;
-                //                     //             console.log(`Checking leaf "${firstKey}" to "${lastKey}"`);
-                //                     //             if (firstKey <= next.key && lastKey >= next.key) {
-                //                     //                 console.log('Found leaf:', leaf);
-                //                     //             }
-                //                     //             else if (leaf.getNext) {
-                //                     //                 return leaf.getNext().then(checkLeaf);
-                //                     //             }
-                //                     //             else {
-                //                     //                 console.log('Not found!');
-                //                     //             }
-                //                     //         }
-                //                     //         return checkLeaf(leaf);
-                //                     //     })
-                //                     //     .catch(err => {
-                //                     //         console.error(err);
-                //                     //     });
-                //                     // }
-    
-                //                     closeTree();
-                //                     return this._rebuild()
-                //                     .then(() => {
-                //                         return this._getTree();
-                //                     })
-                //                     .then(idx => {
-                //                         binaryTree = idx.tree;
-                //                         closeTree = idx.close;
-                //                         // try again
-                //                         binaryTree.autoGrow = true;
-                //                         return binaryTree.add(next.key, recordPointer, metadata); // Try again
-                //                     });
-                //                 })
-                //                 // .then(() => {
-                //                 //     // Test the entry
-                //                 //     return binaryTree.findLeaf(next.key)
-                //                 //     .then(leaf => {
-                //                 //         return Promise.all([
-                //                 //             leaf.getPrevious ? leaf.getPrevious() : null,
-                //                 //             leaf.getNext ? leaf.getNext() : null,
-                //                 //         ]);
-                //                 //     })
-                //                 //     .then(surroundingLeafs => {
-                //                 //         let prev = surroundingLeafs[0];
-                //                 //         let next = surroundingLeafs[1];
-                //                 //         return Promise.all([
-                //                 //             prev ? binaryTree.find(prev.entries[0].key) : null,
-                //                 //             next ? binaryTree.find(next.entries[0].key) : null
-                //                 //         ])
-                //                 //     })
-                //                 //     .catch(err => {
-                //                 //         console.error(`OOPS: ${err.message}`);
-                //                 //         throw err;
-                //                 //     });
-                //                 // })
-                //                 // .then(() => {
-                //                 //     // Test the whole tree
-                //                 //     let checked = 0;
-                //                 //     const lookupLeafEntries = (leaf) => {
-                //                 //         const firstEntry = leaf.entries[0];
-                //                 //         const lastEntry = leaf.entries.slice(-1)[0];
-                //                 //         // console.log(`Testing leaf "${firstEntry.key}" to "${lastEntry.key}"`);
-                //                 //         const lookupEntry = (entry) => {
-                //                 //             return binaryTree.find(entry.key);
-                //                 //         }
-                //                 //         return Promise.all([
-                //                 //             lookupEntry(firstEntry),
-                //                 //             lookupEntry(lastEntry)
-                //                 //         ])
-                //                 //         .catch(err => {
-                //                 //             console.error(`NOT GOOD: ${err.message}`);
-                //                 //             throw err;
-                //                 //         })
-                //                 //         .then(() => {
-                //                 //             checked += 2;
-                //                 //             if (leaf.getNext) {
-                //                 //                 return leaf.getNext().then(lookupLeafEntries);
-                //                 //             }
-                //                 //             else {
-                //                 //                 return console.log(`Tree testing done, tested ${checked} entries`);
-                //                 //             }
-                //                 //         });
-    
-                //                 //         // let i = 0;
-                //                 //         // const nextEntry = () => {
-                //                 //         //     let entry = leaf.entries[i++];
-                //                 //         //     checked++;
-                //                 //         //     if (!entry) {
-                //                 //         //         if (leaf.getNext) {
-                //                 //         //             return leaf.getNext().then(lookupLeafEntries);
-                //                 //         //         }
-                //                 //         //         else {
-                //                 //         //             return console.log(`Tree testing done, tested ${checked} entries`);
-                //                 //         //         }
-                //                 //         //     }
-                //                 //         //     return binaryTree.find(entry.key)
-                //                 //         //     .then(nextEntry)
-                //                 //         //     .catch(err => {
-                //                 //         //         console.error(`NOT GOOD: ${err.message}`);
-                //                 //         //         throw err;
-                //                 //         //     })
-                //                 //         // }
-                //                 //         // return nextEntry();
-                //                 //     }
-                //                 //     const lookupAllEntries = () => {
-                //                 //         return binaryTree.getFirstLeaf()
-                //                 //         .then(lookupLeafEntries);
-                //                 //     }
-                //                 //     return lookupAllEntries();
-                //                 // })                  
-                //                 .then(() => {
-                //                     return proceed();
-                //                 });
-                //             }
-                //         })
-                //     };
-    
-                //     return proceed()
-                //     .then(() => {
-                //         console.log(`Done! Added ${adds} entries to the index`);
-                //     });
-                // }
-    
+                const maxValues = 100000; // Max 100K in-memory values    
                 const _processedEntries = new Set();
     
                 const readNext = () => {
@@ -1753,10 +1560,8 @@ class DataIndex {
                         if (err.code === 'EOF') { return null; }
                         throw err;
                     });
-                }
-    
-                // return tempBuildIndex();
-    
+                };
+
                 const flagProcessed = (entry) => {
                     // set entry's processed flag to 1 so it'll be skipped in next batch
                     // return writer.write([1], entry.index + 4);
@@ -1940,10 +1745,13 @@ class DataIndex {
                 }
     
                 return createBatches()
-                // .then(() => {
-                //     return pfs.open(mergeFile, pfs.flags.writeAndCreate);
-                // })
-                .then(fd => {
+                .then(() => {
+                    return pfs.close(fd); // Close build file
+                })
+                .then(() => {
+                    return pfs.rm(buildFile); // Remove build file
+                })
+                .then(() => {
                     // Now merge-sort all keys, by reading keys from each batch, 
                     // taking the smallest value from each batch a time
                     const batches = batchNr;
@@ -2116,10 +1924,10 @@ class DataIndex {
                         };
 
                         if (!ok) {
-                            console.log('waiting for merge output stream to drain');
+                            // console.log('waiting for merge output stream to drain');
                             return new Promise(resolve => {
                                 outputStream.once('drain', () => {
-                                    console.log('drained!');
+                                    // console.log('drained!');
                                     resolve();
                                 });
                             })
@@ -2190,8 +1998,7 @@ class DataIndex {
             console.log(`done writing merge file`);
             return Promise.all([
                 pfs.open(mergeFile, pfs.flags.read),
-                pfs.open(this.fileName, pfs.flags.write),
-                pfs.rm(buildFile)
+                pfs.open(this.fileName, pfs.flags.write)
             ]);
         })
         .then(([ readFD, writeFD ]) => {
@@ -2723,17 +2530,16 @@ class DataIndex {
             return pfs.open(this.fileName, pfs.flags.readAndWrite)
             .then(fd => {
                 const reader = (index, length) => {
-                    const buffer = new Uint8Array(length);
-                    // const buffer = Buffer.from(binary.buffer);
+                    const buffer = Buffer.alloc(length); //new Uint8Array(length);
                     return pfs.read(fd, buffer, 0, length, this.trees.default.fileIndex + index)
                     .then(result => {
-                        // Convert Uint8Array to byte array
-                        return buffer; //Array.from(binary);
+                        return buffer;
                     });
                 };
                 const writer = (data, index) => {
-                    const buffer = data instanceof Uint8Array ? data : Uint8Array.from(data);
-                    // const buffer = Buffer.from(binary.buffer);
+                    const buffer = data.constructor === Uint8Array 
+                        ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) 
+                        : Buffer.from(data);
                     return pfs.write(fd, buffer, 0, data.length, this.trees.default.fileIndex + index)
                     .then(result => {
                         return result;
