@@ -368,6 +368,7 @@ class DataIndex {
             throw err;
         })
         .then(() => {
+            dataIndex.state = DataIndex.STATE.READY;
             return dataIndex;
         });
     }
@@ -526,56 +527,43 @@ class DataIndex {
             return this._getTree();
         })
         .then(idx => {
-            /**
-             * @type BinaryBPlusTree
-             */
-            const tree = idx.tree;
+
             // const oldEntry = tree.find(keyValues.oldValue);
             
-            return tree.transaction(operations)
-            .then(() => {
-                // Index updated
-                idx.close();
-                return false; // "not rebuilt"
-            })
-            .catch(err => {
-                // Could not update index --> leaf full?
-                debug.log(`Could not update index ${this.description}: ${err.message}`.yellow);
-
-                idx.close();
-                return this._rebuild()
+            const go = (retry = 0) => {
+                /**
+                 * @type BinaryBPlusTree
+                 */
+                const tree = idx.tree;                
+                return tree.transaction(operations)
                 .then(() => {
-                    return true; // "rebuilt"
+                    // Index updated
+                    idx.close();
+                    return false; // "not rebuilt"
+                })
+                .catch(err => {
+                    // Could not update index --> leaf full?
+                    debug.log(`Could not update index ${this.description}: ${err.message}`.yellow);
+    
+                    console.assert(retry === 0, `unable to process operations because tree was rebuilt, and it didn't help?!`);
+
+                    idx.close(); // rebuild will overwrite the idx file
+                    return this._rebuild()
+                    .then(() => {
+                        // Process left-over operations
+                        console.log(`Index was rebuilt, retrying pending operations`);
+                        return this._getTree();
+                    })
+                    .then(newIdx => {
+                        idx = newIdx;
+                        return go(retry + 1);
+                    })
+                    .then(() => {
+                        return true; // "rebuilt"
+                    });
                 });
-
-                // // OLD: Rebuild it by getting current content
-                // return tree.toTreeBuilder(FILL_FACTOR) 
-                // .then(builder => {
-                //     idx.close();
-
-                //     // Process left-over operations:
-                //     operations.forEach(op => {
-                //         if (op.type === 'add') {
-                //             builder.add(op.key, op.recordPointer, op.metadata);
-                //         }
-                //         else if (op.type === 'update') {
-                //             builder.remove(op.key, op.recordPointer);
-                //             builder.add(op.key, op.recordPointer, op.metadata);
-                //         }
-                //         else if (op.type === 'remove') {
-                //             builder.remove(op.key, op.recordPointer);
-                //         }
-                //     });
-                //     return this._writeIndex(builder);
-                // })
-                // .then(() => {
-                //     return true; // rebuilt
-                // })
-                // .catch(err => {
-                //     debug.error(err);
-                //     throw err;
-                // });
-            })
+            };
+            return go();
         })
         .then(rebuilt => {
             // debug.log(`Released update lock on index ${this.description}`.blue);
@@ -583,14 +571,9 @@ class DataIndex {
             const doneTime = Date.now();
             const duration = Math.round((doneTime - startTime) / 1000);
             debug.log(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration} seconds`.green);
-            if (operations.length > 0) {
-                // Process left-over operations
-                return this._processTreeOperations(path, operations);
-            }
-            else {
-                // Process any queued updates
-                return this._processUpdateQueue();
-            }
+
+            // Process any queued updates
+            return this._processUpdateQueue();
         });
     }
 
@@ -598,7 +581,7 @@ class DataIndex {
         const queue = this._updateQueue.splice(0);
         if (queue.length === 0) { return Promise.resolve(); }
         // Invalidate query cache
-        this._cache.clear();
+        this._cache.clear(); // TODO: check which cache results should be adjusted intelligently
         // Process all queued items
         const promises = queue.map(update => this._updateTree(update.path, update.oldValue, update.newValue, update.recordPointer, update.recordPointer, update.metadata));
         return Promise.all(promises);
@@ -2740,21 +2723,21 @@ class DataIndex {
             return pfs.open(this.fileName, pfs.flags.readAndWrite)
             .then(fd => {
                 const reader = (index, length) => {
-                    const binary = new Uint8Array(length);
-                    const buffer = Buffer.from(binary.buffer);
+                    const buffer = new Uint8Array(length);
+                    // const buffer = Buffer.from(binary.buffer);
                     return pfs.read(fd, buffer, 0, length, this.trees.default.fileIndex + index)
                     .then(result => {
                         // Convert Uint8Array to byte array
-                        return Array.from(binary);
+                        return buffer; //Array.from(binary);
                     });
                 };
                 const writer = (data, index) => {
-                    const binary = Uint8Array.from(data);
-                    const buffer = Buffer.from(binary.buffer);
+                    const buffer = data instanceof Uint8Array ? data : Uint8Array.from(data);
+                    // const buffer = Buffer.from(binary.buffer);
                     return pfs.write(fd, buffer, 0, data.length, this.trees.default.fileIndex + index)
                     .then(result => {
-                        return;
-                    });                    
+                        return result;
+                    });
                 };
                 const tree = new BinaryBPlusTree(reader, DISK_BLOCK_SIZE, writer);
                 tree.id = this.fileName; // For tree locking
@@ -2772,7 +2755,7 @@ class DataIndex {
                         }
                     }
                 };
-                this._idx = idx;
+                // this._idx = idx;
                 lock.release();
                 return idx;
             });
@@ -2921,16 +2904,20 @@ class ArrayIndex extends DataIndex {
         Object.assign(mutated.old, oldValue);
         Object.assign(mutated.new, newValue);
 
+        const promises = [];
         removed.forEach(entry => {
             mutated.old[this.key] = entry;
             mutated.new[this.key] = null;
-            super.handleRecordUpdate(path, mutated.old, mutated.new);
+            const p = super.handleRecordUpdate(path, mutated.old, mutated.new);
+            promises.push(p);
         });
         added.forEach(entry => {
             mutated.old[this.key] = null;
             mutated.new[this.key] = entry;
-            super.handleRecordUpdate(path, mutated.old, mutated.new);
+            const p = super.handleRecordUpdate(path, mutated.old, mutated.new);
+            promises.push(p);
         });
+        return Promise.all(promises);
     }
 
     build() {
@@ -3037,7 +3024,7 @@ class TextInfo {
      * @param {number} [options.maxLength=25] maxLength should be increased if you expect words in your texts like "antidisestablishmentarianism" (28), "floccinaucinihilipilification" (29) or "pneumonoultramicroscopicsilicovolcanoconiosis" (45)
      * @param {string[]} [options.blacklist] words to ignore. You can use a default stoplist from TextInfo.locales
      * @param {string[]} [options.whitelist] words to include even if they do not meet the min & maxLength criteria
-     * @param {boolean} [options.useStoplist=true] whether to use a default stoplist to blacklist words (if available for locale)
+     * @param {boolean} [options.useStoplist=false] whether to use a default stoplist to blacklist words (if available for locale)
      */
     constructor(text, options) {
         // this.text = text; // Be gone later...
@@ -3058,7 +3045,7 @@ class TextInfo {
         const minLength = typeof options.minLength === 'number' ? options.minLength : 1;
         const maxLength = typeof options.maxLength === 'number' ? options.maxLength : 25;
         let blacklist = options.blacklist instanceof Array ? options.blacklist : [];
-        if (localeSettings.stoplist instanceof Array && options.useStoplist !== false) {
+        if (localeSettings.stoplist instanceof Array && options.useStoplist === true) {
             blacklist = blacklist.concat(localeSettings.stoplist);
         }
         const whitelist = options.whitelist instanceof Array ? options.whitelist : [];
@@ -3214,8 +3201,10 @@ class FullTextIndex extends DataIndex {
             removed.push(word);
             added.push(word);
         })
+        const promises = [];
         removed.forEach(word => {
-            super.handleRecordUpdate(path, { [this.key]: word }, { [this.key]: null });
+            const p = super.handleRecordUpdate(path, { [this.key]: word }, { [this.key]: null });
+            promises.push(p);
         });
         added.forEach(word => {
             const mutated = { };
@@ -3237,8 +3226,10 @@ class FullTextIndex extends DataIndex {
             const indexMetadata = {
                 '_occurs_': occurs
             };
-            super.handleRecordUpdate(path, { [this.key]: null }, mutated, indexMetadata);
+            const p = super.handleRecordUpdate(path, { [this.key]: null }, mutated, indexMetadata);
+            promises.push(p);
         });
+        return Promise.all(promises);
     }
 
     build() {

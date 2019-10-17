@@ -67,10 +67,10 @@ class Storage extends EventEmitter {
         const writeQueue = [];
         let writingNow = false;
         const writeData = (fileIndex, buffer, offset = 0, length = -1) => {
-            if (buffer instanceof Uint8Array) {
+            if (buffer.constructor === Uint8Array) { //buffer instanceof Uint8Array) {
                 // If the passsed buffer is of type Uint8Array (which is essentially the same as Buffer),
                 // convert it to a Buffer instance or fs.write will FAIL.
-                buffer = Buffer.from(buffer.buffer);
+                buffer = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
             }
             console.assert(buffer instanceof Buffer, 'buffer argument must be a Buffer or Uint8Array');
             if (length === -1) {
@@ -579,8 +579,8 @@ class Storage extends EventEmitter {
 
                 write(updatedPageCount = false) {
                     // Free Space Table starts at index 2^16 (65536), and is 2^16 (65536) bytes long
-                    const data = new Buffer(this.length);
-                    data.fill(0); //new Uint8Array(buffer).fill(0); // Initialize with all zeroes
+                    const data = Buffer.alloc(this.length);
+                    // data.fill(0); //new Uint8Array(buffer).fill(0); // Initialize with all zeroes
                     const view = new DataView(data.buffer);
                     // Add 4-byte page count
                     view.setUint32(0, this.pages); //new Uint32Array(data.buffer, 0, 4).set([metadata.fst.pages]);

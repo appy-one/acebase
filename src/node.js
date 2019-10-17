@@ -12,6 +12,8 @@ const { TextEncoder, TextDecoder } = require('text-encoding');
 // const promiseTimeout = require('./promise-timeout');
 const colors = require('colors');
 
+// TODO: Refactor TextEncoder and TextDecoder to Node Buffers
+// --> Buffer.from('❤🙌😎','utf8').toString() === the same string
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -1039,8 +1041,8 @@ class NodeReader {
         });
     }
 
-    _treeDataWriter(data, index) {
-        const length = data.length;
+    _treeDataWriter(binary, index) {
+        const length = binary.byteLength;
         const recordSize = this.storage.settings.recordSize;
         const headerLength = this.recordInfo.headerLength;
         const startRecord = {
@@ -1054,7 +1056,7 @@ class NodeReader {
         const writeRecords = this.recordInfo.allocation.addresses.slice(startRecord.nr, endRecord.nr + 1);
         const writeRanges = NodeAllocation.fromAdresses(writeRecords).ranges;
         const writes = [];
-        const binary = new Uint8Array(data);
+        // const binary = new Uint8Array(data);
         let bOffset = 0;
         for (let i = 0; i < writeRanges.length; i++) {
             const range = writeRanges[i];
@@ -1119,11 +1121,13 @@ class NodeReader {
             reads.push(p);
             bOffset += bLength;
         }
-        return Promise.all(reads).then(() => {
+        return Promise.all(reads)
+        .then(() => {
             // Convert Uint8Array to byte array (as long as BinaryBPlusTree doesn't work with typed arrays)
-            let bytes = [];
-            binary.forEach(val => bytes.push(val));
-            return bytes;
+            // let bytes = [];
+            // binary.forEach(val => bytes.push(val));
+            // return bytes;
+            return Buffer.from(binary.buffer);
         });
     }
 
@@ -3030,10 +3034,11 @@ function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
                 let binaryValue = _getValueBytes(kvp);
                 builder.add(kvp.key, binaryValue);
             });
+            // TODO: switch from array to Uint8ArrayBuilder:
             let bytes = [];
             return builder.create().toBinary(true, BinaryWriter.forArray(bytes))
             .then(() => {
-                return { keyTree: true, data: new Uint8Array(bytes) };
+                return { keyTree: true, data: Uint8Array.from(bytes) };
             });
         }
         else {
