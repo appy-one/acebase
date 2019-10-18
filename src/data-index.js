@@ -214,7 +214,6 @@ class DataIndex {
         }
     }
 
-
     static readFromFile(storage, fileName) {
         // Read an index from file
         let dataIndex;
@@ -714,6 +713,13 @@ class DataIndex {
                 });
             }
         }
+        const cacheKey = op + '{count}';
+        const cache = this.cache(cacheKey, val);
+        if (cache) {
+            // Cached count, saves time!
+            return Promise.resolve(cache);
+        }
+
         let lock;
         return this._lock(false, `index.count "${op}", ${val}`)
         .then(l => {
@@ -728,12 +734,22 @@ class DataIndex {
             .then(result => {
                 lock.release();
                 idx.close();
-                return result.valueCount;                
+
+                this.cache(cacheKey, val, result.valueCount);
+                return result.valueCount;
             });
         });
     }
 
     take(skip, take, ascending) {
+        const cacheKey = `${skip}+${take}-${ascending ? 'asc' : 'desc'}`;
+        const cache = this.cache('take', cacheKey);
+        if (cache) {
+            return Promise.resolve(cache);
+        }
+
+        const stats = new IndexQueryStats('take', { skip, take, ascending }, true);
+
         var lock;
         // debug.log(`Requesting query lock on index ${this.description}`.blue);
         return this._lock(false, `index.take ${take}, skip ${skip}, ${ascending ? 'ascending' : 'descending'}`)
@@ -785,9 +801,13 @@ class DataIndex {
                 ? tree.getFirstLeaf().then(processLeaf)
                 : tree.getLastLeaf().then(processLeaf);
 
-            return promise.then(results => {
+            return promise.then(() => {
                 lock.release();
                 idx.close();
+
+                stats.stop(results.length);
+                results.stats = stats;
+                this.cache('take', cacheKey, results);                
                 return results;
             })
         });
@@ -823,14 +843,11 @@ class DataIndex {
             }
         }
 
+        const stats = new IndexQueryStats('query', { op, val }, true);
+
         /** @type {Promise<BinaryBPlusTreeLeafEntry[]>} */
         let entriesPromise;
         let cache = this.cache(op, val);
-        // if (this._cache.has(op) && this._cache.get(op).has(val)) {
-        //     // Use cached entries
-        //     let entries = this._cache.get(op).get(val);
-        //     entriesPromise = Promise.resolve(entries);
-        // }
         if (cache) {
             entriesPromise = Promise.resolve(cache);
         }
@@ -875,23 +892,21 @@ class DataIndex {
             results.values = [];
 
             if (options.filter) {
-                // const binaryCompare = (a, b) => {
-                //     if (a.length < b.length) { return -1; }
-                //     if (a.length > b.length) { return 1; }
-                //     for (let i = 0; i < a.length; i++) {
-                //         if (a[i] < b[i]) { return -1; }
-                //         if (a[i] > b[i]) { return 1; }
-                //     }
-                //     return 0;
-                // };
+                const filterStep = new IndexQueryStats(
+                    'filter', { 
+                        entries: entries.length, 
+                        entryValues: entries.reduce((total, entry) => total + entry.values.length, 0), 
+                        filterValues: options.filter.values.length 
+                    }, 
+                    true
+                );
+                stats.steps.push(filterStep);
 
                 let values = [], valueEntryIndexes = [];
                 entries.forEach(entry => {
                     valueEntryIndexes.push(values.length);
                     values = values.concat(entry.values);
                 });
-                // let filterValues = [];
-                // options.filter.treeEntries.forEach(entry => filterValues = filterValues.concat(entry.values));
                 let filterValues = options.filter.values;
 
                 // Pre-process recordPointers to speed up matching
@@ -932,20 +947,6 @@ class DataIndex {
                     // Find in other set
                     let match = null;
                     let matchIndex;
-                    // // for (let j = 0; j < otherSet.length; j++) {
-                    // //     let otherValue = otherSet[j];
-                    // //     if (value.rp === otherValue.rp) { //if (binaryCompare(value.recordPointer, otherValue.recordPointer) === 0) {
-                    // //         match = smallestSet === values ? value : otherValue;
-                    // //         matchIndex = match === value ? i : j;
-                    // //         break;
-                    // //     }
-                    // // }
-
-                    // let j = otherSet.rps.indexOf(smallestSet.rps[i]);
-                    // if (j >= 0) {
-                    //     match = smallestSet === values ? value : otherSet[j];
-                    //     matchIndex = match === value ? i : j;
-                    // }
                     
                     /** @type {BPlusTree} */
                     let tree = otherSet.rpTree;
@@ -968,6 +969,8 @@ class DataIndex {
                         results.values.push(match);
                     }
                 }
+
+                filterStep.stop({ results: results.length, values: results.values.length });
             }
             else {
                 // No filter, add all results
@@ -983,81 +986,8 @@ class DataIndex {
                 });
             }
 
-            // for (let i = 0; i < entries.length; i++) {
-            //     const entry = entries[i];
-            //     const value = entry.key;
-            //     for (let j = 0; j < entry.values.length; j++) {
-            //         const entryValue = entry.values[j];
-            //         if (options.filter) {
-            //             // Filtering should be offloaded from event loop to stay responsive
-            //             let filterEntries = options.filter.treeEntries;
-            //             let found = false;
-            //             for (let k = 0; k < filterEntries.length; k++) {
-            //                 let filterEntryValues = filterEntries[k].values;
-            //                 for(let l = 0; l < filterEntryValues.length; l++) {
-            //                     let filterValue = filterEntryValues[l];
-            //                     if (binaryCompare(filterValue.recordPointer, entryValue.recordPointer) === 0) {
-            //                         found = true;
-            //                         break;
-            //                     }
-            //                 }
-            //                 if (found) { break; }
-            //             }
-            //             if (!found) {
-            //                 continue;
-            //             }
-            //         }
-            //         const recordPointer = _parseRecordPointer(this.path, entryValue.recordPointer);
-            //         const metadata = entryValue.metadata;
-            //         const result = new IndexQueryResult(recordPointer.key, recordPointer.path, value, metadata);
-            //         result.entry = entry;
-            //         results.push(result);
-            //     }
-            // }
-
-            // entries.forEach(entry => {
-            //     const value = entry.key;
-            //     entry.values.forEach(entryValue => {
-            //         if (options.filter) {
-            //             let filterEntries = options.filter.treeEntries;
-            //             let found = false;
-            //             for (let k = 0; k < filterEntries.length; k++) {
-            //                 let filterEntryValues = filterEntries[k].values;
-            //                 for(let l = 0; l < filterEntryValues.length; l++) {
-            //                     let filterValue = filterEntryValues[l];
-            //                     if (binaryCompare(filterValue.recordPointer, entryValue.recordPointer) === 0) {
-            //                         found = true;
-            //                         break;
-            //                     }
-            //                 }
-            //                 if (found) { break; }
-            //             }
-            //             if (!found) {
-            //                 return;
-            //             }
-            //         }
-            //         const recordPointer = _parseRecordPointer(this.path, entryValue.recordPointer);
-            //         const metadata = entryValue.metadata;
-            //         const result = new IndexQueryResult(recordPointer.key, recordPointer.path, value, metadata);
-            //         result.entry = entry;
-            //         results.push(result);
-            //     });
-            // });
-
-            // entries.forEach(entry => {
-            //     const value = entry.key;
-            //     entry.values.forEach(entryValue => {
-            //         const recordPointer = _parseRecordPointer(this.path, entryValue.recordPointer);
-            //         if (options.filter && options.filter.findIndex(result => result.path === recordPointer.path) < 0) {
-            //             return;
-            //         }
-
-            //         const metadata = entryValue.metadata;
-            //         const result = new IndexQueryResult(recordPointer.key, recordPointer.path, value, metadata);
-            //         result.entry = entry;
-            //         results.push(result);
-            //     });
-            // });
+            stats.stop(results.length);
+            results.stats = stats;
             return results;
         });
     }
@@ -2586,7 +2516,6 @@ class IndexQueryResult {
 }
 
 class IndexQueryResults extends Array {
-    
 
     /**
      * @param {IndexQueryResult[]} results 
@@ -2670,6 +2599,76 @@ class IndexQueryResults extends Array {
             }
         });
         return IndexQueryResults.from(filtered, this.filterKey);
+    }
+
+    constructor(...args) {
+        super(...args);
+        /** @type {IndexQueryHint[]} */
+        this.hints = [];
+        /** @type {IndexQueryStats} */
+        this.stats = null;
+    }
+
+}
+
+class IndexQueryStats {
+    constructor(type, args, start = false) {
+        this.type = type;
+        this.args = args;
+        this.started = 0;
+        this.stopped = 0;
+        /** @type {IndexQueryStats[]} */
+        this.steps = [];
+        /** @type {object} */
+        this.result = null;
+        if (start) {
+            this.start();
+        }
+    }
+    start() {
+        this.started = Date.now();
+    }
+    stop(result = null) {
+        this.stopped = Date.now();
+        this.result = result;
+    }
+    get duration() { return this.stopped - this.started; } 
+}
+
+class IndexQueryHint {
+    constructor(type, value) {
+        this.type = type;
+        this.value = value;
+    }
+}
+class FullTextIndexQueryHint extends IndexQueryHint {
+    static get types() {
+        return { 
+            missingWord: 'missing',
+            genericWord: 'generic',
+            ignoredWord: 'ignored'
+        }
+    }
+
+    constructor(type, value) {
+        super(type, value);
+    }
+
+    get description() {
+        switch (this.type) {
+            case FullTextIndexQueryHint.types.missingWord: {
+                return `Word "${this.value}" does not occur in the index, you might want to remove it from your query`;
+            }
+            case FullTextIndexQueryHint.types.genericWord: {
+                return `Word "${this.value}" is very generic and occurs many times in the index. Removing the word from your query will speed up the results and minimally impact the size of the result set`;
+            }
+            case FullTextIndexQueryHint.types.ignoredWord: {
+                return `Word "${this.value}" was ignored because it is blacklisted or occurs in a stoplist`;
+            }
+            default: {
+                return `Uknown hint`;
+            }
+        }
     }
 }
 
@@ -2824,6 +2823,7 @@ class TextInfo {
      * @param {object} [options]
      * @param {string} [options.locale="en"] Set the text locale to accurately convert words to lowercase
      * @param {RegExp|string} [options.pattern="[\\w']+"] Overrides the default RegExp pattern used
+     * @param {string} [options.includeChars] Add characters to the word detection regular expression. Useful to keep wildcards such as * and ? in query texts
      * @param {string} [options.flags='gmi'] Overrides the default RegExp flags (gmi) used 
      * @param {(word:string, locale:string) => string} [options.stemming] Optional callback function that is able to perform word stemming. Will be executed before performing criteria checks
      * @param {number} [options.minLength=1] minimum length of words to include
@@ -2843,6 +2843,20 @@ class TextInfo {
         else if (typeof options.pattern === 'string') {
             pattern = options.pattern;
         }
+        if (options.includeChars) {
+            console.assert(pattern.indexOf('[') >= 0, 'pattern does not contain []');
+            let insert = '';
+            for (let i = 0; i < options.includeChars.length; i++) {
+                insert += '\\' + options.includeChars[i];
+            }
+            let pos = -1;
+            while(true) {
+                let index = pattern.indexOf('[', pos + 1) + 1;
+                if (index === 0) { break; }
+                pattern = pattern.slice(0, index) + insert + pattern.slice(index);
+                pos = index;
+            }
+        }
         let flags = localeSettings.flags;
         if (typeof options.flags === 'string') {
             flags = options.flags;
@@ -2858,6 +2872,7 @@ class TextInfo {
 
         /** @type {WordInfo[]} */
         this.words = [];
+        this.ignored = [];
         if (text === null) { return; }
 
         /** @type {Map<string, WordInfo>} */
@@ -2878,6 +2893,9 @@ class TextInfo {
                 const stemmed = options.stemming(word, this.locale);
                 if (typeof stemmed !== 'string') {
                     // Ignore this word
+                    if (this.ignored.indexOf(word) < 0) { 
+                        this.ignored.push(word);
+                    }
                     // Do not increase wordIndex
                     continue; 
                 }
@@ -2890,6 +2908,9 @@ class TextInfo {
                 // Word does not meet set criteria
                 if (!~whitelist.indexOf(word)) {
                     // Not whitelisted either
+                    if (this.ignored.indexOf(word) < 0) { 
+                        this.ignored.push(word); 
+                    }
                     // Do not increase wordIndex
                     continue;
                 }
@@ -3100,7 +3121,16 @@ class FullTextIndex extends DataIndex {
         return FullTextIndex.validOperators;
     }
 
-    query(op, val, options = {}) {        
+    /**
+     * 
+     * @param {string} op Operator to use, can be either "fulltext:contains" or "fulltext:!contains"
+     * @param {string} val Text to search for. Can include * and ? wildcards, OR's for combined searches, and "quotes" for phrase searches
+     * @param {object} [options] Options
+     * @param {string} [options.locale] Locale to use for the words in the query. When omitted, the default index locale is used
+     * @param {boolean} [options.phrase] Used internally: treats the words in val as a phrase
+     * @returns {Promise<IndexQueryResults>}
+     */
+    query(op, val, options = { phrase: false, locale: undefined }) {        
         if (FullTextIndex.validOperators.indexOf(op) < 0) { //if (op !== 'fulltext:contains' && op !== 'fulltext:not_contains') {
             throw new Error(`Fulltext indexes can only be queried with operator "fulltext:contains" and "fulltext:!contains`)
         }
@@ -3117,7 +3147,23 @@ class FullTextIndex extends DataIndex {
             return Promise.resolve(cache);
         }
 
-        const searchWordRegex = /[\w'?*]+/g;
+        const stats = new IndexQueryStats(options.phrase ? 'fulltext_phrase_query' : 'fulltext_query', val, true);
+
+        // const searchWordRegex = /[\w'?*]+/g; // Use TextInfo to find and transform words using index settings
+        const getTextInfo = text => {
+            const info = new TextInfo(text, {
+                locale: options.locale || this.textLocale,
+                stemming: this.config.transform,
+                minLength: this.config.minLength,
+                maxLength: this.config.maxLength,
+                blacklist: this.config.blacklist,
+                whitelist: this.config.whitelist,
+                useStoplist: this.config.useStoplist,
+                includeChars: '*?'
+            });
+            return info;
+        }
+
         if (~val.indexOf(' OR ')) {
             // Multiple searches in one query: 'secret OR confidential OR "don't tell"'
             // TODO: chain queries instead of running simultanious?
@@ -3125,6 +3171,11 @@ class FullTextIndex extends DataIndex {
             const promises = queries.map(q => this.query(op, q));
             return Promise.all(promises)
             .then(resultSets => {
+                stats.steps.push(...resultSets.map(results => results.stats));
+
+                const mergeStep = new IndexQueryStats('merge_expand', { sets: resultSets.length, results: resultSets.reduce((total, set) => total + set.length, 0) }, true);
+                stats.steps.push(mergeStep);
+
                 const merged = resultSets[0];
                 resultSets.slice(1).forEach(results => {
                     results.forEach(result => {
@@ -3132,7 +3183,13 @@ class FullTextIndex extends DataIndex {
                         if (!exists) { merged.push(result); }
                     });
                 });
-                return IndexQueryResults.from(merged, this.key);
+                const results = IndexQueryResults.from(merged, this.key);
+                mergeStep.stop(results.length);
+
+                stats.stop(results.length);
+                results.stats = stats;
+                results.hints.push(...resultSets.reduce((hints, set) => { hints.push(...set.hints); return hints; }, []));
+                return results;
             });
         }
         if (~val.indexOf('"')) {
@@ -3152,7 +3209,7 @@ class FullTextIndex extends DataIndex {
             const promises = phrases.map(phrase => this.query(op, phrase, { phrase: true }));
 
             // Check if what is left over still contains words
-            if (val.match(searchWordRegex) !== null) {
+            if (val.length > 0 && getTextInfo(val).wordCount > 0) { //(val.match(searchWordRegex) !== null) {
                 // Add it
                 const promise = this.query(op, val);
                 promises.push(promise);
@@ -3160,7 +3217,12 @@ class FullTextIndex extends DataIndex {
 
             return Promise.all(promises)
             .then(resultSets => {
+                stats.steps.push(...resultSets.map(results => results.stats));
+
                 // Take shortest set, only keep results that are matched in all other sets
+                const mergeStep = new IndexQueryStats('merge_reduce', { sets: resultSets.length, results: resultSets.reduce((total, set) => total + set.length, 0) }, true);
+                resultSets.length > 1 && stats.steps.push(mergeStep);
+
                 const shortestSet = resultSets.sort((a,b) => a.length < b.length ? -1 : 1)[0];
                 const otherSets = resultSets.slice(1);
                 const matches = shortestSet.reduce((matches, match) => {
@@ -3171,20 +3233,29 @@ class FullTextIndex extends DataIndex {
                     return matches;
                 }, new IndexQueryResults());
                 matches.filterKey = this.key;
+                mergeStep.stop(matches.length);
+
+                stats.stop(matches.length);
+                matches.stats = stats;
+                matches.hints.push(...resultSets.reduce((hints, set) => { hints.push(...set.hints); return hints; }, []));
                 return matches;
             });
         }
-        let words = val.match(searchWordRegex); //_getWords(val, true);
-        if (words === null) {
+
+        const info = getTextInfo(val);
+        // Add hints for ignored words
+        info.ignored.forEach(word => {
+            const hint = new FullTextIndexQueryHint(FullTextIndexQueryHint.types.ignoredWord, word);
+            results.hints.push(hint);
+        });
+
+        let words = info.words.map(info => info.word);
+        if (words.length === 0) {
             // Resolve with empty array
-            return Promise.resolve(IndexQueryResults.from([], this.key));
-        }
-        else {
-            // Remove any double words
-            words = words.reduce((words, word) => {
-                if (words.indexOf(word)<0) { words.push(word); }
-                return words;
-            }, []);
+            stats.stop(0);
+            const results = IndexQueryResults.from([], this.key);
+            results.stats = stats;
+            return Promise.resolve(results);
         }
 
         // Get result count for each word
@@ -3197,19 +3268,45 @@ class FullTextIndex extends DataIndex {
             else if (op === 'fulltext:!contains') {
                 wordOp = wildcardIndex >= 0 ? '!like' : '!=';
             }
-            // return super.query(wordOp, word)
+            const step = new IndexQueryStats('count', { op: wordOp, word }, true);
+            stats.steps.push(step);
             return super.count(wordOp, word)
             .then(count => {
-                return { word, count};
-            });            
+                step.stop(count);
+                return { word, count };
+            });
         });
-        return Promise.all(countPromises).then(counts => {
+        return Promise.all(countPromises)
+        .then(counts => {
             // Start with the smallest result set
             counts.sort((a, b) => {
                 if (a.count < b.count) { return -1; }
                 else if (a.count > b.count) { return 1; }
                 return 0;
             });
+
+            /** @type {IndexQueryResults} */
+            let results;
+
+            if (counts[0].count === 0) {
+                stats.stop(0);
+
+                debug.log(`Word "${counts[0].word}" not found in index, 0 results for query ${op} "${val}"`);
+                results = new IndexQueryResults(0);
+                results.filterKey = this.key;
+                results.stats = stats;
+
+                // Add query hints for each unknown word
+                counts.forEach(c => {
+                    if (c.count === 0) {
+                        const hint = new FullTextIndexQueryHint(FullTextIndexQueryHint.types.missingWord, c.word);
+                        results.hints.push(hint);
+                    }
+                });
+
+                this.cache(op, val, results);
+                return results;
+            }
             const allWords = counts.map(c => c.word);
 
             // Sequentual method: query 1 word, then filter results further and further
@@ -3232,11 +3329,16 @@ class FullTextIndex extends DataIndex {
                 else if (op === 'fulltext:!contains') {
                     wordOp = wildcardIndex >= 0 ? '!like' : '!=';
                 }
-                // return super.query(wordOp, word)
-                return super.query(wordOp, word, { filter });
+                // const step = new IndexQueryStats('query', { op: wordOp, word }, true);
+                // stats.steps.push(step);
+                return super.query(wordOp, word, { filter })
+                .then(results => {
+                    stats.steps.push(results.stats);
+                    // step.stop(results.length);
+                    return results;
+                });
             }
             let wordIndex = 0;
-            let results;
             let resultsPerWord = new Array(words.length);
             const nextWord = () => {
                 const word = allWords[wordIndex];
@@ -3256,6 +3358,8 @@ class FullTextIndex extends DataIndex {
             .then(() => {
                 if (options.phrase === true && allWords.length > 1) {
                     // Check which results have the words in the right order
+                    const step = new IndexQueryStats('phrase_check', val, true);
+                    stats.steps.push(step);
                     results = results.reduce((matches, match) => {
                         // the order of the resultsPerWord is in the same order as the given words,
                         // check if their metadata._occurs_ say the same about the indexed content
@@ -3293,17 +3397,15 @@ class FullTextIndex extends DataIndex {
                         }
                         return matches;
                     }, new IndexQueryResults());
+                    step.stop(results.length);
                 }
                 results.filterKey = this.key;
-                
+
+                stats.stop(results.length);
+                results.stats = stats;
+
                 // Cache results
                 delete results.values; // No need to cache these. Free the memory
-                // let opCache = this._cache.get(op);
-                // if (!opCache) {
-                //     opCache = new Map();
-                //     this._cache.set(op, opCache);
-                // }
-                // opCache.set(val, results);
                 this.cache(op, val, results);
                 return results;
             });
