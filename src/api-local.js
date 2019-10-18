@@ -79,7 +79,7 @@ class LocalApi extends Api {
         */
     }
 
-    query(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined }) {
+    query(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: event => {} }) {
         if (typeof options !== "object") { options = {}; }
         if (typeof options.snapshots === "undefined") { options.snapshots = false; }
 
@@ -293,7 +293,14 @@ class LocalApi extends Api {
         const indexScanPromises = [];
         query.filters.forEach(filter => {
             if (filter.index && filter.indexUsage !== 'filter') {
-                let promise = filter.index.query(filter.op, filter.compare);
+                let promise = filter.index.query(filter.op, filter.compare)
+                .then(results => {
+                    options.eventHandler && options.eventHandler({ event: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
+                    if (results.hints.length > 0) {
+                        options.eventHandler && options.eventHandler({ event: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
+                    }
+                    return results;
+                });
                 
                 // Get other filters that can be executed on these indexed results (eg filters on included keys of the index)
                 const resultFilters = query.filters.filter(f => f.index === filter.index && f.indexUsage === 'filter');
@@ -327,7 +334,14 @@ class LocalApi extends Api {
         if (query.filters.length === 0 && query.order.length > 0 && query.order[0].index) {
             const sortIndex = query.order[0].index;
             console.log(`Using index for sorting: ${sortIndex.description}`);
-            const promise = sortIndex.take(query.skip, query.take, query.order[0].ascending);
+            const promise = sortIndex.take(query.skip, query.take, query.order[0].ascending)
+            .then(results => {
+                options.eventHandler && options.eventHandler({ event: 'stats', type: 'sort_index_take', source: filter.index.description, stats: results.stats });
+                if (results.hints.length > 0) {
+                    options.eventHandler && options.eventHandler({ event: 'hints', type: 'sort_index_take', source: filter.index.description, hints: results.hints });
+                }
+                return results;
+            });
             indexScanPromises.push(promise);
             stepsExecuted.skipped = true;
             stepsExecuted.taken = true;
@@ -336,8 +350,6 @@ class LocalApi extends Api {
 
         return Promise.all(indexScanPromises)
         .then(indexResultSets => {
-            //console.log(indexResultSets);
-
             // Merge all results in indexResultSets, get distinct nodes
             let indexedResults = [];
             if (indexResultSets.length === 1) {
