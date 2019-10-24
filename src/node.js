@@ -2096,7 +2096,6 @@ class Node {
  */
 function _childMatchesCriteria(storage, child, criteria, lock) {
     const filters = criteria; // refactor
-
     const promises = [];
     const isMatch = criteria.every(f => {
         let proceed = true;
@@ -2131,9 +2130,11 @@ function _childMatchesCriteria(storage, child, criteria, lock) {
                 if (f.op === "!between") {
                     return val < f.compare[0] || val > f.compare[1];
                 }
-                if (f.op === "custom") {
-                    return f.compare(val);
-                }
+                // DISABLED 2019/10/23 because "custom" only works locally and is not fully implemented
+                // if (f.op === "custom") {
+                //     return f.compare(val);
+                // }
+                return false;
             };
             
             if (child.address) {
@@ -2150,8 +2151,22 @@ function _childMatchesCriteria(storage, child, criteria, lock) {
                     // TODO: refactor to use child stream
                     const p = Node.getValue(storage, child.path, { tid: lock.tid })
                     .then(arr => {
-                        const i = arr.indexOf(f.compare);
-                        return { key: child.key, isMatch: (i >= 0 && f.op === "contains") || (i < 0 && f.op === "!contains") };
+                        // const i = arr.indexOf(f.compare);
+                        // return { key: child.key, isMatch: (i >= 0 && f.op === "contains") || (i < 0 && f.op === "!contains") };
+
+                        const isMatch = 
+                            f.op === "contains"
+                                // "contains"
+                                ? f.compare instanceof Array
+                                    ? f.compare.every(val => arr.includes(val)) // Match if ALL of the passed values are in the array
+                                    : arr.includes(f.compare)
+                            
+                                // "!contains"
+                                : f.compare instanceof Array
+                                    ? !f.compare.some(val => arr.includes(val)) // DON'T match if ANY of the passed values is in the array
+                                    : !arr.includes(f.compare);
+
+                        return { key: child.key, isMatch };
                     });
                     promises.push(p);
                     proceed = true;
