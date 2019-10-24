@@ -2,7 +2,7 @@
 
 const { Storage } = require('./storage');
 const { Node } = require('./node');
-const { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryWriter, BinaryBPlusTreeLeafEntry, BinaryReader } = require('./btree');
+const { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryWriter, BinaryBPlusTreeLeafEntry, BinaryReader, BlacklistingSearchOperator } = require('./btree');
 const { PathInfo, Utils, ID, debug } = require('acebase-core');
 const { compareValues, getChildValues, numberToBytes, bytesToNumber } = Utils;
 const Geohash = require('./geohash');
@@ -829,7 +829,7 @@ class DataIndex {
      * @returns {Promise<IndexQueryResults>}
      */
     query(op, val, options = { filter: undefined }) {
-        if (DataIndex.validOperators.indexOf(op) < 0) {
+        if (!DataIndex.validOperators.includes(op) && !(op instanceof BlacklistingSearchOperator)) {
             throw new TypeError(`Cannot use operator "${op}" to query index "${this.description}"`);
         }
         if (!this.caseSensitive) {
@@ -847,7 +847,8 @@ class DataIndex {
 
         /** @type {Promise<BinaryBPlusTreeLeafEntry[]>} */
         let entriesPromise;
-        let cache = this.cache(op, val);
+        const isCacheable = !(op instanceof BlacklistingSearchOperator);
+        let cache = isCacheable && this.cache(op, val);
         if (cache) {
             entriesPromise = Promise.resolve(cache);
         }
@@ -879,7 +880,7 @@ class DataIndex {
                     //     this._cache.set(op, opCache);
                     // }
                     // opCache.set(val, entries);
-                    this.cache(op, val, entries);
+                    isCacheable && this.cache(op, val, entries);
 
                     return entries;
                 });
@@ -2635,43 +2636,6 @@ class IndexQueryStats {
     get duration() { return this.stopped - this.started; } 
 }
 
-class IndexQueryHint {
-    constructor(type, value) {
-        this.type = type;
-        this.value = value;
-    }
-}
-class FullTextIndexQueryHint extends IndexQueryHint {
-    static get types() {
-        return { 
-            missingWord: 'missing',
-            genericWord: 'generic',
-            ignoredWord: 'ignored'
-        }
-    }
-
-    constructor(type, value) {
-        super(type, value);
-    }
-
-    get description() {
-        switch (this.type) {
-            case FullTextIndexQueryHint.types.missingWord: {
-                return `Word "${this.value}" does not occur in the index, you might want to remove it from your query`;
-            }
-            case FullTextIndexQueryHint.types.genericWord: {
-                return `Word "${this.value}" is very generic and occurs many times in the index. Removing the word from your query will speed up the results and minimally impact the size of the result set`;
-            }
-            case FullTextIndexQueryHint.types.ignoredWord: {
-                return `Word "${this.value}" was ignored because it is blacklisted or occurs in a stoplist`;
-            }
-            default: {
-                return `Uknown hint`;
-            }
-        }
-    }
-}
-
 /**
  * An array index allows all values in an array node to be indexed and searched
  */
@@ -2699,8 +2663,24 @@ class ArrayIndex extends DataIndex {
         let oldEntries = oldValue[this.key];
         let newEntries = newValue[this.key];
         
-        if (!(oldEntries instanceof Array)) { oldEntries = []; }
-        if (!(newEntries instanceof Array)) { newEntries = []; }
+        if (oldEntries instanceof Array) { 
+            // Only use unique values
+            oldEntries = oldEntries.reduce((unique, entry) => { 
+                !unique.includes(entry) && unique.push(entry); 
+                return unique;
+            }, []);
+        }
+        else {
+            oldEntries = []; 
+        }
+        if (newEntries instanceof Array) {
+            // Only use unique values
+            newEntries = newEntries.reduce((unique, entry) => { 
+                !unique.includes(entry) && unique.push(entry); 
+                return unique;
+            }, []);
+        } 
+        else { newEntries = []; }
 
         let removed = oldEntries.filter(entry => newEntries.indexOf(entry) < 0);
         let added = newEntries.filter(entry => oldEntries.indexOf(entry) < 0);
@@ -2731,7 +2711,13 @@ class ArrayIndex extends DataIndex {
             // if (array.length === 0) {
             //     debug.warn(`No entries found to index array`);
             // }
-            array.forEach(entry => {
+
+            // index unique items only
+            array.reduce((unique, entry) => {
+                !unique.includes(entry) && unique.push(entry);
+                return unique;
+            }, [])
+            .forEach(entry => {
                 add(entry, recordPointer, metadata);
             });
             return array;
@@ -2740,37 +2726,169 @@ class ArrayIndex extends DataIndex {
     }
 
     static get validOperators() {
+        // This is the only special index that does not use prefixed operators
+        // because these can also be used to query non-indexed arrays (but slower, of course..)
         return ['contains', '!contains'];
     }
     get validOperators() {
         return ArrayIndex.validOperators;
     }
 
+    /**
+     * 
+     * @param {string} op "contains" or "!contains"
+     * @param {string|number|boolean|Date} val value to search for
+     */
     query(op, val) {
-        if (ArrayIndex.validOperators.indexOf(op) < 0) { //if (op !== 'contains' && op !== '!contains') {
-            throw new Error(`Array indexes can only be queried with operator "contains" and "!contains`)
+        if (!ArrayIndex.validOperators.includes(op)) {
+            throw new Error(`Array indexes can only be queried with operators ${ArrayIndex.validOperators.map(op => `"${op}"`).join(', ')}`);
         }
-        let searchOp;
+
+        // Check cache
+        let cache = this.cache(op, val);
+        if (cache) {
+            // Use cached results
+            return Promise.resolve(cache);
+        }
+
+        const stats = new IndexQueryStats('array_index_query', val, true);
+
         if (op === 'contains') {
-            searchOp = '==';
+            if (val instanceof Array) {
+                // recipesIndex.query('contains', ['egg','bacon'])
+                // Get result count for each value in array
+                const countPromises = val.map(value => {
+                    const wildcardIndex = typeof value !== 'string' ? -1 : ~(~value.indexOf('*') || ~value.indexOf('?'));
+                    const valueOp = ~wildcardIndex ? 'like' : '==';
+
+                    const step = new IndexQueryStats('count', value, true);
+                    stats.steps.push(step);
+
+                    return this.count(valueOp, value)
+                    .then(count => {
+                        step.stop(count);
+                        return { value, count };
+                    })
+                });
+                return Promise.all(countPromises)
+                .then(counts => {
+                    // Start with the smallest result set
+                    counts.sort((a, b) => {
+                        if (a.count < b.count) { return -1; }
+                        else if (a.count > b.count) { return 1; }
+                        return 0;
+                    });
+
+                    /** @type {IndexQueryResults} */
+                    let results;
+
+                    if (counts[0].count === 0) {
+                        stats.stop(0);
+        
+                        debug.log(`Value "${counts[0].value}" not found in index, 0 results for query ${op} ${val}`);
+                        results = new IndexQueryResults(0);
+                        results.filterKey = this.key;
+                        results.stats = stats;
+        
+                        // Add query hints for each unknown item
+                        counts.forEach(c => {
+                            if (c.count === 0) {
+                                const hint = new ArrayIndexQueryHint(ArrayIndexQueryHint.types.missingValue, c.value);
+                                results.hints.push(hint);
+                            }
+                        });
+        
+                        // Cache the empty result set
+                        this.cache(op, val, results);
+                        return results;
+                    }
+                    const allValues = counts.map(c => c.value);
+        
+                    // Query 1 value, then filter results further and further
+                    // Start with the smallest result set
+                    const queryValue = (value, filter) => {
+                        const wildcardIndex = typeof value !== 'string' ? -1 : ~(~value.indexOf('*') || ~value.indexOf('?'));
+                        let valueOp = ~wildcardIndex ? 'like' : '==';
+
+                        return super.query(valueOp, value, { filter })
+                        .then(results => {
+                            stats.steps.push(results.stats);
+                            return results;
+                        });
+                    }
+                    let valueIndex = 0;
+                    // let resultsPerValue = new Array(values.length);
+                    const nextValue = () => {
+                        const value = allValues[valueIndex];
+                        return queryValue(value, results)
+                        .then(fr => {
+                            // resultsPerValue[values.indexOf(value)] = fr;
+                            results = fr;
+                            valueIndex++;
+                            if (results.length === 0 || valueIndex === allValues.length) { return; }
+                            return nextValue();
+                        });
+                    }
+                    return nextValue()
+                    .then(() => {
+                        results.filterKey = this.key;
+
+                        stats.stop(results.length);
+                        results.stats = stats;
+        
+                        // Cache results
+                        delete results.values; // No need to cache these. Free the memory
+                        this.cache(op, val, results);
+                        return results;
+                    });
+                });
+            }
+            else {
+                // Single value query
+                const valueOp = 
+                    typeof val === 'string' && (val.includes('*') || val.includes('?')) 
+                    ? 'like'
+                    : '==';
+                return super.query(valueOp, val)
+                .then(results => {
+                    stats.steps.push(results.stats);
+                    results.stats = stats;
+                    delete results.values;
+                    return results;
+                });
+            }
         }
         else if (op === '!contains') {
-            searchOp = '!=';
+            // DISABLED executing super.query('!=', val) because it returns false positives 
+            // for arrays that "!contains" val, but does contain other values...
+            // Eg: an indexed array value of: ['bacon', 'egg', 'toast', 'sausage'],
+            // when executing index.query('!contains', 'bacon'),
+            // it will falsely match that record because the 2nd value 'egg'
+            // matches the filter ('egg' is not 'bacon')
+
+            // NEW: BlacklistingSearchOperator will take all values in the index unless
+            // they are blacklisted along the way. Our callback determines whether to blacklist
+            // an entry's values, which we'll do if its key matches val
+            const customOp = new BlacklistingSearchOperator(entry => {
+                let blacklist = val === entry.key
+                    || (val instanceof Array && val.includes(entry.key));
+                if (blacklist) { return entry.values; }
+            });
+
+            stats.type = 'array_index_blacklist_scan';
+            return super.query(customOp)
+            .then(results => {
+                stats.stop(results.length);
+                results.filterKey = this.key;
+                results.stats = stats;
+
+                // Cache results
+                this.cache(op, val, results);
+                return results;
+            });
         }
-        return super.query(searchOp, val)
     }
 }
-
-
-// const _wordsRegex = /[\w%$#@]+/gu; // OR, with word-regex:   /[a-zA-Z0-9_'\u0392-\u03c9\u0400-\u04FF\u0027]+|[\u4E00-\u9FFF\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\uac00-\ud7af\u0400-\u04FF]+|[\u00E4\u00C4\u00E5\u00C5\u00F6\u00D6]+|[\u0531-\u0556\u0561-\u0586\u0559\u055A\u055B]+|\w+/g;
-// const _wordsWithWildcardsRegex = /[\w%$#@?*]+/gu;
-// function _getWords(text, wildcards) {
-//     if (typeof text !== 'string') {
-//         return [];
-//     }
-//     let words = text.toLowerCase().match(wildcards === true ? _wordsWithWildcardsRegex : _wordsRegex);
-//     return words || [];
-// }
 
 class WordInfo {
     /**
@@ -3131,16 +3249,11 @@ class FullTextIndex extends DataIndex {
      * @returns {Promise<IndexQueryResults>}
      */
     query(op, val, options = { phrase: false, locale: undefined }) {        
-        if (FullTextIndex.validOperators.indexOf(op) < 0) { //if (op !== 'fulltext:contains' && op !== 'fulltext:not_contains') {
-            throw new Error(`Fulltext indexes can only be queried with operator "fulltext:contains" and "fulltext:!contains`)
+        if (!FullTextIndex.validOperators.includes(op)) { //if (op !== 'fulltext:contains' && op !== 'fulltext:not_contains') {
+            throw new Error(`Fulltext indexes can only be queried with operators ${FullTextIndex.validOperators.map(op => `"${op}"`).join(', ')}`)
         }
 
-        // Check cache. Using the _cache Map does not clash with the superclass's cache because the op will be different
-        // if (this._cache.has(op) && this._cache.get(op).has(val)) {
-        //     // Use cached results
-        //     let results = this._cache.get(op).get(val);
-        //     return Promise.resolve(results);
-        // }
+        // Check cache
         let cache = this.cache(op, val);
         if (cache) {
             // Use cached results
@@ -3243,6 +3356,7 @@ class FullTextIndex extends DataIndex {
         }
 
         const info = getTextInfo(val);
+
         // Add hints for ignored words
         info.ignored.forEach(word => {
             const hint = new FullTextIndexQueryHint(FullTextIndexQueryHint.types.ignoredWord, word);
@@ -3258,16 +3372,45 @@ class FullTextIndex extends DataIndex {
             return Promise.resolve(results);
         }
 
+        if (op === 'fulltext:!contains') {
+            // NEW: Use BlacklistingSearchOperator that uses all (unique) values in the index,
+            // besides the ones that get blacklisted along the way by our callback function
+            const wordChecks = words.map(word => {
+                if (word.includes('*') || word.includes('?')) {
+                    const pattern = '^' + word.replace(/\*/g, '.*').replace(/\?/g, '.') + '$';
+                    const re = new RegExp(pattern, 'i');
+                    return re;
+                }
+                return word;
+            })
+            const customOp = new BlacklistingSearchOperator(entry => {
+                let blacklist = wordChecks.some(word => {
+                    if (word instanceof RegExp) {
+                        return word.test(entry.key);
+                    }
+                    return entry.key === word;
+                })
+                if (blacklist) { return entry.values; }
+            });
+
+            stats.type = 'fulltext_blacklist_scan';
+            return super.query(customOp)
+            .then(results => {
+                stats.stop(results.length);
+                results.filterKey = this.key;
+                results.stats = stats;
+
+                // Cache results
+                this.cache(op, val, results);
+                return results;
+            });            
+        }
+
+        // op === 'fulltext:contains'
         // Get result count for each word
         const countPromises = words.map(word => {
             const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?'));
-            let wordOp;
-            if (op === 'fulltext:contains') {
-                wordOp = wildcardIndex >= 0 ? 'like' : '==';
-            }
-            else if (op === 'fulltext:!contains') {
-                wordOp = wildcardIndex >= 0 ? '!like' : '!=';
-            }
+            let wordOp = wildcardIndex >= 0 ? 'like' : '==';
             const step = new IndexQueryStats('count', { op: wordOp, word }, true);
             stats.steps.push(step);
             return super.count(wordOp, word)
@@ -3304,6 +3447,7 @@ class FullTextIndex extends DataIndex {
                     }
                 });
 
+                // Cache the empty result set
                 this.cache(op, val, results);
                 return results;
             }
@@ -3322,13 +3466,7 @@ class FullTextIndex extends DataIndex {
 
             const queryWord = (word, filter) => {
                 const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?'));
-                let wordOp;
-                if (op === 'fulltext:contains') {
-                    wordOp = wildcardIndex >= 0 ? 'like' : '==';
-                }
-                else if (op === 'fulltext:!contains') {
-                    wordOp = wildcardIndex >= 0 ? '!like' : '!=';
-                }
+                let wordOp = wildcardIndex >= 0 ? 'like' : '==';
                 // const step = new IndexQueryStats('query', { op: wordOp, word }, true);
                 // stats.steps.push(step);
                 return super.query(wordOp, word, { filter })
@@ -3658,33 +3796,122 @@ class GeoIndex extends DataIndex {
         return GeoIndex.validOperators;
     }
 
+    /**
+     * 
+     * @param {string} op Only 'geo:nearby' is supported at the moment
+     * @param {object} val 
+     * @param {number} val.lat nearby query center latitude
+     * @param {number} val.long nearby query center longitude
+     * @param {number} val.radius nearby query radius in meters
+     */
     query(op, val) {
-        if (GeoIndex.validOperators.indexOf(op) < 0) {
-            throw new Error(`Geo indexes can not be queried with operator "${op}"`)
+        if (!GeoIndex.validOperators.includes(op)) {
+            throw new Error(`Geo indexes can not be queried with operators ${GeoIndex.validOperators.map(op => `"${op}"`).join(', ')}`)
         }
+
+        // Check cache
+        const cached = this.cache(op, val);
+        if (cached) {
+            // Use cached results
+            return Promise.resolve(cached);
+        }
+
         if (op === 'geo:nearby') {
             if (typeof val.lat !== 'number' || typeof val.long !== 'number' || typeof val.radius !== 'number') {
                 throw new Error(`geo:nearby query must supply an object with properties .lat, .long and .radius`);
             }
+            const stats = new IndexQueryStats('geo_nearby_query', val, true);
+
             const precision = _getGeoRadiusPrecision(val.radius / 10);
             const targetHashes = _hashesInRadius(val.lat, val.long, val.radius, precision);
+
+            stats.queries = targetHashes.length;
+
             const promises = targetHashes.map(hash => {
                 return super.query('like', `${hash}*`);
             });
             return Promise.all(promises)
             .then(resultSets => {
+                
                 // Combine all results
                 const results = new IndexQueryResults();
                 results.filterKey = this.key;
                 resultSets.forEach(set => {
                     set.forEach(match => results.push(match));
                 });
+
+                stats.stop(results.length);
+                results.stats = stats;
+
+                this.cache(op, val, results);
+
                 return results;
             });
         }
     }
-
 }
+
+class IndexQueryHint {
+    constructor(type, value) {
+        this.type = type;
+        this.value = value;
+    }
+}
+class FullTextIndexQueryHint extends IndexQueryHint {
+    static get types() {
+        return { 
+            missingWord: 'missing',
+            genericWord: 'generic',
+            ignoredWord: 'ignored'
+        };
+    }
+
+    constructor(type, value) {
+        super(type, value);
+    }
+
+    get description() {
+        switch (this.type) {
+            case FullTextIndexQueryHint.types.missingWord: {
+                return `Word "${this.value}" does not occur in the index, you might want to remove it from your query`;
+            }
+            case FullTextIndexQueryHint.types.genericWord: {
+                return `Word "${this.value}" is very generic and occurs many times in the index. Removing the word from your query will speed up the results and minimally impact the size of the result set`;
+            }
+            case FullTextIndexQueryHint.types.ignoredWord: {
+                return `Word "${this.value}" was ignored because it is blacklisted or occurs in a stoplist`;
+            }
+            default: {
+                return `Uknown hint`;
+            }
+        }
+    }
+}
+
+class ArrayIndexQueryHint extends IndexQueryHint {
+    static get types() {
+        return { 
+            missingValue: 'missing'
+        };
+    }
+
+    constructor(type, value) {
+        super(type, value);
+    }
+
+    get description() {
+        const val = typeof this.value === 'string' ? `"${this.value}"` : this.value;
+        switch (this.type) {
+            case ArrayIndexQueryHint.types.missingValue: {
+                return `Value ${val} does not occur in the index, you might want to remove it from your query`;
+            }
+            default: {
+                return `Uknown hint`;
+            }
+        }
+    }
+}
+
 
 // Got quicksort implementation from https://github.com/CharlesStover/quicksort-js/blob/master/src/quicksort.ts
 // modified to work with Maps instead
