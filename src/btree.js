@@ -985,6 +985,15 @@ class BPlusTreeLeaf {
     }
 }
 
+class BlacklistingSearchOperator {
+    /**
+     * @param {entry => []} callback callback that runs for each entry, must return an array of the entry values to be blacklist
+     */
+    constructor(callback) {
+        this.check = callback;
+    }
+}
+
 class BPlusTree {
     /**
      * 
@@ -2300,6 +2309,9 @@ class BinaryBPlusTree {
                         values: {
                             get() { 
                                 return this.extData.values;
+                            },
+                            set(values) {
+                                this.extData.values = values;
                             }
                         },
                         extData: {
@@ -2320,6 +2332,9 @@ class BinaryBPlusTree {
                                 get values() {
                                     if (this._values !== null) { return this._values; }
                                     throw new Error('ext_data values were not read yet. use entry.extData.loadValues() first')
+                                },
+                                set values(values) {
+                                    this._values = values;
                                 },
                                 leafOffset: extDataOffset,
                                 index: extDataBlockIndex,
@@ -2869,7 +2884,7 @@ class BinaryBPlusTree {
 
     /**
      * Searches the tree
-     * @param {string} op operator to use for key comparison, can be single value operators "<", "<=", "==", "!=", ">", ">=", "matches", "!matches", double value operators "between", "!between", and multiple value operators "in", "!in"
+     * @param {string|BlacklistingSearchOperator} op operator to use for key comparison, can be single value operators "<", "<=", "==", "!=", ">", ">=", "matches", "!matches", double value operators "between", "!between", and multiple value operators "in", "!in"
      * @param {string|number|boolean|Date|Array} param single value or array for double/multiple value operators
      * @param {object} [include]
      * @param {boolean} [include.keys=false]
@@ -2897,8 +2912,15 @@ class BinaryBPlusTree {
             entries: [],
             keys: [],
             keyCount: 0,
-            valueCount: 0
+            valueCount: 0,
+            values: [] // was not implemented? is include.values used anywhere?
         };
+
+        /** @type {BPlusTree} */
+        let blacklistRpTree;
+        if (op instanceof BlacklistingSearchOperator) {
+            blacklistRpTree = new BPlusTree(255, true);
+        }
 
         // const binaryCompare = (a, b) => {
         //     if (a.length < b.length) { return -1; }
@@ -2925,13 +2947,14 @@ class BinaryBPlusTree {
         let totalMatches = 0;
         let totalAdded = 0;
         const valuePromises = [];
-
+        const emptyValue = [];
+        
         /**
          * @param {BinaryBPlusTreeLeafEntry} entry 
          */
         const add = (entry) => {
             totalMatches += entry.totalValues;
-            const requireValues = filterRecordPointers || include.entries || include.values;
+            const requireValues = filterRecordPointers || include.entries || include.values || op instanceof BlacklistingSearchOperator;
             if (requireValues && typeof entry.extData === 'object' && !entry.extData.loaded) {
                 // We haven't got its values yet
                 const p = entry.extData.loadValues()
@@ -2940,6 +2963,101 @@ class BinaryBPlusTree {
                 });
                 valuePromises.push(p);
                 return p;
+            }
+            if (op instanceof BlacklistingSearchOperator) {
+                // Generate rp's for each value
+                entry.values.forEach(val => {
+                    val.rp = String.fromCharCode(...val.recordPointer);
+                });
+
+                // Check which values were previously blacklisted
+                entry.values = entry.values.filter(val => {
+                    return blacklistRpTree.find(val.rp) === null;
+                })
+                if (entry.values.length === 0) { return; }
+
+                // Check which values should be blacklisted
+                let blacklistValues = op.check(entry);
+                if (blacklistValues instanceof Array) {
+                    // Add to blacklist tree
+                    blacklistValues.forEach(val => {
+                        blacklistRpTree.add(val.rp, emptyValue);
+                    });
+
+                    // Remove from current results
+                    entry.values = blacklistValues === entry.values
+                        ? [] // Same array, so all values were blacklisted
+                        : entry.values.filter(value => blacklistValues.indexOf(value) < 0);
+
+                    let removed = { values: 0, entries: 0 };
+                    if (include.values) {
+                        // Remove from previous results (values)
+                        for (let i = 0; i < results.values.length; i++) {
+                            const val = results.values[i];
+                            // if (!val.rp) { val.rp = String.fromCharCode(...val.recordPointer); }
+                            if (blacklistRpTree.find(val.rp)) {
+                                results.values.splice(i, 1);
+                                i--;
+                                removed.values++;
+                            }
+                        }
+                    }
+                    if (include.entries) {
+                        // Remove from previous results (entries, keys)
+                        for (let i = 0; i < results.entries.length; i++) {
+                            const entry = results.entries[i];
+                            for (let j = 0; j < entry.values.length; j++) {
+                                const val = entry.values[j];
+                                // if (!val.rp) { val.rp = String.fromCharCode(...val.recordPointer); }
+                                if (blacklistRpTree.find(val.rp)) {
+                                    entry.values.splice(j, 1);
+                                    j--;
+                                    if (!include.values) { removed.values++; }
+                                    if (entry.values.length === 0) {
+                                        results.entries.splice(i, 1);
+                                        i--;
+                                        removed.entries++;
+                                        if (include.keys) {
+                                            results.keys.splice(results.keys.indexOf(entry.key), 1);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    results.valueCount -= removed.values;
+                    results.keyCount -= removed.entries;
+
+                    if (entry.values.length === 0) { return; }
+                }
+
+                // The way BlacklistingSearchOperator is currently used (including ALL values
+                // in the index besides the ones that are blacklisted along the way), we only 
+                // want unique "non-blacklisted" recordpointers in the results. So, we want to 
+                // remove all values that are already present in the current results:
+                for (let i = 0; i < entry.values.length; i++) {
+                    const currentValue = entry.values[i];
+                    let remove = false;
+                    if (include.values) {
+                        const index = results.values.findIndex(val => val.rp === currentValue.rp);
+                        remove = index >= 0;
+                    }
+                    else if (include.entries) {
+                        // Check result entries
+                        for (let j = 0; j < results.entries.length; j++) {
+                            const entry = results.entries[j];
+                            const index = entry.values.findIndex(val => val.rp === currentValue.rp);
+                            remove = index >= 0;
+                            if (remove) { break; }
+                        }
+                    }
+                    if (remove) {
+                        entry.values.splice(i, 1);
+                        i--;
+                    }
+                }
+                if (entry.values.length === 0) { return; }
             }
             if (filterRecordPointers) {
                 // Apply filter first, only use what remains
@@ -3012,7 +3130,28 @@ class BinaryBPlusTree {
             }
         }
 
-        if (["<","<="].indexOf(op) >= 0) {
+        if (op instanceof BlacklistingSearchOperator) {
+            // NEW: custom callback methods to check match
+            // Full index scan needed
+            const processLeaf = leaf => {
+                for (let i = 0; i < leaf.entries.length; i++) {
+                    const entry = leaf.entries[i];
+                    // const keyMatch = typeof op.keyCheck === 'function' ? op.keyCheck(entry.key) : true;
+                    // if (!keyMatch) { continue; }
+                    add(entry); // check will be done by add
+                }
+                if (leaf.getNext) {
+                    return leaf.getNext()
+                    .then(processLeaf);
+                }
+                else {
+                    return ret(); // results; //ret(results);
+                }
+            };
+            return this.getFirstLeaf(getLeafOptions)
+            .then(processLeaf);
+        }
+        else if (["<","<="].indexOf(op) >= 0) {
             const processLeaf = (leaf) => {
                 let stop = false;
                 for (let i = 0; i < leaf.entries.length; i++) {
@@ -6413,5 +6552,6 @@ module.exports = {
     BinaryBPlusTreeLeafEntry,
     BPlusTreeBuilder,
     BinaryWriter,
-    BinaryReader
+    BinaryReader,
+    BlacklistingSearchOperator
 };
