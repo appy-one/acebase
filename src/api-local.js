@@ -177,29 +177,9 @@ class LocalApi extends Api {
             const indexesOnKey = availableIndexes
                 .filter(index => index.key === filter.key)
                 .filter(index => {
-                    if (index.type === 'array') {
-                        return ['contains', '!contains'].indexOf(filter.op) >= 0;
-                    }
-                    else if (index.type === 'fulltext') {
-                        return ['fulltext:contains', 'fulltext:not_contains'].indexOf(filter.op) >= 0;
-                    }
-                    else if (index.type === 'geo') {
-                        return ['geo:nearby'].indexOf(filter.op) >= 0;
-                    }
-                    return true;
+                    return index.validOperators.includes(filter.op);
                 });
 
-            // if (indexesOnKey.length === 1) {
-            //     filter.index = indexesOnKey[0];
-            //     filter.index.includeKeys.forEach(key => {
-            //         // Are there other filters on this included key? Let them use this index
-            //         query.filters.filter(f => f !== filter && f.key === key).forEach(f => {
-            //             f.indexUsage = 'filter';
-            //             f.index = filter.index;
-            //         });
-            //     });
-            // }
-            // else 
             if (indexesOnKey.length >= 1) {
                 // If there are multiple indexes on 1 key (happens when index includes other keys), 
                 // we should check other .filters and .order to determine the best one to use
@@ -231,6 +211,11 @@ class LocalApi extends Api {
                 // Assign to other filters and sorts
                 bestBenificialIndex.filterKeys.forEach(key => {
                     query.filters.filter(f => f !== filter && f.key === key).forEach(f => {
+                        if (!DataIndex.validOperators.includes(f.op)) {
+                            // The used operator for this filter is invalid for use on metadata
+                            // Probably because it is an Array/Fulltext/Geo query operator
+                            return;
+                        }
                         f.indexUsage = 'filter';
                         f.index = bestBenificialIndex.index;
                     });
@@ -268,6 +253,13 @@ class LocalApi extends Api {
 
         // Filters that should run on all nodes after indexed results:
         const tableScanFilters = query.filters.filter(filter => !filter.index);
+        const allowedTableScanOperators = ["<","<=","==","!=",">=",">","in","!in","matches","!matches","between","!between","has","!has","contains","!contains"]; // DISABLED "custom" because it is not fully implemented and only works locally
+        for(let i = 0; i < tableScanFilters.length; i++) {
+            const f = tableScanFilters[i];
+            if (!allowedTableScanOperators.includes(f.op)) {
+                return Promise.reject(new Error(`Invalid table scan operator: "${f.op}"`));
+            }
+        }
 
         // Check if the available indexes are sufficient for this wildcard query
         if (isWildcardPath && tableScanFilters.length > 0) {
@@ -327,7 +319,7 @@ class LocalApi extends Api {
         };
 
         if (query.filters.length === 0 && query.take === 0) { 
-            console.error(`Filterless queries must use .take to limit the results. Defaulting to 100`);
+            console.error(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
             query.take = 100;
         }
 
