@@ -313,9 +313,9 @@ db.ref('users/*/posts')
 .subscribe(snap => {
     // This will fire for every post added by any user,
     // so for our example .push this will be the result:
-    // snap.ref.vars === { wildcards: ["ewout"] }
-    const wildcards = snap.ref.vars.wildcards;
-    console.log(`New post added by user "${wildcards[0]}"`)
+    // snap.ref.vars === { 0: "ewout" }
+    const vars = snap.ref.vars;
+    console.log(`New post added by user "${vars[0]}"`)
 });
 db.ref('users/ewout/posts').push({ title: 'new post' });
 
@@ -325,7 +325,8 @@ db.ref('users/$userid/posts/$postid/title')
 .subscribe(snap => {
     // This will fire for every new or changed post title,
     // so for our example .push below this will be the result:
-    // snap.ref.vars === { userid: "ewout", postid: "jpx0k53u0002ecr7s354c51l" }
+    // snap.ref.vars === { 0: "ewout", 1: "jpx0k53u0002ecr7s354c51l", userid: "ewout", postid: (...), $userid: (...), $postid: (...) }
+    // The user id will be in vars[0], vars.userid and vars.$userid
     const title = snap.val();
     const vars = snap.ref.vars; // contains the variable values in path
     console.log(`The title of post ${vars.postid} by user ${vars.userid} was set to: "${title}"`);
@@ -336,7 +337,7 @@ db.ref('users/ewout/posts').push({ title: 'new post' });
 db.ref('users/*/posts/$postid/title')
 .on('value')
 .subscribe(snap => {
-    // snap.ref.vars === { wildcards: ['ewout'], postid: "jpx0k53u0002ecr7s354c51l" }
+    // snap.ref.vars === { 0: 'ewout', 1: "jpx0k53u0002ecr7s354c51l", postid: "jpx0k53u0002ecr7s354c51l", $postid: (...) }
 });
 db.ref('users/ewout/posts').push({ title: 'new post' });
 ```
@@ -347,21 +348,31 @@ In additional to the events mentioned above, you can also subscribe to their ```
 
 ### Wait for events to activate
 
-In some situations, it is useful to wait for event handlers to be active before modifying data.
+In some situations, it is useful to wait for event handlers to be active before modifying data. For instance, if you want an event to fire for changes you are about to make, you have to make sure the subscription is active before performing the updates.
 ```javascript
 var subscription = db.ref('users')
 .on('child_added')
 .subscribe(snap => { /*...*/ });
 
+// Use activated promise
+subscription.activated()
+.then(() => {
+    // We now know for sure the subscription is active,
+    // adding a new user will trigger the .subscribe callback
+    db.ref('users').push({ name: 'Ewout' });
+})
+.catch(err => {
+    // Access to path denied by server?
+    console.error(`Subscription canceled: ${err.message}`);
+});
+```
+
+If you want to handle changes in the subscription state after it was activated (eg because server-side access rights have changed), provide a callback function to the ```activated``` call:
+```javascript
 subscription.activated((activated, cancelReason) => {
     if (!activated) {
         // Access to path denied by server?
-        console.error(`Could not get subscription: ${cancelReason}`);
-    }
-    else {
-        // We now know for sure the subscription is active,
-        // adding a new user will trigger the .subscribe callback
-        db.ref('users').push({ name: 'Ewout' });
+        console.error(`Subscription canceled: ${cancelReason}`);
     }
 });
 ```
@@ -389,8 +400,8 @@ To filter results, multiple ```filter(key, operator, compare)``` statements can 
 - ```'!in'```: value must not be equal to any value in ```compare``` array
 - ```'has'```: value must be an object, and it must have property ```compare```.
 - ```'!has'```: value must be an object, and it must not have property ```compare```
-- ```'contains'```: value must be an array and it must contain a value equal to ```compare```
-- ```'!contains'```: value must be an array and it must not contain a value equal to ```compare```
+- ```'contains'```: value must be an array and it must contain a value equal to ```compare```, or contain all of the values in ```compare``` array
+- ```'!contains'```: value must be an array and it must not contain a value equal to ```compare```, or not contain any of the values in ```compare``` array
 
 NOTE: A query does not require any ```filter``` criteria, you can also use a ```query``` to paginate your data using ```skip```, ```take``` and ```sort```. If you don't specify any of these, AceBase will use ```.take(100)``` as default. If you do not specify a ```sort```, the order of the returned values can vary between executions.
 
@@ -499,7 +510,7 @@ db.createIndex('users/*/posts', 'date') // Index date of any post by any user
 
 ### Include more data in indexes (NEW!)
 
-If your query use filters on multiple keys you could create seperate indexes on each key, but you can also include that data into a single index. This will speed up the query even more in most cases:
+If your query uses filters on multiple keys you could create separate indexes on each key, but you can also include that data into a single index. This will speed up queries even more in most cases:
 
 ```javascript
 db.createIndex('songs', 'year', { include: ['genre'] })
@@ -532,7 +543,7 @@ db.createIndex('songs', 'title', { include: ['year', 'genre'] })
 
 ### Special indexes (NEW!)
 
-Normal indexes are able to index ```string```, ```number```, ```Date```, ```boolean``` and ```undefined``` (non-existent) values. To index other data, you have to create a special index. Currently supported special indexes are: **Array**, **Fulltext** and **Geo** indexes.
+Normal indexes are able to index ```string```, ```number```, ```Date```, ```boolean``` and ```undefined``` (non-existent) values. To index other data, you have to create a special index. Currently supported special indexes are: **Array**, **FullText** and **Geo** indexes.
 
 ### Array indexes (NEW!)
 
@@ -543,7 +554,7 @@ Consider the following data structure:
 chats: {
     chat1: {
         members: ['ewout','john','pete','jack'],
-        ...
+        // ...
     }
 }
 ```
@@ -561,6 +572,24 @@ db.createIndex('chats', 'members', { type: 'array' });
     // Got all chats with ewout
 })
 ```
+
+By supplying an array to the filter, you can get all chats that have all of the supplied users:
+```javascript
+db.query('chats')
+.filter('members', 'contains', ['ewout', 'jack']);
+.get(snapshots => {
+    // Got all chats with ewout AND jack
+})
+```
+Using ```!contains``` you can check which chats do not involve 1 or more users:
+```javascript
+db.query('chats')
+.filter('members', '!contains', ['ewout', 'jack']);
+.get(snapshots => {
+    // Got all chats without ewout and/or jack
+})
+```
+
 
 ### Fulltext indexes (NEW!)
 
@@ -587,6 +616,7 @@ Consider the following dataset:
 landmarks: {
     landmark1: {
         name: 'I Amsterdam Sign',
+        note: 'This is where it used to be before some crazy mayor decided it had to go',
         location: {
             lat: 52.359157,
             long: 4.884155
@@ -606,7 +636,7 @@ landmarks: {
             long: 4.884924
         }
     },
-    ...
+    // ...
 }
 ```
 
@@ -739,13 +769,17 @@ db.types.bind(
 
 ## Upgrade notices
 
+v0.7.0 - Changed DataReference.vars object for subscription events, it now contains all values for path wildcards and variables with their index, and (for named variables:) name and $prefixed name. The ```wildcards``` array has been removed. See *Using variables and wildcards in subscription paths* in the documentation at above.
+
 v0.6.0 - Changed ```db.types.bind``` method signature. Serialization and creator functions can now also access the ```DataReference``` for the object being serialized/instantiated, this enables the use of path variables.
 
 v0.4.0 - introduced fulltext, geo and array indexes. This required making changes to the index file format, you will have to delete all index files and create them again using ```db.indexes.create```.
 
 ## Known issues
 
-* Index building is done in memory (heap), which can cause a "v8::internal::FatalProcessOutOfMemory" (JavaScript heap out of memory) crash on larger datasets. I will refactor this to use input and output streams in a following version. UPDATE: v0.4.3 now uses an output stream and allows for larger indexes to be created. Input stream is still on the todo list.
+* Before v0.7.0 ```fulltext:!contains``` queries on FullText indexes, and ```!contains``` queries on Array indexes did not produce the right results. This has been fixed.
+
+* Before v0.7.0 index building was done in memory (heap), which could cause a "v8::internal::FatalProcessOutOfMemory" (JavaScript heap out of memory) crash on larger datasets. From v0.4.3 it used an output stream and allows for larger indexes to be created, but was still vulnerable to this issue. v0.7.0 now completely builds indexes using streams from/to disk, eliminating memory issues.
 
 * Fulltext indexes are currently only able to index words with latin characters. This will be fixed in a following version.
 
