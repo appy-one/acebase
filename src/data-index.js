@@ -1269,104 +1269,6 @@ class DataIndex {
                                                 indexedValues++;
                                             }
 
-                                            // const addIndexValue = (key, recordPointer, metadata) => {
-                                            //     indexedValues++;
-                                            //     if (!flushed) {
-                                            //         if (indexedValues <= 1000000) { // max 1 million (max 255MB) of values in-memory
-                                            //             // Add to tree builder
-                                            //             treeBuilder.add(key, recordPointer, metadata);
-                                            //         }
-                                            //         else {
-                                            //             // Switch from tree builder to binary tree writer
-                                            //             flushed = true;
-                                            //             addPromise = this._writeIndex(treeBuilder)
-                                            //             .then(() => {
-                                            //                 return this._getTree();
-                                            //             })
-                                            //             .then(i => {
-                                            //                 idx = i;
-                                            //                 treeBuilder = null;
-                                            //                 return idx.tree.add(key, recordPointer, metadata);
-                                            //             });
-                                            //         }
-                                            //     }
-                                            //     else {
-                                            //         const proceed = () => {
-                                            //             return idx.tree.add(key, recordPointer, metadata)
-                                            //             .then(() => {
-                                            //                 console.log(`added '${key}'`);
-                                            //             })
-                                            //             .catch(err => {
-                                            //                 return rebuild(err)
-                                            //                 .then(() => {
-                                            //                     return idx.tree.add(key, recordPointer, metadata);
-                                            //                 });
-                                            //             });
-                                            //         }
-                                            //         // Chain to addPromise
-                                            //         addPromise = addPromise ? addPromise.then(proceed) : proceed();
-                                            //     }
-                                            // }
-                                            // const rebuild = err => {
-                                            //     // Could not update index --> leaf full?
-                                            //     debug.log(`Could not update index ${this.description}: ${err.message}`.yellow);
-
-                                            //     // NEW: Rebuild with streams
-                                            //     const newIndexFile = this.fileName + '.tmp';
-                                            //     return pfs.open(newIndexFile, pfs.flags.write)
-                                            //     .then(fd => {
-                                            //         const treeStatistics = {};
-                                            //         const headerStats = {
-                                            //             written: false,
-                                            //             length: 0,
-                                            //             promise: null
-                                            //         };
-
-                                            //         const writer = (data, index) => { 
-                                            //             let go = () => {
-                                            //                 return pfs.write(fd, data, 0, data.length, headerStats.length + index);
-                                            //             };
-                                            //             if (!headerStats.written) {
-                                            //                 // Write header first, or wait until done
-                                            //                 let promise = 
-                                            //                     headerStats.promise
-                                            //                     || this._writeIndexHeader(fd, treeStatistics)
-                                            //                     .then(result => {
-                                            //                         headerStats.written = true;
-                                            //                         headerStats.length = result.length;
-                                            //                         headerStats.updateTreeLength = result.treeLengthCallback;
-                                            //                     });
-                                            //                 headerStats.promise = promise.then(go); // Chain to original promise
-                                            //                 return headerStats.promise;
-                                            //             }
-                                            //             else {
-                                            //                 return go();
-                                            //             }
-                                            //         }
-                                            //         return idx.tree.rebuild(
-                                            //             BinaryWriter.forFunction(writer), 
-                                            //             { fillFactor: FILL_FACTOR, keepFreeSpace: true, increaseMaxEntries: true, treeStatistics }
-                                            //         )
-                                            //         .then(() => {
-                                            //             idx.close();
-                                            //             return headerStats.updateTreeLength(treeStatistics.byteLength);
-                                            //         })
-                                            //         .then(() => {
-                                            //             return pfs.close(fd);
-                                            //         })
-                                            //         .then(() => {
-                                            //             // rename new file, overwriting the old file
-                                            //             return pfs.rename(newIndexFile, this.fileName);
-                                            //         })
-                                            //     })
-                                            //     .then(() => {
-                                            //         return this._getTree();
-                                            //     })
-                                            //     .then(i => {
-                                            //         idx = i;
-                                            //     });
-                                            // };
-
                                             if (typeof keyValue !== 'undefined' && keyValue !== null) {
                                                 // Add it to the index, using value as the index key, a record pointer as the value
                                                 // Create record pointer
@@ -1512,27 +1414,17 @@ class DataIndex {
                             if (!next) { return; }
     
                             processedValues++;
-                            let values = map.get(next.key);
+                            const isDate = next.key instanceof Date;
+                            const key = isDate ? next.key.getTime() : next.key;
+                            let values = map.get(key);
                             if (values) {
-                                // const nv = next.value.join(',');
-                                // console.assert(values.findIndex(v => v.join(',') === nv) === -1)
                                 values.push(next.value);
                                 flagProcessed(next);
                             }
-                            // else if (map.size < maxKeys) {
-                            //     map.set(next.key, [next.value]);
-                            //     flagProcessed(next);
-                            // }
-                            // else {
-                            //     // save for next batch
-                            //     // IDEA: this could be refactored to start reading next batch in parallel
-                            //     if (!more) {
-                            //         more = true;
-                            //         nextBatchStartEntry = next;
-                            //     }
-                            // }
                             else if (processedValues < maxValues) {
-                                map.set(next.key, [next.value]);
+                                values = [next.value];
+                                if (isDate) { values.dateKey = true; }
+                                map.set(key, values);
                                 flagProcessed(next);
                             }
                             else {
@@ -1578,13 +1470,14 @@ class DataIndex {
                         const writeKey = i => {
                             const key = sortedKeys[i];
                             const values = map.get(key);
+                            const isDateKey = values.dateKey === true;
                             
                             let bytes = [
                                 0, 0, 0, 0 // entry_length
                             ];
     
                             // key:
-                            let b = BinaryWriter.getBytes(key);
+                            let b = BinaryWriter.getBytes(isDateKey ? new Date(key) : key);
                             bytes.push(...b);
     
                             // // values_byte_length:

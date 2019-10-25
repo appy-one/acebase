@@ -2581,7 +2581,7 @@ class BinaryBPlusTree {
             };
         }
 
-        console.assert(leaf.entries.every((entry, index, arr) => index === 0 || _isMore(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
+        console.assert(leaf.entries.every((entry, index, arr) => index === 0 || _isMore(entry.key, arr[index-1].key)), 'Invalid B+Tree: leaf entries are not sorted ok');
 
         return leaf;
     }
@@ -3502,9 +3502,6 @@ class BinaryBPlusTree {
             }
             const go = () => {
                 const index = this.info.byteLength - this.info.freeSpace;
-                if (index === 75216) {
-                    console.log('debug here');
-                }
                 this.info.freeSpace -= bytesRequired;
                 return this._writeFn(
                     _writeByteLength([], 0, this.info.freeSpace), this.info.freeSpaceIndex
@@ -4024,9 +4021,6 @@ class BinaryBPlusTree {
             else {
                 if (~entryIndex) {
                     const entry = leaf.entries[entryIndex];
-                    if (entry.key === 'years' && entry.totalValues === 9) {
-                        console.log('debug time');
-                    }
                     if (entry.extData) {
                         return entry.extData.addValue(recordPointer, metadata)
                         .catch(err => {
@@ -4038,7 +4032,7 @@ class BinaryBPlusTree {
                                 growData: false,
                                 growExtData: true,
                                 applyChanges: leaf => {
-                                    const entry = leaf.entries.find(entry => entry.key === key); //[entryIndex];
+                                    const entry = leaf.entries.find(entry => _isEqual(entry.key, key)); //[entryIndex];
                                     entry.values.push(new BinaryBPlusTreeLeafEntryValue(recordPointer, metadata));
                                 }
                             };
@@ -4534,7 +4528,7 @@ class BinaryBPlusTree {
     /**
      * 
      * @param {object} options 
-     * @param {(entriesPerLeaf: NumberConstructor) => Promise<any[]>} options.getLeafStartKeys
+     * @param {(entriesPerLeaf: number) => Promise<any[]>} options.getLeafStartKeys
      * @param {(n: number) => Promise<{ key: any, values: any[]}[]>} options.getEntries
      * @param {BinaryWriter} options.writer
      * @param {object} options.treeStatistics
@@ -4694,16 +4688,10 @@ class BinaryBPlusTree {
                 let currentLeafIndex = 0;
                 let totalWrittenEntries = 0;
                 const writeLeaf = (entries) => {
-                    // For debugging:
-                    // if (entries[0].key <= 75032 && entries[entries.length-1].key >= 75032 && entries.findIndex(entry => entry.key === 75032) < 0) {
-                    //     console.log('we lost it!');
-                    // }
-                    console.assert(entries.every((entry, index, arr) => index === 0 || entry.key >= arr[index-1].key), 'Leaf entries are not sorted ok');
-
                     // console.log(`Writing leaf with ${entries.length} entries at index ${index}, keys range: ["${entries[0].key}", "${entries[entries.length-1].key}"]`)
+                    console.assert(entries.every((entry, index, arr) => index === 0 || _isMoreOrEqual(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
                     let i = leafIndexes.length;
-                    console.assert(leafStartKeys[i] === entries[0].key, 'wrong!');
-                    // /debugging
+                    console.assert(_isEqual(leafStartKeys[i], entries[0].key), `first entry for leaf has wrong key, must be ${leafStartKeys[i]}!`);
 
                     leafIndexes.push(index);
                     const isLastLeaf = leafIndexes.length === leafStartKeys.length;
@@ -4736,7 +4724,7 @@ class BinaryBPlusTree {
                          }
                     }
                     else {
-                        let cutEntryIndex = newLeafEntries.findIndex(entry => entry.key === cutEntryKey);
+                        let cutEntryIndex = newLeafEntries.findIndex(entry => _isEqual(entry.key, cutEntryKey));
                         if (cutEntryIndex === -1) {
                             // Not enough entries yet
                             console.assert(!flushAll, 'check logic');
@@ -4765,8 +4753,8 @@ class BinaryBPlusTree {
                     }
                     // options.treeStatistics.readEntries += entries.length;
 
-                    console.assert(entries.every((entry, index, arr) => index === 0 || entry.key >= arr[index-1].key), 'Leaf entries are not sorted ok');
-                    console.assert(newLeafEntries.length === 0 || entries[0].key > newLeafEntries[newLeafEntries.length-1].key, 'adding entries will corrupt sort order');
+                    console.assert(entries.every((entry, index, arr) => index === 0 || _isMoreOrEqual(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
+                    console.assert(newLeafEntries.length === 0 || _isMore(entries[0].key, newLeafEntries[newLeafEntries.length-1].key), 'adding entries will corrupt sort order');
                     newLeafEntries.push(...entries);
 
                     let writePromise = flush(false);
