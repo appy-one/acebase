@@ -107,6 +107,9 @@ class NodeAllocation {
      * @returns {NodeAllocation}
      */
     static fromAdresses(records) {
+        if (records.length === 0) { 
+            throw new Error(`Cannot create allocation for 0 addresses`); 
+        }
         let range = new StorageAddressRange(records[0].pageNr, records[0].recordNr, 1);
         let ranges = [range];
         for(let i = 1; i < records.length; i++) {
@@ -1042,7 +1045,10 @@ class NodeReader {
     }
 
     _treeDataWriter(binary, index) {
-        const length = binary.byteLength;
+        if (binary instanceof Array) {
+            binary = Buffer.from(binary);
+        }
+        const length = binary.length;
         const recordSize = this.storage.settings.recordSize;
         const headerLength = this.recordInfo.headerLength;
         const startRecord = {
@@ -1451,7 +1457,7 @@ class Node {
             // Deletion of node is requested. Update parent
             return Node.update(storage, pathInfo.parentPath, { [pathInfo.key]: null }, { merge: true, tid });
         }
-        
+
         if (path !== "" && _valueFitsInline(storage, value)) {
             // Simple value, update parent instead
             return Node.update(storage, pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid });
@@ -2583,136 +2589,8 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
                 debug.log(`Could not update tree for "/${nodeInfo.path}": ${err.message}`.yellow);
                 // Failed to update the binary data, we need to recreate the whole tree
 
-                // let recordInfo = nodeReader.recordInfo; // will be updated later
-
-                // // Pre-allocate new records (old byte size + 10%), create binary writer for it and call .rebuild(writer, { allocatedBytes })
-                // let newTreeSize = Math.round(tree.info.byteLength * 1.1);
-                // const bytesPerRecord = storage.settings.recordSize;
-                // const estimatedChunks = Math.ceil(newTreeSize / bytesPerRecord / storage.settings.pageSize);
-                // let estimatedHeaderSize = 4;
-                // if (estimatedChunks > 1) {
-                //     estimatedHeaderSize += (estimatedChunks - 1) * 9;
-                // }
-                // const estimatedHeaderRecords = Math.ceil(estimatedHeaderSize / bytesPerRecord);
-                // const requiredRecords = estimatedHeaderRecords + Math.ceil(newTreeSize / bytesPerRecord);
-                // return storage.FST.allocate(requiredRecords)
-                // .then(allocation => {
-
-                //     // Create header data
-                //     const header = [
-                //         FLAG_KEY_TREE | VALUE_TYPES.OBJECT  // record_info
-                //     ];
-                //     // Add header chunk table
-                //     allocation.forEach((chunk, index) => {
-                //         if (index === 0) {
-                //             // Add first chunk
-                //             let followingRecords = chunk.length - 1;
-                //             header.push(
-                //                 1,  // ct_entry_type 1 (number of contigious following records)
-                //                 (followingRecords >> 8) & 0xff,
-                //                 followingRecords & 0xff
-                //             );
-                //         }
-                //         else {
-                //             // Another chunk
-                //             let followingRecords = chunk.length - 1;
-                //             header.push(
-                //                 2,  // ct_entry_type 2 (following range)
-                //                 // start_page_nr:
-                //                 (chunk.pageNr >> 24) & 0xff,
-                //                 (chunk.pageNr >> 16) & 0xff,
-                //                 (chunk.pageNr >> 8) & 0xff,
-                //                 chunk.pageNr & 0xff,
-                //                 // start_record_nr:
-                //                 (chunk.recordNr >> 8) & 0xff,
-                //                 chunk.recordNr & 0xff,
-                //                 // nr_records:
-                //                 (followingRecords >> 8) & 0xff,
-                //                 followingRecords & 0xff
-                //             );  
-                //         }                          
-                //     });
-                //     header.push(
-                //         0,  // ct_entry_type 0 (end of table, no entry data)
-
-                //         // last_record_len:
-                //         (bytesPerRecord >> 8) & 0xff,
-                //         bytesPerRecord & 0xff
-                //     );
-
-                //     // Recalulate the amount of bytes the tree is allowed to grow to with the allocated records
-                //     let totalAvailableBytes = (requiredRecords * bytesPerRecord) - header.length;
-                    
-                //     // Update newTreeSize
-                //     newTreeSize = totalAvailableBytes;
-
-                //     // write header
-                //     const firstRange = allocation[0];
-                //     const fileIndex = storage.getRecordFileIndex(firstRange.pageNr, firstRange.recordNr);
-                //     if (firstRange.length * bytesPerRecord < header.length) {
-                //         // This is a problem. Can't write the whole header in the first range
-                //         throw new Error(`NOT IMPLEMENTED YET: Can't write headers larger than first allocated record range!`);
-                //     }
-                //     return storage.writeData(fileIndex, Uint8Array.from(header))
-                //     .then(() => {
-                //         const nodeAllocation = new NodeAllocation(allocation);
-                //         const writer = (data, index) => { 
-                //             // Taken from _treeDataWriter, modified slightly. 
-                //             // TODO: create and move to: function _createTreeDataWriter(storage, allocation, headerLength)
-                //             const length = data.length;
-                //             const recordSize = bytesPerRecord;
-                //             const headerLength = header.length;
-                //             const startRecord = {
-                //                 nr: Math.floor((headerLength + index) / recordSize),
-                //                 offset: (headerLength + index) % recordSize
-                //             };
-                //             const endRecord = {
-                //                 nr: Math.floor((headerLength + index + length) / recordSize),
-                //                 offset: (headerLength + index + length) % recordSize
-                //             };
-                //             const writeRecords = nodeAllocation.addresses.slice(startRecord.nr, endRecord.nr + 1);
-                //             const writeRanges = NodeAllocation.fromAdresses(writeRecords).ranges;
-                //             const writes = [];
-                //             const binary = new Uint8Array(data);
-                //             let bOffset = 0;
-                //             for (let i = 0; i < writeRanges.length; i++) {
-                //                 const range = writeRanges[i];
-                //                 let fIndex = storage.getRecordFileIndex(range.pageNr, range.recordNr);
-                //                 let bLength = range.length * recordSize;
-                //                 if (i === 0) { 
-                //                     fIndex += startRecord.offset; 
-                //                     bLength -= startRecord.offset; 
-                //                 }
-                //                 if (bOffset + bLength > length) {
-                //                     bLength = length - bOffset;
-                //                 }
-                //                 let p = storage.writeData(fIndex, binary, bOffset, bLength);
-                //                 writes.push(p);
-                //                 bOffset += bLength;
-                //             }
-                //             return Promise.all(writes);
-                //         }
-                //         return tree.rebuild(BinaryWriter.forFunction(writer), { allocatedBytes: newTreeSize }); // Read all leafs, rebuild tree from ground up
-                //     })
-                //     .then(() => {
-                //         // Update record info
-                //         const newAddress = new NodeAddress(nodeInfo.path, allocation[0].pageNr, allocation[0].recordNr);
-                //         const newNodeReader = new NodeReader(storage, newAddress, lock, false);
-                //         return newNodeReader.readHeader()
-                //         .then(info => {
-                //             tree = new BinaryBPlusTree(
-                //                 newNodeReader._treeDataReader.bind(newNodeReader), 
-                //                 1024 * 100, // 100KB reads/writes
-                //                 newNodeReader._treeDataWriter.bind(newNodeReader),
-                //                 'record@' + newNodeReader.recordInfo.address.toString()
-                //             );
-                //             recordInfo = newNodeReader.recordInfo;
-                //         });
-                //     });
-                // })
-
                 // Rebuild the tree the old-fashioned in-memory way. 
-                // Hope this is never necessary!!
+                // TODO: rebuild tree on disk with streams. See data-index.js
                 let bytes = [];
                 let writer = BinaryWriter.forArray(bytes);
                 return tree.rebuild(writer)
