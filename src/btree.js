@@ -2648,7 +2648,6 @@ class BinaryBPlusTree {
                 : null;
             const addFreeSpace = true;
             const writes = [];
-            // const pointers = [];
             const bytes = builder.createLeaf({
                 index: leafInfo.index,
                 prevIndex: leafInfo.prevLeafIndex,
@@ -2678,9 +2677,6 @@ class BinaryBPlusTree {
 
                     // ext_data_free_length:
                     bytes.writeUint32(free); //_writeByteLength(bytes, bytes.length, free);
-                    if (free < 0 || _readByteLength(bytes, 4) > length) {
-                        console.log('What?!');
-                    }
 
                     // data:
                     bytes.append(data); //_appendToArray(bytes, data);
@@ -2693,26 +2689,19 @@ class BinaryBPlusTree {
 
                     let writePromise = this._writeFn(bytes.data, fileIndex)
                     .then(result => {
-                        console.log('additional extdata written successfully');
                         return result;
                     });
                     writes.push(writePromise);
-                    // pointers.push({ pointerIndex, targetIndex: extIndex });
                     return { extIndex };
                 }
             });
             const maxLength = leafInfo.length + (leafInfo.extData && leafInfo.extData.loaded ? leafInfo.extData.length : 0);
             console.assert(bytes.length <= maxLength, 'more bytes needed than allocated for leaf');
 
-            // // Adjust pointers to newly created ext_data blocks
-            // pointers.forEach(pointer => {
-            //     _writeByteLength(bytes, pointer.pointerIndex, pointer.targetIndex);
-            // });
             const promise = this._writeFn(bytes, leafInfo.index);
             writes.push(promise);
             return Promise.all(writes)
             .then(results => {
-                console.log(`${writes.length} writes succeeded`);
                 return results;
             });
         }
@@ -3832,12 +3821,7 @@ class BinaryBPlusTree {
         return this._requestFreeSpace(newLeafLength + newLeafExtDataLength)
         .then(allocated => {
 
-            // let lock;
-            // return ThreadSafe.lock(this.id)
-            // .then(l => {
-            //     lock = l;
-
-            console.log(`Splitting leaf "${leaf.entries[0].key}" to "${leaf.entries.slice(-1)[0].key}", cutting at "${movingEntries[0].key}"`);
+            // console.log(`Splitting leaf "${leaf.entries[0].key}" to "${leaf.entries.slice(-1)[0].key}", cutting at "${movingEntries[0].key}"`);
 
             const nextLeaf = options.nextLeaf;
 
@@ -4411,7 +4395,7 @@ class BinaryBPlusTree {
         }
         let lock;
         let leafsSeen = 0;
-        console.log('Starting tree rebuild');
+        // console.log('Starting tree rebuild');
         return ThreadSafe.lock(this.id, { timeout: 15 * 60 * 1000 })
         .then(l => {
             lock = l;
@@ -4456,7 +4440,7 @@ class BinaryBPlusTree {
                         }
                     }
     
-                    console.log(`Processed ${leafsSeen} leafs in source tree`);
+                    // console.log(`Processed ${leafsSeen} leafs in source tree`);
                     if (leaf.getNext) {
                         return leaf.getNext()
                         .then(processLeaf);
@@ -4809,7 +4793,7 @@ class BinaryBPlusTree {
                 else {
                     // Use 10% free space, or the largest leaf length + 10%, whichever is the largest
                     freeBytes = Math.max(Math.ceil(byteLength * 0.1), Math.ceil(largestLeafLength * 1.1));
-                    console.log(`new tree gets ${freeBytes} free bytes`);
+                    // console.log(`new tree gets ${freeBytes} free bytes`);
                     byteLength += freeBytes;
                 }
 
