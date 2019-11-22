@@ -1,9 +1,9 @@
 const { Utils } = require('acebase-core');
-const { numberToBytes, bytesToNumber } = Utils;
-const { TextEncoder, TextDecoder } = require('text-encoding');
+const { numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
+// const { TextEncoder, TextDecoder } = require('text-encoding');
 const ThreadSafe = require('./thread-safe');
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
+// const textEncoder = new TextEncoder();
+// const textDecoder = new TextDecoder();
 
 const KEY_TYPE = {
     UNDEFINED: 0,
@@ -1317,7 +1317,7 @@ class BPlusTree {
                 break;
             }
             case KEY_TYPE.STRING: {
-                key = textDecoder.decode(Uint8Array.from(keyData));
+                key = decodeString(keyData); // textDecoder.decode(Uint8Array.from(keyData));
                 // key = keyData.reduce((k, code) => k + String.fromCharCode(code), "");
                 break;
             }
@@ -1354,10 +1354,7 @@ class BPlusTree {
             }                
             case "string": {
                 keyType = KEY_TYPE.STRING;
-                keyBytes = Array.from(textEncoder.encode(key));
-                // for (let i = 0; i < key.length; i++) {
-                //     keyBytes.push(key.charCodeAt(i));
-                // }
+                keyBytes = Array.from(encodeString(key)); // textEncoder.encode(key)
                 break;
             }
             case "number": {
@@ -3585,7 +3582,7 @@ class BinaryBPlusTree {
         return allocPromise
         .catch(err => {
             // Not enough space available?
-            console.log(`Can't get ${bytesNeeded} bytes to rebuild leaf`, leaf, options);
+            console.log(`Can't get ${bytesNeeded} bytes to rebuild leaf: ${err.message}`); // , leaf, options
             throw err;
         })
         .then(allocated => {
@@ -6040,12 +6037,8 @@ class BinaryBPlusTreeBuilder {
             }                
             case "string": {
                 keyType = KEY_TYPE.STRING;
-                keyBytes = Array.from(textEncoder.encode(key));
+                keyBytes = Array.from(encodeString(key)); // textEncoder.encode(key)
                 console.assert(keyBytes.length < 256, `key byte size for "${key}" is too large, max is 255`);
-
-                // for (let i = 0; i < key.length; i++) {
-                //     keyBytes.push(key.charCodeAt(i));
-                // }
                 break;
             }
             case "number": {

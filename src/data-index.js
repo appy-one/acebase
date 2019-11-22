@@ -4,11 +4,11 @@ const { Storage } = require('./storage');
 const { Node } = require('./node');
 const { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryWriter, BinaryBPlusTreeLeafEntry, BinaryReader, BlacklistingSearchOperator } = require('./btree');
 const { PathInfo, Utils, ID, debug } = require('acebase-core');
-const { compareValues, getChildValues, numberToBytes, bytesToNumber } = Utils;
+const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
 const Geohash = require('./geohash');
-const { TextEncoder, TextDecoder } = require('text-encoding');
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
+// const { TextEncoder, TextDecoder } = require('text-encoding');
+// const textEncoder = new TextEncoder();
+// const textDecoder = new TextDecoder();
 const pfs = require('./promise-fs');
 const fs = require('fs');
 const ThreadSafe = require('./thread-safe');
@@ -282,7 +282,7 @@ class DataIndex {
                 let value;
                 if (valueType === 1) {
                     // STRING
-                    value = textDecoder.decode(header.slice(index, index+valueLength));
+                    value = decodeString(header.slice(index, index+valueLength)); // textDecoder.decode(header.slice(index, index+valueLength));
                 }
                 else if (valueType === 2) {
                     // NUMBER
@@ -1929,7 +1929,7 @@ class DataIndex {
             else if (typeof value === 'string') {
                 // value_type:
                 bytes.push(1);
-                valBytes = Array.from(textEncoder.encode(value));
+                valBytes = Array.from(encodeString(value)); // textEncoder.encode(value)
             }
             else if (typeof value === 'number') {
                 // value_type:
@@ -2153,7 +2153,7 @@ class DataIndex {
                 else if (typeof value === 'string') {
                     // value_type:
                     bytes.push(1);
-                    valBytes = Array.from(textEncoder.encode(value));
+                    valBytes = Array.from(encodeString(value)); // textEncoder.encode(value)
                 }
                 else if (typeof value === 'number') {
                     // value_type:
@@ -2553,8 +2553,8 @@ class ArrayIndex extends DataIndex {
      * @param {any} newValue 
      */
     handleRecordUpdate(path, oldValue, newValue) {
-        let oldEntries = oldValue[this.key];
-        let newEntries = newValue[this.key];
+        let oldEntries = this.key in oldValue ? oldValue[this.key] : null;
+        let newEntries = this.key in newValue ? newValue[this.key] : null;
         
         if (oldEntries instanceof Array) { 
             // Only use unique values
