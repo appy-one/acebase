@@ -251,8 +251,7 @@ class AceBaseStorage extends Storage {
                     throw new Error(`DEV ERROR: KIT.write not allowed to run if it is a cluster worker!!`);
                 }
                 // Key Index Table starts at index 64, and is 2^16 (65536) bytes long
-                const data = new Buffer(this.length);
-                data.fill(0); // Initialize with all zeroes
+                const data = Buffer.alloc(this.length);
                 const view = new DataView(data.buffer);
                 let index = 0;
                 for(let i = 0; i < this.keys.length; i++) {
@@ -285,7 +284,7 @@ class AceBaseStorage extends Storage {
 
             load() {
                 return new Promise((resolve, reject) => {
-                    let data = new Buffer(this.length);
+                    let data = Buffer.alloc(this.length);
                     fs.read(fd, data, 0, data.length, this.fileIndex, (err, bytesRead) => {
                         if (err) {
                             debug.error(`Error reading KIT from file: `, err);
@@ -563,7 +562,7 @@ class AceBaseStorage extends Storage {
 
                 load() {
                     return new Promise((resolve, reject) => {
-                        let data = new Buffer(this.length);
+                        let data = Buffer.alloc(this.length);
                         fs.read(fd, data, 0, data.length, this.fileIndex, (err, bytesRead) => {
                             if (err) {
                                 debug.error(`Error reading FST from file`);
@@ -665,7 +664,7 @@ class AceBaseStorage extends Storage {
                         return error(err, `Failed to open database file`);
                     }
                     this.file = fd = file;
-                    const data = new Buffer(64);
+                    const data = Buffer.alloc(64);
                     fs.read(fd, data, 0, data.length, 0, (err, bytesRead) => {
                         if (err) {
                             return error(err, `Could not read database header`);
