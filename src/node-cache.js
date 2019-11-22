@@ -1,3 +1,5 @@
+// TODO: Rename to NodeInfoCache
+
 const { NodeInfo } = require('./node-info');
 const { PathInfo } = require('acebase-core');
 
@@ -43,6 +45,7 @@ class NodeCache {
         this. _cleanupTimeout = null;
         /** @type {Map<string, NodeCacheEntry>} */
         this._cache = new Map(); //{ };
+        this._announcements = new Map(); // For announced lookups, will bind subsequent .find calls to a promise that resolves once the cache item is set
     }
 
     _assertCleanupTimeout() {
@@ -54,6 +57,22 @@ class NodeCache {
                     this._assertCleanupTimeout();
                 }
             }, CACHE_TIMEOUT);
+        }
+    }
+
+    announce(path) {
+        let announcement = this._announcements.get(path);
+        if (!announcement) {
+            announcement = {
+                resolve: null,
+                reject: null,
+                promise: null
+            }
+            announcement.promise = new Promise((resolve, reject) => {
+                announcement.resolve = resolve;
+                announcement.reject = reject;
+            });
+            this._announcements.set(path, announcement);
         }
     }
 
@@ -69,7 +88,7 @@ class NodeCache {
         if (nodeInfo.path === "") {
             // Don't cache root address, it has to be retrieved from storage.rootAddress
             return;
-        }      
+        }
         let entry = this._cache.get(nodeInfo.path);
         if (entry) {
             if (!overwrite) {
@@ -85,6 +104,11 @@ class NodeCache {
             DEBUG_MODE && console.error(`CACHE INSERT ${nodeInfo}`);
             entry = new NodeCacheEntry(nodeInfo);
             this._cache.set(nodeInfo.path, entry);
+        }
+        const announcement = this._announcements.get(nodeInfo.path);
+        if (announcement) {
+            this._announcements.delete(nodeInfo.path);
+            announcement.resolve(nodeInfo);
         }
         this._assertCleanupTimeout();
     }
@@ -158,9 +182,21 @@ class NodeCache {
     /**
      * Finds cached NodeInfo for a given path. Returns null if the info is not found in cache
      * @param {string} path 
-     * @returns {NodeInfo|null} cached info or null
+     * @returns {NodeInfo|Promise<NodeInfo>|null} cached info, a promise, or null
      */
-    find(path) {
+    find(path, checkAnnounced = false) {
+        if (checkAnnounced === true) {
+            const announcement = this._announcements.get(path);
+            if (announcement) {
+                let resolve;
+                const p = new Promise(rs => { resolve = rs; });
+                announcement.promise = announcement.promise.then(info => {
+                    resolve(info);
+                    return info;
+                });
+                return p;
+            }
+        }
         let entry = this._cache.get(path) || null;
         if (entry && entry.nodeInfo.path !== "") {
             if (entry.expires <= Date.now()) {
