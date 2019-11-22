@@ -21,15 +21,41 @@ export class AceBase extends acebasecore.AceBaseBase {
 
 export interface AceBaseLocalSettings {
     logLevel?: string;
-    storage?: StorageOptions;
+    storage?: StorageSettings;
 }
 
-export interface StorageOptions {
-    recordSize?: number;
-    pageSize?: number;
+export abstract class StorageSettings {
     maxInlineValueSize?: number;
     removeVoidProperties?: boolean;
-    path?:string;
+    path?: string;    
+}
+
+export class AceBaseStorageSettings extends StorageSettings {
+    constructor(settings: AceBaseStorageSettings);
+    recordSize?: number;
+    pageSize?: number;
+}
+
+export class SQLiteStorageSettings extends StorageSettings {
+    constructor(settings: SQLiteStorageSettings);
+}
+
+export class MSSQLStorageSettings extends StorageSettings {
+    constructor(settings: MSSQLStorageSettings);
+    driver?: 'tedious'|'native';
+    domain?: string;
+    user?: string;
+    password?: string;
+    server?: string;
+    port?: number;
+    database?: string;
+    encrypt?: boolean;
+    appName?: string;
+    connectionTimeout?: number;
+    requestTimeout?: number;
+    maxConnections?: number;
+    minConnections?: number;
+    idleTimeout?: number;
 }
 
 export import DataSnapshot = acebasecore.DataSnapshot;
