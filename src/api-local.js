@@ -1,6 +1,9 @@
 const { Api } = require('acebase-core');
 const { LocalAceBase } = require('./acebase-local');
-const { Storage, StorageSettings } = require('./storage');
+const { StorageSettings } = require('./storage');
+const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
+const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
+const { MSSQLStorage, MSSQLStorageSettings } = require('./storage-mssql');
 const { Node } = require('./node');
 const { DataIndex } = require('./data-index');
 
@@ -14,7 +17,18 @@ class LocalApi extends Api {
     constructor(dbname = "default", settings, readyCallback) {
         super();
         this.db = settings.db;
-        this.storage = new Storage(dbname, settings.storage);
+        if (settings.storage instanceof SQLiteStorageSettings) {
+            this.storage = new SQLiteStorage(dbname, settings.storage);
+        }
+        else if (settings.storage instanceof MSSQLStorageSettings) {
+            this.storage = new MSSQLStorage(dbname, settings.storage);
+        }
+        else {
+            const storageSettings = settings.storage instanceof AceBaseStorageSettings
+                ? settings.storage
+                : new AceBaseStorageSettings(settings.storage);
+            this.storage = new AceBaseStorage(dbname, storageSettings);
+        }
         this.storage.on("ready", readyCallback);
         // this.storage.on("datachanged", (event) => {
         //     debug.warn(`datachanged event fired for path ${event.path}`);
@@ -133,7 +147,8 @@ class LocalApi extends Api {
                     .then(val => {
                         if (val === null) { 
                             // Record was deleted, but index isn't updated yet?
-                            console.warn(`Indexed result "/${path}" does not have a record!`)
+                            console.warn(`Indexed result "/${path}" does not have a record!`);
+                            // TODO: let index rebuild
                             return; 
                         }
                         

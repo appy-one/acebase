@@ -14,18 +14,18 @@
   
  */
 const { AceBaseBase, AceBaseSettings } = require('acebase-core');
-const { StorageOptions } = require('./storage');
+const { StorageSettings } = require('./storage');
 const { LocalApi } = require('./api-local');
 
 class AceBaseLocalSettings {
     /**
      * 
-     * @param {{ logLevel: string, storage: StorageOptions }} options 
+     * @param {{ logLevel: string, storage: StorageSettings }} options 
      */
     constructor(options) {
         if (!options) { options = {}; }
         this.logLevel = options.logLevel || 'log';
-        this.storage = new StorageOptions(options.storage);
+        this.storage = options.storage; ////new StorageOptions(options.storage);
     }
 }
 
