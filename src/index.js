@@ -1,5 +1,8 @@
 const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, TypeMappingOptions } = require('acebase-core');
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
+const { AceBaseStorageSettings } = require('./storage-acebase');
+const { SQLiteStorageSettings } = require('./storage-sqlite');
+const { MSSQLStorageSettings } = require('./storage-mssql');
 
 module.exports = { 
     AceBase, 
@@ -9,5 +12,8 @@ module.exports = {
     EventSubscription, 
     PathReference, 
     TypeMappings, 
-    TypeMappingOptions
+    TypeMappingOptions,
+    AceBaseStorageSettings,
+    SQLiteStorageSettings,
+    MSSQLStorageSettings
 };
