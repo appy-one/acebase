@@ -780,7 +780,7 @@ Dependencies: SQLite requires the ```sqlite3``` package to be installed from npm
 const db = new AceBase('mydb', new SQLiteStorageSettings({ path: '.' }));
 
 // Or, SQL Server:
-const db = new AceBase('mydb', new SQLiteStorageSettings({ server: 'localhost', port: 1433, database: 'MyDB', username: 'user', password: 'secret', (...) }));
+const db = new AceBase('mydb', new MSSQLStorageSettings({ server: 'localhost', port: 1433, database: 'MyDB', username: 'user', password: 'secret', (...) }));
 ```
 
 ## Upgrade notices
