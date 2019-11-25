@@ -2848,7 +2848,7 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
                     // operations.push({ type: 'update', key: change.keyOrIndex, currentValue: change.oldValue, newValue: change.newValue });
                     const oldEntryValue = new BinaryBPlusTree.EntryValue(change.oldValue);
                     const newEntryValue = new BinaryBPlusTree.EntryValue(change.newValue);
-                    const op = BinaryBPlusTree.TransactionOperation.update(change.key, newEntryValue, oldEntryValue);
+                    const op = BinaryBPlusTree.TransactionOperation.update(change.keyOrIndex, newEntryValue, oldEntryValue);
                     operations.push(op);
                 });
                 changes.inserts.forEach(change => {
