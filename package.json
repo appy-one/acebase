@@ -1,6 +1,6 @@
 {
   "name": "acebase",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "AceBase realtime database engine",
   "main": "./src/index.js",
   "types": "./index.d.ts",
