@@ -958,7 +958,27 @@ class AceBaseStorage extends Storage {
         }
 
         // Cache miss, announce the lookup
-        this.nodeCache.announce(path);
+        if (!this._announcements) {
+            this._announcements = new Map();
+        }
+        const a = this._announcements.get(path);
+        if (a) {
+            return new Promise(resolve => {
+                a.promise = a.promise.then(info => { 
+                    resolve(info); 
+                    return info; 
+                });
+            });
+        }
+        const announcement = {
+            resolve: null,
+            promise: null
+        };
+        announcement.promise = new Promise(resolve => {
+            announcement.resolve = resolve;
+        });
+        this._announcements.set(path, announcement);
+        // this.nodeCache.announce(path);
 
         // Try again on the parent node, enable others to bind to our lookup result
         // _currentNodeLookups.set(path, []);
@@ -985,7 +1005,7 @@ class AceBaseStorage extends Storage {
                 // Parent does not exist, is not an object or array, or has no children (object not stored in own address)
                 // so child doesn't exist
                 const childInfo = new NodeInfo({ path, exists: false });
-                this.nodeCache.update(childInfo);
+                this.nodeCache.update(childInfo, true);
                 return childInfo;
             }
 
@@ -995,6 +1015,10 @@ class AceBaseStorage extends Storage {
         .then(childInfo => {
             lock.release(`Node.getInfo: done with path "/${parentPath}"`);
             this.nodeCache.update(childInfo, true); // NodeCache.update(childInfo); // Don't have to, nodeReader will have done it already
+
+            this._announcements.delete(path);
+            announcement.resolve(childInfo);
+
             return childInfo;
         });
     }
@@ -1962,6 +1986,10 @@ class NodeReader {
                         const isLastKey = i + 1 === options.keyFilter.length;
                         const key = options.keyFilter[i];
                         tree.find(key)
+                        .catch(err => {
+                            console.error(`Error reading tree for node ${this.address}: ${err.message}`, err);
+                            throw err;
+                        })
                         .then(value => {
                             if (isLastKey) {
                                 resolve();  // Resolve already, so lock can be removed
@@ -2751,12 +2779,8 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
             }
         });
 
-        if (isInternalUpdate) {
-            debug.log(`Internal update of node "/${nodeInfo.path}" triggered by child node update`.cyan);
-        }
-        else {
-            debug.log(`Node "/${nodeInfo.path}" being updated: adding ${changes.inserts.length} keys (${changes.inserts.map(ch => `"${ch.keyOrIndex}"`).join(',')}), updating ${changes.updates.length} keys (${changes.updates.map(ch => `"${ch.keyOrIndex}"`).join(',')}), removing ${changes.deletes.length} keys (${changes.deletes.map(ch => `"${ch.keyOrIndex}"`).join(',')})`.cyan);
-
+        debug.log(`Node "/${nodeInfo.path}" being updated:${isInternalUpdate ? ' (internal)' : ''} adding ${changes.inserts.length} keys (${changes.inserts.map(ch => `"${ch.keyOrIndex}"`).join(',')}), updating ${changes.updates.length} keys (${changes.updates.map(ch => `"${ch.keyOrIndex}"`).join(',')}), removing ${changes.deletes.length} keys (${changes.deletes.map(ch => `"${ch.keyOrIndex}"`).join(',')})`.cyan);
+        if (!isInternalUpdate) {
             // Update cache (remove entries or mark them as deleted)
             const pathInfo = PathInfo.get(nodeInfo.path);
             const invalidatePaths = changes.all
@@ -3210,7 +3234,11 @@ function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
             let bytes = [];
             return builder.create().toBinary(true, BinaryWriter.forArray(bytes))
             .then(() => {
+                // // Test tree
+                // return BinaryBPlusTree.test(bytes)
+                // .then(() => {
                 return { keyTree: true, data: Uint8Array.from(bytes) };
+                // })
             });
         }
         else {

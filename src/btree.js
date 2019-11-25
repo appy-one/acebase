@@ -891,7 +891,7 @@ class BPlusTreeLeaf {
             }
             else {
                 // update val_length:
-                const valLength = valueBytes.length + (this.uniqueKeys ? 0 : 4); // +4 to include value_list_length bytes //bytes.length - valLengthIndex - 4;
+                const valLength = valueBytes.length + (this.tree.uniqueKeys ? 0 : 4); // +4 to include value_list_length bytes //bytes.length - valLengthIndex - 4;
                 if (WRITE_SMALL_LEAFS) {
                     bytes[valLengthIndex] = valLength;
                 }
@@ -2006,7 +2006,7 @@ class BinaryBPlusTree {
             }
             this._readFn = (i, length) => {
                 let slice = data.slice(i, i + length);
-                return Promise.resolve(slice);
+                return Promise.resolve(Buffer.from(slice));
             };
         }
         else if (typeof readFn === "function") {
@@ -2039,6 +2039,29 @@ class BinaryBPlusTree {
                 throw new Error(`Cannot write data, no writeFn was supplied`);
             }
         }
+    }
+
+    static test(data) {
+        const tree = new BinaryBPlusTree(data);
+
+        const testLeaf = leaf => {
+            let i = 0;
+            const nextEntry = () => {
+                const entry = leaf.entries[i];                
+                return tree.find(entry.key)
+                .then(found => {
+                    i++;
+                    return i < leaf.entries.length ? nextEntry() : null;
+                });
+            }
+            return nextEntry()
+            .then(() => {
+                if (leaf.getNext) { return leaf.getNext().then(testLeaf); } 
+            })
+        };
+
+        return tree.getFirstLeaf()
+        .then(testLeaf);
     }
 
     get autoGrow() {
@@ -2228,6 +2251,9 @@ class BinaryBPlusTree {
         };
         const readEntryValue = (bytes, index) => {
             console.assert(index < bytes.length, 'invalid data');
+            if (index >= bytes.length) {
+                throw new Error('invalid data');
+            }
             const startIndex = index;
             let valueLength = bytes[index]; // value_length
             console.assert(index + valueLength < bytes.length, 'not enough data!');
@@ -4261,7 +4287,7 @@ class BinaryBPlusTree {
                         break;
                     }
                     case 'update': {
-                        p = this.update(op.key, op.newValue, op.currentValue);
+                        p = this.update(op.key, op.newValue.recordPointer, op.currentValue.recordPointer, op.newValue.metadata);
                         break;
                     }
                 }
