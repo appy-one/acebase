@@ -958,27 +958,7 @@ class AceBaseStorage extends Storage {
         }
 
         // Cache miss, announce the lookup
-        if (!this._announcements) {
-            this._announcements = new Map();
-        }
-        const a = this._announcements.get(path);
-        if (a) {
-            return new Promise(resolve => {
-                a.promise = a.promise.then(info => { 
-                    resolve(info); 
-                    return info; 
-                });
-            });
-        }
-        const announcement = {
-            resolve: null,
-            promise: null
-        };
-        announcement.promise = new Promise(resolve => {
-            announcement.resolve = resolve;
-        });
-        this._announcements.set(path, announcement);
-        // this.nodeCache.announce(path);
+        this.nodeCache.announce(path);
 
         // Try again on the parent node, enable others to bind to our lookup result
         // _currentNodeLookups.set(path, []);
@@ -1005,7 +985,7 @@ class AceBaseStorage extends Storage {
                 // Parent does not exist, is not an object or array, or has no children (object not stored in own address)
                 // so child doesn't exist
                 const childInfo = new NodeInfo({ path, exists: false });
-                this.nodeCache.update(childInfo, true);
+                this.nodeCache.update(childInfo);
                 return childInfo;
             }
 
@@ -1015,10 +995,6 @@ class AceBaseStorage extends Storage {
         .then(childInfo => {
             lock.release(`Node.getInfo: done with path "/${parentPath}"`);
             this.nodeCache.update(childInfo, true); // NodeCache.update(childInfo); // Don't have to, nodeReader will have done it already
-
-            this._announcements.delete(path);
-            announcement.resolve(childInfo);
-
             return childInfo;
         });
     }
