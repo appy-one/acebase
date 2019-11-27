@@ -268,11 +268,21 @@ class LocalApi extends Api {
 
         // Filters that should run on all nodes after indexed results:
         const tableScanFilters = query.filters.filter(filter => !filter.index);
+
+        // Check if there are filters that require an index to run (such as "fulltext:contains", and "geo:nearby" etc)
+        const specialOpsRegex = /^[a-z]+\:/i;
+        if (tableScanFilters.some(filter => specialOpsRegex.test(filter.op))) {
+            const f = tableScanFilters.find(filter => specialOpsRegex.test(filter.op));
+            const err = new Error(`query contains operator "${f.op}" which requires a special index that was not found on path "${path}", key "${f.key}"`)
+            return Promise.reject(err);
+        }
+
+        // Check if the filters are using valid operators
         const allowedTableScanOperators = ["<","<=","==","!=",">=",">","in","!in","matches","!matches","between","!between","has","!has","contains","!contains"]; // DISABLED "custom" because it is not fully implemented and only works locally
         for(let i = 0; i < tableScanFilters.length; i++) {
             const f = tableScanFilters[i];
             if (!allowedTableScanOperators.includes(f.op)) {
-                return Promise.reject(new Error(`Invalid table scan operator: "${f.op}"`));
+                return Promise.reject(new Error(`query contains unknown filter operator "${f.op}" on path "${path}", key "${f.key}"`));
             }
         }
 
@@ -286,13 +296,6 @@ class LocalApi extends Api {
                 return keys;
             }, []).map(key => `"${key}"`);
             const err = new Error(`This wildcard path query on "/${path}" requires index(es) on key(s): ${keys.join(", ")}. Create the index(es) and retry`);
-            return Promise.reject(err);
-        }
-
-        const specialOpsRegex = /^[a-z]+\:/i;
-        if (tableScanFilters.some(filter => specialOpsRegex.test(filter.op))) {
-            const operator = tableScanFilters.find(filter => specialOpsRegex.test(filter.op)).op;
-            const err = new Error(`This query contains operator "${operator}" which requires a special index, which was not found`)
             return Promise.reject(err);
         }
 
