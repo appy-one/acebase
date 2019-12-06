@@ -582,7 +582,16 @@ class DataIndex {
         // Invalidate query cache
         this._cache.clear(); // TODO: check which cache results should be adjusted intelligently
         // Process all queued items
-        const promises = queue.map(update => this._updateTree(update.path, update.oldValue, update.newValue, update.recordPointer, update.recordPointer, update.metadata));
+        const promises = queue.map(update => {
+            return this._updateTree(update.path, update.oldValue, update.newValue, update.recordPointer, update.recordPointer, update.metadata)
+            .then(() => {
+                update.resolve(); // Resolve waiting promise
+            })
+            .catch(err => {
+                update.reject(err); // Reject waiting promise
+                // Do not throw again
+            })
+        });
         return Promise.all(promises);
     }
 
@@ -612,7 +621,7 @@ class DataIndex {
         const includedValuesChanged = includedValues.some(values => compareValues(values.oldValue, values.newValue) !== 'identical');
 
         if (!keyValueChanged && !includedValuesChanged) {
-            return;
+            return Promise.resolve();
         }
 
         const updatedKey = PathInfo.get(path).key;
@@ -624,26 +633,40 @@ class DataIndex {
             this.includeKeys.forEach(key => obj[key] = newValue[key]);
             return obj;
         })();
-
+        
         if (this.state === DataIndex.STATE.READY) {
             // Invalidate query cache
             this._cache.clear();
             // Update the tree
             return this._updateTree(path, keyValues.oldValue, keyValues.newValue, recordPointer, recordPointer, metadata);
         }
+        else {
+            // Queue the update
+            const update = { 
+                path, 
+                oldValue: keyValues.oldValue, 
+                newValue: keyValues.newValue, 
+                recordPointer, 
+                metadata,
+                resolve: null,
+                reject: null
+            };
 
-        // Queue the update
-        this._updateQueue.push({ 
-            path, 
-            oldValue: keyValues.oldValue, 
-            newValue: keyValues.newValue, 
-            recordPointer, 
-            metadata 
-        });
-        return Promise.resolve();
+            // Create a promise that resolves once the queued item has processed
+            const p = new Promise((resolve, reject) => {
+                update.resolve = resolve;
+                update.reject = reject;
+            });
+
+            this._updateQueue.push(update);
+            return p;
+        }
     }
 
     _lock(forWriting, comment) {
+        // Do we still need this? B+Tree now does its own locking, so this might be obsolete...
+        // UPDATE: Yes, we do. When an index is being created/rebuilt and queried at the same time, we very much need this locking!
+
         if (!this._lockQueue) { this._lockQueue = []; }
         if (!this._lockState) {
             this._lockState = {
@@ -656,16 +679,20 @@ class DataIndex {
         const lock = { forWriting, comment, release: comment => {
             const pending = [];
             while (true) {
+                // Gather all queued read locks, or 1 write lock
                 if (this._lockQueue.length === 0) { break; }
                 const next = this._lockQueue[0];
                 if (next.forWriting) { 
+                    // allow this write lock only if there are no previous read locks
                     if (pending.length === 0) {
                         pending.push(next);
                         this._lockQueue.shift();
                     }
+                    // stop while loop
                     break;
                 }
                 else {
+                    // a(nother) read loop
                     pending.push(next);
                     this._lockQueue.shift();
                 }
@@ -674,16 +701,16 @@ class DataIndex {
                 this._lockState.isLocked = false;
                 this._lockState.forWriting = undefined;
                 this._lockState.comment = undefined;
+                return;
             }
-            else {
-                this._lockState.forWriting = pending[0].forWriting;
-                this._lockState.comment = '';
-            }
+            // Grant pending locks (can be multiple reads, or 1 pending write)
+            this._lockState.forWriting = pending[0].forWriting;
+            this._lockState.comment = '';
             for (let i = 0; i < pending.length; i++) {
                 const lock = pending[i];
                 if (this._lockState.comment.length > 0) { this._lockState.comment += ' && '}
                 this._lockState.comment += lock.comment;
-                lock.resolve(lock);
+                lock.resolve(lock); // go!
             }
         }};
         if (this._lockState.isLocked) {
@@ -1046,18 +1073,18 @@ class DataIndex {
                 buildWriteStream.on('open', () => {
                     return getAll('', 0)
                     .then(() => {
-                        if (indexedValues === 0) {
-                            const err = new Error('No values found to index');
-                            err.code = 'NO_DATA';
-                            buildWriteStream.close(() => {
-                                pfs.rm(buildFile)
-                                .then(() => {
-                                    reject(err);
-                                })
-                                return reject(err);
-                            });
-                            return;
-                        }
+                        // if (indexedValues === 0) {
+                        //     const err = new Error('No values found to index');
+                        //     err.code = 'NO_DATA';
+                        //     buildWriteStream.close(() => {
+                        //         pfs.rm(buildFile)
+                        //         .then(() => {
+                        //             reject(err);
+                        //         })
+                        //         return reject(err);
+                        //     });
+                        //     return;
+                        // }
                         console.log(`done writing values`);
                         if (streamState.wait) {
                             buildWriteStream.once('drain', () => {
@@ -1195,12 +1222,12 @@ class DataIndex {
                                                 // What can be indexed? 
                                                 // strings, numbers, booleans, dates, undefined
                                                 seenKeys.push(childInfo.key);
-                                                if (childInfo.key === this.key && allowedKeyValueTypes.indexOf(childInfo.valueType) < 0) {
+                                                if (childInfo.key === this.key && !allowedKeyValueTypes.includes(childInfo.valueType)) {
                                                     // Key value isn't allowed to be this type, mark it as null so it won't be indexed
                                                     keyValue = null;
                                                     return;
                                                 }
-                                                else if (childInfo.key !== this.key && indexableTypes.indexOf(childInfo.valueType) < 0) {
+                                                else if (childInfo.key !== this.key && !indexableTypes.includes(childInfo.valueType)) {
                                                     // Metadata that can't be indexed because it has the wrong type
                                                     return;
                                                 }
@@ -1218,7 +1245,7 @@ class DataIndex {
                                             })
                                             .then(() => {
                                                 // If the key value wasn't present, set it to undefined (so it'll be indexed)
-                                                if (seenKeys.indexOf(this.key) < 0) { keyValue = undefined; }
+                                                if (!seenKeys.includes(this.key)) { keyValue = undefined; }
                                                 return Promise.all(keyPromises);
                                             });
                                         }
@@ -1269,7 +1296,7 @@ class DataIndex {
                                                 indexedValues++;
                                             }
 
-                                            if (typeof keyValue !== 'undefined' && keyValue !== null) {
+                                            if (keyValue !== null) { // typeof keyValue !== 'undefined' && 
                                                 // Add it to the index, using value as the index key, a record pointer as the value
                                                 // Create record pointer
                                                 let wildcards = [];
@@ -1315,6 +1342,11 @@ class DataIndex {
             // take the first n keys in the .build file, read through the entire file 
             // to find other occurences of the same key. 
             // Group them and write to .build.n files in batches of 10.000 keys
+
+            if (indexedValues === 0) {
+                return Promise.resolve();
+            }
+
             return pfs.exists(mergeFile)
             .then(exists => {
                 if (exists) { 
@@ -1821,7 +1853,7 @@ class DataIndex {
             // Open merge file for reading, index file for writing
             console.log(`done writing merge file`);
             return Promise.all([
-                pfs.open(mergeFile, pfs.flags.read),
+                indexedValues === 0 ? -1 : pfs.open(mergeFile, pfs.flags.read),
                 pfs.open(this.fileName, pfs.flags.write)
             ]);
         })
@@ -1835,9 +1867,6 @@ class DataIndex {
                 },
                 length: DISK_BLOCK_SIZE
             };
-            const reader = new BinaryReader(readFD);
-            // const writeStream = fs.createWriteStream(this.fileName, { fd: writeFD, autoClose: false, start: headerStats.length });
-            // const writer = new BinaryWriter(writeStream, (data, index) => {
             const writer = BinaryWriter.forFunction((data, index) => {
                 let go = () => {
                     return pfs.write(writeFD, data, 0, data.length, headerStats.length + index);
@@ -1862,6 +1891,26 @@ class DataIndex {
                     return go();
                 }
             });
+
+            if (indexedValues === 0) {
+                // NEW: Create empty B+Tree
+                return BinaryBPlusTree.create({
+                    getLeafStartKeys(entriesPerLeaf) { return Promise.resolve([]); },
+                    getEntries(n) { return Promise.resolve([])},
+                    writer,
+                    treeStatistics, 
+                    fillFactor: FILL_FACTOR, //50, 
+                    maxEntriesPerNode: 255, 
+                    isUnique: false, 
+                    keepFreeSpace: true, 
+                    metadataKeys: this.allMetadataKeys
+                })
+                .then(() => {
+                    return pfs.close(writeFD);
+                });
+            }
+
+            const reader = new BinaryReader(readFD);
             return BinaryBPlusTree.createFromEntryStream(
                 reader, 
                 writer, 
@@ -1882,7 +1931,7 @@ class DataIndex {
             });
         })
         .then(() => {
-            return pfs.rm(mergeFile);
+            return indexedValues > 0 ? pfs.rm(mergeFile) : true;
         })
         .then(() => {
             const doneTime = Date.now();
@@ -2553,8 +2602,8 @@ class ArrayIndex extends DataIndex {
      * @param {any} newValue 
      */
     handleRecordUpdate(path, oldValue, newValue) {
-        let oldEntries = this.key in oldValue ? oldValue[this.key] : null;
-        let newEntries = this.key in newValue ? newValue[this.key] : null;
+        let oldEntries = oldValue !== null && typeof oldValue === 'object' && this.key in oldValue ? oldValue[this.key] : null;
+        let newEntries = newValue !== null && typeof newValue === 'object' && this.key in newValue ? newValue[this.key] : null;
         
         if (oldEntries instanceof Array) { 
             // Only use unique values
@@ -3657,9 +3706,9 @@ class GeoIndex extends DataIndex {
      */
     handleRecordUpdate(path, oldValue, newValue) {
         const mutated = { old: {}, new: {} };
-        Object.assign(mutated.old, oldValue);
-        Object.assign(mutated.new, newValue);
-        if (mutated.old[this.key] !== null && typeof mutated.old[this.key] === 'object') { 
+        oldValue !== null && typeof oldValue === 'object' && Object.assign(mutated.old, oldValue);
+        newValue !== null && typeof newValue === 'object' && Object.assign(mutated.new, newValue);
+        if (mutated.old[this.key] !== null && typeof mutated.old[this.key] === 'object') {
             mutated.old[this.key] = _getGeoHash(mutated.old[this.key]); 
         }
         if (mutated.new[this.key] !== null && typeof mutated.new[this.key] === 'object') { 
