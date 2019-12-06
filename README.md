@@ -17,7 +17,7 @@ by older releases might be incompatible with newer versions, so you might have t
 
 ### Prerequisites
 
-AceBase currently only runs on [Node](https://nodejs.org/), as it requires the 'fs' filesystem. If you want to connect to an AceBase server from the browser, see [acebase-client](https://www.npmjs.com/package/acebase-client)
+AceBase is designed to run in a [Node.js](https://nodejs.org/) environment, as it (by default) requires the 'fs' filesystem to store its data and indexes. However, since v0.9.0 **it is now also possible to use AceBase databases in the browser**! To run AceBase in the browser, simply include 1 script file and you're good to go! See [AceBase in the browser](#browser) for more info and code samples!
 
 ### Installing
 
@@ -767,9 +767,9 @@ db.types.bind(
 );
 ```
 
-## Use SQLite or MSSQL backend
+## Using a SQLite or MSSQL backend (NEW v0.8.0)
 
-In v0.8.0+ it is now possible to have AceBase store all data in a SQLite or SQL Server database backend! They're not as fast as the default AceBase binary database (which is about 5x faster), but if you want more control over your data, storing it in a widely used RDMS might come in handy. I developed it to be able to make ports to the browser and/or Android/iOS HTML5 apps easier, so ```AceBaseClient```s will be able to store and query data locally also. Development for IndexedDB backend will follow soon!
+From v0.8.0+ it is now possible to have AceBase store all data in a SQLite or SQL Server database backend! They're not as fast as the default AceBase binary database (which is about 5x faster), but if you want more control over your data, storing it in a widely used RDMS might come in handy. I developed it to be able to make ports to the browser and/or Android/iOS HTML5 apps easier, so ```AceBaseClient```s will be able to store and query data locally also. Development for IndexedDB backend will follow soon!
 
 To use a different backend database, simply pass a typed ```StorageSettings``` object to the ```AceBase``` constructor. You can use ```SQLiteStorageSettings``` for a SQLite backend, ```MSSQLStorageSettings``` for SQL Server etc. 
 
@@ -781,6 +781,35 @@ const db = new AceBase('mydb', new SQLiteStorageSettings({ path: '.' }));
 
 // Or, SQL Server:
 const db = new AceBase('mydb', new MSSQLStorageSettings({ server: 'localhost', port: 1433, database: 'MyDB', username: 'user', password: 'secret', (...) }));
+```
+
+<a name="browser"></a>
+## Running AceBase in the browser (NEW v0.9.0)
+
+Exciting news! From v0.9.0+, AceBase is now able to run stand-alone in the browser! It uses localStorage to store the data, or sessionStorage if you want a temporary database.
+
+NOTE: If you want to connect to a remote AceBase [acebase-server](https://www.npmjs.com/package/acebase-server) from the browser instead of running one locally, use [acebase-client](https://www.npmjs.com/package/acebase-client) instead.
+
+```html
+<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/acebase@latest/dist/browser.min.js"></script>
+<script type="text/javascript">
+    // Create an AceBase db using localStorage
+    const db = new AceBase('mydb', { temp: false }); // Set temp to true to use sessionStorage instead of localStorage
+    db.ready(() => {
+        console.log('Database ready to use');
+        return db.ref('browser').set({
+            test: 'AceBase runs in the browser!'
+        })
+        .then(ref => {
+            console.log(`"${ref.path}" was saved!`);
+            return ref.get();
+        })
+        .then(snap => {
+            console.log(`Got "${snap.ref.path}" value:`);
+            console.log(snap.val());
+        });
+    })
+</script>
 ```
 
 ## Upgrade notices
