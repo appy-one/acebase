@@ -1,0 +1,25 @@
+<html>
+    <head>
+        <script src="browser.min.js"></script>
+    </head>
+    <body>
+        <script>
+            // Create AceBase using localStorage
+            const db = new AceBase('mydb', { temp: false }); // Set temp to true to use sessionStorage instead of localStorage
+            db.ready(() => {
+                console.log('Database ready to use');
+                return db.ref('browser').set({
+                    test: 'AceBase runs in the browser!'
+                })
+                .then(ref => {
+                    console.log(`"${ref.path}" was saved!`);
+                    return ref.get();
+                })
+                .then(snap => {
+                    console.log(`Got "${snap.ref.path}" value:`);
+                    console.log(snap.val());
+                })
+            })
+        </script>
+    </body>
+</html>
