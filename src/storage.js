@@ -5,7 +5,6 @@ const { NodeInfo } = require('./node-info');
 const { EventEmitter } = require('events');
 const { cloneObject, compareValues, getChildValues, encodeString } = Utils;
 const colors = require('colors');
-const pfs = require('./promise-fs');
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
@@ -183,7 +182,7 @@ class Storage extends EventEmitter {
         this.cluster = new ClusterManager(settings.cluster);
 
         // Setup indexing functionality
-        const { DataIndex, ArrayIndex, FullTextIndex, GeoIndex } = require('./data-index');
+        const { DataIndex, ArrayIndex, FullTextIndex, GeoIndex } = require('./data-index'); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
 
         /** @type {DataIndex[]} */ 
         const _indexes = [];
@@ -281,7 +280,11 @@ class Storage extends EventEmitter {
              */
             load() {
                 _indexes.splice(0);
-                // return new Promise((resolve, reject) => {
+                const pfs = require('./promise-fs');
+                if (!pfs || !pfs.readdir) { 
+                    // If pfs (fs) is not available, don't try using it
+                    return Promise.resolve();
+                }
                 return pfs.readdir(`${self.settings.path}/${self.name}.acebase`)
                 .then(files => {
                     const promises = [];
@@ -564,7 +567,7 @@ class Storage extends EventEmitter {
      * @param {object} [options] 
      * @returns {Promise<void>}
      */
-    _writeNodeWithTracking(path, value, options = { merge: false, tid: undefined, _customWriteFunction: undefined }) {
+    _writeNodeWithTracking(path, value, options = { merge: false, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true }) {
         // TODO: create and move to Storage base class, for shared use in SqlStorage, FileStorage etc
         if (!options || !options.tid) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid!`); }
         options.merge = options.merge === true;
@@ -625,7 +628,7 @@ class Storage extends EventEmitter {
             // Check if there are any event subscribers
             const indexes = this.indexes.getAll(path);
             if (eventSubscriptions.length === 0 && indexes.length === 0) {
-                // Nobody's interested in changes values. We're done!
+                // Nobody's interested in changed values. We're done!
                 return result;
             }
 
@@ -683,19 +686,21 @@ class Storage extends EventEmitter {
             })();
 
             // Trigger all index updates
+            const indexUpdates = [];
             indexes.map(index => {
-                index._keys = PathInfo.getPathKeys(index.path);
-                return index;
+                const keys = PathInfo.getPathKeys(index.path);
+                return {
+                    index,
+                    keys
+                };
             })
             .sort((a, b) => {
                 // Deepest paths should fire first, then bubble up the tree
-                if (a._keys.length < b._keys.length) { return 1; }
-                else if (a._keys.length > b._keys.length) { return -1; }
+                if (a.keys.length < b.keys.length) { return 1; }
+                else if (a.keys.length > b.keys.length) { return -1; }
                 return 0;
             })
-            .forEach(index => {
-                delete index._keys;
-
+            .forEach(({ index }) => {
                 // Index is either on the updated data path, or on a child path
 
                 // Example situation:
@@ -710,7 +715,9 @@ class Storage extends EventEmitter {
                 let { oldValue, newValue } = updatedData;
                 if (trailKeys.length === 0) {
                     // Index is on updated path
-                    return index.handleRecordUpdate(path, oldValue, newValue);
+                    const p = index.handleRecordUpdate(path, oldValue, newValue);
+                    indexUpdates.push(p);
+                    return; // next index
                 }
                 const getAllIndexUpdates = (path, oldValue, newValue) => {
                     if (oldValue === null && newValue === null) {
@@ -758,7 +765,8 @@ class Storage extends EventEmitter {
                 };
                 let results = getAllIndexUpdates(path, oldValue, newValue);
                 results.forEach(result => {
-                    index.handleRecordUpdate(result.path, result.oldValue, result.newValue);
+                    const p = index.handleRecordUpdate(result.path, result.oldValue, result.newValue);
+                    indexUpdates.push(p);
                 });
             });
 
@@ -795,11 +803,14 @@ class Storage extends EventEmitter {
                 trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue);
             };
 
-            // Now... trigger all events
-            process.nextTick(() => {
+            const triggerAllEvents = () => {
+                // Notify all event subscriptions, should be executed with a delay (process.nextTick)
                 eventSubscriptions.map(sub => {
-                    sub.keys = PathInfo.getPathKeys(sub.dataPath);
-                    return sub;
+                    const keys = PathInfo.getPathKeys(sub.dataPath);
+                    return {
+                        sub,
+                        keys
+                    };
                 })
                 .sort((a, b) => {
                     // Deepest paths should fire first, then bubble up the tree
@@ -807,7 +818,7 @@ class Storage extends EventEmitter {
                     else if (a.keys.length > b.keys.length) { return -1; }
                     return 0;
                 })
-                .forEach(sub => {
+                .forEach(({ sub }) => {
                     const process = (currentPath, oldValue, newValue, variables = []) => {
                         let trailPath = sub.dataPath.slice(currentPath.length).replace(/^\//, '');
                         let trailKeys = PathInfo.getPathKeys(trailPath);
@@ -845,9 +856,17 @@ class Storage extends EventEmitter {
 
                     process(topEventPath, topEventData, newTopEventData);
                 });
-            }); // Delayed execution process.nextTick
+            };
 
-            return result;
+            // Wait for all index updates to complete
+            if (options.waitForIndexUpdates === false) {
+                indexUpdates.splice(0); // Remove all index update promises, so we don't wait for them to resolve
+            }
+            return Promise.all(indexUpdates)
+            .then(() => {
+                process.nextTick(triggerAllEvents); // Delayed execution
+                return result;
+            })
         });
     }
 
