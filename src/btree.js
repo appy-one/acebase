@@ -2549,7 +2549,7 @@ class BinaryBPlusTree {
                                     index += result.byteLength;
                                     entry._values.push(entryValue.entryValue);
                                 }
-                                return entry._values;       
+                                return entry._values;
                             })
                             .then(values => {
                                 lock.release();
@@ -3484,7 +3484,7 @@ class BinaryBPlusTree {
     }
 
     _claimFreeSpace(bytesRequired) {
-        if (bytesRequired === 0) { return Promise.reject(new Error('Claiming 0 bytes')); }
+        // if (bytesRequired === 0) { return Promise.reject(new Error('Claiming 0 bytes')); } // ALLOW this!
         if (bytesRequired > this.info.freeSpace) { return Promise.reject(new Error('Attempt to claim more bytes than available in trailing free space')); }
         const index = this.info.byteLength - this.info.freeSpace;
         this.info.freeSpace -= bytesRequired;
@@ -4695,13 +4695,19 @@ class BinaryBPlusTree {
                 let currentLeafIndex = 0;
                 let totalWrittenEntries = 0;
                 const writeLeaf = (entries) => {
+                    let emptyLeaf = false;
+                    if (entries.length === 0 && leafStartKeys.length === 0) {
+                        // Write an empty leaf
+                        emptyLeaf = true;
+                    }
+                    
                     // console.log(`Writing leaf with ${entries.length} entries at index ${index}, keys range: ["${entries[0].key}", "${entries[entries.length-1].key}"]`)
                     console.assert(entries.every((entry, index, arr) => index === 0 || _isMoreOrEqual(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
                     let i = leafIndexes.length;
-                    console.assert(_isEqual(leafStartKeys[i], entries[0].key), `first entry for leaf has wrong key, must be ${leafStartKeys[i]}!`);
+                    console.assert(emptyLeaf || _isEqual(leafStartKeys[i], entries[0].key), `first entry for leaf has wrong key, must be ${leafStartKeys[i]}!`);
 
                     leafIndexes.push(index);
-                    const isLastLeaf = leafIndexes.length === leafStartKeys.length;
+                    const isLastLeaf = emptyLeaf || leafIndexes.length === leafStartKeys.length;
                     const newLeaf = builder.createLeaf(
                         { index, prevIndex, nextIndex: isLastLeaf ? 0 : 'adjacent', entries },
                         { addFreeSpace: options.keepFreeSpace }
@@ -5845,7 +5851,7 @@ class BinaryBPlusTreeBuilder {
             }
             else {
                 let freeEntries = this.maxEntriesPerNode - info.entries.length;
-                let avgEntrySize = Math.ceil((byteLength - 18) / info.entries.length);
+                let avgEntrySize = info.entries.length === 0 ? 1 : Math.ceil((byteLength - 18) / info.entries.length);
                 // freeSpace = (freeEntries * avgEntrySize) + (avgEntrySize * 2);
                 freeSpace = Math.ceil(freeEntries * avgEntrySize * 1.1) // + 10%
                 byteLength += freeSpace;
@@ -6262,6 +6268,7 @@ class BinaryReader {
         });        
     }
     assert(byteCount) {
+        console.assert(byteCount >= 0, `Invalid byteCount: ${byteCount}`);
         if (this.index + byteCount > this.data.byteLength) {
             return this.more(Math.ceil(byteCount / this.chunkSize))
             .then(() => {
