@@ -3,6 +3,7 @@ const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorageSettings } = require('./storage-sqlite');
 const { MSSQLStorageSettings } = require('./storage-mssql');
+const { LocalStorageSettings } = require('./storage-localstorage');
 
 module.exports = { 
     AceBase, 
@@ -15,5 +16,6 @@ module.exports = {
     TypeMappingOptions,
     AceBaseStorageSettings,
     SQLiteStorageSettings,
-    MSSQLStorageSettings
+    MSSQLStorageSettings,
+    LocalStorageSettings
 };

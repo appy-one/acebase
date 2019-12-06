@@ -58,6 +58,12 @@ export class MSSQLStorageSettings extends StorageSettings {
     idleTimeout?: number;
 }
 
+export class LocalStorageSettings extends StorageSettings {
+    constructor(settings: LocalStorageSettings);
+    session?: boolean;
+    provider?: object
+}
+
 export import DataSnapshot = acebasecore.DataSnapshot;
 export import DataReference = acebasecore.DataReference;
 export import EventStream = acebasecore.EventStream;
