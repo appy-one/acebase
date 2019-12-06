@@ -1,4 +1,4 @@
-const { debug, ID, PathReference, PathInfo } = require('acebase-core');
+const { debug, ID, PathReference, PathInfo, ascii85 } = require('acebase-core');
 const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
@@ -29,7 +29,7 @@ class SQLiteNodeInfo extends NodeInfo {
         /** @type {Date} */
         this.created = info.created;
         /** @type {Date} */
-        this.modified = info.modiied;
+        this.modified = info.modified;
     }
 }
 
@@ -416,14 +416,13 @@ class SQLiteStorage extends Storage {
                 child = { type: VALUE_TYPES.REFERENCE, value: child.path };
             }
             else if (child instanceof ArrayBuffer) {
-                // TODO: fix ascii85 code
                 child = { type: VALUE_TYPES.BINARY, value: ascii85.encode(child) };
             }            
             else if (typeof child === 'object') {
                 child = this._createJSON(child);
             }
             obj[key] = child;
-        })
+        });
         return JSON.stringify(obj);
     }
 
@@ -436,8 +435,7 @@ class SQLiteStorage extends Storage {
             if (typeof val === 'object' && 'type' in val) {
                 // Typed value stored in parent record
                 if (val.type === VALUE_TYPES.BINARY) {
-                    // binary stored in a parent record as a string?
-                    // TODO: Fix ascii call:
+                    // binary stored in a parent record as a string
                     value[key] = ascii85.decode(val.value);
                 }
                 else if (val.type === VALUE_TYPES.DATETIME) {
@@ -535,14 +533,16 @@ class SQLiteStorage extends Storage {
                 // if (!newIsObjectOrArray) {
                 //     changes.delete = children.current.map(key => currentObject[key]);
                 // }
-                if (currentObject instanceof Array) {
-                    // Convert array to object with numeric properties
-                    const obj = {};
-                    for (let i = 0; i < value.length; i++) {
-                        obj[i] = value[i];
-                    }
-                    currentObject = obj;
-                }
+
+                // ALWAYS FALSE: arrays are stored as objects with numeric properties:
+                // if (currentObject instanceof Array) {
+                //     // Convert array to object with numeric properties
+                //     const obj = {};
+                //     for (let i = 0; i < value.length; i++) {
+                //         obj[i] = value[i];
+                //     }
+                //     currentObject = obj;
+                // }
                 if (newIsObjectOrArray) {
                     mainNode.value = currentObject;
                 }
@@ -553,6 +553,7 @@ class SQLiteStorage extends Storage {
                 // children.new = options.merge ? children.current : [];
                 Object.keys(value).forEach(key => {
                     const val = value[key];
+                    delete mainNode.value[key]; // key is being overwritten, moved from inline to dedicated, or deleted.
                     if (val === null) { //  || typeof val === 'undefined'
                         // This key is being removed
                         // children.new = children.new.filter(k => k !== key); 
@@ -577,7 +578,6 @@ class SQLiteStorage extends Storage {
                     else {
                         // Store in child node
                         childNodeValues[key] = val;
-                        delete mainNode.value[key]; // If key was inline, remove it
                     }
                 });
             }
