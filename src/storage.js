@@ -1,4 +1,4 @@
-const { Utils, debug, PathInfo, ID, PathReference } = require('acebase-core');
+const { Utils, debug, PathInfo, ID, PathReference, ascii85 } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
@@ -1232,6 +1232,153 @@ class Storage extends EventEmitter {
 
         return checkNode(path, criteria);
     }    
+
+    /**
+     * Export a specific path's data to a stream
+     * @param {Storage} storage
+     * @param {string} path
+     * @param {{ write(str: string) => void|Promise<void>}} stream stream object that has a write method that (optionally) returns a promise the export needs to wait for before continuing
+     * @returns {Promise<void>} returns a promise that resolves once all data is exported
+     */
+    exportNode(path, stream, options = { format: 'json' }) {
+        if (options && options.format !== 'json') {
+            throw new Error(`Only json output is currently supported`);
+        }
+
+        const stringifyValue = (type, val) => {
+            const escape = str => str.replace(/\\/i, "\\\\").replace(/"/g, '\\"');
+            if (type === VALUE_TYPES.DATETIME) {
+                val = `"${val.toISOString()}"`;
+            }
+            else if (type === VALUE_TYPES.STRING) {
+                val = `"${escape(val)}"`;
+            }
+            else if (type === VALUE_TYPES.ARRAY) {
+                val = `[]`;
+            }
+            else if (type === VALUE_TYPES.OBJECT) {
+                val = `{}`;
+            }
+            else if (type === VALUE_TYPES.BINARY) {
+                val = `"${escape(ascii85.encode(val))}"`; // TODO: use base64 instead, no escaping needed
+            }
+            else if (type === VALUE_TYPES.REFERENCE) {
+                val = `"${val.path}"`;
+            }
+            return val;
+        };
+
+        const queue = [];
+        let outputCount = 0;
+        let objStart = '', objEnd = '';
+        const buffer = {
+            output: '',
+            enable: false,
+            promise: null
+        }
+
+        return this.getNodeInfo(path)
+        .then(nodeInfo => {
+            if (!nodeInfo.exists) {
+                stream.write('null');
+            }
+            else if (nodeInfo.type === VALUE_TYPES.OBJECT) { objStart = '{'; objEnd = '}'; }
+            else if (nodeInfo.type === VALUE_TYPES.ARRAY) { objStart = '{'; objEnd = '}'; } // TODO: export as arrays, and guarantee the right order!!!
+            else {
+                // Node has no children, get and export its value
+                return this.getNodeValue(path)
+                .then(value => {
+                    const val = stringifyValue(nodeInfo.type, value);
+                    return stream.write(val);
+                });
+            }
+
+            let p = Promise.resolve();
+            if (objStart) {
+                p = stream.write(objStart);
+                if (!(p instanceof Promise)) { p = Promise.resolve(); }
+            }
+            return p
+            .then(() => {
+                return this.getChildren(path)
+                .next(childInfo => {
+                    // if child is stored in the parent record, we can output it right now. 
+                    // If a child needs value fetching, queue it for output
+                    if (childInfo.address) {
+                        queue.push(childInfo);
+                    }
+                    else {
+                        const val = stringifyValue(childInfo.type, childInfo.value);
+                        const comma = outputCount > 0 ? ',' : '';
+                        const key = typeof childInfo.index === 'number' ? `"${childInfo.index}"` : `"${childInfo.key}"`;
+                        const output = `${comma}${key}:${val}`;
+                        outputCount++;
+                        if (buffer.enable) {
+                            // Output must be buffered. Doing this will probably not cost a lot of memory because these 
+                            // values are only the smaller (inline) ones being flushed. Larger ones will have been queued above
+                            buffer.output += output;
+                        }
+                        else {
+                            // Output can be flushed to the stream. If the write function resturns a promise, we need to buffer
+                            // further output before flushing again.
+                            const flush = output => {
+                                const p = stream.write(output);
+                                if (p instanceof Promise) {
+                                    // buffer all output until write promise resolves
+                                    buffer.enable = true;
+                                    buffer.promise = p.then(() => {
+                                        // We can flush now
+                                        const buffered = buffer.output;
+                                        buffer.enable = false;
+                                        buffer.output = '';
+                                        buffer.promise = null;
+                                        if (buffered.length > 0) {
+                                            return flush(buffered);
+                                        }
+                                    });
+                                    return buffer.promise;
+                                }
+                            }
+                            flush(output);
+                        }
+                    }
+                });
+            });
+        })
+        .then(() => {
+            return buffer.promise; // Wait for any buffered output to be flushed before continuing
+        })
+        .then(() => {
+            // process queueu
+            const next = () => {
+                if (queue.length === 0) { 
+                    // Done
+                    return; 
+                }
+                const childInfo = queue.shift();
+
+                const comma = outputCount > 0 ? ',' : '';
+                const key = typeof childInfo.index === 'number' ? `"${childInfo.index}"` : `"${childInfo.key}"`;
+                let p = stream.write(`${comma}${key}:`);
+                outputCount++;
+                if (!(p instanceof Promise)) {
+                    p = Promise.resolve(p);
+                }
+                return p.then(() => {
+                    return this.exportNode(childInfo.address.path, stream);
+                })
+                .then(() => {
+                    return next();
+                });
+            };
+            return next();
+        })
+        .then(() => {
+            if (objEnd) {
+                return stream.write(objEnd);
+            }
+        });
+    }
 
 }
 

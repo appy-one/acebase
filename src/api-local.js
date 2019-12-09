@@ -624,6 +624,7 @@ class LocalApi extends Api {
                         key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index,
                         type: childInfo.valueTypeName,
                         value: childInfo.value,
+                        // TODO: fix .address properties being used on different storage types (sqlite, mssql, localstorage etc)
                         address: childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined
                     });
                 }
@@ -670,6 +671,10 @@ class LocalApi extends Api {
                 });
             }
         }
+    }
+
+    export(path, stream, options = { format: 'json' }) {
+        return this.storage.exportNode(path, stream, options);
     }
 }
 
