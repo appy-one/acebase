@@ -1,6 +1,6 @@
 # AceBase realtime database engine
 
-A fast, low memory, transactional, index & query enabled NoSQL database engine and server for node.js with realtime data change notifications. Includes built-in user authentication and authorization. Inspired by the Firebase realtime database, with additional functionality and less data sharding/duplication. Capable of storing up to 2^48 (281 trillion) object nodes in a binary database file that can theoretically grow to a max filesize of 8 petabytes. AceBase can run anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, wherever you want. 
+A fast, low memory, transactional, index & query enabled NoSQL database engine and server for node.js with realtime data change notifications. Includes built-in user authentication and authorization. Inspired by the Firebase realtime database, with additional functionality and less data sharding/duplication. Capable of storing up to 2^48 (281 trillion) object nodes in a binary database file that can theoretically grow to a max filesize of 8 petabytes. AceBase can run anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, wherever you want. On top of this, AceBase can now also run in the browser!
 
 Natively supports storing of JSON objects, arrays, numbers, strings, booleans, dates and binary (ArrayBuffer) data. Custom classes can automatically be shape-shifted to and from plain objects by adding type mappings => Store a ```User```, get a ```User```. Store a ```Chat``` that has a collection of ```Messages```, get a ```Chat``` with ```Messages``` back from the database. Any class specific methods can be executed directly on the objects you get back from the db, because they will be an ```instanceof``` your class.
 
@@ -812,9 +812,72 @@ NOTE: If you want to connect to a remote AceBase [acebase-server](https://www.np
 </script>
 ```
 
+## Reflect API
+
+AceBase has a built-in reflection API that enables browsing the database content without retrieving nested data. This API is available for local databases, and remote databases when signed in as the ```admin``` user.
+
+```javascript
+// Get info about the root node:
+db.root.reflect('info', { child_limit: 200 })
+.then(info => {
+
+    console.log(info); 
+    // info is an object like: 
+    // { 
+    //      key: "",
+    //      exists: true, 
+    //      type: "object",
+    //      children: { 
+    //          more: false, 
+    //          list: [
+    //              { key: "appName", type: "string", value: "My social app" },
+    //              { key: "appVersion", type: "number", value: 1 },
+    //              { key: "posts", type: "object" },
+    //              (...)
+    //          ] 
+    //      } 
+    //  }
+
+    // For each child that is an object or array, get their children
+    info.children && info.children.list.forEach(child => {
+        if (child.type === 'object' || child.type === 'array') {
+            // Object or array child
+            return db.ref(child.key)
+            .reflect('children', { limit: 10 })
+            .then(children => {
+                // children is an object with properties "more" (boolean) and "list" (array)
+                console.log({ key: child.key, children });
+            });
+        }
+        else {
+            // string, number, boolean, binary, date, or reference:
+            console.log(child);
+        }
+    });
+});
+```
+
+## Export API (NEW v0.9.1)
+
+To export data from any node to json, you can use the export API. Simply pass an object that has a ```write``` method to ```yourRef.export```, and the entire node's value (including nested data) will be streamed in ```json``` format. If your ```write``` function returns a ```Promise```, streaming will be paused until the promise resolves (local databases only). You can use this to back off writing if the target stream's buffer is full (eg while waiting for a file stream to "drain"). This API is available for local databases, and remote databases when signed in as the ```admin``` user.
+
+```javascript
+let json = '';
+let stream = {
+    write(str) {
+        json += str;
+    }
+}
+db.ref('posts').export(stream)
+.then(() => {
+    console.log('Alls posts have been exported:');
+    console.log(json);
+})
+```
+
 ## Upgrade notices
 
-v0.7.0 - Changed DataReference.vars object for subscription events, it now contains all values for path wildcards and variables with their index, and (for named variables:) name and $prefixed name. The ```wildcards``` array has been removed. See *Using variables and wildcards in subscription paths* in the documentation at above.
+v0.7.0 - Changed DataReference.vars object for subscription events, it now contains all values for path wildcards and variables with their index, and (for named variables:) ```name``` and ($-)prefixed ```$name```. The ```wildcards``` array has been removed. See *Using variables and wildcards in subscription paths* in the documentation above.
 
 v0.6.0 - Changed ```db.types.bind``` method signature. Serialization and creator functions can now also access the ```DataReference``` for the object being serialized/instantiated, this enables the use of path variables.
 
