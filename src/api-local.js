@@ -19,28 +19,27 @@ class LocalApi extends Api {
         super();
         this.db = settings.db;
 
-        if (SQLiteStorageSettings && (settings.storage instanceof SQLiteStorageSettings || settings.storage.type === 'sqlite')) {
-            this.storage = new SQLiteStorage(dbname, settings.storage);
-        }
-        else if (MSSQLStorageSettings && (settings.storage instanceof MSSQLStorageSettings || settings.storage.type === 'mssql')) {
-            this.storage = new MSSQLStorage(dbname, settings.storage);
-        }
-        else if (LocalStorageSettings && (settings.storage instanceof LocalStorageSettings || settings.storage.type === 'localstorage')) {
-            this.storage = new LocalStorage(dbname, settings.storage);
+        if (typeof settings.storage === 'object') {
+            if (SQLiteStorageSettings && (settings.storage instanceof SQLiteStorageSettings || settings.storage.type === 'sqlite')) {
+                this.storage = new SQLiteStorage(dbname, settings.storage);
+            }
+            else if (MSSQLStorageSettings && (settings.storage instanceof MSSQLStorageSettings || settings.storage.type === 'mssql')) {
+                this.storage = new MSSQLStorage(dbname, settings.storage);
+            }
+            else if (LocalStorageSettings && (settings.storage instanceof LocalStorageSettings || settings.storage.type === 'localstorage')) {
+                this.storage = new LocalStorage(dbname, settings.storage);
+            }
+            else {
+                const storageSettings = settings.storage instanceof AceBaseStorageSettings
+                    ? settings.storage
+                    : new AceBaseStorageSettings(settings.storage);
+                this.storage = new AceBaseStorage(dbname, storageSettings);
+            }
         }
         else {
-            const storageSettings = settings.storage instanceof AceBaseStorageSettings
-                ? settings.storage
-                : new AceBaseStorageSettings(settings.storage);
-            this.storage = new AceBaseStorage(dbname, storageSettings);
+            this.storage = new AceBaseStorage(dbname, new AceBaseStorageSettings());
         }
         this.storage.on("ready", readyCallback);
-        // this.storage.on("datachanged", (event) => {
-        //     debug.warn(`datachanged event fired for path ${event.path}`);
-        //     //debug.warn(event);
-        //     //storage.subscriptions.trigger(db, event.type, event.path, event.previous);
-        //     this.emit("datachanged", event);
-        // });        
     }
 
     stats(options) {
