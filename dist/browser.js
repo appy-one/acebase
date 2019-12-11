@@ -588,7 +588,7 @@ class DataReference {
         /** @type {EventPublisher} */
         let eventPublisher = null;
         const eventStream = new EventStream(publisher => { eventPublisher = publisher });
-        
+
         // Map OUR callback to original callback, so .off can remove the right callback
         let cb = { 
             subscr: eventStream,
@@ -626,12 +626,15 @@ class DataReference {
         this[_private].callbacks.push(cb);
 
         let authorized = this.db.api.subscribe(this.path, event, cb.ours);
+        const allSubscriptionsStoppedCallback = () => {
+            this.db.api.unsubscribe(this.path, event, cb.ours);
+        };
         if (authorized instanceof Promise) {
             // Web API now returns a promise that resolves if the request is allowed
             // and rejects when access is denied by the set security rules
             authorized.then(() => {
                 // Access granted
-                eventPublisher.start();
+                eventPublisher.start(allSubscriptionsStoppedCallback);
             })
             .catch(err => {
                 // Access denied?
@@ -647,7 +650,7 @@ class DataReference {
         }
         else {
             // Local API, always authorized
-            eventPublisher.start();
+            eventPublisher.start(allSubscriptionsStoppedCallback);
         }
 
         if (callback && !this.isWildcardPath) {
@@ -838,6 +841,10 @@ class DataReference {
             throw new Error(`Cannot reflect on a path with wildcards and/or variables`);
         }
         return this.db.api.reflect(this.path, type, args);
+    }
+
+    export(stream, options = { format: 'json' }) {
+        return this.db.api.export(this.path, stream, options);
     }
 } 
 
@@ -1609,17 +1616,6 @@ class EventSubscription {
         // Changed behaviour: now also returns a Promise when the callback is used.
         // This allows for 1 activated call to both handle: first activation result, 
         // and any future events using the callback
-
-        // if (this._internal.state === 'active') {
-        //     return Promise.resolve();
-        // }
-        // else if (this._internal.state === 'canceled') {
-        //     if (callback) { 
-        //         // Do not reject when callback is used
-        //         return new Promise(() => {}); 
-        //     }
-        //     return Promise.reject(new Error(this._internal.cancelReason));
-        // }
         return new Promise((resolve, reject) => { 
             if (this._internal.state === 'active') { 
                 return resolve(); 
@@ -1673,7 +1669,9 @@ class EventStream {
      */
     constructor(eventPublisherCallback) {
         const subscribers = [];
+        let noMoreSubscribersCallback;
         let activationState;
+        const _stoppedState = 'stopped (no more subscribers)';
 
         /**
          * Subscribe to new value events in the stream
@@ -1685,6 +1683,9 @@ class EventStream {
             if (typeof callback !== "function") {
                 throw new TypeError("callback must be a function");
             }
+            else if (activationState === _stoppedState) {
+                throw new Error("stream can't be used anymore because all subscribers were stopped");
+            }
 
             const sub = {
                 callback,
@@ -1695,8 +1696,9 @@ class EventStream {
                 // stop() {
                 //     subscribers.splice(subscribers.indexOf(this), 1);
                 // },
-                subscription: new EventSubscription(function() {
+                subscription: new EventSubscription(function stop() {
                     subscribers.splice(subscribers.indexOf(this), 1);
+                    checkActiveSubscribers();
                 })
             };
             subscribers.push(sub);
@@ -1714,6 +1716,13 @@ class EventStream {
             return sub.subscription;
         };
 
+        const checkActiveSubscribers = () => {
+            if (subscribers.length === 0) {
+                noMoreSubscribersCallback && noMoreSubscribersCallback();
+                activationState = _stoppedState;
+            }
+        };
+
         /**
          * Stops monitoring new value events
          * @param {function} callback | (optional) specific callback to remove. Will remove all callbacks when omitted
@@ -1726,8 +1735,14 @@ class EventStream {
                 const i = subscribers.indexOf(sub);
                 subscribers.splice(i, 1);
             });
+            checkActiveSubscribers();
         };
 
+        this.stop = () => {
+            // Stop (remove) all subscriptions
+            subscribers.splice(0);
+            checkActiveSubscribers();
+        }
 
         /**
          * For publishing side: adds a value that will trigger callbacks to all subscribers
@@ -1749,8 +1764,9 @@ class EventStream {
         /**
          * For publishing side: let subscribers know their subscription is activated. Should be called only once
          */
-        const start = () => {
+        const start = (allSubscriptionsStoppedCallback) => {
             activationState = true;
+            noMoreSubscribersCallback = allSubscriptionsStoppedCallback;
             subscribers.forEach(sub => {
                 sub.activationCallback && sub.activationCallback(true);
             });
@@ -3401,28 +3417,27 @@ class LocalApi extends Api {
         super();
         this.db = settings.db;
 
-        if (SQLiteStorageSettings && (settings.storage instanceof SQLiteStorageSettings || settings.storage.type === 'sqlite')) {
-            this.storage = new SQLiteStorage(dbname, settings.storage);
-        }
-        else if (MSSQLStorageSettings && (settings.storage instanceof MSSQLStorageSettings || settings.storage.type === 'mssql')) {
-            this.storage = new MSSQLStorage(dbname, settings.storage);
-        }
-        else if (LocalStorageSettings && (settings.storage instanceof LocalStorageSettings || settings.storage.type === 'localstorage')) {
-            this.storage = new LocalStorage(dbname, settings.storage);
+        if (typeof settings.storage === 'object') {
+            if (SQLiteStorageSettings && (settings.storage instanceof SQLiteStorageSettings || settings.storage.type === 'sqlite')) {
+                this.storage = new SQLiteStorage(dbname, settings.storage);
+            }
+            else if (MSSQLStorageSettings && (settings.storage instanceof MSSQLStorageSettings || settings.storage.type === 'mssql')) {
+                this.storage = new MSSQLStorage(dbname, settings.storage);
+            }
+            else if (LocalStorageSettings && (settings.storage instanceof LocalStorageSettings || settings.storage.type === 'localstorage')) {
+                this.storage = new LocalStorage(dbname, settings.storage);
+            }
+            else {
+                const storageSettings = settings.storage instanceof AceBaseStorageSettings
+                    ? settings.storage
+                    : new AceBaseStorageSettings(settings.storage);
+                this.storage = new AceBaseStorage(dbname, storageSettings);
+            }
         }
         else {
-            const storageSettings = settings.storage instanceof AceBaseStorageSettings
-                ? settings.storage
-                : new AceBaseStorageSettings(settings.storage);
-            this.storage = new AceBaseStorage(dbname, storageSettings);
+            this.storage = new AceBaseStorage(dbname, new AceBaseStorageSettings());
         }
         this.storage.on("ready", readyCallback);
-        // this.storage.on("datachanged", (event) => {
-        //     debug.warn(`datachanged event fired for path ${event.path}`);
-        //     //debug.warn(event);
-        //     //storage.subscriptions.trigger(db, event.type, event.path, event.previous);
-        //     this.emit("datachanged", event);
-        // });        
     }
 
     stats(options) {
@@ -4006,6 +4021,7 @@ class LocalApi extends Api {
                         key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index,
                         type: childInfo.valueTypeName,
                         value: childInfo.value,
+                        // TODO: fix .address properties being used on different storage types (sqlite, mssql, localstorage etc)
                         address: childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined
                     });
                 }
@@ -4052,6 +4068,10 @@ class LocalApi extends Api {
                 });
             }
         }
+    }
+
+    export(path, stream, options = { format: 'json' }) {
+        return this.storage.exportNode(path, stream, options);
     }
 }
 
@@ -5757,14 +5777,13 @@ module.exports = {
 }
 },{"./node-info":33,"./node-value-types":35,"./storage":38,"acebase-core":11}],38:[function(require,module,exports){
 (function (process){
-const { Utils, debug, PathInfo, ID, PathReference } = require('acebase-core');
+const { Utils, debug, PathInfo, ID, PathReference, ascii85 } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
 const { EventEmitter } = require('events');
 const { cloneObject, compareValues, getChildValues, encodeString } = Utils;
 const colors = require('colors');
-const { DataIndex, ArrayIndex, FullTextIndex, GeoIndex } = require('./data-index'); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
@@ -5942,6 +5961,8 @@ class Storage extends EventEmitter {
         this.cluster = new ClusterManager(settings.cluster);
 
         // Setup indexing functionality
+        const { DataIndex, ArrayIndex, FullTextIndex, GeoIndex } = require('./data-index'); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
+
         /** @type {DataIndex[]} */ 
         const _indexes = [];
         const self = this;
@@ -6990,6 +7011,153 @@ class Storage extends EventEmitter {
 
         return checkNode(path, criteria);
     }    
+
+    /**
+     * Export a specific path's data to a stream
+     * @param {Storage} storage
+     * @param {string} path
+     * @param {{ write(str: string) => void|Promise<void>}} stream stream object that has a write method that (optionally) returns a promise the export needs to wait for before continuing
+     * @returns {Promise<void>} returns a promise that resolves once all data is exported
+     */
+    exportNode(path, stream, options = { format: 'json' }) {
+        if (options && options.format !== 'json') {
+            throw new Error(`Only json output is currently supported`);
+        }
+
+        const stringifyValue = (type, val) => {
+            const escape = str => str.replace(/\\/i, "\\\\").replace(/"/g, '\\"');
+            if (type === VALUE_TYPES.DATETIME) {
+                val = `"${val.toISOString()}"`;
+            }
+            else if (type === VALUE_TYPES.STRING) {
+                val = `"${escape(val)}"`;
+            }
+            else if (type === VALUE_TYPES.ARRAY) {
+                val = `[]`;
+            }
+            else if (type === VALUE_TYPES.OBJECT) {
+                val = `{}`;
+            }
+            else if (type === VALUE_TYPES.BINARY) {
+                val = `"${escape(ascii85.encode(val))}"`; // TODO: use base64 instead, no escaping needed
+            }
+            else if (type === VALUE_TYPES.REFERENCE) {
+                val = `"${val.path}"`;
+            }
+            return val;
+        };
+
+        const queue = [];
+        let outputCount = 0;
+        let objStart = '', objEnd = '';
+        const buffer = {
+            output: '',
+            enable: false,
+            promise: null
+        }
+
+        return this.getNodeInfo(path)
+        .then(nodeInfo => {
+            if (!nodeInfo.exists) {
+                stream.write('null');
+            }
+            else if (nodeInfo.type === VALUE_TYPES.OBJECT) { objStart = '{'; objEnd = '}'; }
+            else if (nodeInfo.type === VALUE_TYPES.ARRAY) { objStart = '{'; objEnd = '}'; } // TODO: export as arrays, and guarantee the right order!!!
+            else {
+                // Node has no children, get and export its value
+                return this.getNodeValue(path)
+                .then(value => {
+                    const val = stringifyValue(nodeInfo.type, value);
+                    return stream.write(val);
+                });
+            }
+
+            let p = Promise.resolve();
+            if (objStart) {
+                p = stream.write(objStart);
+                if (!(p instanceof Promise)) { p = Promise.resolve(); }
+            }
+            return p
+            .then(() => {
+                return this.getChildren(path)
+                .next(childInfo => {
+                    // if child is stored in the parent record, we can output it right now. 
+                    // If a child needs value fetching, queue it for output
+                    if (childInfo.address) {
+                        queue.push(childInfo);
+                    }
+                    else {
+                        const val = stringifyValue(childInfo.type, childInfo.value);
+                        const comma = outputCount > 0 ? ',' : '';
+                        const key = typeof childInfo.index === 'number' ? `"${childInfo.index}"` : `"${childInfo.key}"`;
+                        const output = `${comma}${key}:${val}`;
+                        outputCount++;
+                        if (buffer.enable) {
+                            // Output must be buffered. Doing this will probably not cost a lot of memory because these 
+                            // values are only the smaller (inline) ones being flushed. Larger ones will have been queued above
+                            buffer.output += output;
+                        }
+                        else {
+                            // Output can be flushed to the stream. If the write function resturns a promise, we need to buffer
+                            // further output before flushing again.
+                            const flush = output => {
+                                const p = stream.write(output);
+                                if (p instanceof Promise) {
+                                    // buffer all output until write promise resolves
+                                    buffer.enable = true;
+                                    buffer.promise = p.then(() => {
+                                        // We can flush now
+                                        const buffered = buffer.output;
+                                        buffer.enable = false;
+                                        buffer.output = '';
+                                        buffer.promise = null;
+                                        if (buffered.length > 0) {
+                                            return flush(buffered);
+                                        }
+                                    });
+                                    return buffer.promise;
+                                }
+                            }
+                            flush(output);
+                        }
+                    }
+                });
+            });
+        })
+        .then(() => {
+            return buffer.promise; // Wait for any buffered output to be flushed before continuing
+        })
+        .then(() => {
+            // process queueu
+            const next = () => {
+                if (queue.length === 0) { 
+                    // Done
+                    return; 
+                }
+                const childInfo = queue.shift();
+
+                const comma = outputCount > 0 ? ',' : '';
+                const key = typeof childInfo.index === 'number' ? `"${childInfo.index}"` : `"${childInfo.key}"`;
+                let p = stream.write(`${comma}${key}:`);
+                outputCount++;
+                if (!(p instanceof Promise)) {
+                    p = Promise.resolve(p);
+                }
+                return p.then(() => {
+                    return this.exportNode(childInfo.address.path, stream);
+                })
+                .then(() => {
+                    return next();
+                });
+            };
+            return next();
+        })
+        .then(() => {
+            if (objEnd) {
+                return stream.write(objEnd);
+            }
+        });
+    }
 
 }
 
