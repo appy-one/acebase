@@ -439,7 +439,7 @@ class Storage extends EventEmitter {
                                     : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey); //NodePath(subscriptionPath).childPath(childKey); 
                             }
-                            if (dataPath !== null && subscribers.findIndex(s => s.type === sub.type && s.path === eventPath) < 0) {
+                            if (dataPath !== null && subscribers.findIndex(s => s.type === sub.type && s.dataPath === dataPath) < 0) {
                                 subscribers.push({ type: sub.type, eventPath, dataPath, subscriptionPath });
                             }
                         });
