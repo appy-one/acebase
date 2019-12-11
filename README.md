@@ -257,7 +257,7 @@ db.ref('users')
     // and for each new user from then on
 });
 ```
-AceBase uses the same ```.on``` method signature as Firebase, but also offers a (more intuitive) way to subscribe to the events using the returned ```EventStream``` you can ```subscribe``` to. Additionally, ```subscribe``` callbacks only fire for future events, as opposed to the ```.on``` callback, which also fires for current values of events ```'value'``` and ```'child_changed'```.
+AceBase uses the same ```.on``` method signature as Firebase, but also offers a (more intuitive) way to subscribe to the events using the returned ```EventStream``` you can ```subscribe``` to. Additionally, ```subscribe``` callbacks only fire for future events, as opposed to the ```.on``` callback, which also fires for current values of events ```'value'``` and ```'child_added'```.
 
 ```javascript
 // AceBase style: using .subscribe
