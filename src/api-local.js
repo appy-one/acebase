@@ -612,35 +612,37 @@ class LocalApi extends Api {
     }
 
     reflect(path, type, args) {
-        const getChildren = (path, limit = 50) => {
+        const getChildren = (path, limit = 50, skip = 0) => {
+            if (typeof limit === 'string') { limit = parseInt(limit); }
+            if (typeof skip === 'string') { skip = parseInt(skip); }
             const children = [];
-            let n = 0;
+            let n = 0, stop = skip + limit;
             return Node.getChildren(this.storage, path)
             .next(childInfo => {
                 n++;
-                if (limit === 0 || n <= limit) {
+                if (limit === 0 || (n <= stop && n > skip)) {
                     children.push({
                         key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index,
                         type: childInfo.valueTypeName,
                         value: childInfo.value,
-                        // TODO: fix .address properties being used on different storage types (sqlite, mssql, localstorage etc)
-                        address: childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined
+                        // address is now only added when storage is acebase. Not when eg sqlite, mssql, localstorage
+                        address: typeof childInfo.address === 'object' && 'pageNr' in childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined
                     });
                 }
-                if (limit > 0 && n > limit) {
+                if (limit > 0 && n > stop) {
                     return false; // Stop iterating
                 }
             })
             .then(() => {
                 return {
-                    more: limit !== 0 && n > limit,
+                    more: limit !== 0 && n > stop,
                     list: children
                 };
             });
         }
         switch(type) {
             case "children": {
-                return getChildren(path, args.limit);
+                return getChildren(path, args.limit, args.skip);
             }
             case "info": {
                 const info = {
@@ -659,9 +661,9 @@ class LocalApi extends Api {
                     info.exists = nodeInfo.exists;
                     info.type = nodeInfo.valueTypeName;
                     info.value = nodeInfo.value;
-                    let hasChildren = nodeInfo.exists && nodeInfo.address && ~[Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].indexOf(nodeInfo.type);
+                    let hasChildren = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
                     if (hasChildren) {
-                        return getChildren(path, args.child_limit);
+                        return getChildren(path, args.child_limit, args.child_skip);
                     }
                 })
                 .then(children => {
