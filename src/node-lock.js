@@ -27,6 +27,17 @@ class NodeLocker {
     _allowLock(path, tid, forWriting) {
         // Can this lock be granted now or do we have to wait?
         const pathInfo = PathInfo.get(path);
+        const existing = this._locks.find(otherLock => 
+            otherLock.tid === tid 
+            && otherLock.state === LOCK_STATE.LOCKED 
+            && (otherLock.path === path || pathInfo.isDescendantOf(otherLock.path)) // other lock is on the same or a higher path
+            && (otherLock.forWriting || !forWriting) // other lock is for writing, or requested lock isn't
+        );
+        if (typeof existing === 'object') {
+            // Current tid already has a granted lock on this path
+            return { allow: true };
+        }
+
         const conflict = this._locks
             .filter(otherLock => otherLock.tid !== tid && otherLock.state === LOCK_STATE.LOCKED)
             .find(otherLock => {
