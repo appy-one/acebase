@@ -153,7 +153,7 @@ class MSSQLStorage extends Storage {
                     this.emit('ready');
                 })
                 .catch(err => {
-                    debug.error(`Error initializing MSSQL database connection: ${err.message}`);
+                    this.debug.error(`Error initializing MSSQL database connection: ${err.message}`);
                     this.emit('error', err);
                 });
             }
@@ -410,11 +410,11 @@ class MSSQLStorage extends Storage {
             });
         })
         .then(() => {
-            debug.log(`Database "${this.name}" details:`.intro);
-            debug.log(`- Type: MSSQL`);
-            debug.log(`- Server: ${this.settings.server}:${this.settings.port}`);
-            debug.log(`- Database: ${this.settings.database}`);
-            debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.intro);
+            this.debug.log(`Database "${this.name}" details:`.intro);
+            this.debug.log(`- Type: MSSQL`);
+            this.debug.log(`- Server: ${this.settings.server}:${this.settings.port}`);
+            this.debug.log(`- Database: ${this.settings.database}`);
+            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.intro);
 
             // Load indexes
             return this.indexes.load();
@@ -635,7 +635,7 @@ class MSSQLStorage extends Storage {
             // Insert or update node
             if (currentRow) {
                 // update
-                debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.cyan);
+                this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.cyan);
 
                 const updateMainNode = () => {
                     const sql = `UPDATE nodes SET type = @type, text_value = @text_value, binary_value = @binary_value, json_value = @json_value, modified = @modified, revision_nr = revision_nr + 1, revision = @revision
@@ -744,7 +744,7 @@ class MSSQLStorage extends Storage {
             else {
                 // Current node does not exist, create it and any child nodes
                 // write all child nodes that must be stored in their own record
-                debug.log(`Node "/${path}" is being created`.cyan);
+                this.debug.log(`Node "/${path}" is being created`.cyan);
 
                 const childCreatePromises = Object.keys(childNodeValues).map(key => {
                     const childPath = PathInfo.getChildPath(path, key);
@@ -1002,7 +1002,7 @@ class MSSQLStorage extends Storage {
                     });
                 }
 
-                debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${rows.length} records`.magenta);
+                this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${rows.length} records`.magenta);
 
                 const targetPathKeys = PathInfo.getPathKeys(path);
                 const targetRow = rows.find(row => row.path === path);

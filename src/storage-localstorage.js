@@ -64,9 +64,9 @@ class LocalStorage extends Storage {
             this._localStorage = this.settings.session === true ? sessionStorage : localStorage;
         }
 
-        debug.log(`Database "${this.name}" details:`.intro);
-        debug.log(`- Type: LocalStorage`);
-        debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.intro);
+        this.debug.log(`Database "${this.name}" details:`.intro);
+        this.debug.log(`- Type: LocalStorage`);
+        this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.intro);
 
         // Create root node if it's not there yet
         return this.getNodeInfo('')
@@ -375,7 +375,7 @@ class LocalStorage extends Storage {
         // Insert or update node
         if (currentRow) {
             // update
-            debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.cyan);
+            this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.cyan);
 
             // If existing is an array or object, we have to find out which children are affected
             if (currentIsObjectOrArray || newIsObjectOrArray) {
@@ -440,7 +440,7 @@ class LocalStorage extends Storage {
         else {
             // Current node does not exist, create it and any child nodes
             // write all child nodes that must be stored in their own record
-            debug.log(`Node "/${path}" is being created`.cyan);
+            this.debug.log(`Node "/${path}" is being created`.cyan);
 
             Object.keys(childNodeValues).map(key => {
                 const childPath = PathInfo.getChildPath(path, key);
@@ -671,7 +671,7 @@ class LocalStorage extends Storage {
                 }
             }
 
-            debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${childRows.length + 1} records`.magenta);
+            this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${childRows.length + 1} records`.magenta);
 
             const result = {
                 revision: targetRow ? targetRow.revision : null,
