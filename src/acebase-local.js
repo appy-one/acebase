@@ -20,7 +20,7 @@ const { LocalApi } = require('./api-local');
 class AceBaseLocalSettings {
     /**
      * 
-     * @param {{ logLevel: string, storage: StorageSettings }} options 
+     * @param {{ logLevel: 'verbose'|'log'|'warn'|'error', storage: StorageSettings }} options 
      */
     constructor(options) {
         if (!options) { options = {}; }
@@ -40,8 +40,9 @@ class AceBase extends AceBaseBase {
         options = new AceBaseLocalSettings(options);
         super(dbname, options);
         const apiSettings = { 
-            db: this, 
-            storage: options.storage
+            db: this,
+            storage: options.storage,
+            logLevel: options.logLevel
         };
         this.api = new LocalApi(dbname, apiSettings, ready => {
             this.emit("ready");

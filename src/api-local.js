@@ -13,13 +13,14 @@ class LocalApi extends Api {
     
     /**
      * 
-     * @param {{db: LocalAceBase, storage: StorageSettings }} settings
+     * @param {{db: LocalAceBase, storage: StorageSettings, logLevel?: string }} settings
      */
     constructor(dbname = "default", settings, readyCallback) {
         super();
         this.db = settings.db;
 
         if (typeof settings.storage === 'object') {
+            settings.storage.logLevel = settings.logLevel;
             if (SQLiteStorageSettings && (settings.storage instanceof SQLiteStorageSettings || settings.storage.type === 'sqlite')) {
                 this.storage = new SQLiteStorage(dbname, settings.storage);
             }
@@ -37,7 +38,8 @@ class LocalApi extends Api {
             }
         }
         else {
-            this.storage = new AceBaseStorage(dbname, new AceBaseStorageSettings());
+            settings.storage = new AceBaseStorageSettings({ logLevel: settings.logLevel });
+            this.storage = new AceBaseStorage(dbname, settings.storage);
         }
         this.storage.on("ready", readyCallback);
     }
@@ -151,7 +153,7 @@ class LocalApi extends Api {
                     .then(val => {
                         if (val === null) { 
                             // Record was deleted, but index isn't updated yet?
-                            console.warn(`Indexed result "/${path}" does not have a record!`);
+                            this.storage.debug.warn(`Indexed result "/${path}" does not have a record!`);
                             // TODO: let index rebuild
                             return; 
                         }
@@ -268,7 +270,7 @@ class LocalApi extends Api {
 
         // const usingIndexes = query.filters.map(filter => filter.index).filter(index => index);
         const indexDescriptions = usingIndexes.map(index => index.description).join(', ');
-        usingIndexes.length > 0 && console.log(`Using indexes for query: ${indexDescriptions}`);
+        usingIndexes.length > 0 && this.storage.debug.log(`Using indexes for query: ${indexDescriptions}`);
 
         // Filters that should run on all nodes after indexed results:
         const tableScanFilters = query.filters.filter(filter => !filter.index);
@@ -341,13 +343,13 @@ class LocalApi extends Api {
         };
 
         if (query.filters.length === 0 && query.take === 0) { 
-            console.error(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
+            this.storage.debug.error(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
             query.take = 100;
         }
 
         if (query.filters.length === 0 && query.order.length > 0 && query.order[0].index) {
             const sortIndex = query.order[0].index;
-            console.log(`Using index for sorting: ${sortIndex.description}`);
+            this.storage.debug.log(`Using index for sorting: ${sortIndex.description}`);
             const promise = sortIndex.take(query.skip, query.take, query.order[0].ascending)
             .then(results => {
                 options.eventHandler && options.eventHandler({ event: 'stats', type: 'sort_index_take', source: filter.index.description, stats: results.stats });
@@ -534,7 +536,7 @@ class LocalApi extends Api {
             })
             .catch(reason => {
                 // No record?
-                console.warn(`Error getting child stream: ${reason}`);
+                this.storage.debug.warn(`Error getting child stream: ${reason}`);
                 return [];
             })
             .then(() => {

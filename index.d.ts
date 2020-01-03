@@ -20,7 +20,7 @@ export class AceBase extends acebasecore.AceBaseBase {
 }
 
 export interface AceBaseLocalSettings {
-    logLevel?: string;
+    logLevel?: 'verbose'|'log'|'warn'|'error';
     storage?: StorageSettings;
 }
 
