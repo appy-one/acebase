@@ -122,7 +122,6 @@ module.exports = function pad (num, size) {
 const { EventEmitter } = require('events');
 const { DataReference, DataReferenceQuery } = require('./data-reference');
 const { TypeMappings } = require('./type-mappings');
-const debug = require('./debug');
 
 class AceBaseSettings {
     constructor(options) {
@@ -145,9 +144,6 @@ class AceBaseBase extends EventEmitter {
         super();
 
         if (!options) { options = {}; }
-        if (options.logLevel) {
-            debug.setLevel(options.logLevel);
-        }
 
         this.once("ready", () => {
             this._ready = true;
@@ -182,6 +178,10 @@ class AceBaseBase extends EventEmitter {
             });
             return promise;
         }
+    }
+
+    get isReady() {
+        return this._ready === true;
     }
 
     /**
@@ -241,7 +241,7 @@ class AceBaseBase extends EventEmitter {
 }
 
 module.exports = { AceBaseBase, AceBaseSettings };
-},{"./data-reference":7,"./debug":9,"./type-mappings":16,"events":40}],5:[function(require,module,exports){
+},{"./data-reference":7,"./type-mappings":16,"events":40}],5:[function(require,module,exports){
 
 class Api {
     // interface for local and web api's
@@ -441,7 +441,8 @@ class DataReference {
      * @type {DataReference}
      */
     get parent() {
-        const info = PathInfo.get(this.path);
+        let currentPath = PathInfo.fillVariables2(this.path, this.vars);
+        const info = PathInfo.get(currentPath);
         if (info.parentPath === null) {
             return null;
         }
@@ -451,7 +452,7 @@ class DataReference {
     /**
      * Contains values of the variables/wildcards used in a subscription path if this reference was 
      * created by an event ("value", "child_added" etc)
-     * @type {{ [name: string]: string|number, wildcards?: Array<string|number> }}
+     * @type {{ [index: number]: string|number, [variable: string]: string|number }}
      */
     get vars() {
         return this[_private].vars;
@@ -464,7 +465,9 @@ class DataReference {
      */
     child(childPath) {
         childPath = childPath.replace(/^\/|\/$/g, "");
-        return new DataReference(this.db, `${this.path}/${childPath}`);
+        const currentPath = PathInfo.fillVariables2(this.path, this.vars);
+        const targetPath = PathInfo.getChildPath(currentPath, childPath);
+        return new DataReference(this.db, targetPath); //  `${this.path}/${childPath}`
     }
     
     /**
@@ -484,22 +487,24 @@ class DataReference {
             throw new TypeError(`Cannot store value undefined`);
         }
         value = this.db.types.serialize(this.path, value);
-        // let flags;
-        // if (this.__pushed) {
-        //     flags = { pushed: true };
-        // }
-        const promise = this.db.api.set(this.path, value);
-        if (typeof onComplete === 'function') {
-            promise.then(res => {
-                onComplete(null, this);
-            })
-            .catch(err => {
+        return this.db.api.set(this.path, value)
+        .then(res => {
+            if (typeof onComplete === 'function') {
+                try { onComplete(null, this);} catch(err) { console.error(`Error in onComplete callback:`, err); }
+            }
+        })
+        .catch(err => {
+            if (typeof onComplete === 'function') {
                 try { onComplete(err); } catch(err) { console.error(`Error in onComplete callback:`, err); }
-            });
-        }
-        else {
-            return promise.then(res => this);
-        }
+            }
+            else {
+                // throw again
+                throw err;
+            }
+        })
+        .then(() => {
+            return this;
+        });
     }
 
     /**
@@ -520,17 +525,22 @@ class DataReference {
             updates = this.db.types.serialize(this.path, updates);
             promise = this.db.api.update(this.path, updates);
         }
-        if (typeof onComplete === 'function') {
-            promise.then(() => {
-                onComplete(null, this);
-            })
-            .catch(err => {
+        return promise.then(() => {
+            if (typeof onComplete === 'function') {
+                try { onComplete(null, this); } catch(err) { console.error(`Error in onComplete callback:`, err); }
+            }
+        })
+        .catch(err => {
+            if (typeof onComplete === 'function') {
                 try { onComplete(err); } catch(err) { console.error(`Error in onComplete callback:`, err); }
-            });
-        }
-        else {
-            return promise.then(() => this);
-        }
+            }
+            else {
+                throw err;
+            }
+        })
+        .then(() => {
+            return this;
+        })
     }
 
     /**
@@ -580,6 +590,9 @@ class DataReference {
      * @returns {EventStream} returns an EventStream
      */
     on(event, callback, cancelCallbackOrContext, context) {
+        if (this.path === '' && ['value','notify_value','child_changed','notify_child_changed'].includes(event)) {
+            console.warn(`WARNING: Listening for value and child_changed events on the root node is a bad practice`);
+        }
         const cancelCallback = typeof cancelCallbackOrContext === 'function' && cancelCallbackOrContext;
         context = typeof cancelCallbackOrContext === 'object' ? cancelCallbackOrContext : context
 
@@ -1196,16 +1209,23 @@ class DataSnapshot {
 
 module.exports = { DataSnapshot };
 },{"./data-reference":7,"./path-info":12}],9:[function(require,module,exports){
-const debug = {
-    setLevel(level) {
-        this.log = ["log"].indexOf(level) >= 0 ? console.log.bind(console) : ()=>{};
-        this.warn = ["log", "warn"].indexOf(level) >= 0 ? console.warn.bind(console) : ()=>{};
-        this.error = ["log", "warn", "error"].indexOf(level) >= 0 ? console.error.bind(console) : ()=>{};
+class DebugLogger {
+    constructor(level = "log", prefix = '') {
+        this.prefix = prefix;
+        this.setLevel(level);
     }
-};
-debug.setLevel("log"); // default
+    setLevel(level) {
+        const prefix = this.prefix ? this.prefix : '';
+        this.level = level;
+        this.verbose = ["verbose"].includes(level) ? console.log.bind(console, prefix) : () => {};
+        this.log = ["verbose", "log"].includes(level) ? console.log.bind(console, prefix) : () => {};
+        this.warn = ["verbose", "log", "warn"].includes(level) ? console.warn.bind(console, prefix) : () => {};
+        this.error = ["verbose", "log", "warn", "error"].includes(level) ? console.error.bind(console, prefix) : () => {};
+        this.write = console.log.bind(console);
+    }
+}
 
-module.exports = debug;
+module.exports = DebugLogger;
 },{}],10:[function(require,module,exports){
 const cuid = require('cuid');
 // const uuid62 = require('uuid62');
@@ -1224,7 +1244,7 @@ const { AceBaseBase, AceBaseSettings } = require('./acebase-base');
 const { Api } = require('./api');
 const { DataReference, DataReferenceQuery, DataRetrievalOptions, QueryDataRetrievalOptions } = require('./data-reference');
 const { DataSnapshot } = require('./data-snapshot');
-const debug = require('./debug');
+const DebugLogger = require('./debug');
 const { ID } = require('./id');
 const { PathReference } = require('./path-reference');
 const { EventStream, EventPublisher, EventSubscription } = require('./subscription');
@@ -1239,7 +1259,7 @@ module.exports = {
     Api,
     DataReference, DataReferenceQuery, DataRetrievalOptions, QueryDataRetrievalOptions,
     DataSnapshot,
-    debug,
+    DebugLogger,
     ID,
     PathReference,
     EventStream, EventPublisher, EventSubscription,
@@ -1488,6 +1508,31 @@ class PathInfo {
             }
         });
         return mergedPath;
+    }
+
+    /**
+     * Replaces all variables in a path with the values in the vars argument
+     * @param {string} varPath path containing variables
+     * @param {object} variables variables object such as one gotten from PathInfo.extractVariables
+     */
+    static fillVariables2(varPath, vars) {
+        if (typeof vars !== 'object' || Object.keys(vars).length === 0) {
+            return varPath; // Nothing to fill
+        }
+        let pathKeys = getPathKeys(varPath);
+        let n = 0;
+        const targetPath = pathKeys.reduce((path, key) => { 
+            if (key === '*' || key.startsWith('$')) {
+                key = vars[n++];
+            }
+            if (typeof key === 'number') {
+                return `${path}[${key}]`;
+            }
+            else {
+                return `${path}/${key}`;
+            }
+        }, '');
+        return targetPath;
     }
 
     /**
@@ -1778,7 +1823,7 @@ class EventStream {
         const cancel = (reason) => {
             activationState = reason;
             subscribers.forEach(sub => {
-                sub.activationCallback && sub.activationCallback(false, reason || 'unknown reason');
+                sub.activationCallback && sub.activationCallback(false, reason || new Error('unknown reason'));
             });
             subscribers.splice(); // Clear all
         }
@@ -3365,7 +3410,7 @@ const { LocalApi } = require('./api-local');
 class AceBaseLocalSettings {
     /**
      * 
-     * @param {{ logLevel: string, storage: StorageSettings }} options 
+     * @param {{ logLevel: 'verbose'|'log'|'warn'|'error', storage: StorageSettings }} options 
      */
     constructor(options) {
         if (!options) { options = {}; }
@@ -3385,8 +3430,9 @@ class AceBase extends AceBaseBase {
         options = new AceBaseLocalSettings(options);
         super(dbname, options);
         const apiSettings = { 
-            db: this, 
-            storage: options.storage
+            db: this,
+            storage: options.storage,
+            logLevel: options.logLevel
         };
         this.api = new LocalApi(dbname, apiSettings, ready => {
             this.emit("ready");
@@ -3411,13 +3457,14 @@ class LocalApi extends Api {
     
     /**
      * 
-     * @param {{db: LocalAceBase, storage: StorageSettings }} settings
+     * @param {{db: LocalAceBase, storage: StorageSettings, logLevel?: string }} settings
      */
     constructor(dbname = "default", settings, readyCallback) {
         super();
         this.db = settings.db;
 
         if (typeof settings.storage === 'object') {
+            settings.storage.logLevel = settings.logLevel;
             if (SQLiteStorageSettings && (settings.storage instanceof SQLiteStorageSettings || settings.storage.type === 'sqlite')) {
                 this.storage = new SQLiteStorage(dbname, settings.storage);
             }
@@ -3435,7 +3482,8 @@ class LocalApi extends Api {
             }
         }
         else {
-            this.storage = new AceBaseStorage(dbname, new AceBaseStorageSettings());
+            settings.storage = new AceBaseStorageSettings({ logLevel: settings.logLevel });
+            this.storage = new AceBaseStorage(dbname, settings.storage);
         }
         this.storage.on("ready", readyCallback);
     }
@@ -3549,7 +3597,7 @@ class LocalApi extends Api {
                     .then(val => {
                         if (val === null) { 
                             // Record was deleted, but index isn't updated yet?
-                            console.warn(`Indexed result "/${path}" does not have a record!`);
+                            this.storage.debug.warn(`Indexed result "/${path}" does not have a record!`);
                             // TODO: let index rebuild
                             return; 
                         }
@@ -3666,7 +3714,7 @@ class LocalApi extends Api {
 
         // const usingIndexes = query.filters.map(filter => filter.index).filter(index => index);
         const indexDescriptions = usingIndexes.map(index => index.description).join(', ');
-        usingIndexes.length > 0 && console.log(`Using indexes for query: ${indexDescriptions}`);
+        usingIndexes.length > 0 && this.storage.debug.log(`Using indexes for query: ${indexDescriptions}`);
 
         // Filters that should run on all nodes after indexed results:
         const tableScanFilters = query.filters.filter(filter => !filter.index);
@@ -3739,13 +3787,13 @@ class LocalApi extends Api {
         };
 
         if (query.filters.length === 0 && query.take === 0) { 
-            console.error(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
+            this.storage.debug.error(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
             query.take = 100;
         }
 
         if (query.filters.length === 0 && query.order.length > 0 && query.order[0].index) {
             const sortIndex = query.order[0].index;
-            console.log(`Using index for sorting: ${sortIndex.description}`);
+            this.storage.debug.log(`Using index for sorting: ${sortIndex.description}`);
             const promise = sortIndex.take(query.skip, query.take, query.order[0].ascending)
             .then(results => {
                 options.eventHandler && options.eventHandler({ event: 'stats', type: 'sort_index_take', source: filter.index.description, stats: results.stats });
@@ -3932,7 +3980,7 @@ class LocalApi extends Api {
             })
             .catch(reason => {
                 // No record?
-                console.warn(`Error getting child stream: ${reason}`);
+                this.storage.debug.warn(`Error getting child stream: ${reason}`);
                 return [];
             })
             .then(() => {
@@ -4010,35 +4058,37 @@ class LocalApi extends Api {
     }
 
     reflect(path, type, args) {
-        const getChildren = (path, limit = 50) => {
+        const getChildren = (path, limit = 50, skip = 0) => {
+            if (typeof limit === 'string') { limit = parseInt(limit); }
+            if (typeof skip === 'string') { skip = parseInt(skip); }
             const children = [];
-            let n = 0;
+            let n = 0, stop = skip + limit;
             return Node.getChildren(this.storage, path)
             .next(childInfo => {
                 n++;
-                if (limit === 0 || n <= limit) {
+                if (limit === 0 || (n <= stop && n > skip)) {
                     children.push({
                         key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index,
                         type: childInfo.valueTypeName,
                         value: childInfo.value,
-                        // TODO: fix .address properties being used on different storage types (sqlite, mssql, localstorage etc)
-                        address: childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined
+                        // address is now only added when storage is acebase. Not when eg sqlite, mssql, localstorage
+                        address: typeof childInfo.address === 'object' && 'pageNr' in childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined
                     });
                 }
-                if (limit > 0 && n > limit) {
+                if (limit > 0 && n > stop) {
                     return false; // Stop iterating
                 }
             })
             .then(() => {
                 return {
-                    more: limit !== 0 && n > limit,
+                    more: limit !== 0 && n > stop,
                     list: children
                 };
             });
         }
         switch(type) {
             case "children": {
-                return getChildren(path, args.limit);
+                return getChildren(path, args.limit, args.skip);
             }
             case "info": {
                 const info = {
@@ -4057,9 +4107,9 @@ class LocalApi extends Api {
                     info.exists = nodeInfo.exists;
                     info.type = nodeInfo.valueTypeName;
                     info.value = nodeInfo.value;
-                    let hasChildren = nodeInfo.exists && nodeInfo.address && ~[Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].indexOf(nodeInfo.type);
+                    let hasChildren = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
                     if (hasChildren) {
-                        return getChildren(path, args.child_limit);
+                        return getChildren(path, args.child_limit, args.child_skip);
                     }
                 })
                 .then(children => {
@@ -4201,6 +4251,17 @@ class NodeLocker {
     _allowLock(path, tid, forWriting) {
         // Can this lock be granted now or do we have to wait?
         const pathInfo = PathInfo.get(path);
+        const existing = this._locks.find(otherLock => 
+            otherLock.tid === tid 
+            && otherLock.state === LOCK_STATE.LOCKED 
+            && (otherLock.path === path || pathInfo.isDescendantOf(otherLock.path)) // other lock is on the same or a higher path
+            && (otherLock.forWriting || !forWriting) // other lock is for writing, or requested lock isn't
+        );
+        if (typeof existing === 'object') {
+            // Current tid already has a granted lock on this path
+            return { allow: true };
+        }
+
         const conflict = this._locks
             .filter(otherLock => otherLock.tid !== tid && otherLock.state === LOCK_STATE.LOCKED)
             .find(otherLock => {
@@ -4848,9 +4909,9 @@ class LocalStorage extends Storage {
             this._localStorage = this.settings.session === true ? sessionStorage : localStorage;
         }
 
-        debug.log(`Database "${this.name}" details:`.intro);
-        debug.log(`- Type: LocalStorage`);
-        debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.intro);
+        this.debug.log(`Database "${this.name}" details:`.intro);
+        this.debug.log(`- Type: LocalStorage`);
+        this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.intro);
 
         // Create root node if it's not there yet
         return this.getNodeInfo('')
@@ -5159,7 +5220,7 @@ class LocalStorage extends Storage {
         // Insert or update node
         if (currentRow) {
             // update
-            debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.cyan);
+            this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.cyan);
 
             // If existing is an array or object, we have to find out which children are affected
             if (currentIsObjectOrArray || newIsObjectOrArray) {
@@ -5224,7 +5285,7 @@ class LocalStorage extends Storage {
         else {
             // Current node does not exist, create it and any child nodes
             // write all child nodes that must be stored in their own record
-            debug.log(`Node "/${path}" is being created`.cyan);
+            this.debug.log(`Node "/${path}" is being created`.cyan);
 
             Object.keys(childNodeValues).map(key => {
                 const childPath = PathInfo.getChildPath(path, key);
@@ -5455,7 +5516,7 @@ class LocalStorage extends Storage {
                 }
             }
 
-            debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${childRows.length + 1} records`.magenta);
+            this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${childRows.length + 1} records`.magenta);
 
             const result = {
                 revision: targetRow ? targetRow.revision : null,
@@ -5777,7 +5838,7 @@ module.exports = {
 }
 },{"./node-info":33,"./node-value-types":35,"./storage":38,"acebase-core":11}],38:[function(require,module,exports){
 (function (process){
-const { Utils, debug, PathInfo, ID, PathReference, ascii85 } = require('acebase-core');
+const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85 } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
@@ -5902,6 +5963,7 @@ class StorageSettings {
      * @param {boolean} [settings.removeVoidProperties=false] Instead of throwing errors on undefined values, remove the properties automatically. Default is false
      * @param {ClusterSettings} [settings.cluster] cluster settings
      * @param {string} [settings.path="."] Target path to store database files in, default is '.'
+     * @param {string} [settings.info="realtime database"] optional info to be written to the console output underneith the logo
      */
     constructor(settings) {
         settings = settings || {};
@@ -5911,6 +5973,9 @@ class StorageSettings {
         /** @type {string} */
         this.path = settings.path || '.';
         if (this.path.endsWith('/')) { this.path = this.path.slice(0, -1); }
+        /** @type {string} */
+        this.logLevel = settings.logLevel || 'log';
+        this.info = settings.info || 'realtime database';
     }
 }
 
@@ -5926,6 +5991,7 @@ class Storage extends EventEmitter {
         super();
         this.name = name;
         this.settings = settings;
+        this.debug = new DebugLogger(settings.logLevel, `[${name}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
         colors.setTheme({
             art: ['magenta', 'bold'],
@@ -5938,9 +6004,10 @@ class Storage extends EventEmitter {
             '   / /_\\ \\ ___ ___| |_/ / __ _ ___  ___ '.art + '\n' +
             '   |  _  |/ __/ _ \\ ___ \\/ _` / __|/ _ \\'.art + '\n' +
             '   | | | | (_|  __/ |_/ / (_| \\__ \\  __/'.art + '\n' +
-            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|'.art + '\n'
+            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|'.art + '\n' +
+            (settings.info ? ''.padStart(40 - settings.info.length, ' ') + settings.info.magenta + '\n' : '');
 
-        debug.log(logo);
+        this.debug.write(logo);
 
         // this._ready = false;
         // this._readyCallbacks = [];
@@ -5965,7 +6032,7 @@ class Storage extends EventEmitter {
 
         /** @type {DataIndex[]} */ 
         const _indexes = [];
-        const self = this;
+        const storage = this;
         this.indexes = {
             /**
              * Creates an index on specified path and key(s)
@@ -5990,15 +6057,15 @@ class Storage extends EventEmitter {
                     && index.includeKeys.every((key, index) => includeKeys[index] === key)
                 );
                 if (existingIndex && rebuild !== true) {
-                    debug.log(`Index on "/${path}/*/${key}" already exists`.inverse);
+                    storage.debug.log(`Index on "/${path}/*/${key}" already exists`.inverse);
                     return Promise.resolve(existingIndex);
                 }
                 const index = existingIndex || (() => {
                     switch (indexType) {
-                        case 'array': return new ArrayIndex(self, path, key, { include: options.include, config: options.config });
-                        case 'fulltext': return new FullTextIndex(self, path, key, { include: options.include, config: options.config });
-                        case 'geo': return new GeoIndex(self, path, key, { include: options.include, config: options.config });
-                        default: return new DataIndex(self, path, key, { include: options.include, config: options.config });
+                        case 'array': return new ArrayIndex(storage, path, key, { include: options.include, config: options.config });
+                        case 'fulltext': return new FullTextIndex(storage, path, key, { include: options.include, config: options.config });
+                        case 'geo': return new GeoIndex(storage, path, key, { include: options.include, config: options.config });
+                        default: return new DataIndex(storage, path, key, { include: options.include, config: options.config });
                     }
                 })();
                 if (!existingIndex) {
@@ -6009,7 +6076,7 @@ class Storage extends EventEmitter {
                     return index;
                 })
                 .catch(err => {
-                    debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.red);
+                    storage.debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.red);
                     if (!existingIndex) {
                         // Only remove index if we added it. Build may have failed because someone tried creating the index more than once, or rebuilding it while it was building...
                         _indexes.splice(_indexes.indexOf(index), 1);
@@ -6064,17 +6131,17 @@ class Storage extends EventEmitter {
                     // If pfs (fs) is not available, don't try using it
                     return Promise.resolve();
                 }
-                return pfs.readdir(`${self.settings.path}/${self.name}.acebase`)
+                return pfs.readdir(`${storage.settings.path}/${storage.name}.acebase`)
                 .then(files => {
                     const promises = [];
                     files.forEach(fileName => {
                         if (fileName.endsWith('.idx')) {
-                            const p = DataIndex.readFromFile(self, fileName)
+                            const p = DataIndex.readFromFile(storage, fileName)
                             .then(index => {
                                 _indexes.push(index);
                             })
                             .catch(err => {
-                                console.error(err);
+                                storage.debug.error(err);
                             });
                             promises.push(p);
                         }
@@ -6082,7 +6149,7 @@ class Storage extends EventEmitter {
                     return Promise.all(promises);
                 })
                 .catch(err => {
-                    console.error(err);
+                    storage.debug.error(err);
                 });
             }
         };
@@ -6106,7 +6173,7 @@ class Storage extends EventEmitter {
                 let pathSubs = _subs[path];
                 if (!pathSubs) { pathSubs = _subs[path] = []; }
                 // if (pathSubs.findIndex(ps => ps.type === type && ps.callback === callback)) {
-                //     debug.warn(`Identical subscription of type ${type} on path "${path}" being added`);
+                //     storage.debug.warn(`Identical subscription of type ${type} on path "${path}" being added`);
                 // }
                 pathSubs.push({ created: Date.now(), type, callback });
             },
@@ -6218,7 +6285,7 @@ class Storage extends EventEmitter {
                                     : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey); //NodePath(subscriptionPath).childPath(childKey); 
                             }
-                            if (dataPath !== null && subscribers.findIndex(s => s.type === sub.type && s.dataPath === dataPath) < 0) {
+                            if (dataPath !== null) { // && subscribers.findIndex(s => s.type === sub.type && s.dataPath === dataPath) < 0
                                 subscribers.push({ type: sub.type, eventPath, dataPath, subscriptionPath });
                             }
                         });
@@ -6375,6 +6442,19 @@ class Storage extends EventEmitter {
             topEventPath = first.path;
         }
 
+        const writeNode = () => {
+            if (typeof options._customWriteFunction === 'function') {
+                return options._customWriteFunction();
+            }
+            return this._writeNode(path, value, options);            
+        }
+
+        const indexes = this.indexes.getAll(path);
+        if (eventSubscriptions.length === 0 && indexes.length === 0) {
+            // Nobody's interested in value changes. Write node without tracking
+            return writeNode();
+        }
+
         return this.getNodeInfo(topEventPath, { tid })
         .then(eventNodeInfo => {
             if (!eventNodeInfo.exists) {
@@ -6391,25 +6471,18 @@ class Storage extends EventEmitter {
                     keys.forEach(key => valueOptions.include.indexOf(key) < 0 && valueOptions.include.push(key));
                 });
             }
+            if (topEventPath === '' && typeof valueOptions.include === 'undefined') {
+                this.debug.warn(`WARNING: One or more value event listeners on the root node are causing the entire database value to be read to facilitate change tracking. Using "value", "notify_value", "child_changed" and "notify_child_changed" events on the root node are a bad practice because of the significant performance impact`);
+            }
             return this.getNodeValue(topEventPath, valueOptions);
         })
         .then(currentValue => {
             topEventData = currentValue;
 
             // Now proceed with node updating
-            if (typeof options._customWriteFunction === 'function') {
-                return options._customWriteFunction();
-            }
-            return this._writeNode(path, value, options);
+            return writeNode();
         })
         .then(result => {
-
-            // Check if there are any event subscribers
-            const indexes = this.indexes.getAll(path);
-            if (eventSubscriptions.length === 0 && indexes.length === 0) {
-                // Nobody's interested in changed values. We're done!
-                return result;
-            }
 
             // Build data for old/new comparison
             let newTopEventData = cloneObject(topEventData);
@@ -6777,11 +6850,11 @@ class Storage extends EventEmitter {
                     newValue = callback(node.value);
                 }
                 catch (err) {
-                    debug.error(`Error in transaction callback: ${err.message}`);
+                    this.debug.error(`Error in transaction callback: ${err.message}`);
                 }
                 if (newValue instanceof Promise) {
                     return newValue.catch(err => {
-                        debug.error(`Error in transaction callback: ${err.message}`);
+                        this.debug.error(`Error in transaction callback: ${err.message}`);
                     });
                 }
                 return newValue;
@@ -6887,7 +6960,7 @@ class Storage extends EventEmitter {
                 return isMatch;
             })
             .catch(err => {
-                debug.error(`Error matching on "${path}": `, err);
+                this.debug.error(`Error matching on "${path}": `, err);
                 throw err;
             });
         }; // checkNode
