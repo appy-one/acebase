@@ -4261,7 +4261,8 @@ class BinaryBPlusTree {
     }
 
     /**
-     * 
+     * TODO: Rename this to eg "process", it does not perform a transaction: 
+     * it executes all operations until execution fails.
      * @param {BinaryBPlusTreeTransactionOperation[]} operations 
      */
     transaction(operations) {
