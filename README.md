@@ -277,7 +277,7 @@ db.ref('users')
 
 db.ref('users')
 .on('child_changed')
-.subscribe(userRef => {
+.subscribe(updatedUserSnapshot => {
     // Got new value for an updated user object
 });
 ```
@@ -286,7 +286,7 @@ If you want to use ```.subscribe``` while also getting callbacks on existing dat
 ```javascript
 db.ref('users/some_user')
 .on('value', true) // passing true will trigger .subscribe for current value as well
-.subscribe(userRef => {
+.subscribe(userSnapshot => {
     // Got current value (1st call), or new value (2nd+ call) for some_user
 });
 ```
@@ -870,7 +870,7 @@ let stream = {
 }
 db.ref('posts').export(stream)
 .then(() => {
-    console.log('Alls posts have been exported:');
+    console.log('All posts have been exported:');
     console.log(json);
 })
 ```
@@ -907,4 +907,4 @@ What can you help me with?
 * Database GUI - it would be great to have a web-based GUI to browse and/or edit database content. The ```reflect``` API method can be used to get info about particular database nodes and their children, so it is already possible to selectively load info.
 * Ports - If you would like to port ```AceBaseClient``` to other languages (Java, Swift, C#, etc) that would be awesome!
 * Ideas - I love new ideas, share them!
-* Money - I am an independant developer and many working hours were put into developing this. Being new to open sourcing my code, giving it away for free was not easy! I also have a family to feed so if you like AceBase, feel free to send me a donation 👌 My BTC address: 3EgetGDnG9vvfJzjLYdKwWvZpHwePKNJYc
+* Money - I am an independant developer and many months were put into developing this. I also have a family to feed so if you like AceBase, feel free to send me a donation 👌 My BTC address: 3EgetGDnG9vvfJzjLYdKwWvZpHwePKNJYc
