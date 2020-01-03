@@ -1,4 +1,4 @@
-const { Utils, debug, PathInfo, ID, PathReference, ascii85 } = require('acebase-core');
+const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85 } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
@@ -123,6 +123,7 @@ class StorageSettings {
      * @param {boolean} [settings.removeVoidProperties=false] Instead of throwing errors on undefined values, remove the properties automatically. Default is false
      * @param {ClusterSettings} [settings.cluster] cluster settings
      * @param {string} [settings.path="."] Target path to store database files in, default is '.'
+     * @param {string} [settings.info="realtime database"] optional info to be written to the console output underneith the logo
      */
     constructor(settings) {
         settings = settings || {};
@@ -132,6 +133,9 @@ class StorageSettings {
         /** @type {string} */
         this.path = settings.path || '.';
         if (this.path.endsWith('/')) { this.path = this.path.slice(0, -1); }
+        /** @type {string} */
+        this.logLevel = settings.logLevel || 'log';
+        this.info = settings.info || 'realtime database';
     }
 }
 
@@ -147,6 +151,7 @@ class Storage extends EventEmitter {
         super();
         this.name = name;
         this.settings = settings;
+        this.debug = new DebugLogger(settings.logLevel, `[${name}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
         colors.setTheme({
             art: ['magenta', 'bold'],
@@ -159,9 +164,10 @@ class Storage extends EventEmitter {
             '   / /_\\ \\ ___ ___| |_/ / __ _ ___  ___ '.art + '\n' +
             '   |  _  |/ __/ _ \\ ___ \\/ _` / __|/ _ \\'.art + '\n' +
             '   | | | | (_|  __/ |_/ / (_| \\__ \\  __/'.art + '\n' +
-            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|'.art + '\n'
+            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|'.art + '\n' +
+            (settings.info ? ''.padStart(40 - settings.info.length, ' ') + settings.info.magenta + '\n' : '');
 
-        debug.log(logo);
+        this.debug.write(logo);
 
         // this._ready = false;
         // this._readyCallbacks = [];
@@ -186,7 +192,7 @@ class Storage extends EventEmitter {
 
         /** @type {DataIndex[]} */ 
         const _indexes = [];
-        const self = this;
+        const storage = this;
         this.indexes = {
             /**
              * Creates an index on specified path and key(s)
@@ -211,15 +217,15 @@ class Storage extends EventEmitter {
                     && index.includeKeys.every((key, index) => includeKeys[index] === key)
                 );
                 if (existingIndex && rebuild !== true) {
-                    debug.log(`Index on "/${path}/*/${key}" already exists`.inverse);
+                    storage.debug.log(`Index on "/${path}/*/${key}" already exists`.inverse);
                     return Promise.resolve(existingIndex);
                 }
                 const index = existingIndex || (() => {
                     switch (indexType) {
-                        case 'array': return new ArrayIndex(self, path, key, { include: options.include, config: options.config });
-                        case 'fulltext': return new FullTextIndex(self, path, key, { include: options.include, config: options.config });
-                        case 'geo': return new GeoIndex(self, path, key, { include: options.include, config: options.config });
-                        default: return new DataIndex(self, path, key, { include: options.include, config: options.config });
+                        case 'array': return new ArrayIndex(storage, path, key, { include: options.include, config: options.config });
+                        case 'fulltext': return new FullTextIndex(storage, path, key, { include: options.include, config: options.config });
+                        case 'geo': return new GeoIndex(storage, path, key, { include: options.include, config: options.config });
+                        default: return new DataIndex(storage, path, key, { include: options.include, config: options.config });
                     }
                 })();
                 if (!existingIndex) {
@@ -230,7 +236,7 @@ class Storage extends EventEmitter {
                     return index;
                 })
                 .catch(err => {
-                    debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.red);
+                    storage.debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.red);
                     if (!existingIndex) {
                         // Only remove index if we added it. Build may have failed because someone tried creating the index more than once, or rebuilding it while it was building...
                         _indexes.splice(_indexes.indexOf(index), 1);
@@ -285,17 +291,17 @@ class Storage extends EventEmitter {
                     // If pfs (fs) is not available, don't try using it
                     return Promise.resolve();
                 }
-                return pfs.readdir(`${self.settings.path}/${self.name}.acebase`)
+                return pfs.readdir(`${storage.settings.path}/${storage.name}.acebase`)
                 .then(files => {
                     const promises = [];
                     files.forEach(fileName => {
                         if (fileName.endsWith('.idx')) {
-                            const p = DataIndex.readFromFile(self, fileName)
+                            const p = DataIndex.readFromFile(storage, fileName)
                             .then(index => {
                                 _indexes.push(index);
                             })
                             .catch(err => {
-                                console.error(err);
+                                storage.debug.error(err);
                             });
                             promises.push(p);
                         }
@@ -303,7 +309,7 @@ class Storage extends EventEmitter {
                     return Promise.all(promises);
                 })
                 .catch(err => {
-                    console.error(err);
+                    storage.debug.error(err);
                 });
             }
         };
@@ -327,7 +333,7 @@ class Storage extends EventEmitter {
                 let pathSubs = _subs[path];
                 if (!pathSubs) { pathSubs = _subs[path] = []; }
                 // if (pathSubs.findIndex(ps => ps.type === type && ps.callback === callback)) {
-                //     debug.warn(`Identical subscription of type ${type} on path "${path}" being added`);
+                //     storage.debug.warn(`Identical subscription of type ${type} on path "${path}" being added`);
                 // }
                 pathSubs.push({ created: Date.now(), type, callback });
             },
@@ -439,7 +445,7 @@ class Storage extends EventEmitter {
                                     : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey); //NodePath(subscriptionPath).childPath(childKey); 
                             }
-                            if (dataPath !== null && subscribers.findIndex(s => s.type === sub.type && s.dataPath === dataPath) < 0) {
+                            if (dataPath !== null) { // && subscribers.findIndex(s => s.type === sub.type && s.dataPath === dataPath) < 0
                                 subscribers.push({ type: sub.type, eventPath, dataPath, subscriptionPath });
                             }
                         });
@@ -596,6 +602,19 @@ class Storage extends EventEmitter {
             topEventPath = first.path;
         }
 
+        const writeNode = () => {
+            if (typeof options._customWriteFunction === 'function') {
+                return options._customWriteFunction();
+            }
+            return this._writeNode(path, value, options);            
+        }
+
+        const indexes = this.indexes.getAll(path);
+        if (eventSubscriptions.length === 0 && indexes.length === 0) {
+            // Nobody's interested in value changes. Write node without tracking
+            return writeNode();
+        }
+
         return this.getNodeInfo(topEventPath, { tid })
         .then(eventNodeInfo => {
             if (!eventNodeInfo.exists) {
@@ -612,25 +631,18 @@ class Storage extends EventEmitter {
                     keys.forEach(key => valueOptions.include.indexOf(key) < 0 && valueOptions.include.push(key));
                 });
             }
+            if (topEventPath === '' && typeof valueOptions.include === 'undefined') {
+                this.debug.warn(`WARNING: One or more value event listeners on the root node are causing the entire database value to be read to facilitate change tracking. Using "value", "notify_value", "child_changed" and "notify_child_changed" events on the root node are a bad practice because of the significant performance impact`);
+            }
             return this.getNodeValue(topEventPath, valueOptions);
         })
         .then(currentValue => {
             topEventData = currentValue;
 
             // Now proceed with node updating
-            if (typeof options._customWriteFunction === 'function') {
-                return options._customWriteFunction();
-            }
-            return this._writeNode(path, value, options);
+            return writeNode();
         })
         .then(result => {
-
-            // Check if there are any event subscribers
-            const indexes = this.indexes.getAll(path);
-            if (eventSubscriptions.length === 0 && indexes.length === 0) {
-                // Nobody's interested in changed values. We're done!
-                return result;
-            }
 
             // Build data for old/new comparison
             let newTopEventData = cloneObject(topEventData);
@@ -998,11 +1010,11 @@ class Storage extends EventEmitter {
                     newValue = callback(node.value);
                 }
                 catch (err) {
-                    debug.error(`Error in transaction callback: ${err.message}`);
+                    this.debug.error(`Error in transaction callback: ${err.message}`);
                 }
                 if (newValue instanceof Promise) {
                     return newValue.catch(err => {
-                        debug.error(`Error in transaction callback: ${err.message}`);
+                        this.debug.error(`Error in transaction callback: ${err.message}`);
                     });
                 }
                 return newValue;
@@ -1108,7 +1120,7 @@ class Storage extends EventEmitter {
                 return isMatch;
             })
             .catch(err => {
-                debug.error(`Error matching on "${path}": `, err);
+                this.debug.error(`Error matching on "${path}": `, err);
                 throw err;
             });
         }; // checkNode
