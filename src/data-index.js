@@ -542,7 +542,7 @@ class DataIndex {
                 })
                 .catch(err => {
                     // Could not update index --> leaf full?
-                    debug.log(`Could not update index ${this.description}: ${err.message}`.yellow);
+                    this.storage.debug.log(`Could not update index ${this.description}: ${err.message}`.yellow);
     
                     console.assert(retry === 0, `unable to process operations because tree was rebuilt, and it didn't help?!`);
 
@@ -569,7 +569,7 @@ class DataIndex {
             lock.release();
             const doneTime = Date.now();
             const duration = Math.round((doneTime - startTime) / 1000);
-            debug.log(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration} seconds`.green);
+            this.storage.debug.log(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration} seconds`.green);
 
             // Process any queued updates
             return this._processUpdateQueue();
@@ -1046,7 +1046,7 @@ class DataIndex {
         const allowedKeyValueTypes = options && options.valueTypes
             ? options.valueTypes
             : indexableTypes;
-        debug.log(`Index build ${this.description} started`.blue);
+        this.storage.debug.log(`Index build ${this.description} started`.blue);
         let indexedValues = 0;
         // let addPromise;
         // let flushed = false;
@@ -1313,7 +1313,7 @@ class DataIndex {
                                                 else {
                                                     addIndexValue(keyValue, recordPointer, metadata);
                                                 }
-                                                debug.log(`Indexed "/${childPath}/${this.key}" value: '${keyValue}' (${typeof keyValue})`.cyan);
+                                                this.storage.debug.log(`Indexed "/${childPath}/${this.key}" value: '${keyValue}' (${typeof keyValue})`.cyan);
                                             }
                                             // return addPromise; // Do we really have to wait for this?
                                         });
@@ -1936,13 +1936,13 @@ class DataIndex {
         .then(() => {
             const doneTime = Date.now();
             const duration = Math.round((doneTime - startTime) / 1000 / 60);
-            debug.log(`Index ${this.description} was built successfully, took ${duration} minutes`.green);
+            this.storage.debug.log(`Index ${this.description} was built successfully, took ${duration} minutes`.green);
             this.state = DataIndex.STATE.READY;
             lock.release(); // release index lock
             return this;
         })
         .catch(err => {
-            debug.error(`Error building index ${this.description}: ${err.message}`);
+            this.storage.debug.error(`Error building index ${this.description}: ${err.message}`);
             this.state = DataIndex.STATE.ERROR;
             this._buildError = err;
             lock.release(); // release index lock
@@ -2727,7 +2727,7 @@ class ArrayIndex extends DataIndex {
                     if (counts[0].count === 0) {
                         stats.stop(0);
         
-                        debug.log(`Value "${counts[0].value}" not found in index, 0 results for query ${op} ${val}`);
+                        this.storage.debug.log(`Value "${counts[0].value}" not found in index, 0 results for query ${op} ${val}`);
                         results = new IndexQueryResults(0);
                         results.filterKey = this.key;
                         results.stats = stats;
@@ -3376,7 +3376,7 @@ class FullTextIndex extends DataIndex {
             if (counts[0].count === 0) {
                 stats.stop(0);
 
-                debug.log(`Word "${counts[0].word}" not found in index, 0 results for query ${op} "${val}"`);
+                this.storage.debug.log(`Word "${counts[0].word}" not found in index, 0 results for query ${op} "${val}"`);
                 results = new IndexQueryResults(0);
                 results.filterKey = this.key;
                 results.stats = stats;
@@ -3426,7 +3426,7 @@ class FullTextIndex extends DataIndex {
                 return queryWord(word, results)
                 .then(fr => {
                     const t2 = Date.now();
-                    debug.log(`fulltext search for "${word}" took ${t2-t1}ms`);
+                    this.storage.debug.log(`fulltext search for "${word}" took ${t2-t1}ms`);
                     resultsPerWord[words.indexOf(word)] = fr;
                     results = fr;
                     wordIndex++;
