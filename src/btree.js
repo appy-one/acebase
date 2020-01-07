@@ -5648,9 +5648,9 @@ class BinaryBPlusTreeBuilder {
         const leaf = new BPlusTreeLeaf(tree);
         info.entries.forEach(entry => {
             const key = entry.key;
-            if (typeof key === 'undefined') {
-                console.warn(`undefined key being written to leaf`);
-            }
+            // if (typeof key === 'undefined') {
+            //     console.warn(`undefined key being written to leaf`);
+            // }
             // const leafEntry = new BPlusTreeLeafEntry(leaf, key);
             // leafEntry.values = entry.values;
             // leaf.entries.push(leafEntry);
