@@ -1085,7 +1085,7 @@ class DataIndex {
                         //     });
                         //     return;
                         // }
-                        console.log(`done writing values`);
+                        this.storage.debug.log(`done writing values to ${buildFile}`);
                         if (streamState.wait) {
                             buildWriteStream.once('drain', () => {
                                 buildWriteStream.end(resolve);
@@ -1846,12 +1846,12 @@ class DataIndex {
             // Done writing values to build file. 
             // Now we have to group all values per key, sort them.
             // then create the binary B+tree.
-            console.log(`done writing build file`);
+            this.storage.debug.log(`done writing build file ${buildFile}`);
             return createMergeFile();
         })
         .then(() => {
             // Open merge file for reading, index file for writing
-            console.log(`done writing merge file`);
+            this.storage.debug.log(`done writing merge file ${mergeFile}`);
             return Promise.all([
                 indexedValues === 0 ? -1 : pfs.open(mergeFile, pfs.flags.read),
                 pfs.open(this.fileName, pfs.flags.write)
