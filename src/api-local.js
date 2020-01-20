@@ -1,5 +1,5 @@
-const { Api } = require('acebase-core');
-const { LocalAceBase } = require('./acebase-local');
+const { Api, Utils } = require('acebase-core');
+const { AceBase } = require('./acebase-local');
 const { StorageSettings } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
@@ -13,7 +13,7 @@ class LocalApi extends Api {
     
     /**
      * 
-     * @param {{db: LocalAceBase, storage: StorageSettings, logLevel?: string }} settings
+     * @param {{db: AceBase, storage: StorageSettings, logLevel?: string }} settings
      */
     constructor(dbname = "default", settings, readyCallback) {
         super();
@@ -99,10 +99,31 @@ class LocalApi extends Api {
         */
     }
 
+    /**
+     * 
+     * @param {string} path 
+     * @param {object} query 
+     * @param {Array<{ key: string, op: string, compare: any}>} query.filters
+     * @param {number} query.skip number of results to skip, useful for paging
+     * @param {number} query.take max number of results to return
+     * @param {Array<{ key: string, ascending: boolean }>} query.order
+     * @param {object} [options]
+     * @param {boolean} [options.snapshots=false] whether to return matching data, or paths to matching nodes only
+     * @param {string[]} [options.include] when using snapshots, keys or relative paths to include in result data
+     * @param {string[]} [options.exclude] when using snapshots, keys or relative paths to exclude from result data
+     * @param {boolean} [options.child_objects] when using snapshots, whether to include child objects in result data
+     * @param {(event: { name: string, [key]: any }) => void} [options.eventHandler]
+     * @param {object} [options.monitor] NEW (BETA) monitor changes
+     * @param {boolean} [options.monitor.add=false] monitor new matches (either because they were added, or changed and now match the query)
+     * @param {boolean} [options.monitor.change=false] monitor changed children that still match this query
+     * @param {boolean} [options.monitor.remove=false] monitor children that don't match this query anymore
+     * @ param {(event:string, path: string, value?: any) => boolean} [options.monitor.callback] NEW (BETA) callback with subscription to enable monitoring of new matches
+     * @returns {Promise<object[]|string[]>} returns a promise that resolves with matching data or paths
+     */
     query(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: event => {} }) {
         if (typeof options !== "object") { options = {}; }
         if (typeof options.snapshots === "undefined") { options.snapshots = false; }
-
+        
         const sortMatches = (matches) => {
             matches.sort((a,b) => {
                 const compare = (i) => {
@@ -186,7 +207,7 @@ class LocalApi extends Api {
             });                
         };
 
-        let isWildcardPath = path.indexOf('*') >= 0;
+        const isWildcardPath = path.indexOf('*') >= 0 || path.indexOf('$') >= 0;
 
         const availableIndexes = this.storage.indexes.get(path);
         const usingIndexes = [];
@@ -284,7 +305,7 @@ class LocalApi extends Api {
         }
 
         // Check if the filters are using valid operators
-        const allowedTableScanOperators = ["<","<=","==","!=",">=",">","in","!in","matches","!matches","between","!between","has","!has","contains","!contains"]; // DISABLED "custom" because it is not fully implemented and only works locally
+        const allowedTableScanOperators = ["<","<=","==","!=",">=",">","like","!like","in","!in","matches","!matches","between","!between","has","!has","contains","!contains"]; // DISABLED "custom" because it is not fully implemented and only works locally
         for(let i = 0; i < tableScanFilters.length; i++) {
             const f = tableScanFilters[i];
             if (!allowedTableScanOperators.includes(f.op)) {
@@ -297,7 +318,7 @@ class LocalApi extends Api {
             // There are unprocessed filters, which means the fields aren't indexed. 
             // We're not going to get all data of a wildcard path to query manually. 
             // Indexes must be created
-            const keys =  tableScanFilters.reduce((keys, f) => { 
+            const keys = tableScanFilters.reduce((keys, f) => { 
                 if (keys.indexOf(f.key) < 0) { keys.push(f.key); }
                 return keys;
             }, []).map(key => `"${key}"`);
@@ -311,9 +332,9 @@ class LocalApi extends Api {
             if (filter.index && filter.indexUsage !== 'filter') {
                 let promise = filter.index.query(filter.op, filter.compare)
                 .then(results => {
-                    options.eventHandler && options.eventHandler({ event: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
+                    options.eventHandler && options.eventHandler({ name: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
                     if (results.hints.length > 0) {
-                        options.eventHandler && options.eventHandler({ event: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
+                        options.eventHandler && options.eventHandler({ name: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
                     }
                     return results;
                 });
@@ -352,9 +373,9 @@ class LocalApi extends Api {
             this.storage.debug.log(`Using index for sorting: ${sortIndex.description}`);
             const promise = sortIndex.take(query.skip, query.take, query.order[0].ascending)
             .then(results => {
-                options.eventHandler && options.eventHandler({ event: 'stats', type: 'sort_index_take', source: filter.index.description, stats: results.stats });
+                options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: filter.index.description, stats: results.stats });
                 if (results.hints.length > 0) {
-                    options.eventHandler && options.eventHandler({ event: 'hints', type: 'sort_index_take', source: filter.index.description, hints: results.hints });
+                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: filter.index.description, hints: results.hints });
                 }
                 return results;
             });
@@ -590,6 +611,184 @@ class LocalApi extends Api {
                 matches = matches.slice(0, query.take);
             }
 
+            // NEW: Check if this is a realtime query - future updates must send query result updates
+            if (options.monitor === true) {
+                options.monitor = { add: true, change: true, remove: true };
+            }
+            if (typeof options.monitor === 'object' && (options.monitor.add || options.monitor.change || options.monitor.remove)) {
+                const matchedPaths = options.snapshots ? matches.map(match => match.path) : matches.slice();
+                const ref = this.db.ref(path);
+                const removeMatch = (path) => {
+                    const index = matchedPaths.indexOf(path);
+                    if (index < 0) { return; }
+                    matchedPaths.splice(index, 1);
+                };
+                const addMatch = (path) => {
+                    if (matchedPaths.includes(path)) { return; }
+                    matchedPaths.push(path);
+                };
+                const stopMonitoring = () => {
+                    this.unsubscribe(ref.path, 'notify_child_changed', childChangedCallback);
+                    this.unsubscribe(ref.path, 'notify_child_added', childAddedCallback);
+                    this.unsubscribe(ref.path, 'notify_child_removed', childRemovedCallback);
+                };
+                const childChangedCallback = (err, path, newValue, oldValue) => {
+                    const wasMatch = matchedPaths.includes(path);
+
+                    let keepMonitoring = true;
+                    // check if the properties we already have match filters, 
+                    // and if we have to check additional properties
+                    const checkKeys = [];
+                    query.filters.forEach(f => !checkKeys.includes(f.key) && checkKeys.push(f.key));
+                    const seenKeys = [];
+                    typeof oldValue === 'object' && Object.keys(oldValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
+                    typeof newValue === 'object' && Object.keys(newValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
+                    const missingKeys = [];
+                    let isMatch = seenKeys.every(key => {
+                        if (!checkKeys.includes(key)) { return true; }
+                        const filters = query.filters.filter(filter => filter.key === key);
+                        return filters.every(filter => {
+                            if (allowedTableScanOperators.includes(filter.op)) {
+                                return this.storage.test(newValue[key], filter.op, filter.compare);
+                            }
+                            // specific index filter
+                            if (filter.index.constructor.name === 'FullTextDataIndex' && filter.index.localeKey && !seenKeys.includes(filter.index.localeKey)) {
+                                // Can't check because localeKey is missing
+                                missingKeys.push(filter.index.localeKey);
+                                return true; // so we'll know if all others did match
+                            }
+                            return filter.index.test(newValue, filter.op, filter.compare);
+                        });
+                    });
+                    if (isMatch) {
+                        // Matches all checked (updated) keys. BUT. Did we have all data needed?
+                        // If it was a match before, other properties don't matter because they didn't change and won't
+                        // change the current outcome
+
+                        missingKeys.push(...checkKeys.filter(key => !seenKeys.includes(key)));
+
+                        let promise = Promise.resolve(true);
+                        if (!wasMatch && missingKeys.length > 0) {
+                            // We have to check if this node becomes a match
+                            const filterQueue = query.filters.filter(f => missingKeys.includes(f.key)); 
+                            const simpleFilters = filterQueue.filter(f => allowedTableScanOperators.includes(f.op));
+                            const indexFilters = filterQueue.filter(f => !allowedTableScanOperators.includes(f.op));
+                            
+                            const processFilters = () => {
+                                const checkIndexFilters = () => {
+                                    // TODO: ask index what keys to load (eg: FullTextIndex might need key specified by localeKey)
+                                    const keysToLoad = indexFilters.reduce((keys, filter) => {
+                                        if (!keys.includes(filter.key)) {
+                                            keys.push(filter.key);
+                                        }
+                                        if (filter.index.constructor.name === 'FullTextDataIndex' && filter.index.localeKey && !keys.includes(filter.index.localeKey)) {
+                                            keys.push(filter.index.localeKey);
+                                        }
+                                        return keys;
+                                    }, []);
+                                    return Node.getValue(this.storage, path, { include: keysToLoad })
+                                    .then(val => {
+                                        if (val === null) { return false; }
+                                        return indexFilters.every(filter => filter.index.test(val, filter.op, filter.compare));
+                                    })
+                                }
+                                if (simpleFilters.length > 0) {
+                                    return Node.matches(this.storage, path, simpleFilters)
+                                    .then(isMatch => {
+                                        if (isMatch) {
+                                            if (indexFilters.length === 0) { return true; }
+                                            return checkIndexFilters();
+                                        }
+                                        return false;
+                                    })
+                                }
+                                else {
+                                    return checkIndexFilters();
+                                }
+                            }
+                            promise = processFilters();
+                        }
+                        return promise
+                        .then(isMatch => {
+                            if (isMatch) {
+                                if (!wasMatch) { addMatch(path); }
+                                // load missing data if snapshots are requested
+                                let gotValue = value => {
+                                    if (wasMatch && options.monitor.change) {
+                                        keepMonitoring = options.eventHandler({ name: 'change', path, value });
+                                    }
+                                    else if (!wasMatch && options.monitor.add) {
+                                        keepMonitoring = options.eventHandler({ name: 'add', path, value });
+                                    }
+                                    if (keepMonitoring === false) { stopMonitoring(); }
+                                };
+                                if (options.snapshots) {
+                                    const loadOptions = { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
+                                    return this.storage.getNodeValue(path, loadOptions)
+                                    .then(gotValue);
+                                }
+                                else {
+                                    return gotValue(newValue);
+                                }
+                            }
+                            else if (wasMatch) {
+                                removeMatch(path);
+                                if (options.monitor.remove) {
+                                    keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: oldValue });
+                                }
+                            }
+                            if (keepMonitoring === false) { stopMonitoring(); }
+                        });
+                    }
+                    else {
+                        // No match
+                        if (wasMatch) {
+                            removeMatch(path);
+                            if (options.monitor.remove) {
+                                keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: oldValue });
+                                if (keepMonitoring === false) { stopMonitoring(); }
+                            }                                
+                        }
+                    }
+                };
+                const childAddedCallback = (err, path, newValue, oldValue) => {
+                    let isMatch = query.filters.every(filter => {
+                        if (allowedTableScanOperators.includes(filter.op)) {
+                            return this.storage.test(newValue[filter.key], filter.op, filter.compare);
+                        }
+                        else {
+                            return filter.index.test(newValue, filter.op, filter.compare);
+                        }
+                    });
+                    let keepMonitoring = true;
+                    if (isMatch) {
+                        addMatch(path);
+                        if (options.monitor.add) {
+                            keepMonitoring = options.eventHandler({ name: 'add', path: path, value: options.snapshots ? newValue : null });
+                        }
+                    }
+                    if (keepMonitoring === false) { stopMonitoring(); }
+                };
+                const childRemovedCallback = (err, path, newValue, oldValue) => {
+                    let keepMonitoring = true;
+                    removeMatch(path);
+                    if (options.monitor.remove) {
+                        keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: options.snapshots ? oldValue : null });
+                    }
+                    if (keepMonitoring === false) { stopMonitoring(); }
+                };
+                if (options.monitor.add || options.monitor.change || options.monitor.remove) {
+                    // Listen for child_changed events
+                    this.subscribe(ref.path, 'notify_child_changed', childChangedCallback);
+                }
+                if (options.monitor.remove) {
+                    this.subscribe(ref.path, 'notify_child_removed', childRemovedCallback);
+                }
+                if (options.monitor.add) {
+                    this.subscribe(ref.path, 'notify_child_added', childAddedCallback);
+                }
+            }
+        
             return matches;
         });
     }
