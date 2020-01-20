@@ -467,14 +467,15 @@ class Storage extends EventEmitter {
                 const pathSubscriptions = _subs[path] || [];
                 pathSubscriptions.filter(sub => sub.type === event)
                 .forEach(sub => {
-                    if (event.startsWith('notify_')) {
-                        // Notify only event, run callback without data
-                        sub.callback(null, dataPath);
-                    }
-                    else {
-                        // Run callback with data
-                        sub.callback(null, dataPath, newValue, oldValue);
-                    }
+                    sub.callback(null, dataPath, newValue, oldValue);
+                    // if (event.startsWith('notify_')) {
+                    //     // Notify only event, run callback without data
+                    //     sub.callback(null, dataPath);
+                    // }
+                    // else {
+                    //     // Run callback with data
+                    //     sub.callback(null, dataPath, newValue, oldValue);
+                    // }
                 });
             }
         };
@@ -574,7 +575,6 @@ class Storage extends EventEmitter {
      * @returns {Promise<void>}
      */
     _writeNodeWithTracking(path, value, options = { merge: false, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true }) {
-        // TODO: create and move to Storage base class, for shared use in SqlStorage, FileStorage etc
         if (!options || !options.tid) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid!`); }
         options.merge = options.merge === true;
         const tid = options.tid;
@@ -600,6 +600,10 @@ class Storage extends EventEmitter {
                 });
             let first = eventPaths[0];
             topEventPath = first.path;
+            if (valueSubscribers.filter(sub => sub.dataPath === topEventPath).every(sub => sub.type.startsWith('notify_'))) {
+                // Prevent loading of all data on path, so it'll only load changing properties
+                hasValueSubscribers = false;
+            }
         }
 
         const writeNode = () => {
@@ -609,6 +613,12 @@ class Storage extends EventEmitter {
             return this._writeNode(path, value, options);            
         }
 
+        // TODO: FIX indexes on higher path not being updated. 
+        // Now, updates on an indexed property does not update the index!
+        // issue example: 
+        // a geo index on path 'restaurants', key 'location'
+        // updates on 'restaurant/chez_jean` will update the index
+        // BUT updates on 'restaurent/chez_jean/location' WILL NOT!!!!
         const indexes = this.indexes.getAll(path);
         if (eventSubscriptions.length === 0 && indexes.length === 0) {
             // Nobody's interested in value changes. Write node without tracking
@@ -623,12 +633,12 @@ class Storage extends EventEmitter {
             }
             let valueOptions = { tid };
             if (!hasValueSubscribers && options.merge === true) {
-                // Only load current value for properties being updated.
+                // Only load current value for properties being updated
                 valueOptions.include = Object.keys(value);
                 // Make sure the keys for any indexes on this path are also loaded
                 this.indexes.getAll(path, false).forEach(index => {
                     const keys = [index.key].concat(index.includeKeys);
-                    keys.forEach(key => valueOptions.include.indexOf(key) < 0 && valueOptions.include.push(key));
+                    keys.forEach(key => !valueOptions.include.includes(key) && valueOptions.include.push(key));
                 });
             }
             if (topEventPath === '' && typeof valueOptions.include === 'undefined') {
@@ -1145,33 +1155,39 @@ class Storage extends EventEmitter {
                     proceed = false;
                 }
                 else {
-                    const isMatch = (val) => {
-                        if (f.op === "<") { return val < f.compare; }
-                        if (f.op === "<=") { return val <= f.compare; }
-                        if (f.op === "==") { return val === f.compare; }
-                        if (f.op === "!=") { return val !== f.compare; }
-                        if (f.op === ">") { return val > f.compare; }
-                        if (f.op === ">=") { return val >= f.compare; }
-                        if (f.op === "in") { return f.compare.indexOf(val) >= 0; }
-                        if (f.op === "!in") { return f.compare.indexOf(val) < 0; }
-                        if (f.op === "matches") {
-                            return f.compare.test(val.toString());
-                        }
-                        if (f.op === "!matches") {
-                            return !f.compare.test(val.toString());
-                        }
-                        if (f.op === "between") {
-                            return val >= f.compare[0] && val <= f.compare[1];
-                        }
-                        if (f.op === "!between") {
-                            return val < f.compare[0] || val > f.compare[1];
-                        }
-                        // DISABLED 2019/10/23 because "custom" only works locally and is not fully implemented
-                        // if (f.op === "custom") {
-                        //     return f.compare(val);
-                        // }
-                        return false;
-                    };
+                    // const isMatch = (val) => {
+                    //     if (f.op === "<") { return val < f.compare; }
+                    //     if (f.op === "<=") { return val <= f.compare; }
+                    //     if (f.op === "==") { return val === f.compare; }
+                    //     if (f.op === "!=") { return val !== f.compare; }
+                    //     if (f.op === ">") { return val > f.compare; }
+                    //     if (f.op === ">=") { return val >= f.compare; }
+                    //     if (f.op === "in") { return f.compare.indexOf(val) >= 0; }
+                    //     if (f.op === "!in") { return f.compare.indexOf(val) < 0; }
+                    //     if (f.op === "like" || f.op === "!like") {
+                    //         const pattern = f.compare.replace(/[-[\]{}()+.,\\^$|#\s]/g, '\\$&').replace(/\?/g, '.').replace(/\*/g, '.*?');
+                    //         const re = new RegExp(pattern, 'i');
+                    //         const isMatch = re.test(val.toString());
+                    //         return f.op === "like" ? isMatch : !isMatch;
+                    //     }
+                    //     if (f.op === "matches") {
+                    //         return f.compare.test(val.toString());
+                    //     }
+                    //     if (f.op === "!matches") {
+                    //         return !f.compare.test(val.toString());
+                    //     }
+                    //     if (f.op === "between") {
+                    //         return val >= f.compare[0] && val <= f.compare[1];
+                    //     }
+                    //     if (f.op === "!between") {
+                    //         return val < f.compare[0] || val > f.compare[1];
+                    //     }
+                    //     // DISABLED 2019/10/23 because "custom" only works locally and is not fully implemented
+                    //     // if (f.op === "custom") {
+                    //     //     return f.compare(val);
+                    //     // }
+                    //     return false;
+                    // };
                     
                     if (child.address) {
                         if (child.valueType === VALUE_TYPES.OBJECT && ["has","!has"].indexOf(f.op) >= 0) {
@@ -1210,7 +1226,7 @@ class Storage extends EventEmitter {
                         else if (child.valueType === VALUE_TYPES.STRING) {
                             const p = this.getNodeValue(child.path, { tid })
                             .then(val => {
-                                return { key: child.key, isMatch: isMatch(val) };
+                                return { key: child.key, isMatch: this.test(val, f.op, f.compare) };
                             });
                             promises.push(p);
                             proceed = true;
@@ -1228,7 +1244,7 @@ class Storage extends EventEmitter {
                         proceed = (contains && f.op === "contains") || (!contains && f.op === "!contains");
                     }
                     else {
-                        const ret = isMatch(child.value);
+                        const ret = this.test(child.value, f.op, f.compare);
                         if (ret instanceof Promise) {
                             promises.push(ret);
                             ret = true;
@@ -1243,7 +1259,46 @@ class Storage extends EventEmitter {
         }; // checkChild
 
         return checkNode(path, criteria);
-    }    
+    }
+
+    test(val, op, compare) {
+        if (op === "<") { return val < compare; }
+        if (op === "<=") { return val <= compare; }
+        if (op === "==") { return val === compare; }
+        if (op === "!=") { return val !== compare; }
+        if (op === ">") { return val > compare; }
+        if (op === ">=") { return val >= compare; }
+        if (op === "in") { return compare.indexOf(val) >= 0; }
+        if (op === "!in") { return compare.indexOf(val) < 0; }
+        if (op === "like" || op === "!like") {
+            const pattern = '^' + compare.replace(/[-[\]{}()+.,\\^$|#\s]/g, '\\$&').replace(/\?/g, '.').replace(/\*/g, '.*?') + '$';
+            const re = new RegExp(pattern, 'i');
+            const isMatch = re.test(val.toString());
+            return op === "like" ? isMatch : !isMatch;
+        }
+        if (op === "matches") {
+            return compare.test(val.toString());
+        }
+        if (op === "!matches") {
+            return !compare.test(val.toString());
+        }
+        if (op === "between") {
+            return val >= compare[0] && val <= compare[1];
+        }
+        if (op === "!between") {
+            return val < compare[0] || val > compare[1];
+        }
+        if (op === "has" || op === "!has") {
+            const has = typeof val === 'object' && compare in val;
+            return op === "has" ? has : !has;
+        }
+        if (op === "contains" || op === "!contains") {
+            // TODO: rename to "includes"?
+            const includes = typeof val === 'object' && val instanceof Array && val.includes(compare);
+            return op === "contains" ? includes : !includes;
+        }
+        return false;
+    }
 
     /**
      * Export a specific path's data to a stream
