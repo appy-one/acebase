@@ -382,7 +382,7 @@ class DataRetrievalOptions {
 class QueryDataRetrievalOptions extends DataRetrievalOptions {
     /**
      * Options for data retrieval, allows selective loading of object properties
-     * @param {{ snapshots?: boolean, include?: Array<string|number>, exclude?: Array<string|number>, child_objects?: boolean }} options 
+     * @param {QueryDataRetrievalOptions} [options]
      */
     constructor(options) {
         super(options);
@@ -978,10 +978,36 @@ class DataReferenceQuery {
             options.snapshots = true;
         }
         options.eventHandler = ev => {
-            if (!this._events || !this._events[ev.event]) { return; }
-            const listeners = this._events[ev.event];
+            if (!this._events || !this._events[ev.name]) { return false; }
+            const listeners = this._events[ev.name];
+            if (typeof listeners !== 'object' || listeners.length === 0) { return false; }
+            if (['add','change','remove'].includes(ev.name)) {
+                const ref = new DataReference(this.ref.db, ev.path);
+                const eventData = { name: ev.name };
+                if (options.snapshots && ev.name !== 'remove') {
+                    const val = db.types.deserialize(ev.path, ev.value);
+                    eventData.snapshot = new DataSnapshot(ref, val, false);
+                }
+                else {
+                    eventData.ref = ref;
+                }
+                ev = eventData;
+            }
             listeners.forEach(callback => { try { callback(ev); } catch(e) {} });
         };
+        // Check if there are event listeners set for realtime changes
+        options.monitor = { add: false, change: false, remove: false };
+        if (this._events) {
+            if (this._events['add'] && this._events['add'].length > 0) {
+                options.monitor.add = true;
+            }
+            if (this._events['change'] && this._events['change'].length > 0) {
+                options.monitor.change = true;
+            }
+            if (this._events['remove'] && this._events['remove'].length > 0) {
+                options.monitor.remove = true;
+            }
+        }
         const db = this.ref.db;
         return db.api.query(this.ref.path, this[_private], options)
         .catch(err => {
@@ -1034,6 +1060,15 @@ class DataReferenceQuery {
         });
     }
 
+    /**
+     * Subscribes to an event. Supported events are:
+     *  "stats": receive information about query performance.
+     *  "hints": receive query or index optimization hints
+     *  "add", "change", "remove": receive real-time query result changes
+     * @param {string} event - Name of the event to subscribe to
+     * @param {(event: object) => void} callback - Callback function
+     * @returns {DataReferenceQuery} returns reference to this query
+     */
     on(event, callback) {
         if (!this._events) { this._events = {}; };
         if (!this._events[event]) { this._events[event] = []; }
@@ -1041,8 +1076,23 @@ class DataReferenceQuery {
         return this;
     }
 
+    /**
+     * Unsubscribes from a previously added event(s)
+     * @param {string} [event] Name of the event
+     * @param {Function} [callback] callback function to remove
+     * @returns {DataReferenceQuery} returns reference to this query
+     */
     off(event, callback) {
-        if (!this._events || !this._events[event]) { return this; }
+        if (!this._events) { return this; }
+        if (typeof event === 'undefined') {
+            this._events = {};
+            return this;
+        }
+        if (!this._events[event]) { return this; }
+        if (typeof callback === 'undefined') {
+            delete this._events[event];
+            return this;
+        }
         const index = !this._events[event].indexOf(callback);
         if (!~index) { return this; }
         this._events[event].splice(index, 1);
@@ -1857,6 +1907,9 @@ module.exports = {
             else if (type === "reference") {
                 return new PathReference(val);
             }
+            else if (type === "regexp") {
+                return new RegExp(val.pattern, val.flags);
+            }
             return val;          
         };
         if (typeof data.map === "string") {
@@ -1913,6 +1966,11 @@ module.exports = {
                 else if (val instanceof PathReference) {
                     obj[key] = val.path;
                     mappings[path] = "reference";
+                }
+                else if (val instanceof RegExp) {
+                    // Queries using the 'matches' filter with a regular expression can now also be used on remote db's
+                    obj[key] = { pattern: val.source, flags: val.flags };
+                    mappings[path] = "regexp";
                 }
                 else if (typeof val === "object" && val !== null) {
                     process(val, mappings, path);
@@ -2478,7 +2536,7 @@ function cloneObject(original, stack) {
     };
     original = checkAndFixTypedArray(original);
 
-    if (typeof original !== "object" || original === null || original instanceof Date || original instanceof ArrayBuffer || original instanceof PathReference) {
+    if (typeof original !== "object" || original === null || original instanceof Date || original instanceof ArrayBuffer || original instanceof PathReference || original instanceof RegExp) {
         return original;
     }
 
@@ -2487,7 +2545,7 @@ function cloneObject(original, stack) {
             throw new ReferenceError(`object contains a circular reference`);
         }
         val = checkAndFixTypedArray(val);
-        if (val === null || val instanceof Date || val instanceof ArrayBuffer || val instanceof PathReference) { // || val instanceof ID
+        if (val === null || val instanceof Date || val instanceof ArrayBuffer || val instanceof PathReference || val instanceof RegExp) { // || val instanceof ID
             return val;
         }
         else if (val instanceof Array) {
@@ -3442,8 +3500,8 @@ class AceBase extends AceBaseBase {
 
 module.exports = { AceBase, AceBaseLocalSettings };
 },{"./api-local":31,"./storage":38,"acebase-core":11}],31:[function(require,module,exports){
-const { Api } = require('acebase-core');
-const { LocalAceBase } = require('./acebase-local');
+const { Api, Utils } = require('acebase-core');
+const { AceBase } = require('./acebase-local');
 const { StorageSettings } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
@@ -3457,7 +3515,7 @@ class LocalApi extends Api {
     
     /**
      * 
-     * @param {{db: LocalAceBase, storage: StorageSettings, logLevel?: string }} settings
+     * @param {{db: AceBase, storage: StorageSettings, logLevel?: string }} settings
      */
     constructor(dbname = "default", settings, readyCallback) {
         super();
@@ -3543,10 +3601,31 @@ class LocalApi extends Api {
         */
     }
 
+    /**
+     * 
+     * @param {string} path 
+     * @param {object} query 
+     * @param {Array<{ key: string, op: string, compare: any}>} query.filters
+     * @param {number} query.skip number of results to skip, useful for paging
+     * @param {number} query.take max number of results to return
+     * @param {Array<{ key: string, ascending: boolean }>} query.order
+     * @param {object} [options]
+     * @param {boolean} [options.snapshots=false] whether to return matching data, or paths to matching nodes only
+     * @param {string[]} [options.include] when using snapshots, keys or relative paths to include in result data
+     * @param {string[]} [options.exclude] when using snapshots, keys or relative paths to exclude from result data
+     * @param {boolean} [options.child_objects] when using snapshots, whether to include child objects in result data
+     * @param {(event: { name: string, [key]: any }) => void} [options.eventHandler]
+     * @param {object} [options.monitor] NEW (BETA) monitor changes
+     * @param {boolean} [options.monitor.add=false] monitor new matches (either because they were added, or changed and now match the query)
+     * @param {boolean} [options.monitor.change=false] monitor changed children that still match this query
+     * @param {boolean} [options.monitor.remove=false] monitor children that don't match this query anymore
+     * @ param {(event:string, path: string, value?: any) => boolean} [options.monitor.callback] NEW (BETA) callback with subscription to enable monitoring of new matches
+     * @returns {Promise<object[]|string[]>} returns a promise that resolves with matching data or paths
+     */
     query(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: event => {} }) {
         if (typeof options !== "object") { options = {}; }
         if (typeof options.snapshots === "undefined") { options.snapshots = false; }
-
+        
         const sortMatches = (matches) => {
             matches.sort((a,b) => {
                 const compare = (i) => {
@@ -3630,7 +3709,7 @@ class LocalApi extends Api {
             });                
         };
 
-        let isWildcardPath = path.indexOf('*') >= 0;
+        const isWildcardPath = path.indexOf('*') >= 0 || path.indexOf('$') >= 0;
 
         const availableIndexes = this.storage.indexes.get(path);
         const usingIndexes = [];
@@ -3728,7 +3807,7 @@ class LocalApi extends Api {
         }
 
         // Check if the filters are using valid operators
-        const allowedTableScanOperators = ["<","<=","==","!=",">=",">","in","!in","matches","!matches","between","!between","has","!has","contains","!contains"]; // DISABLED "custom" because it is not fully implemented and only works locally
+        const allowedTableScanOperators = ["<","<=","==","!=",">=",">","like","!like","in","!in","matches","!matches","between","!between","has","!has","contains","!contains"]; // DISABLED "custom" because it is not fully implemented and only works locally
         for(let i = 0; i < tableScanFilters.length; i++) {
             const f = tableScanFilters[i];
             if (!allowedTableScanOperators.includes(f.op)) {
@@ -3741,7 +3820,7 @@ class LocalApi extends Api {
             // There are unprocessed filters, which means the fields aren't indexed. 
             // We're not going to get all data of a wildcard path to query manually. 
             // Indexes must be created
-            const keys =  tableScanFilters.reduce((keys, f) => { 
+            const keys = tableScanFilters.reduce((keys, f) => { 
                 if (keys.indexOf(f.key) < 0) { keys.push(f.key); }
                 return keys;
             }, []).map(key => `"${key}"`);
@@ -3755,9 +3834,9 @@ class LocalApi extends Api {
             if (filter.index && filter.indexUsage !== 'filter') {
                 let promise = filter.index.query(filter.op, filter.compare)
                 .then(results => {
-                    options.eventHandler && options.eventHandler({ event: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
+                    options.eventHandler && options.eventHandler({ name: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
                     if (results.hints.length > 0) {
-                        options.eventHandler && options.eventHandler({ event: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
+                        options.eventHandler && options.eventHandler({ name: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
                     }
                     return results;
                 });
@@ -3796,9 +3875,9 @@ class LocalApi extends Api {
             this.storage.debug.log(`Using index for sorting: ${sortIndex.description}`);
             const promise = sortIndex.take(query.skip, query.take, query.order[0].ascending)
             .then(results => {
-                options.eventHandler && options.eventHandler({ event: 'stats', type: 'sort_index_take', source: filter.index.description, stats: results.stats });
+                options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: filter.index.description, stats: results.stats });
                 if (results.hints.length > 0) {
-                    options.eventHandler && options.eventHandler({ event: 'hints', type: 'sort_index_take', source: filter.index.description, hints: results.hints });
+                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: filter.index.description, hints: results.hints });
                 }
                 return results;
             });
@@ -4034,6 +4113,184 @@ class LocalApi extends Api {
                 matches = matches.slice(0, query.take);
             }
 
+            // NEW: Check if this is a realtime query - future updates must send query result updates
+            if (options.monitor === true) {
+                options.monitor = { add: true, change: true, remove: true };
+            }
+            if (typeof options.monitor === 'object' && (options.monitor.add || options.monitor.change || options.monitor.remove)) {
+                const matchedPaths = options.snapshots ? matches.map(match => match.path) : matches.slice();
+                const ref = this.db.ref(path);
+                const removeMatch = (path) => {
+                    const index = matchedPaths.indexOf(path);
+                    if (index < 0) { return; }
+                    matchedPaths.splice(index, 1);
+                };
+                const addMatch = (path) => {
+                    if (matchedPaths.includes(path)) { return; }
+                    matchedPaths.push(path);
+                };
+                const stopMonitoring = () => {
+                    this.unsubscribe(ref.path, 'notify_child_changed', childChangedCallback);
+                    this.unsubscribe(ref.path, 'notify_child_added', childAddedCallback);
+                    this.unsubscribe(ref.path, 'notify_child_removed', childRemovedCallback);
+                };
+                const childChangedCallback = (err, path, newValue, oldValue) => {
+                    const wasMatch = matchedPaths.includes(path);
+
+                    let keepMonitoring = true;
+                    // check if the properties we already have match filters, 
+                    // and if we have to check additional properties
+                    const checkKeys = [];
+                    query.filters.forEach(f => !checkKeys.includes(f.key) && checkKeys.push(f.key));
+                    const seenKeys = [];
+                    typeof oldValue === 'object' && Object.keys(oldValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
+                    typeof newValue === 'object' && Object.keys(newValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
+                    const missingKeys = [];
+                    let isMatch = seenKeys.every(key => {
+                        if (!checkKeys.includes(key)) { return true; }
+                        const filters = query.filters.filter(filter => filter.key === key);
+                        return filters.every(filter => {
+                            if (allowedTableScanOperators.includes(filter.op)) {
+                                return this.storage.test(newValue[key], filter.op, filter.compare);
+                            }
+                            // specific index filter
+                            if (filter.index.constructor.name === 'FullTextDataIndex' && filter.index.localeKey && !seenKeys.includes(filter.index.localeKey)) {
+                                // Can't check because localeKey is missing
+                                missingKeys.push(filter.index.localeKey);
+                                return true; // so we'll know if all others did match
+                            }
+                            return filter.index.test(newValue, filter.op, filter.compare);
+                        });
+                    });
+                    if (isMatch) {
+                        // Matches all checked (updated) keys. BUT. Did we have all data needed?
+                        // If it was a match before, other properties don't matter because they didn't change and won't
+                        // change the current outcome
+
+                        missingKeys.push(...checkKeys.filter(key => !seenKeys.includes(key)));
+
+                        let promise = Promise.resolve(true);
+                        if (!wasMatch && missingKeys.length > 0) {
+                            // We have to check if this node becomes a match
+                            const filterQueue = query.filters.filter(f => missingKeys.includes(f.key)); 
+                            const simpleFilters = filterQueue.filter(f => allowedTableScanOperators.includes(f.op));
+                            const indexFilters = filterQueue.filter(f => !allowedTableScanOperators.includes(f.op));
+                            
+                            const processFilters = () => {
+                                const checkIndexFilters = () => {
+                                    // TODO: ask index what keys to load (eg: FullTextIndex might need key specified by localeKey)
+                                    const keysToLoad = indexFilters.reduce((keys, filter) => {
+                                        if (!keys.includes(filter.key)) {
+                                            keys.push(filter.key);
+                                        }
+                                        if (filter.index.constructor.name === 'FullTextDataIndex' && filter.index.localeKey && !keys.includes(filter.index.localeKey)) {
+                                            keys.push(filter.index.localeKey);
+                                        }
+                                        return keys;
+                                    }, []);
+                                    return Node.getValue(this.storage, path, { include: keysToLoad })
+                                    .then(val => {
+                                        if (val === null) { return false; }
+                                        return indexFilters.every(filter => filter.index.test(val, filter.op, filter.compare));
+                                    })
+                                }
+                                if (simpleFilters.length > 0) {
+                                    return Node.matches(this.storage, path, simpleFilters)
+                                    .then(isMatch => {
+                                        if (isMatch) {
+                                            if (indexFilters.length === 0) { return true; }
+                                            return checkIndexFilters();
+                                        }
+                                        return false;
+                                    })
+                                }
+                                else {
+                                    return checkIndexFilters();
+                                }
+                            }
+                            promise = processFilters();
+                        }
+                        return promise
+                        .then(isMatch => {
+                            if (isMatch) {
+                                if (!wasMatch) { addMatch(path); }
+                                // load missing data if snapshots are requested
+                                let gotValue = value => {
+                                    if (wasMatch && options.monitor.change) {
+                                        keepMonitoring = options.eventHandler({ name: 'change', path, value });
+                                    }
+                                    else if (!wasMatch && options.monitor.add) {
+                                        keepMonitoring = options.eventHandler({ name: 'add', path, value });
+                                    }
+                                    if (keepMonitoring === false) { stopMonitoring(); }
+                                };
+                                if (options.snapshots) {
+                                    const loadOptions = { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
+                                    return this.storage.getNodeValue(path, loadOptions)
+                                    .then(gotValue);
+                                }
+                                else {
+                                    return gotValue(newValue);
+                                }
+                            }
+                            else if (wasMatch) {
+                                removeMatch(path);
+                                if (options.monitor.remove) {
+                                    keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: oldValue });
+                                }
+                            }
+                            if (keepMonitoring === false) { stopMonitoring(); }
+                        });
+                    }
+                    else {
+                        // No match
+                        if (wasMatch) {
+                            removeMatch(path);
+                            if (options.monitor.remove) {
+                                keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: oldValue });
+                                if (keepMonitoring === false) { stopMonitoring(); }
+                            }                                
+                        }
+                    }
+                };
+                const childAddedCallback = (err, path, newValue, oldValue) => {
+                    let isMatch = query.filters.every(filter => {
+                        if (allowedTableScanOperators.includes(filter.op)) {
+                            return this.storage.test(newValue[filter.key], filter.op, filter.compare);
+                        }
+                        else {
+                            return filter.index.test(newValue, filter.op, filter.compare);
+                        }
+                    });
+                    let keepMonitoring = true;
+                    if (isMatch) {
+                        addMatch(path);
+                        if (options.monitor.add) {
+                            keepMonitoring = options.eventHandler({ name: 'add', path: path, value: options.snapshots ? newValue : null });
+                        }
+                    }
+                    if (keepMonitoring === false) { stopMonitoring(); }
+                };
+                const childRemovedCallback = (err, path, newValue, oldValue) => {
+                    let keepMonitoring = true;
+                    removeMatch(path);
+                    if (options.monitor.remove) {
+                        keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: options.snapshots ? oldValue : null });
+                    }
+                    if (keepMonitoring === false) { stopMonitoring(); }
+                };
+                if (options.monitor.add || options.monitor.change || options.monitor.remove) {
+                    // Listen for child_changed events
+                    this.subscribe(ref.path, 'notify_child_changed', childChangedCallback);
+                }
+                if (options.monitor.remove) {
+                    this.subscribe(ref.path, 'notify_child_removed', childRemovedCallback);
+                }
+                if (options.monitor.add) {
+                    this.subscribe(ref.path, 'notify_child_added', childAddedCallback);
+                }
+            }
+        
             return matches;
         });
     }
@@ -6307,14 +6564,15 @@ class Storage extends EventEmitter {
                 const pathSubscriptions = _subs[path] || [];
                 pathSubscriptions.filter(sub => sub.type === event)
                 .forEach(sub => {
-                    if (event.startsWith('notify_')) {
-                        // Notify only event, run callback without data
-                        sub.callback(null, dataPath);
-                    }
-                    else {
-                        // Run callback with data
-                        sub.callback(null, dataPath, newValue, oldValue);
-                    }
+                    sub.callback(null, dataPath, newValue, oldValue);
+                    // if (event.startsWith('notify_')) {
+                    //     // Notify only event, run callback without data
+                    //     sub.callback(null, dataPath);
+                    // }
+                    // else {
+                    //     // Run callback with data
+                    //     sub.callback(null, dataPath, newValue, oldValue);
+                    // }
                 });
             }
         };
@@ -6414,7 +6672,6 @@ class Storage extends EventEmitter {
      * @returns {Promise<void>}
      */
     _writeNodeWithTracking(path, value, options = { merge: false, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true }) {
-        // TODO: create and move to Storage base class, for shared use in SqlStorage, FileStorage etc
         if (!options || !options.tid) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid!`); }
         options.merge = options.merge === true;
         const tid = options.tid;
@@ -6440,6 +6697,10 @@ class Storage extends EventEmitter {
                 });
             let first = eventPaths[0];
             topEventPath = first.path;
+            if (valueSubscribers.filter(sub => sub.dataPath === topEventPath).every(sub => sub.type.startsWith('notify_'))) {
+                // Prevent loading of all data on path, so it'll only load changing properties
+                hasValueSubscribers = false;
+            }
         }
 
         const writeNode = () => {
@@ -6449,6 +6710,12 @@ class Storage extends EventEmitter {
             return this._writeNode(path, value, options);            
         }
 
+        // TODO: FIX indexes on higher path not being updated. 
+        // Now, updates on an indexed property does not update the index!
+        // issue example: 
+        // a geo index on path 'restaurants', key 'location'
+        // updates on 'restaurant/chez_jean` will update the index
+        // BUT updates on 'restaurent/chez_jean/location' WILL NOT!!!!
         const indexes = this.indexes.getAll(path);
         if (eventSubscriptions.length === 0 && indexes.length === 0) {
             // Nobody's interested in value changes. Write node without tracking
@@ -6463,12 +6730,12 @@ class Storage extends EventEmitter {
             }
             let valueOptions = { tid };
             if (!hasValueSubscribers && options.merge === true) {
-                // Only load current value for properties being updated.
+                // Only load current value for properties being updated
                 valueOptions.include = Object.keys(value);
                 // Make sure the keys for any indexes on this path are also loaded
                 this.indexes.getAll(path, false).forEach(index => {
                     const keys = [index.key].concat(index.includeKeys);
-                    keys.forEach(key => valueOptions.include.indexOf(key) < 0 && valueOptions.include.push(key));
+                    keys.forEach(key => !valueOptions.include.includes(key) && valueOptions.include.push(key));
                 });
             }
             if (topEventPath === '' && typeof valueOptions.include === 'undefined') {
@@ -6985,33 +7252,39 @@ class Storage extends EventEmitter {
                     proceed = false;
                 }
                 else {
-                    const isMatch = (val) => {
-                        if (f.op === "<") { return val < f.compare; }
-                        if (f.op === "<=") { return val <= f.compare; }
-                        if (f.op === "==") { return val === f.compare; }
-                        if (f.op === "!=") { return val !== f.compare; }
-                        if (f.op === ">") { return val > f.compare; }
-                        if (f.op === ">=") { return val >= f.compare; }
-                        if (f.op === "in") { return f.compare.indexOf(val) >= 0; }
-                        if (f.op === "!in") { return f.compare.indexOf(val) < 0; }
-                        if (f.op === "matches") {
-                            return f.compare.test(val.toString());
-                        }
-                        if (f.op === "!matches") {
-                            return !f.compare.test(val.toString());
-                        }
-                        if (f.op === "between") {
-                            return val >= f.compare[0] && val <= f.compare[1];
-                        }
-                        if (f.op === "!between") {
-                            return val < f.compare[0] || val > f.compare[1];
-                        }
-                        // DISABLED 2019/10/23 because "custom" only works locally and is not fully implemented
-                        // if (f.op === "custom") {
-                        //     return f.compare(val);
-                        // }
-                        return false;
-                    };
+                    // const isMatch = (val) => {
+                    //     if (f.op === "<") { return val < f.compare; }
+                    //     if (f.op === "<=") { return val <= f.compare; }
+                    //     if (f.op === "==") { return val === f.compare; }
+                    //     if (f.op === "!=") { return val !== f.compare; }
+                    //     if (f.op === ">") { return val > f.compare; }
+                    //     if (f.op === ">=") { return val >= f.compare; }
+                    //     if (f.op === "in") { return f.compare.indexOf(val) >= 0; }
+                    //     if (f.op === "!in") { return f.compare.indexOf(val) < 0; }
+                    //     if (f.op === "like" || f.op === "!like") {
+                    //         const pattern = f.compare.replace(/[-[\]{}()+.,\\^$|#\s]/g, '\\$&').replace(/\?/g, '.').replace(/\*/g, '.*?');
+                    //         const re = new RegExp(pattern, 'i');
+                    //         const isMatch = re.test(val.toString());
+                    //         return f.op === "like" ? isMatch : !isMatch;
+                    //     }
+                    //     if (f.op === "matches") {
+                    //         return f.compare.test(val.toString());
+                    //     }
+                    //     if (f.op === "!matches") {
+                    //         return !f.compare.test(val.toString());
+                    //     }
+                    //     if (f.op === "between") {
+                    //         return val >= f.compare[0] && val <= f.compare[1];
+                    //     }
+                    //     if (f.op === "!between") {
+                    //         return val < f.compare[0] || val > f.compare[1];
+                    //     }
+                    //     // DISABLED 2019/10/23 because "custom" only works locally and is not fully implemented
+                    //     // if (f.op === "custom") {
+                    //     //     return f.compare(val);
+                    //     // }
+                    //     return false;
+                    // };
                     
                     if (child.address) {
                         if (child.valueType === VALUE_TYPES.OBJECT && ["has","!has"].indexOf(f.op) >= 0) {
@@ -7050,7 +7323,7 @@ class Storage extends EventEmitter {
                         else if (child.valueType === VALUE_TYPES.STRING) {
                             const p = this.getNodeValue(child.path, { tid })
                             .then(val => {
-                                return { key: child.key, isMatch: isMatch(val) };
+                                return { key: child.key, isMatch: this.test(val, f.op, f.compare) };
                             });
                             promises.push(p);
                             proceed = true;
@@ -7068,7 +7341,7 @@ class Storage extends EventEmitter {
                         proceed = (contains && f.op === "contains") || (!contains && f.op === "!contains");
                     }
                     else {
-                        const ret = isMatch(child.value);
+                        const ret = this.test(child.value, f.op, f.compare);
                         if (ret instanceof Promise) {
                             promises.push(ret);
                             ret = true;
@@ -7083,7 +7356,46 @@ class Storage extends EventEmitter {
         }; // checkChild
 
         return checkNode(path, criteria);
-    }    
+    }
+
+    test(val, op, compare) {
+        if (op === "<") { return val < compare; }
+        if (op === "<=") { return val <= compare; }
+        if (op === "==") { return val === compare; }
+        if (op === "!=") { return val !== compare; }
+        if (op === ">") { return val > compare; }
+        if (op === ">=") { return val >= compare; }
+        if (op === "in") { return compare.indexOf(val) >= 0; }
+        if (op === "!in") { return compare.indexOf(val) < 0; }
+        if (op === "like" || op === "!like") {
+            const pattern = '^' + compare.replace(/[-[\]{}()+.,\\^$|#\s]/g, '\\$&').replace(/\?/g, '.').replace(/\*/g, '.*?') + '$';
+            const re = new RegExp(pattern, 'i');
+            const isMatch = re.test(val.toString());
+            return op === "like" ? isMatch : !isMatch;
+        }
+        if (op === "matches") {
+            return compare.test(val.toString());
+        }
+        if (op === "!matches") {
+            return !compare.test(val.toString());
+        }
+        if (op === "between") {
+            return val >= compare[0] && val <= compare[1];
+        }
+        if (op === "!between") {
+            return val < compare[0] || val > compare[1];
+        }
+        if (op === "has" || op === "!has") {
+            const has = typeof val === 'object' && compare in val;
+            return op === "has" ? has : !has;
+        }
+        if (op === "contains" || op === "!contains") {
+            // TODO: rename to "includes"?
+            const includes = typeof val === 'object' && val instanceof Array && val.includes(compare);
+            return op === "contains" ? includes : !includes;
+        }
+        return false;
+    }
 
     /**
      * Export a specific path's data to a stream
