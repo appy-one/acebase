@@ -1950,6 +1950,10 @@ class DataIndex {
         });
     }
 
+    test(obj, op, val) {
+        throw new Error(`test method must be overridden by subclass`);
+    }
+
     /**
      * 
      * @param {number} fd
@@ -3044,6 +3048,58 @@ class FullTextIndex extends DataIndex {
         return 'fulltext';
     }
 
+    test(obj, op, val) {
+        if (obj === null) { return op === 'fulltext:!contains'; }
+        const text = obj[this.key];
+        if (typeof text === 'undefined') { return op === 'fulltext:!contains'; }
+
+        const locale = obj === null ? this.textLocale : this.config.localeKey && obj[this.config.localeKey] ? obj[this.config.localeKey] : this.textLocale;        
+        const textInfo = new TextInfo(text, { locale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
+        if (op === 'fulltext:contains') {
+            let tests = [val];
+            if (~val.indexOf(' OR ')) {
+                // split
+                tests = val.split(' OR ');
+                return tests.some(val => this.test(text, op, val));
+            }
+            else if (~val.indexOf('"')) {
+                // Phrase(s) used. We have to make sure the words used are not only in the text,
+                // but also in that exact order.
+                const phraseRegex = /"(.+?)"/g;
+                const phrases = [];
+                while (true) {
+                    const match = phraseRegex.exec(val);
+                    if (match === null) { break; }
+                    const phrase = match[1];
+                    phrases.push(phrase);
+                    val = val.slice(0, match.index) + val.slice(match.index + match[0].length);
+                    phraseRegex.lastIndex = 0;
+                }
+                if (val.length > 0) { 
+                    phrases.push(val); 
+                }
+                return phrases.every(phrase => {
+                    const phraseInfo = new TextInfo(phrase, { locale: this.textLocale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
+                    const indexes = phraseInfo.words.map(word => textInfo.words.indexOf(word));
+                    if (indexes[0] < 0) { return false; }
+                    for (let i = 1; i < indexes.length; i++) {
+                        if (indexes[i] - indexes[i-1] !== 1) {
+                            return false;
+                        }
+                    }
+                    return true;
+                });
+            }
+            else {
+                // test 1 or more words
+                const wordsInfo = new TextInfo(test, { locale: this.textLocale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
+                return wordsInfo.words.every(word => {
+                    return textInfo.words.includes(word);
+                });
+            }
+        }
+    }
+
     /**
      * 
      * @param {string} path 
@@ -3053,8 +3109,8 @@ class FullTextIndex extends DataIndex {
     handleRecordUpdate(path, oldValue, newValue) {
         let oldText = oldValue === null ? null : oldValue[this.key],
             newText = newValue === null ? null : newValue[this.key];
-        let oldLocale = oldValue === null ? this.textLocale : this.config.localeKey && oldValue[this.config.localeKey] ? oldValue[this.config.localeKey] : oldValue[this.textLocale],
-            newLocale = newValue === null ? this.textLocale : this.config.localeKey && newValue[this.config.localeKey] ? newValue[this.config.localeKey] : newValue[this.textLocale];
+        let oldLocale = oldValue === null ? this.textLocale : this.config.localeKey && oldValue[this.config.localeKey] ? oldValue[this.config.localeKey] : this.textLocale,
+            newLocale = newValue === null ? this.textLocale : this.config.localeKey && newValue[this.config.localeKey] ? newValue[this.config.localeKey] : this.textLocale;
 
         if (typeof oldText === 'object' && oldText instanceof Array) {
             oldText = oldText.join(' ');
@@ -3736,6 +3792,32 @@ class GeoIndex extends DataIndex {
     
     get validOperators() {
         return GeoIndex.validOperators;
+    }
+
+    test(obj, op, val) {
+        if (!this.validOperators.includes(op)) {
+            throw new Error(`Unsupported operator "${op}"`)
+        }
+        if (obj == null || typeof obj !== 'object') {
+            // No source object
+            return false;
+        }
+        const src = obj[this.key];
+        if (typeof src !== 'object' || typeof src.lat !== 'number' || typeof src.long !== 'number') {
+            // source object is not geo
+            return false;
+        }
+        if (typeof val !== 'object' || typeof val.lat !== 'number' || typeof val.long !== 'number' || typeof val.radius !== 'number') {
+            // compare object is not geo with radius
+            return false;
+        }
+
+        const isInCircle = (checkLat, checkLon, lat, lon, radiusM) => {
+            let deltaLon = checkLon - lon;
+            let deltaLat = checkLat - lat;
+            return Math.pow(deltaLon, 2) + Math.pow(deltaLat, 2) <= Math.pow(radiusM, 2);
+        };
+        return isInCircle(src.lat, src.long, val.lat, val.long, val.radius);
     }
 
     /**
