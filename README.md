@@ -455,7 +455,6 @@ const snapshots = await db.query('songs')
     .get();
 ```
 
-
 ### Removing data with a query
 
 To remove all nodes that match a query, simply call ```remove``` instead of ```get```:
@@ -466,6 +465,40 @@ db.query('songs')
     // Old junk gone
 }); 
 ```
+
+### Realtime queries (NEW 0.9.9, alpha)
+
+AceBase now supports realtime (live) queries and is able to send notifications when there are changes to the initial query results
+
+```javascript
+let fiveStarBooks = {}; // maps keys to book values
+function gotMatches(snaps) {
+    snaps.forEach(snap => {
+        fiveStarBooks[snap.key] = snap.val();
+    });
+}
+function matchAdded(match) {
+    // add book to results
+    fiveStarBooks[match.snap.key] = match.snapshot.val();
+}
+function matchChanged(match) {
+    // update book details
+    fiveStarBooks[match.snap.key] = match.snapshot.val();
+}
+function matchRemoved(match) {
+    // remove book from results
+    delete fiveStarBooks[match.ref.key];
+}
+
+db.query('books')
+.filter('rating', '==', 5)
+.on('add', matchAdded)
+.on('change', matchChanged)
+.on('remove', matchRemoved)
+.get(gotMatches)
+```
+
+NOTE: Usage of ```take``` and ```skip``` are currently not taken into consideration, events might fire for results that are not in the requested range.
 
 ## Indexing data
 
@@ -884,6 +917,8 @@ v0.6.0 - Changed ```db.types.bind``` method signature. Serialization and creator
 v0.4.0 - introduced fulltext, geo and array indexes. This required making changes to the index file format, you will have to delete all index files and create them again using ```db.indexes.create```.
 
 ## Known issues
+
+* Indexes are currently not updated when the indexed key is being updated. This will be fixed in v0.9.10
 
 * Before v0.8.0, event listening on the root node would have caused errors, this has been fixed.
 
