@@ -918,7 +918,7 @@ v0.4.0 - introduced fulltext, geo and array indexes. This required making change
 
 ## Known issues
 
-* Indexes are currently not updated when the indexed key is being updated. This will be fixed in v0.9.10
+* Indexes are currently not updated when the indexed key is being updated. This will be fixed in v0.9.11
 
 * Before v0.8.0, event listening on the root node would have caused errors, this has been fixed.
 
