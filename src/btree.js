@@ -2497,13 +2497,13 @@ class BinaryBPlusTree {
                                         values.splice(index, 1);
 
                                         // rebuild ext_data_block
-                                        const bytes = [];
+                                        const bytes = [
+                                            0, 0, 0, 0, // ext_block_length
+                                            0, 0, 0, 0  // ext_block_free_length
+                                        ];
 
                                         // ext_block_length:
                                         _writeByteLength(bytes, 0, this._length);
-
-                                        // ext_block_free_length:
-                                        _writeByteLength(bytes, 4, this._length - bytes.length);
 
                                         // Add all values
                                         const builder = new BinaryBPlusTreeBuilder({ metadataKeys: tree.info.metadataKeys });
@@ -2511,6 +2511,9 @@ class BinaryBPlusTree {
                                             const valData = builder.getLeafEntryValueBytes(val.recordPointer, val.metadata);
                                             _appendToArray(bytes, valData);
                                         });
+
+                                        // update ext_block_free_length:
+                                        _writeByteLength(bytes, 4, this._length - bytes.length);
 
                                         const valueListLengthData = _writeByteLength([], 0, this.totalValues - 1);
                                         return Promise.all([
@@ -4204,7 +4207,7 @@ class BinaryBPlusTree {
             }
             const entryIndex = leaf.entries.findIndex(entry => _isEqual(key, entry.key));
             if (!~entryIndex) { return; }
-            if (this.info.isUnique || typeof recordPointer === "undefined" || leaf.entries[entryIndex].values.length === 1) {
+            if (this.info.isUnique || typeof recordPointer === "undefined" || leaf.entries[entryIndex].totalValues === 1) {
                 leaf.entries.splice(entryIndex, 1);
             }
             else if (leaf.entries[entryIndex].extData) {
@@ -6091,8 +6094,11 @@ class BinaryBPlusTreeBuilder {
                     keyType = KEY_TYPE.DATE;
                     keyBytes = numberToBytes(key.getTime());
                 }
+                else if (key === null) {
+                    keyType = KEY_TYPE.UNDEFINED;
+                }
                 else {
-                    throw new Error(`Unsupported key type: object`);
+                    throw new Error(`Unsupported object key type: ${key}`);
                 }
                 break;
             }

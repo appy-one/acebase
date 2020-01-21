@@ -603,9 +603,9 @@ class DataIndex {
      */
     handleRecordUpdate(path, oldValue, newValue, indexMetadata) {
 
-        const pathKey = PathInfo.get(path).key;
+        const updatedKey = PathInfo.get(path).key;
         const keyValues = this.key === '{key}' 
-            ? { oldValue: oldValue === null ? null : pathKey, newValue: newValue === null ? null : pathKey }
+            ? { oldValue: oldValue === null ? null : updatedKey, newValue: newValue === null ? null : updatedKey }
             : getChildValues(this.key, oldValue, newValue);
 
         const includedValues = this.includeKeys.map(key => getChildValues(key, oldValue, newValue));
@@ -624,13 +624,14 @@ class DataIndex {
             return Promise.resolve();
         }
 
-        const updatedKey = PathInfo.get(path).key;
         const wildcardKeys = this._getWildcardKeys(path);
         const recordPointer = _createRecordPointer(wildcardKeys, updatedKey);
         const metadata = (() => {
             const obj = {};
             indexMetadata && Object.assign(obj, indexMetadata);
-            this.includeKeys.forEach(key => obj[key] = newValue[key]);
+            if (typeof newValue === 'object' && newValue !== null) {
+                this.includeKeys.forEach(key => obj[key] = newValue[key]);
+            }
             return obj;
         })();
         
