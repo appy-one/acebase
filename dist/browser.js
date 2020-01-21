@@ -6353,19 +6353,34 @@ class Storage extends EventEmitter {
             },
 
             /**
-             * Returns all indexes on a target path, optionally includes indexes on child paths
+             * Returns all indexes on a target path, optionally includes indexes on child and parent paths
              * @param {string} targetPath 
              * @param {boolean} [childPaths=true] 
              * @returns {DataIndex[]}
              */
-            getAll(targetPath, childPaths = true) {
+            getAll(targetPath, options = { parentPaths: true, childPaths: true }) {
                 const pathKeys = PathInfo.getPathKeys(targetPath);
                 return _indexes.filter(index => {
-                    // index can have wildcards
                     const indexKeys = PathInfo.getPathKeys(index.path + '/*');
-                    if (!childPaths && indexKeys.length !== pathKeys.length) { return false; }
+                    // check if index is on a parent node of given path:
+                    if (options.parentPaths && indexKeys.every((key, i) => { return key === '*' || pathKeys[i] === key; }) && [index.key].concat(...index.includeKeys).includes(pathKeys[indexKeys.length])) {
+                        // eg: path = 'restaurants/1/location/lat', index is on 'restaurants(/*)', key 'location'
+                        return true;
+                    }
+                    else if (indexKeys.length < pathKeys.length) {
+                        // the index is on a higher path, and did not match above parent paths check
+                        return false;
+                    }
+                    else if (!options.childPaths && indexKeys.length !== pathKeys.length) { 
+                        // no checking for indexes on child paths and index path has more or less keys than path
+                        // eg: path = 'restaurants/1', index is on child path 'restaurants/*/reviews(/*)', key 'rating'
+                        return false;
+                    }
+                    // check if all path's keys match the index path
+                    // eg: path = 'restaurants/1', index is on 'restaurants(/*)', key 'name'
+                    // or: path = 'restaurants/1', index is on 'restaurants/*/reviews(/*)', key 'rating' (and options.childPaths === true)
                     return pathKeys.every((key, i) => {
-                        return key === indexKeys[i] || indexKeys[i] === '*';
+                        return [key, '*'].includes(indexKeys[i]); //key === indexKeys[i] || indexKeys[i] === '*';
                     });
                 });
             },
@@ -6701,6 +6716,7 @@ class Storage extends EventEmitter {
                 // Prevent loading of all data on path, so it'll only load changing properties
                 hasValueSubscribers = false;
             }
+            topEventPath = PathInfo.fillVariables(topEventPath, path); // fill in any wildcards in the subscription path 
         }
 
         const writeNode = () => {
@@ -6714,12 +6730,62 @@ class Storage extends EventEmitter {
         // Now, updates on an indexed property does not update the index!
         // issue example: 
         // a geo index on path 'restaurants', key 'location'
-        // updates on 'restaurant/chez_jean` will update the index
-        // BUT updates on 'restaurent/chez_jean/location' WILL NOT!!!!
-        const indexes = this.indexes.getAll(path);
+        // updates on 'restaurant/1' will update the index
+        // BUT updates on 'restaurent/1/location' WILL NOT!!!!
+        const indexes = this.indexes.getAll(path, { childPaths: true, parentPaths: true })
+            .map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
+            .sort((a, b) => {
+                if (a.keys.length < b.keys.length) { return -1; }
+                else if (a.keys.length > b.keys.length) { return 1; }
+                return 0;
+            })
+            .map(obj => obj.index);
         if (eventSubscriptions.length === 0 && indexes.length === 0) {
             // Nobody's interested in value changes. Write node without tracking
             return writeNode();
+        }
+        let keysFilter = [];
+        if (indexes.length > 0) {
+            indexes.sort((a,b) => {
+                if (typeof a._pathKeys === 'undefined') { a._pathKeys = PathInfo.getPathKeys(a.path); }
+                if (typeof b._pathKeys === 'undefined') { b._pathKeys = PathInfo.getPathKeys(b.path); }
+                if (a._pathKeys.length < b._pathKeys.length) return -1;
+                else if (a._pathKeys.length > b._pathKeys.length) return 1;
+                return 0;
+            });
+            const topIndex = indexes[0];
+            let topIndexPath = topIndex.path === path ? path : PathInfo.fillVariables(`${topIndex.path}/*`, path);
+            if (topIndexPath.length < topEventPath.length) {
+                // index is on a higher path than any value subscriber.
+                // eg: 
+                //      path = 'restaurants/1/rating'
+                //      topEventPath = 'restaurants/1/rating' (because of 'value' event on 'restaurants/*/rating')
+                //      topIndexPath = 'restaurants/1' (because of index on 'restaurants(/*)', key 'name', included key 'rating')
+                // set topEventPath to topIndexPath, but include only:
+                // - indexed keys on that path,
+                // - any additional child keys for all value event subscriptions in that path (they can never be different though?)
+                topEventPath = topIndexPath;
+                indexes.filter(index => index.path === topIndex.path).forEach(index => {
+                    let keys = [index.key].concat(index.includeKeys);
+                    keys.forEach(key => !keysFilter.includes(key) && keysFilter.push(key));
+                });
+                // following will never add any keys to the filter, right?!!
+                // let topKeys = topIndex.path;  
+                // eventSubscriptions.forEach(sub => {
+                //     let keys = PathInfo.getPathKeys(sub.dataPath);
+                //     let targetKey = keys[topKeys.length];
+                //     !keysFilter.includes(targetKey) && keysFilter.push(targetKey);
+                // })
+            }
+        }
+
+        if (!hasValueSubscribers && options.merge === true && keysFilter.length === 0) {
+            // only load properties being updated
+            keysFilter = Object.keys(value);
+            if (topEventPath !== path) {
+                let trailPath = path.slice(topEventPath.length);
+                keysFilter = keysFilter.map(key => `${trailPath}/${key}`);
+            }
         }
 
         return this.getNodeInfo(topEventPath, { tid })
@@ -6729,14 +6795,17 @@ class Storage extends EventEmitter {
                 return null;
             }
             let valueOptions = { tid };
-            if (!hasValueSubscribers && options.merge === true) {
-                // Only load current value for properties being updated
-                valueOptions.include = Object.keys(value);
-                // Make sure the keys for any indexes on this path are also loaded
-                this.indexes.getAll(path, false).forEach(index => {
-                    const keys = [index.key].concat(index.includeKeys);
-                    keys.forEach(key => !valueOptions.include.includes(key) && valueOptions.include.push(key));
-                });
+            // if (!hasValueSubscribers && options.merge === true) {
+            //     // Only load current value for properties being updated
+            //     valueOptions.include = Object.keys(value);
+            //     // Make sure the keys for any indexes on this path are also loaded
+            //     this.indexes.getAll(path, false).forEach(index => {
+            //         const keys = [index.key].concat(index.includeKeys);
+            //         keys.forEach(key => !valueOptions.include.includes(key) && valueOptions.include.push(key));
+            //     });
+            // }
+            if (keysFilter.length > 0) {
+                valueOptions.include = keysFilter;
             }
             if (topEventPath === '' && typeof valueOptions.include === 'undefined') {
                 this.debug.warn(`WARNING: One or more value event listeners on the root node are causing the entire database value to be read to facilitate change tracking. Using "value", "notify_value", "child_changed" and "notify_child_changed" events on the root node are a bad practice because of the significant performance impact`);
@@ -6790,29 +6859,23 @@ class Storage extends EventEmitter {
             }
 
             // Find out if there are indexes that need to be updated
-            const updatedData = (() => {
-                let topPathKeys = PathInfo.getPathKeys(topEventPath);
-                let trailKeys = PathInfo.getPathKeys(path).slice(topPathKeys.length);
-                let oldValue = topEventData;
-                let newValue = newTopEventData;
-                while (trailKeys.length > 0) {
-                    let subKey = trailKeys.shift();
-                    let childValues = getChildValues(subKey, oldValue, newValue);
-                    oldValue = childValues.oldValue;
-                    newValue = childValues.newValue;
-                }
-                return { oldValue, newValue };
-            })();
+            // const updatedData = (() => {
+            //     let topPathKeys = PathInfo.getPathKeys(topEventPath);
+            //     let trailKeys = PathInfo.getPathKeys(path).slice(topPathKeys.length);
+            //     let oldValue = topEventData;
+            //     let newValue = newTopEventData;
+            //     while (trailKeys.length > 0) {
+            //         let subKey = trailKeys.shift();
+            //         let childValues = getChildValues(subKey, oldValue, newValue);
+            //         oldValue = childValues.oldValue;
+            //         newValue = childValues.newValue;
+            //     }
+            //     return { oldValue, newValue };
+            // })();
 
             // Trigger all index updates
             const indexUpdates = [];
-            indexes.map(index => {
-                const keys = PathInfo.getPathKeys(index.path);
-                return {
-                    index,
-                    keys
-                };
-            })
+            indexes.map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
             .sort((a, b) => {
                 // Deepest paths should fire first, then bubble up the tree
                 if (a.keys.length < b.keys.length) { return 1; }
@@ -6820,7 +6883,7 @@ class Storage extends EventEmitter {
                 return 0;
             })
             .forEach(({ index }) => {
-                // Index is either on the updated data path, or on a child path
+                // Index is either on the top event path, or on a child path
 
                 // Example situation:
                 // path = "users/ewout/posts/1" (a post was added)
@@ -6828,13 +6891,16 @@ class Storage extends EventEmitter {
                 // index.path is "users/*/posts"
                 // index must be called with data of "users/ewout/posts/1" 
 
-                let pathKeys = PathInfo.getPathKeys(path); 
+                let pathKeys = PathInfo.getPathKeys(topEventPath); 
                 let indexPathKeys = PathInfo.getPathKeys(index.path + '/*');
                 let trailKeys = indexPathKeys.slice(pathKeys.length);
-                let { oldValue, newValue } = updatedData;
+                // let { oldValue, newValue } = updatedData;
+                let oldValue = topEventData;
+                let newValue = newTopEventData;
                 if (trailKeys.length === 0) {
+                    console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
                     // Index is on updated path
-                    const p = index.handleRecordUpdate(path, oldValue, newValue);
+                    const p = index.handleRecordUpdate(topEventPath, oldValue, newValue);
                     indexUpdates.push(p);
                     return; // next index
                 }
@@ -6846,6 +6912,7 @@ class Storage extends EventEmitter {
                     let indexPathKeys = PathInfo.getPathKeys(index.path + '/*');
                     let trailKeys = indexPathKeys.slice(pathKeys.length);
                     if (trailKeys.length === 0) {
+                        console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
                         return [{ path, oldValue, newValue }];
                     }
 
@@ -6868,7 +6935,7 @@ class Storage extends EventEmitter {
                                 let childResults = getAllIndexUpdates(subTrailPath, childValues.oldValue, childValues.newValue);
                                 results = results.concat(childResults);
                             });
-                            break; 
+                            break;
                         }
                         else {
                             let values = getChildValues(subKey, oldValue, newValue);
@@ -6882,7 +6949,7 @@ class Storage extends EventEmitter {
                     }
                     return results;
                 };
-                let results = getAllIndexUpdates(path, oldValue, newValue);
+                let results = getAllIndexUpdates(topEventPath, oldValue, newValue);
                 results.forEach(result => {
                     const p = index.handleRecordUpdate(result.path, result.oldValue, result.newValue);
                     indexUpdates.push(p);
