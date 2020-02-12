@@ -23,4 +23,25 @@ class NodeAddress {
     }
 }
 
-module.exports = { NodeAddress };
+class RemovedNodeAddress extends NodeAddress {
+    /**
+     * @param {string} path 
+     */
+    constructor(path) {
+        super(path, null, null);
+    }
+
+    toString() {
+        return `"/${this.path}" (removed)`;
+    }
+
+    /**
+     * Compares this address to another address
+     * @param {NodeAddress} address 
+     */
+    equals(address) {
+        return address instanceof RemovedNodeAddress && this.path === address.path;
+    }
+}
+
+module.exports = { NodeAddress, RemovedNodeAddress };
