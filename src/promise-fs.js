@@ -1,6 +1,8 @@
 const fs = require('fs');
 
-const pfs = {}; //Object.create(fs);
+const pfs = {
+    get hasFileSystem() { return typeof fs === 'object' && 'open' in fs; }
+};
 
 /**
  * @deprecated deprecated in Node.js since v1.0.0, don't use!
@@ -272,5 +274,22 @@ function rename(oldPath, newPath) {
 
 pfs.rename = rename;
 
+/**
+ * Asynchronous stat(2) - Get file status
+ * @param {string|Buffer|URL} path A path to a file. If a URL is provided, it must use the file:
+ * @param {object} [options] 
+ * @param {boolean} [options.bigint=false]
+ * @returns {Promise<fs.Stats|fs.BigIntStats>} returns a promise that resolves with the file stats
+ */
+function stat(path, options) {
+    return new Promise((resolve, reject) => {
+        fs.stat(path, options, (err, stats) => {
+            if (err) { reject(err); }
+            else { resolve(stats); }
+        });
+    })
+}
+pfs.stat = stat;
 
+pfs.fs = fs;
 module.exports = pfs;
