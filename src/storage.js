@@ -195,6 +195,16 @@ class Storage extends EventEmitter {
         const storage = this;
         this.indexes = {
             /**
+             * Tests if (the default storage implementation of) indexes are supported in the environment. 
+             * They are currently only supported when running in Node.js because they use the fs filesystem. 
+             * TODO: Implement storage specific indexes (eg in SQLite, MySQL, MSSQL, in-memory)
+             */
+            get supported() {
+                const pfs = require('./promise-fs');
+                return pfs && pfs.hasFileSystem;
+            },
+
+            /**
              * Creates an index on specified path and key(s)
              * @param {string} path location of objects to be indexed. Eg: "users" to index all children of the "users" node; or "chats/*\/members" to index all members of all chats
              * @param {string} key for now - one key to index. Once our B+tree implementation supports nested trees, we can allow multiple fields
@@ -496,6 +506,10 @@ class Storage extends EventEmitter {
         };
        
     } // end of constructor
+
+    get path() {
+        return `${this.settings.path}/${this.name}.acebase`;
+    }
 
     // /** 
     //  * Once storage is ready for use, the optional callback will fire
@@ -997,7 +1011,7 @@ class Storage extends EventEmitter {
      * @param {string[]} [options.exclude] child paths to exclude
      * @param {boolean} [options.child_objects] whether to inlcude child objects and arrays
      * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {Promise<{ revision: string, value: any}>}
+     * @returns {Promise<{ revision?: string, value: any}>}
      */
     getNode(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
         throw new Error(`This method must be implemented by subclass`);
