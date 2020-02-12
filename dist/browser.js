@@ -640,6 +640,8 @@ class DataReference {
 
         let authorized = this.db.api.subscribe(this.path, event, cb.ours);
         const allSubscriptionsStoppedCallback = () => {
+            let callbacks = this[_private].callbacks;
+            callbacks.splice(callbacks.indexOf(cb), 1);
             this.db.api.unsubscribe(this.path, event, cb.ours);
         };
         if (authorized instanceof Promise) {
@@ -2243,12 +2245,14 @@ class TypeMappings {
         }
 
         if (typeof options.serializer === 'undefined') {
-            if (typeof type.prototype.serialize === 'function') {
-                // Use .serialize instance method
-                options.serializer = type.prototype.serialize;
-            }
+            // if (typeof type.prototype.serialize === 'function') {
+            //     // Use .serialize instance method
+            //     options.serializer = type.prototype.serialize;
+            // }
+
+            // Use object's serialize method upon serialization (if available)
         }
-        if (typeof options.serializer === 'string') {
+        else if (typeof options.serializer === 'string') {
             if (typeof type.prototype[options.serializer] === 'function') {
                 options.serializer = type.prototype[options.serializer];
             }
@@ -2298,6 +2302,9 @@ class TypeMappings {
             serialize(obj, ref) {
                 if (this.serializer) {
                     obj = this.serializer.call(obj, ref, obj);
+                }
+                else if (obj && typeof obj.serialize === 'function') {
+                    obj = obj.serialize(ref, obj);
                 }
                 return obj;
             }
@@ -5103,7 +5110,7 @@ module.exports = {
 const { debug, ID, PathReference, PathInfo, ascii85 } = require('acebase-core');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
-const { Storage, StorageSettings } = require('./storage');
+const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
 
 class LocalStorageSettings extends StorageSettings {
     constructor(settings) {
@@ -5178,7 +5185,7 @@ class LocalStorage extends Storage {
             }
         })
         .then(() => {
-            return this.indexes.load();
+            return this.indexes.supported && this.indexes.load();
         })
         .then(() => {
             this.emit('ready');
@@ -5724,15 +5731,15 @@ class LocalStorage extends Storage {
             const targetRow = this._readNode(path);
             if (!targetRow) {
                 // Lookup parent node
-                if (path === '') { return null; } // path is root. There is no parent.
+                if (path === '') { return { value: null }; } // path is root. There is no parent.
                 return lock.moveToParent()
                 .then(parentLock => {
                     lock = parentLock;
                     let parentNode = this._readNode(pathInfo.parentPath);
-                    if ([VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode) {
-                        return parentNode[pathInfo.key];
+                    if (parentNode && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode) {
+                        return { revision: parentNode.revision, value: parentNode.value[pathInfo.key] };
                     }
-                    return null;
+                    return { value: null };
                 });
             }
 
@@ -5842,8 +5849,6 @@ class LocalStorage extends Storage {
                 throw new Error(`multiple records found for non-object value!`);
             }
 
-            lock.release();
-
             // Post process filters to remove any data that got though because they were
             // not stored in dedicated records. This will happen with smaller values because
             // they are stored inline in their parent node.
@@ -5884,6 +5889,10 @@ class LocalStorage extends Storage {
                     process(result.value, checkKeys);
                 });
             }
+            return result;
+        })
+        .then(result => {
+            lock.release();
             return result;
         })
         .catch(err => {
@@ -6292,6 +6301,16 @@ class Storage extends EventEmitter {
         const storage = this;
         this.indexes = {
             /**
+             * Tests if (the default storage implementation of) indexes are supported in the environment. 
+             * They are currently only supported when running in Node.js because they use the fs filesystem. 
+             * TODO: Implement storage specific indexes (eg in SQLite, MySQL, MSSQL, in-memory)
+             */
+            get supported() {
+                const pfs = require('./promise-fs');
+                return pfs && pfs.hasFileSystem;
+            },
+
+            /**
              * Creates an index on specified path and key(s)
              * @param {string} path location of objects to be indexed. Eg: "users" to index all children of the "users" node; or "chats/*\/members" to index all members of all chats
              * @param {string} key for now - one key to index. Once our B+tree implementation supports nested trees, we can allow multiple fields
@@ -6593,6 +6612,10 @@ class Storage extends EventEmitter {
         };
        
     } // end of constructor
+
+    get path() {
+        return `${this.settings.path}/${this.name}.acebase`;
+    }
 
     // /** 
     //  * Once storage is ready for use, the optional callback will fire
@@ -7094,7 +7117,7 @@ class Storage extends EventEmitter {
      * @param {string[]} [options.exclude] child paths to exclude
      * @param {boolean} [options.child_objects] whether to inlcude child objects and arrays
      * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {Promise<{ revision: string, value: any}>}
+     * @returns {Promise<{ revision?: string, value: any}>}
      */
     getNode(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
         throw new Error(`This method must be implemented by subclass`);
