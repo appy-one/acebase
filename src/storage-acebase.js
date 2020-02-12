@@ -1550,7 +1550,7 @@ class NodeReader {
                     const obj = isArray ? [] : {};
                     const streamOptions = { };
                     if (options.include && options.include.length > 0) {
-                        const keyFilter = options.include.filter(key => key.indexOf('/') < 0);
+                        const keyFilter = options.include.filter(key => key !== '*' && key.indexOf('/') < 0);
                         if (keyFilter.length > 0) { 
                             streamOptions.keyFilter = keyFilter;
                         }
@@ -1558,15 +1558,15 @@ class NodeReader {
 
                     this.getChildStream(streamOptions)
                     .next((child, index) => {
-                        if (options.child_objects === false && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].indexOf(child.type) >= 0) {
+                        if (options.child_objects === false && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(child.type)) {
                             // Options specify not to include any child objects
                             return;
                         }
-                        if (options.include && options.include.length > 0 && options.include.indexOf(child.key) < 0) { 
+                        if (options.include && options.include.length > 0 && !options.include.includes('*') && !options.include.includes(child.key)) { 
                             // This particular child is not in the include list
                             return; 
                         }
-                        if (options.exclude && options.exclude.length > 0 && options.exclude.indexOf(child.key) >= 0) {
+                        if (options.exclude && options.exclude.length > 0 && options.exclude.includes(child.key)) {
                             // This particular child is on the exclude list
                             return; 
                         }
