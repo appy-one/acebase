@@ -1,7 +1,7 @@
 const { debug, ID, PathReference, PathInfo, ascii85 } = require('acebase-core');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
-const { Storage, StorageSettings } = require('./storage');
+const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
 
 class LocalStorageSettings extends StorageSettings {
     constructor(settings) {
@@ -76,7 +76,7 @@ class LocalStorage extends Storage {
             }
         })
         .then(() => {
-            return this.indexes.load();
+            return this.indexes.supported && this.indexes.load();
         })
         .then(() => {
             this.emit('ready');
@@ -622,15 +622,15 @@ class LocalStorage extends Storage {
             const targetRow = this._readNode(path);
             if (!targetRow) {
                 // Lookup parent node
-                if (path === '') { return null; } // path is root. There is no parent.
+                if (path === '') { return { value: null }; } // path is root. There is no parent.
                 return lock.moveToParent()
                 .then(parentLock => {
                     lock = parentLock;
                     let parentNode = this._readNode(pathInfo.parentPath);
-                    if ([VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode) {
-                        return parentNode[pathInfo.key];
+                    if (parentNode && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode) {
+                        return { revision: parentNode.revision, value: parentNode.value[pathInfo.key] };
                     }
-                    return null;
+                    return { value: null };
                 });
             }
 
@@ -740,8 +740,6 @@ class LocalStorage extends Storage {
                 throw new Error(`multiple records found for non-object value!`);
             }
 
-            lock.release();
-
             // Post process filters to remove any data that got though because they were
             // not stored in dedicated records. This will happen with smaller values because
             // they are stored inline in their parent node.
@@ -782,6 +780,10 @@ class LocalStorage extends Storage {
                     process(result.value, checkKeys);
                 });
             }
+            return result;
+        })
+        .then(result => {
+            lock.release();
             return result;
         })
         .catch(err => {
