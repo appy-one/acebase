@@ -195,7 +195,7 @@ class DataIndex {
                 this._cache.set(op, opCache);
             }
             let clear = () => {
-                // debug.log(`Index ${this.description}, cache clean for ${op} "${val}"`);
+                // this.storage.debug.log(`Index ${this.description}, cache clean for ${op} "${val}"`);
                 opCache.delete(val);
             }
             let cache = {
@@ -204,13 +204,13 @@ class DataIndex {
                 reads: 0,
                 timeout: setTimeout(clear, this._cacheTimeoutSettings.duration),
                 extendLife: () => {
-                    // debug.log(`Index ${this.description}, cache lifetime extended for ${op} "${val}". reads: ${cache.reads}`);
+                    // this.storage.debug.log(`Index ${this.description}, cache lifetime extended for ${op} "${val}". reads: ${cache.reads}`);
                     clearTimeout(cache.timeout);
                     cache.timeout = setTimeout(clear, this._cacheTimeoutSettings.duration);
                 }
             }
             opCache.set(val, cache);            
-            // debug.log(`Index ${this.description}, cached ${results.length} results for ${op} "${val}"`);
+            // this.storage.debug.log(`Index ${this.description}, cached ${results.length} results for ${op} "${val}"`);
         }
     }
 
@@ -517,7 +517,7 @@ class DataIndex {
         let lock;
         return this._lock(true, `index._processTreeOperations "/${path}"`)
         .then(l => {
-            // debug.log(`Got update lock on index ${this.description}`.blue, l);
+            // this.storage.debug.log(`Got update lock on index ${this.description}`.blue, l);
             if (this._buildError) {
                 l.release();
                 throw new Error('Cannot update index because there was an error building it');
@@ -565,7 +565,7 @@ class DataIndex {
             return go();
         })
         .then(rebuilt => {
-            // debug.log(`Released update lock on index ${this.description}`.blue);
+            // this.storage.debug.log(`Released update lock on index ${this.description}`.blue);
             lock.release();
             const doneTime = Date.now();
             const duration = Math.round((doneTime - startTime) / 1000);
@@ -751,7 +751,7 @@ class DataIndex {
         let lock;
         return this._lock(false, `index.count "${op}", ${val}`)
         .then(l => {
-            // debug.log(`Got query lock on index ${this.description}`.blue, l);
+            // this.storage.debug.log(`Got query lock on index ${this.description}`.blue, l);
             lock = l;
             return this._getTree();
         })
@@ -779,10 +779,10 @@ class DataIndex {
         const stats = new IndexQueryStats('take', { skip, take, ascending }, true);
 
         var lock;
-        // debug.log(`Requesting query lock on index ${this.description}`.blue);
+        // this.storage.debug.log(`Requesting query lock on index ${this.description}`.blue);
         return this._lock(false, `index.take ${take}, skip ${skip}, ${ascending ? 'ascending' : 'descending'}`)
         .then(l => {
-            // debug.log(`Got query lock on index ${this.description}`.blue, l);
+            // this.storage.debug.log(`Got query lock on index ${this.description}`.blue, l);
             lock = l;
             return this._getTree();
         })
@@ -1151,7 +1151,7 @@ class DataIndex {
                         })
                         .catch(reason => {
                             // Record doesn't exist? No biggy
-                            debug.warn(`Could not load record "/${path}": ${reason.message}`);
+                            this.storage.debug.warn(`Could not load record "/${path}": ${reason.message}`);
                         })
                         .then(() => {
                             // Iterate through the children in batches of max n nodes
@@ -2387,7 +2387,7 @@ class DataIndex {
                 return pfs.close(fd);
             })
             .catch(err => {
-                debug.error(err);
+                this.storage.debug.error(err);
                 throw err;
             })
         });
@@ -2434,7 +2434,7 @@ class DataIndex {
                             this._idx = null;
                             pfs.close(fd)
                             .catch(err => {
-                                debug.warn(`Could not close index file "${this.fileName}":`, err);
+                                this.storage.debug.warn(`Could not close index file "${this.fileName}":`, err);
                             });
                         }
                     }
@@ -2656,7 +2656,7 @@ class ArrayIndex extends DataIndex {
         const addCallback = (add, array, recordPointer, metadata) => {
             if (!(array instanceof Array)) { return []; }
             // if (array.length === 0) {
-            //     debug.warn(`No entries found to index array`);
+            //     this.storage.debug.warn(`No entries found to index array`);
             // }
 
             // index unique items only
@@ -3185,7 +3185,7 @@ class FullTextIndex extends DataIndex {
             const textInfo = new TextInfo(text, { locale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
             const words = textInfo.words; //_getWords(text);
             if (words.length === 0) {
-                debug.warn(`No words found to fulltext index "${env.path}"`);
+                this.storage.debug.warn(`No words found to fulltext index "${env.path}"`);
             }
             
             // const revLookupKey = super._getRevLookupKey(env.path);
@@ -3777,7 +3777,7 @@ class GeoIndex extends DataIndex {
     build() {
         const addCallback = (add, obj, recordPointer, metadata) => {
             if (typeof obj.lat !== 'number' || typeof obj.long !== 'number') {
-                debug.warn(`Cannot index location because lat (${obj.lat}) or long (${obj.long}) are invalid`)
+                this.storage.debug.warn(`Cannot index location because lat (${obj.lat}) or long (${obj.long}) are invalid`)
                 return;
             }
             const geohash = _getGeoHash(obj);
