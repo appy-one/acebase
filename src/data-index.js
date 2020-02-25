@@ -3185,7 +3185,7 @@ class FullTextIndex extends DataIndex {
             const textInfo = new TextInfo(text, { locale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
             const words = textInfo.words; //_getWords(text);
             if (words.length === 0) {
-                this.storage.debug.warn(`No words found to fulltext index "${env.path}"`);
+                this.storage.debug.warn(`No words found in "${typeof text === 'string' && text.length > 50 ? text.slice(0, 50) + '...' : text}" to fulltext index "${env.path}"`);
             }
             
             // const revLookupKey = super._getRevLookupKey(env.path);
