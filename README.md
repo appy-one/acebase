@@ -827,7 +827,7 @@ NOTE: If you want to connect to a remote AceBase [acebase-server](https://www.np
 <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/acebase@latest/dist/browser.min.js"></script>
 <script type="text/javascript">
     // Create an AceBase db using localStorage
-    const db = new AceBase('mydb', { temp: false }); // Set temp to true to use sessionStorage instead of localStorage
+    const db = new AceBase('mydb', { temp: false }); // temp:true to use sessionStorage instead
     db.ready(() => {
         console.log('Database ready to use');
         return db.ref('browser').set({
@@ -843,6 +843,22 @@ NOTE: If you want to connect to a remote AceBase [acebase-server](https://www.np
         });
     })
 </script>
+```
+
+If you are using TypeScript (eg with Angular/Ionic), use the following code:
+
+```typescript
+import { AceBase, LocalStorageSettings } from 'acebase';
+const settings = { 
+    storage: new LocalStorageSettings({ session: false }), // Make AceBase use LocalStorage engine, use session:true to use sessionStorage instead
+};
+const db = new AceBase('dbname', settings);
+```
+
+Or, use the ```BrowserAceBase``` class, which automatically (like sample above) creates an ```AceBase``` instance using a ```LocalStorageSettings``` storage object in the settings.
+```typescript
+import { BrowserAceBase } from 'acebase';
+const db = new BrowserAceBase('dbname', { temp: false }); // temp:true to use sessionStorage instead
 ```
 
 ## Reflect API
@@ -918,13 +934,13 @@ db.ref('posts').export(stream)
 
 ## Known issues
 
-* Before v0.9.11, indexes were not updated when the indexed key or included keys were updated. Also, there was an issue when indexed nodes were removed, corrupting the index file in some cases.
+* FIXED: Before v0.9.11, indexes were not updated when the indexed key or included keys were updated. Also, there was an issue when indexed nodes were removed, corrupting the index file in some cases.
 
-* Before v0.8.0, event listening on the root node would have caused errors, this has been fixed.
+* FIXED: Before v0.8.0, event listening on the root node would have caused errors.
 
-* Before v0.7.0 ```fulltext:!contains``` queries on FullText indexes, and ```!contains``` queries on Array indexes did not produce the right results. This has been fixed.
+* FIXED: Before v0.7.0 ```fulltext:!contains``` queries on FullText indexes, and ```!contains``` queries on Array indexes did not produce the right results.
 
-* Before v0.7.0 index building was done in memory (heap), which could cause a "v8::internal::FatalProcessOutOfMemory" (JavaScript heap out of memory) crash on larger datasets. From v0.4.3 it used an output stream and allows for larger indexes to be created, but was still vulnerable to this issue. v0.7.0 now completely builds indexes using streams from/to disk, eliminating memory issues.
+* FIXED: Before v0.7.0 index building was done in memory (heap), which could cause a "v8::internal::FatalProcessOutOfMemory" (JavaScript heap out of memory) crash on larger datasets. From v0.4.3 it used an output stream and allows for larger indexes to be created, but was still vulnerable to this issue. v0.7.0 now completely builds indexes using streams from/to disk, eliminating memory issues.
 
 * Fulltext indexes are currently only able to index words with latin characters. This will be fixed in a following version.
 

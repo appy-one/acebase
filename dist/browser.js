@@ -1,4 +1,4 @@
-(function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
+(function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.acebase = f()}})(function(){var define,module,exports;return (function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
 /**
  * cuid.js
  * Collision-resistant UID generator for browsers and node.
@@ -3505,8 +3505,29 @@ class AceBase extends AceBaseBase {
     }
 }
 
-module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":31,"./storage":38,"acebase-core":11}],31:[function(require,module,exports){
+class BrowserAceBase extends AceBase {
+    /**
+     * Convenience class for using AceBase in the browser without supplying additional settings.
+     * Uses the browser's localStorage or sessionStorage.
+     * @param {string} name database name
+     * @param {object} [settings] optional settings
+     * @param {string} [settings.logLevel] what level to use for logging to the console
+     * @param {boolean} [settings.temp] whether to use sessionStorage instead of localStorage
+     */
+    constructor(name, settings) {
+        settings = settings || {};
+        const { LocalStorageSettings } = require('./storage-localstorage');
+        settings.storage = new LocalStorageSettings();
+        if (settings.temp === true) {
+            settings.storage.session = true;
+            delete settings.temp;
+        }
+        super(name, settings);
+    }
+}
+
+module.exports = { AceBase, AceBaseLocalSettings, BrowserAceBase };
+},{"./api-local":31,"./storage":38,"./storage-localstorage":37,"acebase-core":11}],31:[function(require,module,exports){
 const { Api, Utils } = require('acebase-core');
 const { AceBase } = require('./acebase-local');
 const { StorageSettings } = require('./storage');
@@ -4391,15 +4412,32 @@ class LocalApi extends Api {
 
 module.exports = { LocalApi };
 },{"./acebase-local":30,"./data-index":39,"./node":36,"./storage":38,"./storage-acebase":39,"./storage-localstorage":37,"./storage-mssql":39,"./storage-sqlite":39,"acebase-core":11}],32:[function(require,module,exports){
-// To use AceBase in the browser with localStorage as the storage engine,
-// npm run browserify, which will execute: 
-//      browserify src/browser.js -o dist/browser.js -u src/btree.js -i ./src/data-index.js -u src/geohash.js -u src/node-cache.js -u src/promise-fs.js -u src/promise-timeout.js -i ./src/storage-acebase.js -i ./src/storage-mssql.js -i ./src/storage-sqlite.js --ignore buffer
-//      terser dist/browser.js -o dist/browser.min.js
+/*
+    * This file is used to create a browser bundle, 
+    (re)generate it with: npm run browserify
+
+    * To use AceBase in the browser with localStorage as the storage engine:
+    const settings = { logLevel: 'error', temp: false }; // optional
+    const db = new AceBase('dbname', settings); // (uses BrowserAceBase class behind the scenes)
+
+    * When using Typescript (Angular/Ionic), you will have to pass a LocalStorageSettings object:
+    import { AceBase, LocalStorageSettings } from 'acebase';
+    const settings = { logLevel: 'error', storage: new LocalStorageSettings({ session: false }) };
+    const db = new AceBase('dbname', settings);
+
+    * In Typescript, its also possible to use the BrowserAceBase class
+    import { BrowserAceBase } from 'acebase';
+    const settings = { logLevel: 'error', temp: false }; // optional
+    const db = new BrowserAceBase('dbname', settings);
+ */
+
 
 const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, TypeMappingOptions } = require('acebase-core');
-const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
+const { AceBase, AceBaseLocalSettings, BrowserAceBase } = require('./acebase-local');
 const { LocalStorageSettings } = require('./storage-localstorage');
+
 const acebase = {
+    BrowserAceBase,
     AceBase, 
     AceBaseLocalSettings,
     DataReference, 
@@ -4411,20 +4449,12 @@ const acebase = {
     LocalStorageSettings
 };
 
-class BrowserAceBase extends acebase.AceBase {
-    constructor(name, settings) {
-        settings = settings || {};
-        settings.storage = new acebase.LocalStorageSettings();
-        if (settings.temp === true) {
-            settings.storage.session = true;
-            delete settings.temp;
-        }
-        super(name, settings);
-    }
-}
-
-window.AceBase = BrowserAceBase;
+// Expose classes to window.acebase:
 window.acebase = acebase;
+// Expose BrowserAceBase class as window.AceBase:
+window.AceBase = BrowserAceBase;
+// Expose classes for module imports:
+module.exports = acebase;
 },{"./acebase-local":30,"./storage-localstorage":37,"acebase-core":11}],33:[function(require,module,exports){
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
@@ -9029,4 +9059,5 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":44,"_process":43,"inherits":41}]},{},[32]);
+},{"./support/isBuffer":44,"_process":43,"inherits":41}]},{},[32])(32)
+});

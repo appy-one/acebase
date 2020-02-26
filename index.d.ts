@@ -27,7 +27,7 @@ export interface AceBaseLocalSettings {
 export abstract class StorageSettings {
     maxInlineValueSize?: number;
     removeVoidProperties?: boolean;
-    path?: string;    
+    path?: string;
 }
 
 export class AceBaseStorageSettings extends StorageSettings {
@@ -62,6 +62,18 @@ export class LocalStorageSettings extends StorageSettings {
     constructor(settings: LocalStorageSettings);
     session?: boolean;
     provider?: object
+}
+
+export class BrowserAceBase extends AceBase {
+    /**
+     * Convenience class for using AceBase in the browser without supplying additional settings.
+     * Uses the browser's localStorage or sessionStorage.
+     * @param {string} name database name
+     * @param {object} [settings] optional settings
+     * @param {string} [settings.logLevel] what level to use for logging to the console
+     * @param {boolean} [settings.temp] whether to use sessionStorage instead of localStorage
+     */
+    constructor(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean });
 }
 
 export import DataSnapshot = acebasecore.DataSnapshot;

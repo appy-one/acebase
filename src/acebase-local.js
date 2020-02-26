@@ -50,4 +50,25 @@ class AceBase extends AceBaseBase {
     }
 }
 
-module.exports = { AceBase, AceBaseLocalSettings };
+class BrowserAceBase extends AceBase {
+    /**
+     * Convenience class for using AceBase in the browser without supplying additional settings.
+     * Uses the browser's localStorage or sessionStorage.
+     * @param {string} name database name
+     * @param {object} [settings] optional settings
+     * @param {string} [settings.logLevel] what level to use for logging to the console
+     * @param {boolean} [settings.temp] whether to use sessionStorage instead of localStorage
+     */
+    constructor(name, settings) {
+        settings = settings || {};
+        const { LocalStorageSettings } = require('./storage-localstorage');
+        settings.storage = new LocalStorageSettings();
+        if (settings.temp === true) {
+            settings.storage.session = true;
+            delete settings.temp;
+        }
+        super(name, settings);
+    }
+}
+
+module.exports = { AceBase, AceBaseLocalSettings, BrowserAceBase };

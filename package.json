@@ -1,6 +1,6 @@
 {
   "name": "acebase",
-  "version": "0.9.14",
+  "version": "0.9.15",
   "description": "AceBase realtime database engine",
   "main": "./src/index.js",
   "browser": "./dist/browser.js",
@@ -8,7 +8,7 @@
   "private": false,
   "repository": "github:appy-one/acebase",
   "scripts": {
-    "browserify": "browserify src/browser.js -o dist/browser.js -u src/btree.js -i ./src/data-index.js -u src/geohash.js -u src/node-cache.js -i ./src/promise-fs.js -u src/promise-timeout.js -i ./src/storage-acebase.js -i ./src/storage-mssql.js -i ./src/storage-sqlite.js --ignore buffer && terser dist/browser.js -o dist/browser.min.js",
+    "browserify": "browserify src/browser.js -o dist/browser.js --standalone acebase -u src/btree.js -i ./src/data-index.js -u src/geohash.js -u src/node-cache.js -i ./src/promise-fs.js -u src/promise-timeout.js -i ./src/storage-acebase.js -i ./src/storage-mssql.js -i ./src/storage-sqlite.js --ignore buffer && terser dist/browser.js -o dist/browser.min.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
