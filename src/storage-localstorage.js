@@ -466,13 +466,15 @@ class LocalStorage extends Storage {
      */
     _deleteNode(path) {
         const pathInfo = PathInfo.get(path);
+        this.debug.log(`Node "/${path}" is being deleted`.cyan);
         this._localStorage.removeItem(this._getKeyFromPath(path)); // Remove main node
         for (let i = 0; i < this._localStorage.length; i++) {
             const key = this._localStorage.key(i);
             if (!key.startsWith(this._keyPrefix)) { continue; }
             let otherPath = this._getPathFromKey(key);
-            if (pathInfo.isParentOf(otherPath)) {
-                localStorage.removeItem(otherPath); // Remove child node
+            if (pathInfo.isAncestorOf(otherPath)) {
+                this.debug.log(`Node "/${otherPath}" is being deleted`.cyan);
+                localStorage.removeItem(this._getKeyFromPath(otherPath)); // Remove child node
             }
         }
     }
