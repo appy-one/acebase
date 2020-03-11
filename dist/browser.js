@@ -5604,6 +5604,7 @@ class LocalStorage extends Storage {
      * @param {string} path 
      */
     _deleteNode(path) {
+        const pathInfo = PathInfo.get(path);
         this._localStorage.removeItem(this._getKeyFromPath(path)); // Remove main node
         for (let i = 0; i < this._localStorage.length; i++) {
             const key = this._localStorage.key(i);
