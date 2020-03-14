@@ -12,6 +12,7 @@ const Geohash = require('./geohash');
 const pfs = require('./promise-fs');
 const fs = require('fs');
 const ThreadSafe = require('./thread-safe');
+const unidecode = require('unidecode');
 
 const DISK_BLOCK_SIZE = 4096; // use 512 for older disks
 const FILL_FACTOR = 50; // leave room for inserts
@@ -2866,8 +2867,14 @@ class TextInfo {
                 // English stoplist from https://gist.github.com/sebleier/554280
                 stoplist: ["i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours", "yourself", "yourselves", "he", "him", "his", "himself", "she", "her", "hers", "herself", "it", "its", "itself", "they", "them", "their", "theirs", "themselves", "what", "which", "who", "whom", "this", "that", "these", "those", "am", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "having", "do", "does", "did", "doing", "a", "an", "the", "and", "but", "if", "or", "because", "as", "until", "while", "of", "at", "by", "for", "with", "about", "against", "between", "into", "through", "during", "before", "after", "above", "below", "to", "from", "up", "down", "in", "out", "on", "off", "over", "under", "again", "further", "then", "once", "here", "there", "when", "where", "why", "how", "all", "any", "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "s", "t", "can", "will", "just", "don", "should", "now"]
             },
+            /**
+             * 
+             * @param {string} locale 
+             * @returns {{ pattern: string, flags: string, stoplist?: string[] }}
+             */
             get(locale) {
-                const settings = this.default;
+                const settings = {};
+                Object.assign(settings, this.default);
                 if (typeof this[locale] === 'undefined' && locale.indexOf('-') > 0) {
                     locale = locale.split('-')[1];
                 }
@@ -2943,6 +2950,20 @@ class TextInfo {
         /** @type {Map<string, WordInfo>} */
         let words = new Map();
 
+        // Unidecode text to get ASCII characters only
+        function safe_unidecode (str) {
+            // Fix for occasional multi-pass issue, copied from https://github.com/FGRibreau/node-unidecode/issues/16
+            var ret;
+            while (str !== (ret = unidecode(str))) {
+              str = ret;
+            }
+            return ret;
+        };
+        text = safe_unidecode(text);
+
+        // Remove any single quotes, so "don't" will be stored as "dont", "isn't" as "isnt" etc
+        text = text.replace(/'/g, '');
+        
         // Process the text
         // const wordsRegex = /[\w']+/gu;
         let wordIndex = 0;
@@ -2969,7 +2990,7 @@ class TextInfo {
 
             word = word.toLocaleLowerCase(this.locale);
 
-            if (word.length < minLength || word.length > maxLength || ~blacklist.indexOf(word)) {
+            if (word.length < minLength || ~blacklist.indexOf(word)) {
                 // Word does not meet set criteria
                 if (!~whitelist.indexOf(word)) {
                     // Not whitelisted either
@@ -2979,6 +3000,10 @@ class TextInfo {
                     // Do not increase wordIndex
                     continue;
                 }
+            }
+            else if (word.length > maxLength) {
+                // Use the word, but cut it to the max length
+                word = word.slice(0, maxLength);
             }
 
             let wordInfo = words.get(word);
@@ -3244,10 +3269,11 @@ class FullTextIndex extends DataIndex {
      * @param {string} val Text to search for. Can include * and ? wildcards, OR's for combined searches, and "quotes" for phrase searches
      * @param {object} [options] Options
      * @param {string} [options.locale] Locale to use for the words in the query. When omitted, the default index locale is used
-     * @param {boolean} [options.phrase] Used internally: treats the words in val as a phrase
+     * @param {boolean} [options.phrase] Used internally: treats the words in val as a phrase, eg: "word1 word2 word3": words need to occur in this exact order
+     * @param {number} [options.minimumWildcardWordLength=2] Sets minimum amount of characters that have to be used for wildcard (sub)queries such as "a%" to guard the system against extremely large result sets. Length does not include the wildcard characters itself. Default value is 2 (allows "an*" but blocks "a*")
      * @returns {Promise<IndexQueryResults>}
      */
-    query(op, val, options = { phrase: false, locale: undefined }) {        
+    query(op, val, options = { phrase: false, locale: undefined, minimumWildcardWordLength: 2 }) {        
         if (!FullTextIndex.validOperators.includes(op)) { //if (op !== 'fulltext:contains' && op !== 'fulltext:not_contains') {
             throw new Error(`Fulltext indexes can only be queried with operators ${FullTextIndex.validOperators.map(op => `"${op}"`).join(', ')}`)
         }
@@ -3273,6 +3299,22 @@ class FullTextIndex extends DataIndex {
                 useStoplist: this.config.useStoplist,
                 includeChars: '*?'
             });
+
+            // NEW: Ignore any wildcard words that do not meet the set minimum length
+            // This is to safeguard the system against (possibly unwanted) very large 
+            // result sets
+            if (options.minimumWildcardWordLength > 0) {
+                for (let i = 0; i < info.words.length; i++) {
+                    const starIndex = info.words[i].word.indexOf('*');
+                    // min = 2, word = 'an*', starIndex = 2, ok!
+                    // min = 3: starIndex < min: not ok!
+                    if (starIndex > 0 && starIndex < options.minimumWildcardWordLength) {
+                        info.ignored.push(info.words[i].word);
+                        info.words.splice(i, 1);
+                        i--;
+                    }
+                }
+            }
             return info;
         }
 
@@ -3280,7 +3322,7 @@ class FullTextIndex extends DataIndex {
             // Multiple searches in one query: 'secret OR confidential OR "don't tell"'
             // TODO: chain queries instead of running simultanious?
             const queries = val.split(' OR ');
-            const promises = queries.map(q => this.query(op, q));
+            const promises = queries.map(q => this.query(op, q, options));
             return Promise.all(promises)
             .then(resultSets => {
                 stats.steps.push(...resultSets.map(results => results.stats));
@@ -3318,12 +3360,15 @@ class FullTextIndex extends DataIndex {
                 phraseRegex.lastIndex = 0;
             }
 
-            const promises = phrases.map(phrase => this.query(op, phrase, { phrase: true }));
+            const phraseOptions = {};
+            Object.assign(phraseOptions, options);
+            phraseOptions.phrase = true;
+            const promises = phrases.map(phrase => this.query(op, phrase, phraseOptions));
 
             // Check if what is left over still contains words
             if (val.length > 0 && getTextInfo(val).wordCount > 0) { //(val.match(searchWordRegex) !== null) {
                 // Add it
-                const promise = this.query(op, val);
+                const promise = this.query(op, val, options);
                 promises.push(promise);
             }
 
@@ -3356,11 +3401,17 @@ class FullTextIndex extends DataIndex {
 
         const info = getTextInfo(val);
 
-        // Add hints for ignored words
-        info.ignored.forEach(word => {
-            const hint = new FullTextIndexQueryHint(FullTextIndexQueryHint.types.ignoredWord, word);
-            results.hints.push(hint);
-        });
+        /**
+         * Add ignored words to the result hints
+         * @param {IndexQueryResults} results 
+         */
+        function addIgnoredWordHints(results) {
+            // Add hints for ignored words
+            info.ignored.forEach(word => {
+                const hint = new FullTextIndexQueryHint(FullTextIndexQueryHint.types.ignoredWord, word);
+                results.hints.push(hint);
+            });
+        }
 
         let words = info.words.map(info => info.word);
         if (words.length === 0) {
@@ -3368,6 +3419,7 @@ class FullTextIndex extends DataIndex {
             stats.stop(0);
             const results = IndexQueryResults.from([], this.key);
             results.stats = stats;
+            addIgnoredWordHints(results);
             return Promise.resolve(results);
         }
 
@@ -3398,6 +3450,7 @@ class FullTextIndex extends DataIndex {
                 stats.stop(results.length);
                 results.filterKey = this.key;
                 results.stats = stats;
+                addIgnoredWordHints(results);
 
                 // Cache results
                 this.cache(op, val, results);
@@ -3437,6 +3490,7 @@ class FullTextIndex extends DataIndex {
                 results = new IndexQueryResults(0);
                 results.filterKey = this.key;
                 results.stats = stats;
+                addIgnoredWordHints(results);
 
                 // Add query hints for each unknown word
                 counts.forEach(c => {
@@ -3540,6 +3594,7 @@ class FullTextIndex extends DataIndex {
 
                 stats.stop(results.length);
                 results.stats = stats;
+                addIgnoredWordHints(results);
 
                 // Cache results
                 delete results.values; // No need to cache these. Free the memory
@@ -3904,7 +3959,7 @@ class FullTextIndexQueryHint extends IndexQueryHint {
                 return `Word "${this.value}" is very generic and occurs many times in the index. Removing the word from your query will speed up the results and minimally impact the size of the result set`;
             }
             case FullTextIndexQueryHint.types.ignoredWord: {
-                return `Word "${this.value}" was ignored because it is blacklisted or occurs in a stoplist`;
+                return `Word "${this.value}" was ignored because it is either blacklisted, occurs in a stoplist, or did not match other criteria such as minimum (wildcard) word length`;
             }
             default: {
                 return `Uknown hint`;
