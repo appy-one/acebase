@@ -934,6 +934,8 @@ db.ref('posts').export(stream)
 
 ## Known issues
 
+* FIXED: Before v0.9.18 Fulltext indexes were only able to index words with latin characters. All indexed texts are now stored "unidecoded", meaning that all unicode characters are translated into ascii characters and become searchable in both ways. Eg: Japanese "AceBaseはクールです" is indexed as "acebase wa kurudesu" and will be found with queries on both "クール", "kūru" and "kuru". (NOTE: Google translate says this is Japanese for "AceBase is cool", I had no idea..)
+
 * FIXED: Before v0.9.11, indexes were not updated when the indexed key or included keys were updated. Also, there was an issue when indexed nodes were removed, corrupting the index file in some cases.
 
 * FIXED: Before v0.8.0, event listening on the root node would have caused errors.
@@ -941,8 +943,6 @@ db.ref('posts').export(stream)
 * FIXED: Before v0.7.0 ```fulltext:!contains``` queries on FullText indexes, and ```!contains``` queries on Array indexes did not produce the right results.
 
 * FIXED: Before v0.7.0 index building was done in memory (heap), which could cause a "v8::internal::FatalProcessOutOfMemory" (JavaScript heap out of memory) crash on larger datasets. From v0.4.3 it used an output stream and allows for larger indexes to be created, but was still vulnerable to this issue. v0.7.0 now completely builds indexes using streams from/to disk, eliminating memory issues.
-
-* Fulltext indexes are currently only able to index words with latin characters. This will be fixed in a following version.
 
 ## Authors
 
