@@ -360,6 +360,15 @@ class LocalStorage extends Storage {
                     // This key is being removed
                     return;
                 }
+                else if (typeof val === "undefined") {
+                    if (this.settings.removeVoidProperties === true) {
+                        delete value[key]; // Kill the property in the passed object as well, to prevent differences in stored and working values
+                        return;
+                    }
+                    else {
+                        throw new Error(`Property "${key}" has invalid value. Cannot store undefined values. Set removeVoidProperties option to true to automatically remove undefined properties`);
+                    }
+                }
                 // Where to store this value?
                 if (this.valueFitsInline(val)) {
                     // Store in main node
