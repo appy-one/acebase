@@ -3835,7 +3835,7 @@ class LocalApi extends Api {
         }
 
         // Check if the filters are using valid operators
-        const allowedTableScanOperators = ["<","<=","==","!=",">=",">","like","!like","in","!in","matches","!matches","between","!between","has","!has","contains","!contains"]; // DISABLED "custom" because it is not fully implemented and only works locally
+        const allowedTableScanOperators = ["<","<=","==","!=",">=",">","like","!like","in","!in","matches","!matches","between","!between","has","!has","contains","!contains","exists","!exists"]; // DISABLED "custom" because it is not fully implemented and only works locally
         for(let i = 0; i < tableScanFilters.length; i++) {
             const f = tableScanFilters[i];
             if (!allowedTableScanOperators.includes(f.op)) {
@@ -6522,8 +6522,7 @@ class Storage extends EventEmitter {
                 if (!pathSubs) { return; }
                 while(true) {
                     const i = pathSubs.findIndex(ps => 
-                        type ? ps.type === type : true 
-                        && callback ? ps.callback === callback : true
+                        (type ? ps.type === type : true) && (callback ? ps.callback === callback : true)
                     );
                     if (i < 0) { break; }
                     pathSubs.splice(i, 1);
@@ -7374,10 +7373,10 @@ class Storage extends EventEmitter {
             const promises = [];
             const isMatch = criteria.every(f => {
                 let proceed = true;
-                if (f.op === "!exists" || (f.op === "==" && (f.compare === null || f.compare === undefined))) { 
+                if (f.op === "!exists" || (f.op === "==" && (typeof f.compare === 'undefined' || f.compare === null))) { 
                     proceed = !child.exists;
                 }
-                else if (f.op === "exists" || (f.op === "!=" && (f.compare === null || f.compare === undefined))) {
+                else if (f.op === "exists" || (f.op === "!=" && (typeof f.compare === 'undefined' || f.compare === null))) {
                     proceed = child.exists;
                 }
                 else if (!child.exists) {
