@@ -305,7 +305,7 @@ class LocalApi extends Api {
         }
 
         // Check if the filters are using valid operators
-        const allowedTableScanOperators = ["<","<=","==","!=",">=",">","like","!like","in","!in","matches","!matches","between","!between","has","!has","contains","!contains"]; // DISABLED "custom" because it is not fully implemented and only works locally
+        const allowedTableScanOperators = ["<","<=","==","!=",">=",">","like","!like","in","!in","matches","!matches","between","!between","has","!has","contains","!contains","exists","!exists"]; // DISABLED "custom" because it is not fully implemented and only works locally
         for(let i = 0; i < tableScanFilters.length; i++) {
             const f = tableScanFilters[i];
             if (!allowedTableScanOperators.includes(f.op)) {
