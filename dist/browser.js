@@ -348,7 +348,7 @@ const { PathInfo } = require('./path-info');
 class DataRetrievalOptions {
     /**
      * Options for data retrieval, allows selective loading of object properties
-     * @param {{ include?: Array<string|number>, exclude?: Array<string|number>, child_objects?: boolean }} options 
+     * @param {{ include?: Array<string|number>, exclude?: Array<string|number>, child_objects?: boolean, allow_cache?: boolean }} options 
      */
     constructor(options) {
         if (!options) {
@@ -363,6 +363,9 @@ class DataRetrievalOptions {
         if (typeof options.child_objects !== 'undefined' && typeof options.child_objects !== 'boolean') {
             throw new TypeError(`options.child_objects must be a boolean`);
         }
+        if (typeof options.allow_cache !== 'undefined' && typeof options.allow_cache !== 'boolean') {
+            throw new TypeError(`options.allow_cache must be a boolean`);
+        }
 
         /**
          * @property {string[]} include - child keys to include (will exclude other keys), can include wildcards (eg "messages/*\/title")
@@ -373,9 +376,13 @@ class DataRetrievalOptions {
          */
         this.exclude = options.exclude || undefined;
         /**
-         * @property {boolean} child_objects - whether or not to include any child objects
+         * @property {boolean} child_objects - whether or not to include any child objects, default is true
          */
         this.child_objects = typeof options.child_objects === "boolean" ? options.child_objects : undefined;
+        /**
+         * @property {boolean} allow_cache - whether cached results are allowed to be used (supported by AceBaseClients using local cache), default is true
+         */
+        this.allow_cache = typeof options.allow_cache === "boolean" ? options.allow_cache : undefined;
     }
 }
 
@@ -390,7 +397,7 @@ class QueryDataRetrievalOptions extends DataRetrievalOptions {
             throw new TypeError(`options.snapshots must be an array`);
         }
         /**
-         * @property {boolean} snapshots - whether to return snapshots of matched nodes (include data), or references only (no data)
+         * @property {boolean} snapshots - whether to return snapshots of matched nodes (include data), or references only (no data). Default is true
          */
         this.snapshots = typeof options.snapshots === 'boolean' ? options.snapshots : undefined;
     }
@@ -741,8 +748,12 @@ class DataReference {
 
         const options = 
             typeof optionsOrCallback === 'object' 
-            ? optionsOrCallback 
-            : undefined;
+            ? optionsOrCallback
+            : new DataRetrievalOptions({ allow_cache: true });
+
+        if (typeof options.allow_cache === 'undefined') {
+            options.allow_cache = true;
+        }
 
         const promise = this.db.api.get(this.path, options).then(value => {
             value = this.db.types.deserialize(this.path, value);
@@ -974,10 +985,13 @@ class DataReferenceQuery {
         const options = 
             typeof optionsOrCallback === 'object' 
             ? optionsOrCallback 
-            : new QueryDataRetrievalOptions({ snapshots: true });
+            : new QueryDataRetrievalOptions({ snapshots: true, allow_cache: true });
 
         if (typeof options.snapshots === 'undefined') {
             options.snapshots = true;
+        }
+        if (typeof options.allow_cache === 'undefined') {
+            options.allow_cache = true;
         }
         options.eventHandler = ev => {
             if (!this._events || !this._events[ev.name]) { return false; }
