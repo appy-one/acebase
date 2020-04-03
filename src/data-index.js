@@ -1003,17 +1003,24 @@ class DataIndex {
                 filterStep.stop({ results: results.length, values: results.values.length });
             }
             else {
-                // No filter, add all results
+                // No filter, add all (unique) results
+                const uniqueRecordPointers = new Set();
                 entries.forEach(entry => {
                     entry.values.forEach(value => {
                         const recordPointer = _parseRecordPointer(this.path, value.recordPointer);
-                        const metadata = value.metadata;
-                        const result = new IndexQueryResult(recordPointer.key, recordPointer.path, entry.key, metadata);
-                        // result.entry = entry;
-                        results.push(result);
-                        results.values.push(value);
+                        if (!uniqueRecordPointers.has(recordPointer.path)) {
+                            // If a single recordPointer exists in multiple entries (can happen with eg 'like' queries),
+                            // only add the first one, ignore others (prevents duplicate results!)
+                            uniqueRecordPointers.add(recordPointer.path);
+                            const metadata = value.metadata;
+                            const result = new IndexQueryResult(recordPointer.key, recordPointer.path, entry.key, metadata);
+                            // result.entry = entry;
+                            results.push(result);
+                            results.values.push(value);
+                        }
                     });
                 });
+                uniqueRecordPointers.clear(); // Help GC
             }
 
             stats.stop(results.length);
