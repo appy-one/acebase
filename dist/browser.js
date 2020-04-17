@@ -7337,7 +7337,7 @@ class Storage extends EventEmitter {
 
             let isMatch = true;
             let delayedMatchPromises = [];
-            return this.getChildren(path, { tid })
+            return this.getChildren(path, { tid, keyFilter: criteriaKeys })
             .next(childInfo => {
                 unseenKeys.includes(childInfo.key) && unseenKeys.splice(unseenKeys.indexOf(childInfo.key), 1);
                 const keyCriteria = criteria
