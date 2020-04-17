@@ -1612,7 +1612,7 @@ class NodeReader {
                             })
                             .then(val => {
                                 childLock.release(`NodeReader.getValue:child done`);
-                                obj[isArray ? index : child.key] = val;
+                                obj[isArray ? child.index : child.key] = val;
                             })
                             .catch(reason => {
                                 childLock && childLock.release(`NodeReader.getValue:child ERROR`);
@@ -1622,11 +1622,11 @@ class NodeReader {
                             promises.push(childValuePromise);
                         }
                         else if (typeof child.value !== "undefined") {
-                            obj[isArray ? index : child.key] = child.value;
+                            obj[isArray ? child.index : child.key] = child.value;
                         }
                         else {
                             if (isArray) {
-                                throw `Value for index ${index} has not been set yet, find out why. Path: ${this.address.path}`;
+                                throw `Value for index ${child.index} has not been set yet, find out why. Path: ${this.address.path}`;
                             }
                             else {
                                 throw `Value for key ${child.key} has not been set yet, find out why. Path: ${this.address.path}`;
@@ -1806,7 +1806,6 @@ class NodeReader {
         let resolve, reject;
         /** @type {(childInfo: NodeInfo, index: number)} */ let callback;
         let childCount = 0;
-        let isArray = this.valueType === VALUE_TYPES.ARRAY;
         const generator = {
             /**
              * 
@@ -1820,6 +1819,7 @@ class NodeReader {
             }
         };
 
+        let isArray = false;
         const start = () => {
             if (this.recordInfo === null) {
                 return this.readHeader()
@@ -1828,6 +1828,7 @@ class NodeReader {
                 });
             }
 
+            isArray = this.recordInfo.valueType === VALUE_TYPES.ARRAY;
             if (this.recordInfo.hasKeyIndex) {
                 return createStreamFromBinaryTree()
                 .then(resolve)
@@ -1853,70 +1854,63 @@ class NodeReader {
         const createStreamFromBinaryTree = () => {
             
             return new Promise((resolve, reject) => {
-                let i = -1;
+                let i = 0;
                 const tree = new BinaryBPlusTree(this._treeDataReader.bind(this));
                 const processLeaf = (leaf) => {
 
-                    if (!leaf.getNext) {
-                        resolve(); // Resolve already, so lock can be removed
-                    }
+                    // if (!leaf.getNext) {
+                    //     resolve(); // Resolve already, so lock can be removed
+                    // }
 
                     const children = leaf.entries
                     .map(entry => {
-                        i++;
-                        if (typeof entry.key !== 'string') { 
-                            // Have to do this because numeric string keys were saved as numbers for sorting & matching purposes
-                            entry.key = entry.key.toString(); 
+                        // DISABLED 2020/04/15: key datatype must NEVER be changed!!
+                        // if (typeof entry.key !== 'string') { 
+                        //     // Have to do this because numeric string keys were saved as numbers for sorting & matching purposes
+                        //     entry.key = entry.key.toString(); 
+                        // }
+                        // /DISABLED
+                        if (options.keyFilter && !options.keyFilter.includes(entry.key)) {
+                            return null;
                         }
-                        if (options.keyFilter) {
-                            if (isArray && options.keyFilter.indexOf(i) < 0) { return null; }
-                            else if (!isArray && options.keyFilter.indexOf(entry.key) < 0) { return null; }
-                        }
-                        // const child = {
-                        //     key: entry.key
-                        // };
-                        const child = new NodeInfo({ path: `${this.address.path}/${entry.key}`, key: entry.key });
+                        const child = isArray ? new NodeInfo({ path: `${this.address.path}[${entry.key}]`, index: entry.key }) : new NodeInfo({ path: `${this.address.path}/${entry.key}`, key: entry.key });
                         const res = getValueFromBinary(child, entry.value.recordPointer, 0);
                         if (res.skip) {
                             return null;
                         }
-                        // child.type = res.type;
-                        // child.address = res.address;
-                        // child.value = res.value;
                         return child;
                     })
                     .filter(child => child !== null);
 
-                    i = 0;
                     const stop = !children.every(child => {
                         return callback(child, i++) !== false; // Keep going until callback returns false
                     });
                     if (!stop && leaf.getNext) {
-                        leaf.getNext().then(processLeaf);
+                        return leaf.getNext().then(processLeaf);
                     }
-                    else if (stop) {
+                    else { //} if (stop) {
                         resolve(); //done(`readKeyStream:processLeaf, stop=${stop}, last=${!leaf.getNext}`);
                     }
                 };
 
-                if (options.keyFilter && !isArray) {
+                if (options.keyFilter) { // && !isArray
                     let i = 0;
                     const nextKey = () => {
                         const isLastKey = i + 1 === options.keyFilter.length;
                         const key = options.keyFilter[i];
-                        tree.find(key)
+                        return tree.find(key)
                         .catch(err => {
                             console.error(`Error reading tree for node ${this.address}: ${err.message}`, err);
                             throw err;
                         })
                         .then(value => {
-                            if (isLastKey) {
-                                resolve();  // Resolve already, so lock can be removed
-                            }
+                            // if (isLastKey) {
+                            //     resolve();  // Resolve already, so lock can be removed
+                            // }
 
                             let proceed = true;
                             if (value !== null) {
-                                const childInfo = new NodeInfo({ path: `${this.address.path}/${key}`, key }); // { key };
+                                const childInfo = isArray ? new NodeInfo({ path: `${this.address.path}[${key}]`, index: key }) : new NodeInfo({ path: `${this.address.path}/${key}`, key });
                                 const res = getValueFromBinary(childInfo, value.recordPointer, 0);
                                 if (!res.skip) {
                                     proceed = callback(childInfo, i) !== false;
@@ -1926,15 +1920,15 @@ class NodeReader {
                                 i++;
                                 nextKey();
                             }
-                            else if (!proceed) {
+                            else { //if (!proceed) {
                                 resolve(); //done(`readKeyStream:nextKey, proceed=${proceed}, last=${isLastKey}`);
                             }
-                        });
+                        });                        
                     }
-                    nextKey();
+                    nextKey().catch(reject);
                 }
                 else {
-                    tree.getFirstLeaf().then(processLeaf);
+                    tree.getFirstLeaf().then(processLeaf).catch(reject);
                 }
             });              
         }
@@ -3042,14 +3036,14 @@ function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
             // Create a B+tree
             keyTree = true;
             let fillFactor = 
-            serialized.every(kvp => typeof kvp.index === 'number' || (typeof kvp.key === 'string' && /^[0-9]+$/.test(kvp.key)) )
-                ? BINARY_TREE_FILL_FACTOR_50
-                : BINARY_TREE_FILL_FACTOR_95;
+                isArray || serialized.every(kvp => typeof kvp.key === 'string' && /^[0-9]+$/.test(kvp.key))
+                    ? BINARY_TREE_FILL_FACTOR_50
+                    : BINARY_TREE_FILL_FACTOR_95;
 
             const builder = new BPlusTreeBuilder(true, fillFactor);
             serialized.forEach(kvp => {
                 let binaryValue = _getValueBytes(kvp);
-                builder.add(kvp.key, binaryValue);
+                builder.add(isArray ? kvp.index : kvp.key, binaryValue);
             });
             // TODO: switch from array to Uint8ArrayBuilder:
             let bytes = [];
