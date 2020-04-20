@@ -334,7 +334,11 @@ class Storage extends EventEmitter {
                     return Promise.all(promises);
                 })
                 .catch(err => {
-                    storage.debug.error(err);
+                    if (err.code !== 'ENOENT') {
+                        // If the directory is not found, there are no file indexes. (probably not supported by used storage class)
+                        // Only complain if error is something else
+                        storage.debug.error(err);
+                    }
                 });
             }
         };
