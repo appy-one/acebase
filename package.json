@@ -1,6 +1,6 @@
 {
   "name": "acebase",
-  "version": "0.9.21",
+  "version": "0.9.22",
   "description": "AceBase realtime database engine",
   "main": "./src/index.js",
   "browser": "./dist/browser.js",
