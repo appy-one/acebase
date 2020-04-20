@@ -93,7 +93,7 @@ export class CustomStorageHelpers {
      * @param columnName Name of the Path column in your SQL db, default is 'path'
      * @returns Returns the SQL where clause
      */
-    static ChildPathsSql(path:string, columnName:string = 'path'): string;
+    static ChildPathsSql(path:string, columnName?:string): string;
     /**
      * Helper function that returns a regular expression to test if paths are children of the given path
      * @param path Path to test children of
@@ -106,7 +106,7 @@ export class CustomStorageHelpers {
      * @param columnName Name of the Path column in your SQL db, default is 'path'
      * @returns Returns the SQL where clause
      */
-    static DescendantPathsSql(path:string, columnName:string = 'path'): string;
+    static DescendantPathsSql(path:string, columnName?:string): string;
     /**
      * Helper function that returns a regular expression to test if paths are descendants of the given path
      * @param path Path to test descendants of
