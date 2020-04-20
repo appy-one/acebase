@@ -668,16 +668,17 @@ class LocalStorage extends Storage {
                         && (excludeCheck ? !excludeCheck.test(checkPath) : true);
                 }
 
-                const childRow = this._readNode(otherPath);
-
                 // Apply child_objects filter
-                if (options.child_objects === false 
+                if (include
+                    && options.child_objects === false 
                     && (pathInfo.isParentOf(otherPath) && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(childNode.type)
-                    || PathInfo.getPathKeys(otherPath).length > pathInfo.pathKeys.length + 1)) {
+                        || PathInfo.getPathKeys(otherPath).length > pathInfo.pathKeys.length + 1)
+                ) {
                     include = false;
                 }
 
                 if (include) {
+                    const childRow = this._readNode(otherPath);
                     childRow.path = otherPath;
                     childRows.push(childRow);                        
                 }
