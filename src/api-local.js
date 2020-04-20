@@ -5,6 +5,7 @@ const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
 const { MSSQLStorage, MSSQLStorageSettings } = require('./storage-mssql');
 const { LocalStorage, LocalStorageSettings } = require('./storage-localstorage');
+const { CustomStorage, CustomStorageSettings } = require('./storage-custom');
 const { Node } = require('./node');
 const { DataIndex } = require('./data-index');
 
@@ -29,6 +30,9 @@ class LocalApi extends Api {
             }
             else if (LocalStorageSettings && (settings.storage instanceof LocalStorageSettings || settings.storage.type === 'localstorage')) {
                 this.storage = new LocalStorage(dbname, settings.storage);
+            }
+            else if (CustomStorageSettings && (settings.storage instanceof CustomStorageSettings || settings.storage.type === 'custom')) {
+                this.storage = new CustomStorage(dbname, settings.storage);
             }
             else {
                 const storageSettings = settings.storage instanceof AceBaseStorageSettings

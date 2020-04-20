@@ -861,6 +861,97 @@ import { BrowserAceBase } from 'acebase';
 const db = new BrowserAceBase('dbname', { temp: false }); // temp:true to use sessionStorage instead
 ```
 
+## Using a CustomStorage backend (NEW v0.9.22)
+
+It is now possible to store data in your own custom storage backend. To do this, you only have to provide a couple of methods to get, set and remove data and you're done. 
+
+The example below shows how to implement a ```CustomStorage``` class that uses the browser's localStorage (NOTE: you can also use ```LocalStorageSettings``` described above to do the same):
+
+```javascript
+const { AceBase, CustomStorageSettings, CustomStorageHelpers } = require('acebase');
+
+// Helper functions to prefix all localStorage keys with dbname
+// to allows multiple db's in localStorage:
+const dbname = 'test';
+const storageKeysPrefix = `${dbname}.acebase::`;
+function getPathFromStorageKey(key) {
+    return key.slice(storageKeysPrefix.length);
+}
+function getStorageKeyForPath(path) {
+    return `${storageKeysPrefix}${path}`;
+}
+
+// Setup our CustomStorageSettings
+const customStorageSettings = new CustomStorageSettings({
+    get(path) {
+        // Gets value from localStorage, wrapped in Promise
+        return new Promise(resolve => {
+            let val = localStorage.getItem(getStorageKeyForPath(path));
+            resolve(val);
+        });
+    },
+    set(path, val) {
+        // Sets value in localStorage, wrapped in Promise
+        return new Promise(resolve => {
+            localStorage.setItem(getStorageKeyForPath(path), val);
+            resolve();
+        });
+    },
+    remove(path) {
+        // Removes a value from localStorage, wrapped in Promise
+        return new Promise(resolve => {
+            localStorage.removeItem(getStorageKeyForPath(path));
+            resolve();
+        });
+    },
+    childrenOf(path) {
+        // Gets all child paths
+        // Cannot query localStorage, so loop through all stored keys to find children
+        return new Promise(resolve => {
+            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+            const childPaths = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (!key.startsWith(storageKeysPrefix)) { continue; }
+                let otherPath = getPathFromStorageKey(key);
+                if (pathInfo.isParentOf(otherPath)) {
+                    childPaths.push(otherPath);
+                }
+            }
+            resolve(childPaths);
+        });
+    },
+    descendantsOf(path) {
+        // Gets all descendant paths
+        // Cannot query localStorage, so loop through all stored keys to find descendants
+        return new Promise(resolve => {
+            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+            const descPaths = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (!key.startsWith(storageKeysPrefix)) { continue; }
+                let otherPath = getPathFromStorageKey(key);
+                if (pathInfo.isAncestorOf(otherPath)) {
+                    descPaths.push(otherPath);
+                }
+            }
+            resolve(descPaths);
+        });
+    }
+});
+
+// Now create AceBase instance using our custom storage:
+const db = new AceBase(dbname, { logLevel: 'log', storage: customStorageSettings });
+// That's all!
+```
+
+The example below shows how to implement a ```CustomStorage``` class in TypeScript
+using [Ionic's Storage class](https://ionicframework.com/docs/angular/storage), which uses "a variety of storage engines underneath, picking the best one available depending on the platform":
+
+```typescript
+// Code will follow soon!
+```
+
 ## Reflect API
 
 AceBase has a built-in reflection API that enables browsing the database content without retrieving nested data. This API is available for local databases, and remote databases when signed in as the ```admin``` user.
