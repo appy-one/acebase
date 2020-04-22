@@ -64,25 +64,45 @@ export class LocalStorageSettings extends StorageSettings {
     provider?: object;
 }
 
+export interface ICustomStorageNodeMetaData {
+    /** cuid (time sortable revision id). Nodes stored in the same operation share this id */
+    revision: string; 
+    /** Number of revisions, starting with 1. Resets to 1 after deletion and recreation */
+    revision_nr: number;
+    /** Creation date/time in ms since epoch UTC */
+    created: number;
+    /** Last modification date/time in ms since epoch UTC */
+    modified: number;
+    /** Type of the node's value. 1=object, 2=array, 3=number, 4=boolean, 5=string, 6=date, 7=reserved, 8=binary, 9=reference */
+    type: number;
+}
+export interface ICustomStorageNodeValue {
+    /** only Object, Array or string values */
+    value: any
+}
+export interface ICustomStorageNode extends ICustomStorageNodeMetaData, ICustomStorageNodeValue {}
+
 /**
  * Allows data to be stored in a custom storage backend of your choice! Simply provide a couple of functions
  * to get, set and remove data and you're done.
  */
 export class CustomStorageSettings extends StorageSettings {
     constructor(settings: CustomStorageSettings);
-    /** Function that gets a value from your custom data store, must return null if path does not exist */
-    get(path: string): Promise<string|null>;
-    /** Function that sets a value in your custom data store */
-    set(path: string, value: string): Promise<void>;
-    /** Function that removes a value from your custom data store */
+    /** Function that returns a Promise that resolves once your data store backend is ready for use */
+    ready(): Promise<any>;
+    /** Function that gets the node with given path from your custom data store, must return null if it doesn't exist */
+    get(path: string): Promise<ICustomStorageNode|null>;
+    /** Function that inserts or updates a node with given path in your custom data store */
+    set(path: string, value: ICustomStorageNode): Promise<void>;
+    /** Function that removes the node with given path from your custom data store */
     remove(path: string): Promise<void>;
-    /** function that returns all stored paths that are direct children of the given path. Must include "parent/path/key" AND "parent/path[0]". Use CustomStorageHelpers for logic */
-    childrenOf(path: string): Promise<string[]>;
-    /** function that returns all stored paths that are descendants of the given path. Must include "parent/path/key", "parent/path/key/subkey", "parent/path[0]", "parent/path[12]/key" etc. Use CustomStorageHelpers for logic */
-    descendantsOf(path: string): Promise<string[]>;
-    /** (optional, not used yet) Function that gets multiple values from your custom data store at once. Must return a Promise that resolves with Map<path,value> */
-    getMultiple?(paths: string[]): Promise<Map<string, string|null>>;
-    /** (optional) Function that removes multiple values from your custom data store at once */
+    /** Function that streams all stored nodes that are direct children of the given path. For path "parent/path", results must include paths such as "parent/path/key" AND "parent/path[0]". 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false. */
+    childrenOf(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (childPath: string) => boolean, addCallback: (childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean): Promise<any>;
+    /** Function that streams all stored nodes that are descendants of the given path. For path "parent/path", results must include paths such as "parent/path/key", "parent/path/key/subkey", "parent/path[0]", "parent/path[12]/key" etc. 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false. */
+    descendantsOf(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (childPath: string) => boolean, addCallback: (descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean): Promise<any>;
+    // /** (optional, not used yet) Function that gets multiple nodes (metadata AND value) from your custom data store at once. Must return a Promise that resolves with Map<path,value> */
+    // getMultiple?(paths: string[]): Promise<Map<string, ICustomStorageNode|null>>;
+    /** (optional) Function that removes multiple nodes from your custom data store at once */
     removeMultiple?(paths: string[]): Promise<void>;
 }
 

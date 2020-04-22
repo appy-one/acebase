@@ -883,17 +883,23 @@ function getStorageKeyForPath(path) {
 
 // Setup our CustomStorageSettings
 const customStorageSettings = new CustomStorageSettings({
+    info: 'Custom LocalStorage',
+    ready() {
+        return Promise.resolve();
+    },
     get(path) {
         // Gets value from localStorage, wrapped in Promise
         return new Promise(resolve => {
-            let val = localStorage.getItem(getStorageKeyForPath(path));
+            const json = localStorage.getItem(getStorageKeyForPath(path));
+            const val = JSON.parse(json);
             resolve(val);
         });
     },
     set(path, val) {
         // Sets value in localStorage, wrapped in Promise
         return new Promise(resolve => {
-            localStorage.setItem(getStorageKeyForPath(path), val);
+            const json = JSON.stringify(val);
+            localStorage.setItem(getStorageKeyForPath(path), json);
             resolve();
         });
     },
@@ -904,38 +910,48 @@ const customStorageSettings = new CustomStorageSettings({
             resolve();
         });
     },
-    childrenOf(path) {
+    childrenOf(path, include, checkCallback, addCallback) {
         // Gets all child paths
         // Cannot query localStorage, so loop through all stored keys to find children
         return new Promise(resolve => {
             const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-            const childPaths = [];
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
-                if (!key.startsWith(storageKeysPrefix)) { continue; }
+                if (!key.startsWith(storageKeysPrefix)) { continue; }                
                 let otherPath = getPathFromStorageKey(key);
-                if (pathInfo.isParentOf(otherPath)) {
-                    childPaths.push(otherPath);
+                if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
+                    let node;
+                    if (include.metadata || include.value) {
+                        const json = localStorage.getItem(key);
+                        node = JSON.parse(json);
+                    }
+                    const keepGoing = addCallback(otherPath, node);
+                    if (!keepGoing) { break; }
                 }
             }
-            resolve(childPaths);
+            resolve();
         });
     },
-    descendantsOf(path) {
+    descendantsOf(path, include, checkCallback, addCallback) {
         // Gets all descendant paths
         // Cannot query localStorage, so loop through all stored keys to find descendants
         return new Promise(resolve => {
             const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-            const descPaths = [];
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
                 if (!key.startsWith(storageKeysPrefix)) { continue; }
                 let otherPath = getPathFromStorageKey(key);
-                if (pathInfo.isAncestorOf(otherPath)) {
-                    descPaths.push(otherPath);
+                if (pathInfo.isAncestorOf(otherPath) && checkCallback(otherPath)) {
+                    let node;
+                    if (include.metadata || include.value) {
+                        const json = localStorage.getItem(key);
+                        node = JSON.parse(json);
+                    }
+                    const keepGoing = addCallback(otherPath, node);
+                    if (!keepGoing) { break; }
                 }
             }
-            resolve(descPaths);
+            resolve();
         });
     }
 });
@@ -943,13 +959,6 @@ const customStorageSettings = new CustomStorageSettings({
 // Now create AceBase instance using our custom storage:
 const db = new AceBase(dbname, { logLevel: 'log', storage: customStorageSettings });
 // That's all!
-```
-
-The example below shows how to implement a ```CustomStorage``` class in TypeScript
-using [Ionic's Storage class](https://ionicframework.com/docs/angular/storage), which uses "a variety of storage engines underneath, picking the best one available depending on the platform":
-
-```typescript
-// Code will follow soon!
 ```
 
 ## Reflect API

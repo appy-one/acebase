@@ -3,6 +3,21 @@ const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
 const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
 
+
+/**
+ * @typedef {Object} ICustomStorageNodeMetaData
+ * @property {string} revision cuid (time sortable revision id). Nodes stored in the same operation share this id
+ * @property {number} revision_nr Number of revisions, starting with 1. Resets to 1 after deletion and recreation
+ * @property {number} created Creation date/time in ms since epoch UTC
+ * @property {number} modified Last modification date/time in ms since epoch UTC
+ * @property {number} type Type of the node's value. 1=object, 2=array, 3=number, 4=boolean, 5=string, 6=date, 7=reserved, 8=binary, 9=reference
+
+ * @typedef {Object} ICustomStorageNodeValue
+ * @property {any} value only Object, Array or string values.
+ * 
+ * @typedef {ICustomStorageNodeMetaData & ICustomStorageNodeValue} ICustomStorageNode
+ */
+
 /**
  * Allows data to be stored in a custom storage backend of your choice! Simply provide a couple of functions
  * to get, set and remove data and you're done.
@@ -11,17 +26,21 @@ class CustomStorageSettings extends StorageSettings {
     /**
      * 
      * @param {object} settings 
-     * @param {(path: string) => Promise<string|null>} settings.get Function that gets a value from your custom data store, must return null if it doesn't exist
-     * @param {(path: string, value: string) => Promise<void>} settings.set Function that sets a value in your custom data store
-     * @param {(path: string) => Promise<void>} settings.remove Function that removes a value from your custom data store
-     * @param {(path: string) => Promise<string[]>} settings.childrenOf Function that returns all stored paths that are direct children of the given path. Must include "parent/path/key" AND "parent/path[0]". Use CustomStorageHelpers for logic 
-     * @param {(path: string) => Promise<string[]>} settings.descendantsOf Function that returns all stored paths that are descendants of the given path. Must include "parent/path/key", "parent/path/key/subkey", "parent/path[0]", "parent/path[12]/key" etc
-     * @param {(paths: string[]) => Promise<Map<string, string|null>>} [settings.getMultiple] (optional, not used yet) Function that gets multiple values from your custom data store at once. Must return a Promise that resolves with Map<path,value>
-     * @param {(paths: string[]) => Promise<void>} [settings.removeMultiple] (optional) Function that removes multiple values from your custom data store at once
+     * @param {() => Promise<any>} settings.ready Function that returns a Promise that resolves once your data store backend is ready for use
+     * @param {(path: string) => Promise<ICustomStorageNode|null>} settings.get Function that gets the node with given path from your custom data store, must return null if it doesn't exist
+     * @param {(path: string, value: ICustomStorageNode) => Promise<void>} settings.set Function that inserts or updates a node with given path in your custom data store
+     * @param {(path: string) => Promise<void>} settings.remove Function that removes the node with given path from your custom data store
+     * @param {(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (childPath: string) => boolean, addCallback: (childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean) => Promise<any>} settings.childrenOf Function that streams all stored nodes that are direct children of the given path. For path "parent/path", results must include paths such as "parent/path/key" AND "parent/path[0]". 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false.
+     * @param {(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (childPath: string) => boolean, addCallback: (descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean) => Promise<any>} settings.descendantsOf Function that streams all stored nodes that are descendants of the given path. For path "parent/path", results must include paths such as "parent/path/key", "parent/path/key/subkey", "parent/path[0]", "parent/path[12]/key" etc. 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false.
+     * @param {(paths: string[]) => Promise<Map<string, ICustomStorageNode|null>>} [settings.getMultiple] (optional, not used yet) Function that gets multiple nodes (metadata AND value) from your custom data store at once. Must return a Promise that resolves with Map<path,node>
+     * @param {(paths: string[]) => Promise<void>} [settings.removeMultiple] (optional) Function that removes multiple nodes from your custom data store at once
      */
      constructor(settings) {
         super(settings);
         settings = settings || {};
+        if (typeof settings.ready !== 'function') {
+            throw new Error(`ready must be a function`);
+        }
         if (typeof settings.get !== 'function') {
             throw new Error(`get must be a function`);
         }
@@ -38,6 +57,7 @@ class CustomStorageSettings extends StorageSettings {
             throw new Error(`descendantsOf must be a function`);
         }
         this.info = settings.info || 'Custom Storage';
+        this.ready = settings.ready;
         this.get = settings.get;
         this.getMultiple = settings.getMultiple 
             || (paths => {
@@ -171,7 +191,8 @@ class CustomStorage extends Storage {
         this.debug.log(`- Autoremove undefined props: ${this.settings.removeVoidProperties}`);
 
         // Create root node if it's not there yet
-        return this.getNodeInfo('')
+        return this._customImplementation.ready()
+        .then(ready => this.getNodeInfo(''))
         .then(info => {
             if (!info.exists) {
                 return this._writeNode('', {});
@@ -249,16 +270,14 @@ class CustomStorage extends Storage {
             });
         }
 
-        // Now stringify it for storage
-        const json = JSON.stringify(info);
-        return this._customImplementation.set(path, json);
+        return this._customImplementation.set(path, info);
     }
 
-    async _readNode(path) {
-        // deserialize a stored value (always an object with "type", "value", "revision", "revision_nr", "created", "modified")
-        let val = await this._customImplementation.get(path);
-        if (val === null) { return null; }
-        val = JSON.parse(val);
+    /**
+     * 
+     * @param {ICustomStorageNode} node 
+     */
+    _processReadNodeValue(node) {
 
         const getTypedChildValue = val => {
             // Typed value stored in parent record
@@ -279,35 +298,13 @@ class CustomStorage extends Storage {
             }            
         }
 
-        const node = {
-            type: val.type,
-            value: val.value,
-            revision: val.revision,
-            revision_nr: val.revision_nr,
-            created: val.created,
-            modified: val.modified
-        };
-
-        switch (val.type) {
-
-            // case VALUE_TYPES.ARRAY: {
-            //     // Array is stored as object with numeric properties
-            //     // check if any value needs to be converted
-            //     const arr = val.value;
-            //     for (let i = 0; i < arr.length; i++) {
-            //         let item = arr[i];
-            //         if (typeof item === 'object' && 'type' in object) {
-            //             arr[i] = getTypedChildValue(item);
-            //         }
-            //     }
-            //     return { type: val.type, value: arr };
-            // }
+        switch (node.type) {
 
             case VALUE_TYPES.ARRAY:
             case VALUE_TYPES.OBJECT: {
                 // check if any value needs to be converted
                 // NOTE: Arrays are stored with numeric properties
-                const obj = val.value;
+                const obj = node.value;
                 Object.keys(obj).forEach(key => {
                     let item = obj[key];
                     if (typeof item === 'object' && 'type' in item) {
@@ -319,23 +316,35 @@ class CustomStorage extends Storage {
             }
 
             case VALUE_TYPES.BINARY: {
-                node.value = ascii85.decode(val.value);
-                break;
-            }
-
-            case VALUE_TYPES.STRING: {
-                node.value = val.value;
+                node.value = ascii85.decode(node.value);
                 break;
             }
 
             case VALUE_TYPES.REFERENCE: {
-                node.value = new PathReference(val.value);
+                node.value = new PathReference(node.value);
+                break;
+            }
+
+            case VALUE_TYPES.STRING: {
+                // No action needed 
+                // node.value = node.value;
                 break;
             }
 
             default:
                 throw new Error(`Invalid standalone record value type`); // should never happen
         }
+    }
+
+    async _readNode(path) {
+        // deserialize a stored value (always an object with "type", "value", "revision", "revision_nr", "created", "modified")
+        let node = await this._customImplementation.get(path);
+        if (node === null) { return null; }
+        if (typeof node !== 'object') {
+            throw new Error(`CustomStorage get function must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
+        }
+
+        this._processReadNodeValue(node);
         return node;
     }
 
@@ -483,8 +492,22 @@ class CustomStorage extends Storage {
             if (currentIsObjectOrArray || newIsObjectOrArray) {
 
                 // Get current child nodes in dedicated child records
-                const childPaths = await this._customImplementation.childrenOf(path);
-                const keys = childPaths.map(p => PathInfo.get(p).key);
+                const pathInfo = PathInfo.get(path);
+                const keys = [];
+                const includeChildCheck = childPath => {
+                    if (!pathInfo.isParentOf(childPath)) {
+                        // Double check failed
+                        throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
+                    }
+                    return true;
+                }
+                const addChildPath = childPath => {
+                    const key = PathInfo.get(childPath).key;
+                    keys.push(key);
+                    return true; // Keep streaming
+                }
+                await this._customImplementation.childrenOf(path, { metadata: false, value: false }, includeChildCheck, addChildPath);
+
                 children.current = children.current.concat(keys);
                 if (newIsObjectOrArray) {
                     if (options && options.merge) {
@@ -505,7 +528,7 @@ class CustomStorage extends Storage {
 
                 // (over)write all child nodes that must be stored in their own record
                 const writePromises = Object.keys(childNodeValues).map(key => {
-                    const childPath = PathInfo.getChildPath(path, key);
+                    const childPath = pathInfo.childPath(key); // PathInfo.getChildPath(path, key);
                     const childValue = childNodeValues[key];
                     return this._writeNode(childPath, childValue, { revision: newRevision, merge: false });
                 });
@@ -515,7 +538,7 @@ class CustomStorage extends Storage {
                 const movingNodes = keys.filter(key => key in mainNode.value); // moving from dedicated to inline value
                 const deleteDedicatedKeys = changes.delete.concat(movingNodes);
                 const deletePromises = deleteDedicatedKeys.map(key => {
-                    const childPath = PathInfo.getChildPath(path, key);
+                    const childPath = pathInfo.childPath(key); //PathInfo.getChildPath(path, key);
                     return this._deleteNode(childPath);
                 });
 
@@ -565,10 +588,23 @@ class CustomStorage extends Storage {
     async _deleteNode(path) {
         const pathInfo = PathInfo.get(path);
         this.debug.log(`Node "/${path}" is being deleted`.cyan);
-        const deletes = await this._customImplementation.descendantsOf(path);
-        deletes.push(path); // Also delete main node
-        this.debug.log(`Nodes ${deletes.map(p => `"/${p}"`).join(',')} are being deleted`.cyan);
-        return await this._customImplementation.removeMultiple(deletes);
+
+        const deletePaths = [path];
+        const includeDescendantCheck = (descPath) => {
+            if (!pathInfo.isAncestorOf(descPath)) {
+                // Double check failed
+                throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
+            }
+            return true;        
+        };
+        const addDescendant = (descPath) => {
+            deletePaths.push(descPath);
+            return true;
+        };
+        await this._customImplementation.descendantsOf(path, { metadata: false, value: false }, includeDescendantCheck, addDescendant);
+
+        this.debug.log(`Nodes ${deletePaths.map(p => `"/${p}"`).join(',')} are being deleted`.cyan);
+        return this._customImplementation.removeMultiple(deletePaths);
     }
 
     /**
@@ -597,16 +633,16 @@ class CustomStorage extends Storage {
             .then(async l => {
                 lock = l;
 
-                let row = await this._customImplementation.get(path);
-                if (!row) { throw new NodeNotFoundError(`Node "/${path}" does not exist`); }
-                row = JSON.parse(row);
+                let node = await this._readNode(path);
+                if (!node) { throw new NodeNotFoundError(`Node "/${path}" does not exist`); }
+                // node = JSON.parse(node);
 
-                if (![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(row.type)) {
+                if (![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type)) {
                     // No children
                     return;
                 }
-                const isArray = row.type === VALUE_TYPES.ARRAY;
-                const value = row.value;
+                const isArray = node.type === VALUE_TYPES.ARRAY;
+                const value = node.value;
                 let keys = Object.keys(value);
                 if (options.keyFilter) {
                     keys = keys.filter(key => options.keyFilter.includes(key));
@@ -623,10 +659,10 @@ class CustomStorage extends Storage {
                         address: null,
                         exists: true,
                         value: child.value,
-                        revision: row.revision,
-                        revision_nr: row.revision_nr,
-                        created: row.created,
-                        modified: row.modified
+                        revision: node.revision,
+                        revision_nr: node.revision_nr,
+                        created: node.created,
+                        modified: node.modified
                     });
 
                     canceled = callback(info) === false;
@@ -637,53 +673,44 @@ class CustomStorage extends Storage {
                 }
 
                 // Go on... get other children
-                const childPaths = await this._customImplementation.childrenOf(path);
-                const childRows = (await Promise.all(childPaths.map(async childPath => {
-                    const key = PathInfo.get(childPath).key;
-                    if (options.keyFilter && !options.keyFilter.includes(key)) { 
-                        return null; // ignore this one
+
+                const includeChildCheck = (childPath) => {
+                    if (!pathInfo.isParentOf(childPath)) {
+                        // Double check failed
+                        throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
                     }
-                    let row = await this._readNode(childPath);
-                    return {
-                        type: row.type,
-                        path: childPath,
-                        revision: row.revision,
-                        revision_nr: row.revision_nr,
-                        created: row.created,
-                        modified: row.modified
-                    };                    
-                })))
-                .filter(row => row !== null);
+                    if (options.keyFilter) {
+                        const key = PathInfo.get(childPath).key;
+                        return options.keyFilter.includes(key);
+                    }
+                    return true;           
+                };
 
-                const handleNextChild = i => {
-                    const row = childRows[i];
-                    if (!row) { return; }
-
-                    const key = PathInfo.get(row.path).key;
-                    // if (options.keyFilter && !options.keyFilter.includes(key)) { 
-                    //     return handleNextChild(i+1); 
-                    // }
-
+                /**
+                 * 
+                 * @param {string} childPath 
+                 * @param {ICustomStorageNodeMetaData} node 
+                 */
+                const addChildNode = (childPath, node) => {
+                    const key = PathInfo.get(childPath).key;
                     const info = new CustomStorageNodeInfo({
-                        path: row.path,
-                        type: row.type,
+                        path: childPath,
+                        type: node.type,
                         key: isArray ? null : key,
                         index: isArray ? key : null,
-                        address: new CustomStorageNodeAddress(row.path), //new SqlNodeAddress(row.path),
+                        address: new CustomStorageNodeAddress(childPath),
                         exists: true,
                         value: null, // not loaded
-                        revision: row.revision,
-                        revision_nr: row.revision_nr,
-                        created: new Date(row.created),
-                        modified: new Date(row.modified)
+                        revision: node.revision,
+                        revision_nr: node.revision_nr,
+                        created: new Date(node.created),
+                        modified: new Date(node.modified)
                     });
 
                     canceled = callback(info) === false;
-                    if (!canceled) {
-                        return handleNextChild(i+1);
-                    }
-                }
-                return handleNextChild(0);
+                    return !canceled;
+                };
+                return this._customImplementation.childrenOf(path, { metadata: true, value: false }, includeChildCheck, addChildNode);
             })
             .then(() => {
                 lock.release();
@@ -709,8 +736,8 @@ class CustomStorage extends Storage {
             // Get path, path/* and path[*
             const filtered = options && (options.include || options.exclude || options.child_objects === false);
             const pathInfo = PathInfo.get(path);
-            const targetRow = await this._readNode(path);
-            if (!targetRow) {
+            const targetNode = await this._readNode(path);
+            if (!targetNode) {
                 // Lookup parent node
                 if (path === '') { return { value: null }; } // path is root. There is no parent.
                 return lock.moveToParent()
@@ -718,7 +745,15 @@ class CustomStorage extends Storage {
                     lock = parentLock;
                     let parentNode = await this._readNode(pathInfo.parentPath);
                     if (parentNode && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode) {
-                        return { revision: parentNode.revision, value: parentNode.value[pathInfo.key] };
+                        const childValueInfo = this._getTypeFromStoredValue(parentNode.value[pathInfo.key]);
+                        return { 
+                            revision: parentNode.revision, 
+                            revision_nr: parentNode.revision_nr,
+                            created: parentNode.created,
+                            modified: parentNode.modified,
+                            type: childValueInfo.type,
+                            value: childValueInfo.value
+                        };
                     }
                     return { value: null };
                 });
@@ -731,8 +766,13 @@ class CustomStorage extends Storage {
                 ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
                 : null;
 
-            const descPaths = await this._customImplementation.descendantsOf(path);
-            const descRows = (await Promise.all(descPaths.map(async descPath => {
+            const includeDescendantCheck = (descPath) => {
+                if (!pathInfo.isAncestorOf(descPath)) {
+                    // Double check failed
+                    throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
+                }
+                if (!filtered) { return true; }
+
                 // Apply include & exclude filters
                 let checkPath = descPath.slice(path.length);
                 if (checkPath[0] === '/') { checkPath = checkPath.slice(1); }
@@ -747,20 +787,31 @@ class CustomStorage extends Storage {
                 ) {
                     include = false;
                 }
+                return include;
+            }
 
-                if (!include) { return null; }
-                const childRow = await this._readNode(descPath);
-                childRow.path = descPath;
-                return childRow;
-            })))
-            .filter(row => row !== null);
+            const descRows = [];
+            /**
+             * 
+             * @param {string} descPath 
+             * @param {ICustomStorageNode} node 
+             */
+            const addDescendant = (descPath, node) => {
+                // Process the value
+                this._processReadNodeValue(node);
+                
+                // Add node
+                node.path = descPath;
+                descRows.push(node);
+
+                return true; // Keep streaming
+            };
+
+            await this._customImplementation.descendantsOf(path, { metadata: true, value: true }, includeDescendantCheck, addDescendant);
 
             this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${descRows.length + 1} records`.magenta);
 
-            const result = {
-                revision: targetRow ? targetRow.revision : null,
-                value: targetRow.value
-            };
+            const result = targetNode;
 
             const objectToArray = obj => {
                 // Convert object value to array
@@ -772,18 +823,18 @@ class CustomStorage extends Storage {
                 return arr;                
             };
 
-            if (targetRow.type === VALUE_TYPES.ARRAY) {
+            if (targetNode.type === VALUE_TYPES.ARRAY) {
                 result.value = objectToArray(result.value);
             }
 
-            if (targetRow.type === VALUE_TYPES.OBJECT || targetRow.type === VALUE_TYPES.ARRAY) {
+            if (targetNode.type === VALUE_TYPES.OBJECT || targetNode.type === VALUE_TYPES.ARRAY) {
                 // target node is an object or array
-                // merge with other found (child) records
+                // merge with other found (child) nodes
                 const targetPathKeys = PathInfo.getPathKeys(path);
-                let value = targetRow.value;
+                let value = targetNode.value;
                 for (let i = 0; i < descRows.length; i++) {
-                    const otherRow = descRows[i];
-                    const pathKeys = PathInfo.getPathKeys(otherRow.path);
+                    const otherNode = descRows[i];
+                    const pathKeys = PathInfo.getPathKeys(otherNode.path);
                     const trailKeys = pathKeys.slice(targetPathKeys.length);
                     let parent = value;
                     for (let j = 0 ; j < trailKeys.length; j++) {
@@ -791,7 +842,7 @@ class CustomStorage extends Storage {
                         const key = trailKeys[j];
                         const isLast = j === trailKeys.length-1;
                         const nodeType = isLast 
-                            ? otherRow.type 
+                            ? otherNode.type 
                             : typeof trailKeys[j+1] === 'number'
                                 ? VALUE_TYPES.ARRAY
                                 : VALUE_TYPES.OBJECT;
@@ -800,7 +851,7 @@ class CustomStorage extends Storage {
                             nodeValue = nodeType === VALUE_TYPES.OBJECT ? {} : [];
                         }
                         else {
-                            nodeValue = otherRow.value;
+                            nodeValue = otherNode.value;
                             if (nodeType === VALUE_TYPES.ARRAY) {
                                 nodeValue = objectToArray(nodeValue);
                             }
