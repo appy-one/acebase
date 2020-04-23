@@ -1,13 +1,12 @@
 const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, TypeMappingOptions } = require('acebase-core');
-const { AceBase, AceBaseLocalSettings, BrowserAceBase } = require('./acebase-local');
+const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorageSettings } = require('./storage-sqlite');
 const { MSSQLStorageSettings } = require('./storage-mssql');
 const { LocalStorageSettings } = require('./storage-localstorage');
 const { CustomStorageSettings, CustomStorageHelpers } = require('./storage-custom');
 
-module.exports = { 
-    BrowserAceBase,
+module.exports = {
     AceBase, 
     AceBaseLocalSettings,
     DataReference, 

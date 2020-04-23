@@ -17,6 +17,24 @@ export class AceBase extends acebasecore.AceBaseBase {
      * @returns {Promise<void>} returns a promise that resolves when ready
      */
     ready(callback?: () => void): Promise<void>;
+
+    /** 
+     * Only available in browser context - Creates an AceBase database instance using IndexedDB as storage engine. Creates a dedicated IndexedDB instance.
+     * @param dbname Name of the database
+     * @param settings optional settings
+     * @param settings.logLevel what level to use for logging to the console
+     */
+    static WithIndexedDB(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error' }): AceBase;
+
+    /**
+     * Only available in browser context - Creates an AceBase database instance using LocalStorage or SessionStorage as storage engine
+     * @param dbname Name of the database
+     * @param settings optional settings
+     * @param settings.logLevel what level to use for logging to the console
+     * @param settings.temp whether to use sessionStorage instead of localStorage
+     * @param settings.provider Alternate localStorage provider. Eg using 'node-localstorage'
+     */    
+    static WithLocalStorage(dbname: string, settings: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean, provider?: any }): AceBase
 }
 
 export interface AceBaseLocalSettings {
@@ -88,6 +106,8 @@ export interface ICustomStorageNode extends ICustomStorageNodeMetaData, ICustomS
  */
 export class CustomStorageSettings extends StorageSettings {
     constructor(settings: CustomStorageSettings);
+    /** Name of the custom storage adapter */
+    name?: string;
     /** Function that returns a Promise that resolves once your data store backend is ready for use */
     ready(): Promise<any>;
     /** Function that gets the node with given path from your custom data store, must return null if it doesn't exist */
@@ -151,17 +171,21 @@ export class CustomStorageHelpers {
     static readonly PathInfo: typeof acebasecore.PathInfo
 }
 
-export class BrowserAceBase extends AceBase {
-    /**
-     * Convenience class for using AceBase in the browser without supplying additional settings.
-     * Uses the browser's localStorage or sessionStorage.
-     * @param {string} name database name
-     * @param {object} [settings] optional settings
-     * @param {string} [settings.logLevel] what level to use for logging to the console
-     * @param {boolean} [settings.temp] whether to use sessionStorage instead of localStorage
-     */
-    constructor(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean });
-}
+// export class BrowserAceBase extends AceBase {
+//     /**
+//      * DEPRECATED - switch to static WithIndexedDB or WithLocalStorage methods.
+//      * Convenience class for using AceBase in the browser without supplying additional settings.
+//      * Uses the browser's localStorage or sessionStorage.
+//      * @deprecated Using the AceBase constructor method in the browser is deprecated, use the static WithIndexedDB or WithLocalStorage methods instead
+//      * @param name database name
+//      * @param settings optional settings
+//      * @param settings.logLevel what level to use for logging to the console
+//      * @param settings.temp whether to use sessionStorage instead of localStorage
+//      */
+//     constructor(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean });
+
+//     /* static methods WithIndexedDB and WithLocalStorage are defined in class AceBase */
+// }
 
 export import DataSnapshot = acebasecore.DataSnapshot;
 export import DataReference = acebasecore.DataReference;

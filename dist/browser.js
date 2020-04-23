@@ -241,7 +241,7 @@ class AceBaseBase extends EventEmitter {
 }
 
 module.exports = { AceBaseBase, AceBaseSettings };
-},{"./data-reference":7,"./type-mappings":16,"events":41}],5:[function(require,module,exports){
+},{"./data-reference":7,"./type-mappings":16,"events":42}],5:[function(require,module,exports){
 
 class Api {
     // interface for local and web api's
@@ -2684,7 +2684,7 @@ module.exports = {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./data-snapshot":8,"./path-reference":13,"buffer":40}],18:[function(require,module,exports){
+},{"./data-snapshot":8,"./path-reference":13,"buffer":41}],18:[function(require,module,exports){
 /*
 
 The MIT License (MIT)
@@ -2887,7 +2887,7 @@ for (var map in colors.maps) {
 
 defineProps(colors, init());
 
-},{"./custom/trap":19,"./custom/zalgo":20,"./maps/america":23,"./maps/rainbow":24,"./maps/random":25,"./maps/zebra":26,"./styles":27,"./system/supports-colors":29,"util":46}],19:[function(require,module,exports){
+},{"./custom/trap":19,"./custom/zalgo":20,"./maps/america":23,"./maps/rainbow":24,"./maps/random":25,"./maps/zebra":26,"./styles":27,"./system/supports-colors":29,"util":47}],19:[function(require,module,exports){
 module['exports'] = function runTheTrap(text, options) {
   var result = '';
   text = text || 'Run the trap, drop the bass';
@@ -3331,7 +3331,7 @@ module.exports = function(flag, argv) {
 };
 
 }).call(this,require('_process'))
-},{"_process":44}],29:[function(require,module,exports){
+},{"_process":45}],29:[function(require,module,exports){
 (function (process){
 /*
 The MIT License (MIT)
@@ -3486,7 +3486,394 @@ module.exports = {
 };
 
 }).call(this,require('_process'))
-},{"./has-flag.js":28,"_process":44,"os":43}],30:[function(require,module,exports){
+},{"./has-flag.js":28,"_process":45,"os":44}],30:[function(require,module,exports){
+const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
+const { CustomStorageSettings, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
+
+/**
+ * @typedef {Object} IIndexedDBNodeData
+ * @property {string} path
+ * @property {ICustomStorageNodeMetaData} metadata
+ */
+
+const deprecatedConstructorError = `Using AceBase constructor in the browser to use localStorage is deprecated!
+Switch to:
+IndexedDB implementation (FASTER, MORE RELIABLE):
+    let db = AceBase.WithIndexedDB(name, settings)
+Or, new LocalStorage implementation:
+    let db = AceBase.WithLocalStorage(name, settings)
+Or, write your own CustomStorage adapter:
+    let myCustomStorage = new CustomStorageSettings({ ... });
+    let db = new AceBase(name, { storage: myCustomStorage })`;
+
+class BrowserAceBase extends AceBase {
+    /**
+     * Constructor that is used in browser context
+     * @param {string} name database name
+     * @param {AceBaseLocalSettings} settings settings
+     */
+    constructor(name, settings) {
+        if (typeof settings !== 'object' || typeof settings.storage !== 'object') {
+            // Client is using old AceBaseBrowser signature, eg:
+            // let db = new AceBase('name', { temp: false })
+            //
+            // Don't allow this anymore. If client wants to use localStorage,
+            // they need to switch to AceBase.WithLocalStorage('name', settings).
+            // If they want to use custom storage in the browser, they must 
+            // use the same constructor signature AceBase has:
+            // let db = new AceBase('name', { storage: new CustomStorageSettings({ ... }) });
+
+            throw new Error(deprecatedConstructorError);
+        }
+        super(name, settings);
+    }
+
+    /**
+     * Creates an AceBase database instance using IndexedDB as storage engine
+     * @param {string} dbname Name of the database
+     * @param {object} [settings] optional settings
+     * @param {string} [settings.logLevel] what level to use for logging to the console
+     */
+    static WithIndexedDB(dbname, settings) {
+
+        settings = settings || {};
+        if (!settings.logLevel) { settings.logLevel = 'error'; }
+
+        // We'll create an IndexedDB with name "dbname.acebase"
+        const IndexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB; // browser prefixes not really needed, see https://caniuse.com/#feat=indexeddb
+        let request = IndexedDB.open(`${dbname}.acebase`, 1);
+
+        let readyResolve, readyReject, readyPromise = new Promise((rs,rj) => { readyResolve = rs; readyReject = rj; });
+
+        request.onupgradeneeded = (e) => {
+            // create datastore
+            let db = request.result;
+
+            // Create "nodes" object store for metadata
+            db.createObjectStore('nodes', { keyPath: 'path'});
+
+            // Create "content" object store with all data
+            db.createObjectStore('content');
+        };
+
+        let db;
+        request.onsuccess = e => {
+            db = request.result;
+            readyResolve();
+        }
+        request.onerror = e => {
+            readyReject(e);
+        };
+
+        const storageSettings = new CustomStorageSettings({
+            name: 'IndexedDB',
+            ready() {
+                return readyPromise;
+            },
+            get(path) {
+                // Get metadata from "nodes" object store
+                const tx = db.transaction(['nodes', 'content'], 'readonly');
+                const request = tx.objectStore('nodes').get(path);
+                return new Promise((resolve, reject) => {
+                    request.onsuccess = event => {
+                        /** @type {IIndexedDBNodeData} */
+                        const data = request.result;
+                        if (!data) {
+                            return resolve(null);
+                        }
+                        /** @type {ICustomStorageNode} */
+                        const node = data.metadata;
+
+                        // Node exists, get content from "content" object store
+                        const contentReq = tx.objectStore('content').get(path);
+                        contentReq.onsuccess = e => {
+                            node.value = contentReq.result;
+                            resolve(node);
+                        };
+                        contentReq.onerror = e => reject(e);
+                    }
+                    request.onerror = e => {
+                        console.error(`IndexedDB get error`, e);
+                        reject(e);
+                    }
+                });
+            },
+            set(path, node) {
+                /** @type {ICustomStorageNode} */
+                const copy = {};
+                const value = node.value;
+                Object.assign(copy, node);
+                delete copy.value;
+                /** @type {ICustomStorageNodeMetaData} */
+                const metadata = copy;                
+                /** @type {IIndexedDBNodeData} */
+                const obj = {
+                    path,
+                    metadata
+                }
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(['nodes', 'content'], 'readwrite');
+                    // Insert into "nodes" object store first
+                    const request = tx.objectStore('nodes').put(obj);
+                    request.onerror = e => reject(e);
+                    request.onsuccess = e => {
+                        // Now add to "content" object store
+                        const contentReq = tx.objectStore('content').put(value, path);
+                        contentReq.onsuccess = e => resolve();
+                        contentReq.onerror = e => {
+                            tx.abort(); // rollback transaction
+                            reject(e);
+                        }
+                    };
+                });
+            },
+            remove(path) {
+                const tx = db.transaction(['nodes','content'], 'readwrite');
+                return new Promise((resolve, reject) => {
+                    // First, remove from "content" object store
+                    const r1 = tx.objectStore('content').delete(path);
+                    r1.onerror = e => reject(e);
+                    r1.onsuccess = e => {
+                        // Now, remove from "nodes" data store
+                        const r2 = tx.objectStore('nodes').delete(path);
+                        r2.onerror = e => {
+                            tx.abort(); // rollback transaction
+                            reject(e);
+                        };
+                        r2.onsuccess = e => resolve();
+                    }
+                });
+            },
+            childrenOf(path, include, checkCallback, addCallback) {
+                // Use cursor to loop from path on
+                const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+                const lockStores = include.value ? ['nodes','content'] : 'nodes';
+                const tx = db.transaction(lockStores, 'readonly');
+                const store = tx.objectStore('nodes');
+                const query = IDBKeyRange.lowerBound(path, true);
+                return new Promise((resolve, reject) => {
+                    /** @type {IDBRequest<IDBCursorWithValue>|IDBRequest<IDBCursor>} */
+                    const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
+                    cursor.onerror = e => reject(e);
+                    cursor.onsuccess = async e => {
+                        /** type {string} */
+                        const otherPath = cursor.result ? cursor.result.key : null;
+                        let keepGoing = true;
+                        if (otherPath === null) {
+                            // No more results
+                            keepGoing = false;
+                        }
+                        else if (!pathInfo.isAncestorOf(otherPath)) {
+                            // Paths are sorted, no more children to be expected!
+                            keepGoing = false;
+                        }
+                        else if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
+                            /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
+                            let node;
+                            if (include.metadata) {
+                                /** @type {IDBRequest<IDBCursorWithValue>} */
+                                const valueCursor = cursor;
+                                /** @type {IIndexedDBNodeData} */
+                                const data = valueCursor.result.value;
+                                node = data.metadata;
+                                if (include.value) {
+                                    // Load value!
+                                    const req = tx.objectStore('content').get(otherPath);
+                                    await new Promise((resolve, reject) => {
+                                        req.onerror = e => reject(e);
+                                        req.onsuccess = e => {
+                                            node.value = req.result;
+                                            resolve();
+                                        }
+                                    });
+                                }
+                            }
+                            keepGoing = addCallback(otherPath, node);
+                        }
+                        if (keepGoing) {
+                            try { cursor.result.continue(); }
+                            catch(err) {
+                                // We reached the end of the cursor?
+                                keepGoing = false;
+                            }
+                        }
+                        if (!keepGoing) {
+                            resolve();
+                        }
+                    };
+                });
+            },
+            descendantsOf(path, include, checkCallback, addCallback) {
+                // Use cursor to loop from path on
+                // NOTE: Implementation is almost identical to childrenOf, consider merging them
+                const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+                const lockStores = include.value ? ['nodes','content'] : 'nodes';
+                const tx = db.transaction(lockStores, 'readonly');
+                const store = tx.objectStore('nodes');
+                const query = IDBKeyRange.lowerBound(path, true);
+                return new Promise((resolve, reject) => {
+                    /** @type {IDBRequest<IDBCursorWithValue>|IDBRequest<IDBCursor>} */
+                    const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
+                    cursor.onerror = e => reject(e);
+                    cursor.onsuccess = async e => {
+                        /** @type {string} */
+                        const otherPath = cursor.result ? cursor.result.key : null;
+                        let keepGoing = true;
+                        if (otherPath === null) {
+                            // No more results
+                            keepGoing = false;
+                        }
+                        else if (!pathInfo.isAncestorOf(otherPath)) {
+                            // Paths are sorted, no more ancestors to be expected!
+                            keepGoing = false;
+                        }
+                        else if (checkCallback(otherPath)) {
+                            /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
+                            let node;
+                            if (include.metadata) {
+                                /** @type {IDBRequest<IDBCursorWithValue>} */
+                                const valueCursor = cursor;
+                                /** @type {IIndexedDBNodeData} */
+                                const data = valueCursor.result.value;
+                                node = data.metadata;
+                                if (include.value) {
+                                    // Load value!
+                                    const req = tx.objectStore('content').get(otherPath);
+                                    await new Promise((resolve, reject) => {
+                                        req.onerror = e => reject(e);
+                                        req.onsuccess = e => {
+                                            node.value = req.result;
+                                            resolve();
+                                        }
+                                    });
+                                }
+                            }
+                            keepGoing = addCallback(otherPath, node);
+                        }
+                        if (keepGoing) {
+                            try { cursor.result.continue(); }
+                            catch(err) {
+                                // We reached the end of the cursor?
+                                keepGoing = false;
+                            }
+                        }
+                        if (!keepGoing) {
+                            resolve();
+                        }
+                    };
+                });
+            }            
+        });
+
+        return new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
+    }
+
+    /**
+     * Creates an AceBase database instance using LocalStorage as storage engine
+     * @param {string} dbname Name of the database
+     * @param {object} [settings] optional settings
+     * @param {string} [settings.logLevel] what level to use for logging to the console
+     * @param {boolean} [settings.temp] whether to use sessionStorage instead of localStorage
+     * @param {any} [settings.provider] Alternate localStorage provider. Eg using 'node-localstorage'
+     */    
+    static WithLocalStorage(dbname, settings) {
+
+        settings = settings || {};
+        if (!settings.logLevel) { settings.logLevel = 'error'; }
+
+        // Determine whether to use localStorage or sessionStorage
+        const localStorage = settings.provider ? settings.provider : settings.temp ? window.localStorage : window.sessionStorage;
+
+        // Helper functions to prefix all localStorage keys with dbname
+        // to allows multiple db's in localStorage
+        const storageKeysPrefix = `${dbname}.acebase::`; // Prefix all localStorage keys with dbname
+        function getPathFromStorageKey(key) {
+            return key.slice(storageKeysPrefix.length);
+        }
+        function getStorageKeyForPath(path) {
+            return `${storageKeysPrefix}${path}`;
+        }
+
+        // Setup our CustomStorageSettings
+        const storageSettings = new CustomStorageSettings({
+            name: 'LocalStorage',
+            ready() {
+                return Promise.resolve();
+            },
+            get(path) {
+                // Gets value from localStorage, wrapped in Promise
+                return new Promise(resolve => {
+                    const json = localStorage.getItem(getStorageKeyForPath(path));
+                    const val = JSON.parse(json);
+                    resolve(val);
+                });
+            },
+            set(path, val) {
+                // Sets value in localStorage, wrapped in Promise
+                return new Promise(resolve => {
+                    const json = JSON.stringify(val);
+                    localStorage.setItem(getStorageKeyForPath(path), json);
+                    resolve();
+                });
+            },
+            remove(path) {
+                // Removes a value from localStorage, wrapped in Promise
+                return new Promise(resolve => {
+                    localStorage.removeItem(getStorageKeyForPath(path));
+                    resolve();
+                });
+            },
+            childrenOf(path, include, checkCallback, addCallback) {
+                // Gets all child paths
+                // Cannot query localStorage, so loop through all stored keys to find children
+                return new Promise(resolve => {
+                    const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        if (!key.startsWith(storageKeysPrefix)) { continue; }                
+                        let otherPath = getPathFromStorageKey(key);
+                        if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
+                            let node;
+                            if (include.metadata || include.value) {
+                                const json = localStorage.getItem(key);
+                                node = JSON.parse(json);
+                            }
+                            const keepGoing = addCallback(otherPath, node);
+                            if (!keepGoing) { break; }
+                        }
+                    }
+                    resolve();
+                });
+            },
+            descendantsOf(path, include, checkCallback, addCallback) {
+                // Gets all descendant paths
+                // Cannot query localStorage, so loop through all stored keys to find descendants
+                return new Promise(resolve => {
+                    const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        if (!key.startsWith(storageKeysPrefix)) { continue; }
+                        let otherPath = getPathFromStorageKey(key);
+                        if (pathInfo.isAncestorOf(otherPath) && checkCallback(otherPath)) {
+                            let node;
+                            if (include.metadata || include.value) {
+                                const json = localStorage.getItem(key);
+                                node = JSON.parse(json);
+                            }
+                            const keepGoing = addCallback(otherPath, node);
+                            if (!keepGoing) { break; }
+                        }
+                    }
+                    resolve();
+                });
+            }
+        });
+        return new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
+    }
+}
+
+module.exports = { BrowserAceBase };
+},{"./acebase-local":31,"./storage-custom":38}],31:[function(require,module,exports){
 /**
    ________________________________________________________________________________
    
@@ -3539,29 +3926,8 @@ class AceBase extends AceBaseBase {
     }
 }
 
-class BrowserAceBase extends AceBase {
-    /**
-     * Convenience class for using AceBase in the browser without supplying additional settings.
-     * Uses the browser's localStorage or sessionStorage.
-     * @param {string} name database name
-     * @param {object} [settings] optional settings
-     * @param {string} [settings.logLevel] what level to use for logging to the console
-     * @param {boolean} [settings.temp] whether to use sessionStorage instead of localStorage
-     */
-    constructor(name, settings) {
-        settings = settings || {};
-        const { LocalStorageSettings } = require('./storage-localstorage');
-        settings.storage = new LocalStorageSettings();
-        if (settings.temp === true) {
-            settings.storage.session = true;
-            delete settings.temp;
-        }
-        super(name, settings);
-    }
-}
-
-module.exports = { AceBase, AceBaseLocalSettings, BrowserAceBase };
-},{"./api-local":31,"./storage":39,"./storage-localstorage":38,"acebase-core":11}],31:[function(require,module,exports){
+module.exports = { AceBase, AceBaseLocalSettings };
+},{"./api-local":32,"./storage":40,"acebase-core":11}],32:[function(require,module,exports){
 const { Api, Utils } = require('acebase-core');
 const { AceBase } = require('./acebase-local');
 const { StorageSettings } = require('./storage');
@@ -4449,7 +4815,7 @@ class LocalApi extends Api {
 }
 
 module.exports = { LocalApi };
-},{"./acebase-local":30,"./data-index":40,"./node":36,"./storage":39,"./storage-acebase":40,"./storage-custom":37,"./storage-localstorage":38,"./storage-mssql":40,"./storage-sqlite":40,"acebase-core":11}],32:[function(require,module,exports){
+},{"./acebase-local":31,"./data-index":41,"./node":37,"./storage":40,"./storage-acebase":41,"./storage-custom":38,"./storage-localstorage":39,"./storage-mssql":41,"./storage-sqlite":41,"acebase-core":11}],33:[function(require,module,exports){
 /*
     * This file is used to create a browser bundle, 
     (re)generate it with: npm run browserify
@@ -4471,13 +4837,13 @@ module.exports = { LocalApi };
 
 
 const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, TypeMappingOptions } = require('acebase-core');
-const { AceBase, AceBaseLocalSettings, BrowserAceBase } = require('./acebase-local');
+const { AceBaseLocalSettings } = require('./acebase-local');
+const { BrowserAceBase } = require('./acebase-browser');
 const { LocalStorageSettings } = require('./storage-localstorage');
 const { CustomStorageSettings, CustomStorageHelpers } = require('./storage-custom');
 
 const acebase = {
-    BrowserAceBase,
-    AceBase, 
+    AceBase: BrowserAceBase, 
     AceBaseLocalSettings,
     DataReference, 
     DataSnapshot, 
@@ -4496,7 +4862,7 @@ window.acebase = acebase;
 window.AceBase = BrowserAceBase;
 // Expose classes for module imports:
 module.exports = acebase;
-},{"./acebase-local":30,"./storage-custom":37,"./storage-localstorage":38,"acebase-core":11}],33:[function(require,module,exports){
+},{"./acebase-browser":30,"./acebase-local":31,"./storage-custom":38,"./storage-localstorage":39,"acebase-core":11}],34:[function(require,module,exports){
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
 
@@ -4556,7 +4922,7 @@ class NodeInfo {
 }
 
 module.exports = { NodeInfo };
-},{"./node-value-types":35,"acebase-core":11}],34:[function(require,module,exports){
+},{"./node-value-types":36,"acebase-core":11}],35:[function(require,module,exports){
 const { PathInfo } = require('acebase-core');
 
 const SECOND = 1000;
@@ -4837,7 +5203,7 @@ class NodeLock {
 }
 
 module.exports = { NodeLocker, NodeLock };
-},{"acebase-core":11}],35:[function(require,module,exports){
+},{"acebase-core":11}],36:[function(require,module,exports){
 const VALUE_TYPES = {
     // Native types:
     OBJECT: 1,
@@ -4867,7 +5233,7 @@ function getValueTypeName(valueType) {
 }
 
 module.exports = { VALUE_TYPES, getValueTypeName };
-},{}],36:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
@@ -5177,26 +5543,70 @@ module.exports = {
     Node,
     NodeInfo
 };
-},{"./node-info":33,"./node-value-types":35,"./storage":39,"colors":22}],37:[function(require,module,exports){
+},{"./node-info":34,"./node-value-types":36,"./storage":40,"colors":22}],38:[function(require,module,exports){
 const { debug, ID, PathReference, PathInfo, ascii85 } = require('acebase-core');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
 const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
 
 
-/**
- * @typedef {Object} ICustomStorageNodeMetaData
- * @property {string} revision cuid (time sortable revision id). Nodes stored in the same operation share this id
- * @property {number} revision_nr Number of revisions, starting with 1. Resets to 1 after deletion and recreation
- * @property {number} created Creation date/time in ms since epoch UTC
- * @property {number} modified Last modification date/time in ms since epoch UTC
- * @property {number} type Type of the node's value. 1=object, 2=array, 3=number, 4=boolean, 5=string, 6=date, 7=reserved, 8=binary, 9=reference
+/** Interface for metadata being stored for nodes */
+class ICustomStorageNodeMetaData {
+    constructor() {
+        /** cuid (time sortable revision id). Nodes stored in the same operation share this id */
+        this.revision = '';
+        /** Number of revisions, starting with 1. Resets to 1 after deletion and recreation */
+        this.revision_nr = 0;
+        /** Creation date/time in ms since epoch UTC */
+        this.created = 0;
+        /** Last modification date/time in ms since epoch UTC */
+        this.modified = 0;
+        /** Type of the node's value. 1=object, 2=array, 3=number, 4=boolean, 5=string, 6=date, 7=reserved, 8=binary, 9=reference */
+        this.type = 0;
+    }
+}
 
- * @typedef {Object} ICustomStorageNodeValue
- * @property {any} value only Object, Array or string values.
- * 
- * @typedef {ICustomStorageNodeMetaData & ICustomStorageNodeValue} ICustomStorageNode
- */
+/** Interface for metadata combined with a stored value */
+class ICustomStorageNode extends ICustomStorageNodeMetaData {
+    constructor() {
+        super();
+        /** @type {any} only Object, Array or string values. */
+        this.value = null;
+    }
+}
+
+/** Enables get/set/remove operations to be wrapped in transactions to improve performance and reliability. */
+class CustomStorageTransaction {
+    /**
+     * @param {string} path 
+     * @returns {Promise<ICustomStorageNode>}
+     */
+    get(path) { throw new Error(`CustomStorageTransaction.get must be overridden by subclass`); }
+    /**
+     * @param {string} path 
+     * @param {ICustomStorageNode} node
+     * @returns {Promise<any>}
+     */
+    set(path, node) { throw new Error(`CustomStorageTransaction.set must be overridden by subclass`); }
+    /**
+     * @param {string} path
+     * @returns {Promise<any>}
+     */
+    remove(path) { throw new Error(`CustomStorageTransaction.remove must be overridden by subclass`); }
+    /**
+     * @param {string} reason 
+     * @returns {Promise<any>}
+     */
+    rollback(reason) { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
+    /**
+     * @returns {Promise<any>}
+     */
+    commit() { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
+    constructor() {
+        /** @type {string} Transaction ID */
+        this.id = ID.generate();
+    }
+}
 
 /**
  * Allows data to be stored in a custom storage backend of your choice! Simply provide a couple of functions
@@ -5206,6 +5616,7 @@ class CustomStorageSettings extends StorageSettings {
     /**
      * 
      * @param {object} settings 
+     * @param {string} settings.name Name of the custom storage adapter
      * @param {() => Promise<any>} settings.ready Function that returns a Promise that resolves once your data store backend is ready for use
      * @param {(path: string) => Promise<ICustomStorageNode|null>} settings.get Function that gets the node with given path from your custom data store, must return null if it doesn't exist
      * @param {(path: string, value: ICustomStorageNode) => Promise<void>} settings.set Function that inserts or updates a node with given path in your custom data store
@@ -5236,7 +5647,8 @@ class CustomStorageSettings extends StorageSettings {
         if (typeof settings.descendantsOf !== 'function') {
             throw new Error(`descendantsOf must be a function`);
         }
-        this.info = settings.info || 'Custom Storage';
+        this.name = settings.name;
+        this.info = `${this.name || 'CustomStorage'} realtime database`;
         this.ready = settings.ready;
         this.get = settings.get;
         this.getMultiple = settings.getMultiple 
@@ -5569,16 +5981,17 @@ class CustomStorage extends Storage {
      * @param {string} path 
      * @param {any} value 
      * @param {object} [options] 
+     * @param {CustomStorageTransaction} [options.transaction] TODO: implement
      * @returns {Promise<void>}
      */
-    async _writeNode(path, value, options = { merge: false, revision: null }) {
+    async _writeNode(path, value, options = { merge: false, revision: null, transaction: null }) {
         if (this.valueFitsInline(value) && path !== '') {
             throw new Error(`invalid value to store in its own node`);
         }
         else if (path === '' && (typeof value !== 'object' || value instanceof Array)) {
-            throw new Error(`Invalid root node value. Must be an object`)
+            throw new Error(`Invalid root node value. Must be an object`);
         }
-
+        
         // Get info about current node at path
         const currentRow = await this._readNode(path);
         const newRevision = (options && options.revision) || ID.generate();
@@ -5674,7 +6087,9 @@ class CustomStorage extends Storage {
                 // Get current child nodes in dedicated child records
                 const pathInfo = PathInfo.get(path);
                 const keys = [];
+                let checkExecuted = false;
                 const includeChildCheck = childPath => {
+                    checkExecuted = true;
                     if (!pathInfo.isParentOf(childPath)) {
                         // Double check failed
                         throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
@@ -5682,12 +6097,15 @@ class CustomStorage extends Storage {
                     return true;
                 }
                 const addChildPath = childPath => {
+                    if (!checkExecuted) {
+                        throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                    }
                     const key = PathInfo.get(childPath).key;
                     keys.push(key);
                     return true; // Keep streaming
                 }
                 await this._customImplementation.childrenOf(path, { metadata: false, value: false }, includeChildCheck, addChildPath);
-
+                
                 children.current = children.current.concat(keys);
                 if (newIsObjectOrArray) {
                     if (options && options.merge) {
@@ -5770,7 +6188,9 @@ class CustomStorage extends Storage {
         this.debug.log(`Node "/${path}" is being deleted`.cyan);
 
         const deletePaths = [path];
+        let checkExecuted = false;
         const includeDescendantCheck = (descPath) => {
+            checkExecuted = true;
             if (!pathInfo.isAncestorOf(descPath)) {
                 // Double check failed
                 throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
@@ -5778,6 +6198,9 @@ class CustomStorage extends Storage {
             return true;        
         };
         const addDescendant = (descPath) => {
+            if (!checkExecuted) {
+                throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+            }
             deletePaths.push(descPath);
             return true;
         };
@@ -5853,8 +6276,9 @@ class CustomStorage extends Storage {
                 }
 
                 // Go on... get other children
-
+                let checkExecuted = false;
                 const includeChildCheck = (childPath) => {
+                    checkExecuted = true;
                     if (!pathInfo.isParentOf(childPath)) {
                         // Double check failed
                         throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
@@ -5872,6 +6296,9 @@ class CustomStorage extends Storage {
                  * @param {ICustomStorageNodeMetaData} node 
                  */
                 const addChildNode = (childPath, node) => {
+                    if (!checkExecuted) {
+                        throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                    }
                     const key = PathInfo.get(childPath).key;
                     const info = new CustomStorageNodeInfo({
                         path: childPath,
@@ -5946,7 +6373,9 @@ class CustomStorage extends Storage {
                 ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
                 : null;
 
+            let checkExecuted = false;
             const includeDescendantCheck = (descPath) => {
+                checkExecuted = true;
                 if (!pathInfo.isAncestorOf(descPath)) {
                     // Double check failed
                     throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
@@ -5977,6 +6406,10 @@ class CustomStorage extends Storage {
              * @param {ICustomStorageNode} node 
              */
             const addDescendant = (descPath, node) => {
+                if (!checkExecuted) {
+                    throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+                }
+                
                 // Process the value
                 this._processReadNodeValue(node);
                 
@@ -6308,9 +6741,11 @@ module.exports = {
     CustomStorageNodeInfo,
     CustomStorage,
     CustomStorageSettings,
-    CustomStorageHelpers
+    CustomStorageHelpers,
+    ICustomStorageNodeMetaData,
+    ICustomStorageNode
 }
-},{"./node-info":33,"./node-value-types":35,"./storage":39,"acebase-core":11}],38:[function(require,module,exports){
+},{"./node-info":34,"./node-value-types":36,"./storage":40,"acebase-core":11}],39:[function(require,module,exports){
 const { debug, ID, PathReference, PathInfo, ascii85 } = require('acebase-core');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
@@ -7319,7 +7754,7 @@ module.exports = {
     LocalStorage,
     LocalStorageSettings    
 }
-},{"./node-info":33,"./node-value-types":35,"./storage":39,"acebase-core":11}],39:[function(require,module,exports){
+},{"./node-info":34,"./node-value-types":36,"./storage":40,"acebase-core":11}],40:[function(require,module,exports){
 (function (process){
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85 } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
@@ -8863,9 +9298,9 @@ module.exports = {
     NodeRevisionError
 };
 }).call(this,require('_process'))
-},{"./data-index":40,"./node-info":33,"./node-lock":34,"./node-value-types":35,"./promise-fs":40,"_process":44,"acebase-core":11,"colors":22,"events":41}],40:[function(require,module,exports){
+},{"./data-index":41,"./node-info":34,"./node-lock":35,"./node-value-types":36,"./promise-fs":41,"_process":45,"acebase-core":11,"colors":22,"events":42}],41:[function(require,module,exports){
 
-},{}],41:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -9390,7 +9825,7 @@ function functionBindPolyfill(context) {
   };
 }
 
-},{}],42:[function(require,module,exports){
+},{}],43:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -9415,7 +9850,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],43:[function(require,module,exports){
+},{}],44:[function(require,module,exports){
 exports.endianness = function () { return 'LE' };
 
 exports.hostname = function () {
@@ -9466,7 +9901,7 @@ exports.homedir = function () {
 	return '/'
 };
 
-},{}],44:[function(require,module,exports){
+},{}],45:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -9652,14 +10087,14 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],45:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],46:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -10249,5 +10684,5 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":45,"_process":44,"inherits":42}]},{},[32])(32)
+},{"./support/isBuffer":46,"_process":45,"inherits":43}]},{},[33])(33)
 });

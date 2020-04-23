@@ -4,19 +4,63 @@ const { VALUE_TYPES } = require('./node-value-types');
 const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
 
 
-/**
- * @typedef {Object} ICustomStorageNodeMetaData
- * @property {string} revision cuid (time sortable revision id). Nodes stored in the same operation share this id
- * @property {number} revision_nr Number of revisions, starting with 1. Resets to 1 after deletion and recreation
- * @property {number} created Creation date/time in ms since epoch UTC
- * @property {number} modified Last modification date/time in ms since epoch UTC
- * @property {number} type Type of the node's value. 1=object, 2=array, 3=number, 4=boolean, 5=string, 6=date, 7=reserved, 8=binary, 9=reference
+/** Interface for metadata being stored for nodes */
+class ICustomStorageNodeMetaData {
+    constructor() {
+        /** cuid (time sortable revision id). Nodes stored in the same operation share this id */
+        this.revision = '';
+        /** Number of revisions, starting with 1. Resets to 1 after deletion and recreation */
+        this.revision_nr = 0;
+        /** Creation date/time in ms since epoch UTC */
+        this.created = 0;
+        /** Last modification date/time in ms since epoch UTC */
+        this.modified = 0;
+        /** Type of the node's value. 1=object, 2=array, 3=number, 4=boolean, 5=string, 6=date, 7=reserved, 8=binary, 9=reference */
+        this.type = 0;
+    }
+}
 
- * @typedef {Object} ICustomStorageNodeValue
- * @property {any} value only Object, Array or string values.
- * 
- * @typedef {ICustomStorageNodeMetaData & ICustomStorageNodeValue} ICustomStorageNode
- */
+/** Interface for metadata combined with a stored value */
+class ICustomStorageNode extends ICustomStorageNodeMetaData {
+    constructor() {
+        super();
+        /** @type {any} only Object, Array or string values. */
+        this.value = null;
+    }
+}
+
+/** Enables get/set/remove operations to be wrapped in transactions to improve performance and reliability. */
+class CustomStorageTransaction {
+    /**
+     * @param {string} path 
+     * @returns {Promise<ICustomStorageNode>}
+     */
+    get(path) { throw new Error(`CustomStorageTransaction.get must be overridden by subclass`); }
+    /**
+     * @param {string} path 
+     * @param {ICustomStorageNode} node
+     * @returns {Promise<any>}
+     */
+    set(path, node) { throw new Error(`CustomStorageTransaction.set must be overridden by subclass`); }
+    /**
+     * @param {string} path
+     * @returns {Promise<any>}
+     */
+    remove(path) { throw new Error(`CustomStorageTransaction.remove must be overridden by subclass`); }
+    /**
+     * @param {string} reason 
+     * @returns {Promise<any>}
+     */
+    rollback(reason) { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
+    /**
+     * @returns {Promise<any>}
+     */
+    commit() { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
+    constructor() {
+        /** @type {string} Transaction ID */
+        this.id = ID.generate();
+    }
+}
 
 /**
  * Allows data to be stored in a custom storage backend of your choice! Simply provide a couple of functions
@@ -26,6 +70,7 @@ class CustomStorageSettings extends StorageSettings {
     /**
      * 
      * @param {object} settings 
+     * @param {string} settings.name Name of the custom storage adapter
      * @param {() => Promise<any>} settings.ready Function that returns a Promise that resolves once your data store backend is ready for use
      * @param {(path: string) => Promise<ICustomStorageNode|null>} settings.get Function that gets the node with given path from your custom data store, must return null if it doesn't exist
      * @param {(path: string, value: ICustomStorageNode) => Promise<void>} settings.set Function that inserts or updates a node with given path in your custom data store
@@ -56,7 +101,8 @@ class CustomStorageSettings extends StorageSettings {
         if (typeof settings.descendantsOf !== 'function') {
             throw new Error(`descendantsOf must be a function`);
         }
-        this.info = settings.info || 'Custom Storage';
+        this.name = settings.name;
+        this.info = `${this.name || 'CustomStorage'} realtime database`;
         this.ready = settings.ready;
         this.get = settings.get;
         this.getMultiple = settings.getMultiple 
@@ -389,16 +435,17 @@ class CustomStorage extends Storage {
      * @param {string} path 
      * @param {any} value 
      * @param {object} [options] 
+     * @param {CustomStorageTransaction} [options.transaction] TODO: implement
      * @returns {Promise<void>}
      */
-    async _writeNode(path, value, options = { merge: false, revision: null }) {
+    async _writeNode(path, value, options = { merge: false, revision: null, transaction: null }) {
         if (this.valueFitsInline(value) && path !== '') {
             throw new Error(`invalid value to store in its own node`);
         }
         else if (path === '' && (typeof value !== 'object' || value instanceof Array)) {
-            throw new Error(`Invalid root node value. Must be an object`)
+            throw new Error(`Invalid root node value. Must be an object`);
         }
-
+        
         // Get info about current node at path
         const currentRow = await this._readNode(path);
         const newRevision = (options && options.revision) || ID.generate();
@@ -494,7 +541,9 @@ class CustomStorage extends Storage {
                 // Get current child nodes in dedicated child records
                 const pathInfo = PathInfo.get(path);
                 const keys = [];
+                let checkExecuted = false;
                 const includeChildCheck = childPath => {
+                    checkExecuted = true;
                     if (!pathInfo.isParentOf(childPath)) {
                         // Double check failed
                         throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
@@ -502,12 +551,15 @@ class CustomStorage extends Storage {
                     return true;
                 }
                 const addChildPath = childPath => {
+                    if (!checkExecuted) {
+                        throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                    }
                     const key = PathInfo.get(childPath).key;
                     keys.push(key);
                     return true; // Keep streaming
                 }
                 await this._customImplementation.childrenOf(path, { metadata: false, value: false }, includeChildCheck, addChildPath);
-
+                
                 children.current = children.current.concat(keys);
                 if (newIsObjectOrArray) {
                     if (options && options.merge) {
@@ -590,7 +642,9 @@ class CustomStorage extends Storage {
         this.debug.log(`Node "/${path}" is being deleted`.cyan);
 
         const deletePaths = [path];
+        let checkExecuted = false;
         const includeDescendantCheck = (descPath) => {
+            checkExecuted = true;
             if (!pathInfo.isAncestorOf(descPath)) {
                 // Double check failed
                 throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
@@ -598,6 +652,9 @@ class CustomStorage extends Storage {
             return true;        
         };
         const addDescendant = (descPath) => {
+            if (!checkExecuted) {
+                throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+            }
             deletePaths.push(descPath);
             return true;
         };
@@ -673,8 +730,9 @@ class CustomStorage extends Storage {
                 }
 
                 // Go on... get other children
-
+                let checkExecuted = false;
                 const includeChildCheck = (childPath) => {
+                    checkExecuted = true;
                     if (!pathInfo.isParentOf(childPath)) {
                         // Double check failed
                         throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
@@ -692,6 +750,9 @@ class CustomStorage extends Storage {
                  * @param {ICustomStorageNodeMetaData} node 
                  */
                 const addChildNode = (childPath, node) => {
+                    if (!checkExecuted) {
+                        throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                    }
                     const key = PathInfo.get(childPath).key;
                     const info = new CustomStorageNodeInfo({
                         path: childPath,
@@ -766,7 +827,9 @@ class CustomStorage extends Storage {
                 ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
                 : null;
 
+            let checkExecuted = false;
             const includeDescendantCheck = (descPath) => {
+                checkExecuted = true;
                 if (!pathInfo.isAncestorOf(descPath)) {
                     // Double check failed
                     throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
@@ -797,6 +860,10 @@ class CustomStorage extends Storage {
              * @param {ICustomStorageNode} node 
              */
             const addDescendant = (descPath, node) => {
+                if (!checkExecuted) {
+                    throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+                }
+                
                 // Process the value
                 this._processReadNodeValue(node);
                 
@@ -1128,5 +1195,7 @@ module.exports = {
     CustomStorageNodeInfo,
     CustomStorage,
     CustomStorageSettings,
-    CustomStorageHelpers
+    CustomStorageHelpers,
+    ICustomStorageNodeMetaData,
+    ICustomStorageNode
 }

@@ -819,15 +819,17 @@ const db = new AceBase('mydb', new MSSQLStorageSettings({ server: 'localhost', p
 <a name="browser"></a>
 ## Running AceBase in the browser (NEW v0.9.0)
 
-Exciting news! From v0.9.0+, AceBase is now able to run stand-alone in the browser! It uses localStorage to store the data, or sessionStorage if you want a temporary database.
+Exciting news! From v0.9.0+, AceBase is now able to run stand-alone in the browser! It uses IndexedDB (NEW v0.9.25) or localStorage to store the data, or sessionStorage if you want a temporary database.
 
 NOTE: If you want to connect to a remote AceBase [acebase-server](https://www.npmjs.com/package/acebase-server) from the browser instead of running one locally, use [acebase-client](https://www.npmjs.com/package/acebase-client) instead.
+
+You can also use a local database in the browser to sync with an AceBase server. To do this, create your database in the browser and set pass it as ```cache``` db in ```AceBaseClient```'s storage settings.
 
 ```html
 <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/acebase@latest/dist/browser.min.js"></script>
 <script type="text/javascript">
-    // Create an AceBase db using localStorage
-    const db = new AceBase('mydb', { temp: false }); // temp:true to use sessionStorage instead
+    // Create an AceBase db using IndexedDB
+    const db = AceBase.WithIndexedDB('mydb');
     db.ready(() => {
         console.log('Database ready to use');
         return db.ref('browser').set({
@@ -841,24 +843,20 @@ NOTE: If you want to connect to a remote AceBase [acebase-server](https://www.np
             console.log(`Got "${snap.ref.path}" value:`);
             console.log(snap.val());
         });
-    })
+    });
+
+    // Or, Create an AceBase db using localStorage:
+    const db2 = AceBase.WithLocalStorage('mydb', { temp: false }); // temp:true to use sessionStorage instead
+    
+    // NOTE: to use the OLD (deprecated) localStorage adapter:
+    const db3 = new AceBase('myolddb', { storage: new LocalStorageSettings({ session: false }) });
 </script>
 ```
 
-If you are using TypeScript (eg with Angular/Ionic), use the following code:
-
+If you are using TypeScript (eg with Angular/Ionic), use:
 ```typescript
-import { AceBase, LocalStorageSettings } from 'acebase';
-const settings = { 
-    storage: new LocalStorageSettings({ session: false }), // Make AceBase use LocalStorage engine, use session:true to use sessionStorage instead
-};
-const db = new AceBase('dbname', settings);
-```
-
-Or, use the ```BrowserAceBase``` class, which automatically (like sample above) creates an ```AceBase``` instance using a ```LocalStorageSettings``` storage object in the settings.
-```typescript
-import { BrowserAceBase } from 'acebase';
-const db = new BrowserAceBase('dbname', { temp: false }); // temp:true to use sessionStorage instead
+import { AceBase } from 'acebase';
+const db = AceBase.WithIndexedDB('dbname'); 
 ```
 
 ## Using a CustomStorage backend (NEW v0.9.22)
