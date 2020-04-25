@@ -100,6 +100,56 @@ export interface ICustomStorageNodeValue {
 }
 export interface ICustomStorageNode extends ICustomStorageNodeMetaData, ICustomStorageNodeValue {}
 
+export abstract class CustomStorageTransaction {
+    /**
+     * @param target Which path the transaction is taking place on, and whether it is a read or read/write lock. If your storage backend does not support transactions, is synchronous, or if you are able to lock resources based on path: use storage.nodeLocker to ensure threadsafe transactions
+     */
+    constructor(target: { path: string, write: boolean });
+
+    readonly target: { path: string, readonly originalPath: string, readonly write: boolean };
+
+    /** Function that gets the node with given path from your custom data store, must return null if it doesn't exist */
+    abstract get(path: string): Promise<ICustomStorageNode|null>;
+    /** Function that inserts or updates a node with given path in your custom data store */
+    abstract set(path: string, value: ICustomStorageNode): Promise<void>;
+    /** Function that removes the node with given path from your custom data store */
+    abstract remove(path: string): Promise<void>;
+    
+    /** 
+     * Function that streams all stored nodes that are direct children of the given path. For path "parent/path", results must include paths such as "parent/path/key" AND "parent/path[0]". 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false. 
+     * @param path Parent path to load children of
+     * @param include 
+     * @param include.metadata Whether metadata needs to be loaded
+     * @param include.value  Whether value needs to be loaded
+     * @param checkCallback callback method to precheck if child needs to be added, perform before loading metadata/value if possible
+     * @param addCallback callback method that adds the child node. Returns whether or not to keep calling with more children
+     * @returns Returns a promise that resolves when there are no more children to be streamed
+     */
+    abstract childrenOf(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (childPath: string) => boolean, addCallback: (childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean): Promise<any>;
+    
+    /** 
+     * Function that streams all stored nodes that are descendants of the given path. For path "parent/path", results must include paths such as "parent/path/key", "parent/path/key/subkey", "parent/path[0]", "parent/path[12]/key" etc. 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false. 
+     * @param path Parent path to load descendants of
+     * @param include 
+     * @param include.metadata Whether metadata needs to be loaded
+     * @param include.value  Whether value needs to be loaded
+     * @param checkCallback callback method to precheck if descendant needs to be added, perform before loading metadata/value if possible
+     * @param addCallback callback method that adds the descendant node. Returns whether or not to keep calling with more children
+     * @returns Returns a promise that resolves when there are no more descendants to be streamed
+     */
+    abstract descendantsOf(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (childPath: string) => boolean, addCallback: (descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean): Promise<any>;
+
+    /** (optional, not used yet) Function that gets multiple nodes (metadata AND value) from your custom data store at once. Must return a Promise that resolves with Map<path,value> */
+    getMultiple?(paths: string[]): Promise<Map<string, ICustomStorageNode|null>>;
+    /** (optional, not used yet) Function that sets multiple nodes at once */
+    setMultiple?(nodes: Array<{ path: string, node: ICustomStorageNode }>): Promise<void>;
+    /** (optional) Function that removes multiple nodes from your custom data store at once */
+    removeMultiple?(paths: string[]): Promise<void>;
+
+    abstract commit(): Promise<void>;
+    abstract rollback(reason: Error): Promise<void>;
+}
+
 /**
  * Allows data to be stored in a custom storage backend of your choice! Simply provide a couple of functions
  * to get, set and remove data and you're done.
@@ -108,22 +158,15 @@ export class CustomStorageSettings extends StorageSettings {
     constructor(settings: CustomStorageSettings);
     /** Name of the custom storage adapter */
     name?: string;
+    /** Whether default node locking should be used (default). Set to false if your storage backend disallows multiple simultanious write transactions (eg IndexedDB). Set to true if your storage backend does not support transactions (eg LocalStorage) or allows multiple simultanious write transactions (eg AceBase binary). */
+    locking?: boolean;
     /** Function that returns a Promise that resolves once your data store backend is ready for use */
     ready(): Promise<any>;
-    /** Function that gets the node with given path from your custom data store, must return null if it doesn't exist */
-    get(path: string): Promise<ICustomStorageNode|null>;
-    /** Function that inserts or updates a node with given path in your custom data store */
-    set(path: string, value: ICustomStorageNode): Promise<void>;
-    /** Function that removes the node with given path from your custom data store */
-    remove(path: string): Promise<void>;
-    /** Function that streams all stored nodes that are direct children of the given path. For path "parent/path", results must include paths such as "parent/path/key" AND "parent/path[0]". 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false. */
-    childrenOf(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (childPath: string) => boolean, addCallback: (childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean): Promise<any>;
-    /** Function that streams all stored nodes that are descendants of the given path. For path "parent/path", results must include paths such as "parent/path/key", "parent/path/key/subkey", "parent/path[0]", "parent/path[12]/key" etc. 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false. */
-    descendantsOf(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (childPath: string) => boolean, addCallback: (descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean): Promise<any>;
-    // /** (optional, not used yet) Function that gets multiple nodes (metadata AND value) from your custom data store at once. Must return a Promise that resolves with Map<path,value> */
-    // getMultiple?(paths: string[]): Promise<Map<string, ICustomStorageNode|null>>;
-    /** (optional) Function that removes multiple nodes from your custom data store at once */
-    removeMultiple?(paths: string[]): Promise<void>;
+    /**
+     * Function that starts a transaction for read/write operations on a specific path and/or child paths
+     * @param target target path and mode to start transaction on
+     */
+    getTransaction(target: { path: string, write: boolean }): Promise<CustomStorageTransaction>
 }
 
 export class CustomStorageHelpers {

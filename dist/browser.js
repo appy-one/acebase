@@ -698,7 +698,8 @@ class DataReference {
                 });
             }
             else if (event === "notify_child_added") {
-                // Use the reflect API to get current children
+                // Use the reflect API to get current children. 
+                // NOTE: This does not work with AceBaseServer <= v0.9.7, only when signed in as admin
                 const step = 100;
                 let limit = step, skip = 0;
                 const more = () => {
@@ -3488,7 +3489,7 @@ module.exports = {
 }).call(this,require('_process'))
 },{"./has-flag.js":28,"_process":45,"os":44}],30:[function(require,module,exports){
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
-const { CustomStorageSettings, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
+const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
 /**
  * @typedef {Object} IIndexedDBNodeData
@@ -3560,211 +3561,27 @@ class BrowserAceBase extends AceBase {
         request.onsuccess = e => {
             db = request.result;
             readyResolve();
-        }
+        };
         request.onerror = e => {
             readyReject(e);
         };
 
         const storageSettings = new CustomStorageSettings({
             name: 'IndexedDB',
+            locking: false,
             ready() {
                 return readyPromise;
             },
-            get(path) {
-                // Get metadata from "nodes" object store
-                const tx = db.transaction(['nodes', 'content'], 'readonly');
-                const request = tx.objectStore('nodes').get(path);
-                return new Promise((resolve, reject) => {
-                    request.onsuccess = event => {
-                        /** @type {IIndexedDBNodeData} */
-                        const data = request.result;
-                        if (!data) {
-                            return resolve(null);
-                        }
-                        /** @type {ICustomStorageNode} */
-                        const node = data.metadata;
-
-                        // Node exists, get content from "content" object store
-                        const contentReq = tx.objectStore('content').get(path);
-                        contentReq.onsuccess = e => {
-                            node.value = contentReq.result;
-                            resolve(node);
-                        };
-                        contentReq.onerror = e => reject(e);
-                    }
-                    request.onerror = e => {
-                        console.error(`IndexedDB get error`, e);
-                        reject(e);
-                    }
-                });
-            },
-            set(path, node) {
-                /** @type {ICustomStorageNode} */
-                const copy = {};
-                const value = node.value;
-                Object.assign(copy, node);
-                delete copy.value;
-                /** @type {ICustomStorageNodeMetaData} */
-                const metadata = copy;                
-                /** @type {IIndexedDBNodeData} */
-                const obj = {
-                    path,
-                    metadata
+            async getTransaction(target) {
+                const context = {
+                    debug: true,
+                    db
                 }
-                return new Promise((resolve, reject) => {
-                    const tx = db.transaction(['nodes', 'content'], 'readwrite');
-                    // Insert into "nodes" object store first
-                    const request = tx.objectStore('nodes').put(obj);
-                    request.onerror = e => reject(e);
-                    request.onsuccess = e => {
-                        // Now add to "content" object store
-                        const contentReq = tx.objectStore('content').put(value, path);
-                        contentReq.onsuccess = e => resolve();
-                        contentReq.onerror = e => {
-                            tx.abort(); // rollback transaction
-                            reject(e);
-                        }
-                    };
-                });
-            },
-            remove(path) {
-                const tx = db.transaction(['nodes','content'], 'readwrite');
-                return new Promise((resolve, reject) => {
-                    // First, remove from "content" object store
-                    const r1 = tx.objectStore('content').delete(path);
-                    r1.onerror = e => reject(e);
-                    r1.onsuccess = e => {
-                        // Now, remove from "nodes" data store
-                        const r2 = tx.objectStore('nodes').delete(path);
-                        r2.onerror = e => {
-                            tx.abort(); // rollback transaction
-                            reject(e);
-                        };
-                        r2.onsuccess = e => resolve();
-                    }
-                });
-            },
-            childrenOf(path, include, checkCallback, addCallback) {
-                // Use cursor to loop from path on
-                const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-                const lockStores = include.value ? ['nodes','content'] : 'nodes';
-                const tx = db.transaction(lockStores, 'readonly');
-                const store = tx.objectStore('nodes');
-                const query = IDBKeyRange.lowerBound(path, true);
-                return new Promise((resolve, reject) => {
-                    /** @type {IDBRequest<IDBCursorWithValue>|IDBRequest<IDBCursor>} */
-                    const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
-                    cursor.onerror = e => reject(e);
-                    cursor.onsuccess = async e => {
-                        /** type {string} */
-                        const otherPath = cursor.result ? cursor.result.key : null;
-                        let keepGoing = true;
-                        if (otherPath === null) {
-                            // No more results
-                            keepGoing = false;
-                        }
-                        else if (!pathInfo.isAncestorOf(otherPath)) {
-                            // Paths are sorted, no more children to be expected!
-                            keepGoing = false;
-                        }
-                        else if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
-                            /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
-                            let node;
-                            if (include.metadata) {
-                                /** @type {IDBRequest<IDBCursorWithValue>} */
-                                const valueCursor = cursor;
-                                /** @type {IIndexedDBNodeData} */
-                                const data = valueCursor.result.value;
-                                node = data.metadata;
-                                if (include.value) {
-                                    // Load value!
-                                    const req = tx.objectStore('content').get(otherPath);
-                                    await new Promise((resolve, reject) => {
-                                        req.onerror = e => reject(e);
-                                        req.onsuccess = e => {
-                                            node.value = req.result;
-                                            resolve();
-                                        }
-                                    });
-                                }
-                            }
-                            keepGoing = addCallback(otherPath, node);
-                        }
-                        if (keepGoing) {
-                            try { cursor.result.continue(); }
-                            catch(err) {
-                                // We reached the end of the cursor?
-                                keepGoing = false;
-                            }
-                        }
-                        if (!keepGoing) {
-                            resolve();
-                        }
-                    };
-                });
-            },
-            descendantsOf(path, include, checkCallback, addCallback) {
-                // Use cursor to loop from path on
-                // NOTE: Implementation is almost identical to childrenOf, consider merging them
-                const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-                const lockStores = include.value ? ['nodes','content'] : 'nodes';
-                const tx = db.transaction(lockStores, 'readonly');
-                const store = tx.objectStore('nodes');
-                const query = IDBKeyRange.lowerBound(path, true);
-                return new Promise((resolve, reject) => {
-                    /** @type {IDBRequest<IDBCursorWithValue>|IDBRequest<IDBCursor>} */
-                    const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
-                    cursor.onerror = e => reject(e);
-                    cursor.onsuccess = async e => {
-                        /** @type {string} */
-                        const otherPath = cursor.result ? cursor.result.key : null;
-                        let keepGoing = true;
-                        if (otherPath === null) {
-                            // No more results
-                            keepGoing = false;
-                        }
-                        else if (!pathInfo.isAncestorOf(otherPath)) {
-                            // Paths are sorted, no more ancestors to be expected!
-                            keepGoing = false;
-                        }
-                        else if (checkCallback(otherPath)) {
-                            /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
-                            let node;
-                            if (include.metadata) {
-                                /** @type {IDBRequest<IDBCursorWithValue>} */
-                                const valueCursor = cursor;
-                                /** @type {IIndexedDBNodeData} */
-                                const data = valueCursor.result.value;
-                                node = data.metadata;
-                                if (include.value) {
-                                    // Load value!
-                                    const req = tx.objectStore('content').get(otherPath);
-                                    await new Promise((resolve, reject) => {
-                                        req.onerror = e => reject(e);
-                                        req.onsuccess = e => {
-                                            node.value = req.result;
-                                            resolve();
-                                        }
-                                    });
-                                }
-                            }
-                            keepGoing = addCallback(otherPath, node);
-                        }
-                        if (keepGoing) {
-                            try { cursor.result.continue(); }
-                            catch(err) {
-                                // We reached the end of the cursor?
-                                keepGoing = false;
-                            }
-                        }
-                        if (!keepGoing) {
-                            resolve();
-                        }
-                    };
-                });
-            }            
+                const transaction = new IndexedDBStorageTransaction(context, target);
+                await transaction.start();
+                return transaction;
+            }
         });
-
         return new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
     }
 
@@ -3784,91 +3601,366 @@ class BrowserAceBase extends AceBase {
         // Determine whether to use localStorage or sessionStorage
         const localStorage = settings.provider ? settings.provider : settings.temp ? window.localStorage : window.sessionStorage;
 
-        // Helper functions to prefix all localStorage keys with dbname
-        // to allows multiple db's in localStorage
-        const storageKeysPrefix = `${dbname}.acebase::`; // Prefix all localStorage keys with dbname
-        function getPathFromStorageKey(key) {
-            return key.slice(storageKeysPrefix.length);
-        }
-        function getStorageKeyForPath(path) {
-            return `${storageKeysPrefix}${path}`;
-        }
-
         // Setup our CustomStorageSettings
         const storageSettings = new CustomStorageSettings({
             name: 'LocalStorage',
+            locking: true,
             ready() {
+                // LocalStorage is always ready
                 return Promise.resolve();
             },
-            get(path) {
-                // Gets value from localStorage, wrapped in Promise
-                return new Promise(resolve => {
-                    const json = localStorage.getItem(getStorageKeyForPath(path));
-                    const val = JSON.parse(json);
-                    resolve(val);
-                });
-            },
-            set(path, val) {
-                // Sets value in localStorage, wrapped in Promise
-                return new Promise(resolve => {
-                    const json = JSON.stringify(val);
-                    localStorage.setItem(getStorageKeyForPath(path), json);
-                    resolve();
-                });
-            },
-            remove(path) {
-                // Removes a value from localStorage, wrapped in Promise
-                return new Promise(resolve => {
-                    localStorage.removeItem(getStorageKeyForPath(path));
-                    resolve();
-                });
-            },
-            childrenOf(path, include, checkCallback, addCallback) {
-                // Gets all child paths
-                // Cannot query localStorage, so loop through all stored keys to find children
-                return new Promise(resolve => {
-                    const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-                    for (let i = 0; i < localStorage.length; i++) {
-                        const key = localStorage.key(i);
-                        if (!key.startsWith(storageKeysPrefix)) { continue; }                
-                        let otherPath = getPathFromStorageKey(key);
-                        if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
-                            let node;
-                            if (include.metadata || include.value) {
-                                const json = localStorage.getItem(key);
-                                node = JSON.parse(json);
-                            }
-                            const keepGoing = addCallback(otherPath, node);
-                            if (!keepGoing) { break; }
-                        }
-                    }
-                    resolve();
-                });
-            },
-            descendantsOf(path, include, checkCallback, addCallback) {
-                // Gets all descendant paths
-                // Cannot query localStorage, so loop through all stored keys to find descendants
-                return new Promise(resolve => {
-                    const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-                    for (let i = 0; i < localStorage.length; i++) {
-                        const key = localStorage.key(i);
-                        if (!key.startsWith(storageKeysPrefix)) { continue; }
-                        let otherPath = getPathFromStorageKey(key);
-                        if (pathInfo.isAncestorOf(otherPath) && checkCallback(otherPath)) {
-                            let node;
-                            if (include.metadata || include.value) {
-                                const json = localStorage.getItem(key);
-                                node = JSON.parse(json);
-                            }
-                            const keepGoing = addCallback(otherPath, node);
-                            if (!keepGoing) { break; }
-                        }
-                    }
-                    resolve();
-                });
+            getTransaction(target) {
+                // Create an instance of our transaction class
+                const context = {
+                    debug: true,
+                    dbname,
+                    localStorage
+                }
+                const transaction = new LocalStorageTransaction(context, target);
+                return Promise.resolve(transaction);
             }
         });
         return new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
+    }
+}
+
+class IndexedDBStorageTransaction extends CustomStorageTransaction {
+
+    /**
+     * @param {{debug: boolean, db: typeof IndexedDB }} context
+     * @param {{path: string, write: boolean}} target 
+     * @param {NodeLocker} nodeLocker 
+     */
+    constructor(context, target) {
+        super(target);
+        this.context = context;
+    }
+
+    start() {
+        // Start transaction
+        return new Promise((resolve, reject) => {
+            this._tx = this.context.db.transaction(['nodes', 'content'], this.target.write ? 'readwrite' : 'readonly');
+            resolve();
+        })
+    }
+    
+    commit() {
+        const tx = this._tx;
+        tx.commit && tx.commit();
+    }
+    
+    rollback(err) {
+        const tx = this._tx;
+        tx.abort && tx.abort();        
+    }
+
+    get(path) {
+        // Get metadata from "nodes" object store
+        const tx = this._tx;
+        const request = tx.objectStore('nodes').get(path);
+        return new Promise((resolve, reject) => {
+            request.onsuccess = event => {
+                /** @type {IIndexedDBNodeData} */
+                const data = request.result;
+                if (!data) {
+                    return resolve(null);
+                }
+                /** @type {ICustomStorageNode} */
+                const node = data.metadata;
+
+                // Node exists, get content from "content" object store
+                const contentReq = tx.objectStore('content').get(path);
+                contentReq.onsuccess = e => {
+                    node.value = contentReq.result;
+                    resolve(node);
+                };
+                contentReq.onerror = e => reject(e);
+            }
+            request.onerror = e => {
+                console.error(`IndexedDB get error`, e);
+                reject(e);
+            }
+        });
+    }
+
+    set(path, node) {
+        /** @type {ICustomStorageNode} */
+        const copy = {};
+        const value = node.value;
+        Object.assign(copy, node);
+        delete copy.value;
+        /** @type {ICustomStorageNodeMetaData} */
+        const metadata = copy;                
+        /** @type {IIndexedDBNodeData} */
+        const obj = {
+            path,
+            metadata
+        }
+        return new Promise((resolve, reject) => {
+            const tx = this._tx;
+            // Insert into "nodes" object store first
+            const request = tx.objectStore('nodes').put(obj);
+            request.onerror = e => reject(e);
+            request.onsuccess = e => {
+                // Now add to "content" object store
+                const contentReq = tx.objectStore('content').put(value, path);
+                contentReq.onsuccess = e => resolve();
+                contentReq.onerror = e => {
+                    tx.abort(); // rollback transaction
+                    reject(e);
+                }
+            };
+        });
+    }
+
+    remove(path) {
+        const tx = this._tx;
+        return new Promise((resolve, reject) => {
+            // First, remove from "content" object store
+            const r1 = tx.objectStore('content').delete(path);
+            r1.onerror = e => reject(e);
+            r1.onsuccess = e => {
+                // Now, remove from "nodes" data store
+                const r2 = tx.objectStore('nodes').delete(path);
+                r2.onerror = e => {
+                    tx.abort(); // rollback transaction
+                    reject(e);
+                };
+                r2.onsuccess = e => resolve();
+            }
+        });
+    }
+
+    childrenOf(path, include, checkCallback, addCallback) {
+        // Use cursor to loop from path on
+        const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+        const tx = this._tx;
+        const store = tx.objectStore('nodes');
+        const query = IDBKeyRange.lowerBound(path, true);
+        return new Promise((resolve, reject) => {
+            /** @type {IDBRequest<IDBCursorWithValue>|IDBRequest<IDBCursor>} */
+            const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
+            cursor.onerror = e => reject(e);
+            cursor.onsuccess = async e => {
+                /** type {string} */
+                const otherPath = cursor.result ? cursor.result.key : null;
+                let keepGoing = true;
+                if (otherPath === null) {
+                    // No more results
+                    keepGoing = false;
+                }
+                else if (!pathInfo.isAncestorOf(otherPath)) {
+                    // Paths are sorted, no more children to be expected!
+                    keepGoing = false;
+                }
+                else if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
+                    /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
+                    let node;
+                    if (include.metadata) {
+                        /** @type {IDBRequest<IDBCursorWithValue>} */
+                        const valueCursor = cursor;
+                        /** @type {IIndexedDBNodeData} */
+                        const data = valueCursor.result.value;
+                        node = data.metadata;
+                        if (include.value) {
+                            // Load value!
+                            const req = tx.objectStore('content').get(otherPath);
+                            await new Promise((resolve, reject) => {
+                                req.onerror = e => reject(e);
+                                req.onsuccess = e => {
+                                    node.value = req.result;
+                                    resolve();
+                                }
+                            });
+                        }
+                    }
+                    keepGoing = addCallback(otherPath, node);
+                }
+                if (keepGoing) {
+                    try { cursor.result.continue(); }
+                    catch(err) {
+                        // We reached the end of the cursor?
+                        keepGoing = false;
+                    }
+                }
+                if (!keepGoing) {
+                    resolve();
+                }
+            };
+        });
+    }
+
+    descendantsOf(path, include, checkCallback, addCallback) {
+        // Use cursor to loop from path on
+        // NOTE: Implementation is almost identical to childrenOf, consider merging them
+        const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+        const tx = this._tx;
+        const store = tx.objectStore('nodes');
+        const query = IDBKeyRange.lowerBound(path, true);
+        return new Promise((resolve, reject) => {
+            /** @type {IDBRequest<IDBCursorWithValue>|IDBRequest<IDBCursor>} */
+            const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
+            cursor.onerror = e => reject(e);
+            cursor.onsuccess = async e => {
+                /** @type {string} */
+                const otherPath = cursor.result ? cursor.result.key : null;
+                let keepGoing = true;
+                if (otherPath === null) {
+                    // No more results
+                    keepGoing = false;
+                }
+                else if (!pathInfo.isAncestorOf(otherPath)) {
+                    // Paths are sorted, no more ancestors to be expected!
+                    keepGoing = false;
+                }
+                else if (checkCallback(otherPath)) {
+                    /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
+                    let node;
+                    if (include.metadata) {
+                        /** @type {IDBRequest<IDBCursorWithValue>} */
+                        const valueCursor = cursor;
+                        /** @type {IIndexedDBNodeData} */
+                        const data = valueCursor.result.value;
+                        node = data.metadata;
+                        if (include.value) {
+                            // Load value!
+                            const req = tx.objectStore('content').get(otherPath);
+                            await new Promise((resolve, reject) => {
+                                req.onerror = e => reject(e);
+                                req.onsuccess = e => {
+                                    node.value = req.result;
+                                    resolve();
+                                }
+                            });
+                        }
+                    }
+                    keepGoing = addCallback(otherPath, node);
+                }
+                if (keepGoing) {
+                    try { cursor.result.continue(); }
+                    catch(err) {
+                        // We reached the end of the cursor?
+                        keepGoing = false;
+                    }
+                }
+                if (!keepGoing) {
+                    resolve();
+                }
+            };
+        });
+    }            
+
+}
+
+// Setup CustomStorageTransaction for browser's LocalStorage
+class LocalStorageTransaction extends CustomStorageTransaction {
+
+    /**
+     * @param {{debug: boolean, dbname: string, localStorage: typeof window.localStorage}} context
+     * @param {{path: string, write: boolean}} target
+     */
+    constructor(context, target) {
+        super(target);
+        this.context = context;
+        this._storageKeysPrefix = `${this.context.dbname}.acebase::`;
+    }
+
+    commit() {
+        // All changes have already been committed
+        return Promise.resolve();
+    }
+    
+    rollback(err) {
+        // Not able to rollback changes, because we did not keep track
+        return Promise.resolve();
+    }
+
+    get(path) {
+        // Gets value from localStorage, wrapped in Promise
+        return new Promise(resolve => {
+            const json = this.context.localStorage.getItem(this.getStorageKeyForPath(path));
+            const val = JSON.parse(json);
+            resolve(val);
+        });
+    }
+
+    set(path, val) {
+        // Sets value in localStorage, wrapped in Promise
+        return new Promise(resolve => {
+            const json = JSON.stringify(val);
+            this.context.localStorage.setItem(this.getStorageKeyForPath(path), json);
+            resolve();
+        });
+    }
+
+    remove(path) {
+        // Removes a value from localStorage, wrapped in Promise
+        return new Promise(resolve => {
+            this.context.localStorage.removeItem(this.getStorageKeyForPath(path));
+            resolve();
+        });
+    }
+
+    childrenOf(path, include, checkCallback, addCallback) {
+        // Streams all child paths
+        // Cannot query localStorage, so loop through all stored keys to find children
+        return new Promise(resolve => {
+            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+            for (let i = 0; i < this.context.localStorage.length; i++) {
+                const key = this.context.localStorage.key(i);
+                if (!key.startsWith(this._storageKeysPrefix)) { continue; }                
+                let otherPath = this.getPathFromStorageKey(key);
+                if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
+                    let node;
+                    if (include.metadata || include.value) {
+                        const json = this.context.localStorage.getItem(key);
+                        node = JSON.parse(json);
+                    }
+                    const keepGoing = addCallback(otherPath, node);
+                    if (!keepGoing) { break; }
+                }
+            }
+            resolve();
+        });
+    }
+
+    descendantsOf(path, include, checkCallback, addCallback) {
+        // Streams all descendant paths
+        // Cannot query localStorage, so loop through all stored keys to find descendants
+        return new Promise(resolve => {
+            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+            for (let i = 0; i < this.context.localStorage.length; i++) {
+                const key = this.context.localStorage.key(i);
+                if (!key.startsWith(this._storageKeysPrefix)) { continue; }
+                let otherPath = this.getPathFromStorageKey(key);
+                if (pathInfo.isAncestorOf(otherPath) && checkCallback(otherPath)) {
+                    let node;
+                    if (include.metadata || include.value) {
+                        const json = this.context.localStorage.getItem(key);
+                        node = JSON.parse(json);
+                    }
+                    const keepGoing = addCallback(otherPath, node);
+                    if (!keepGoing) { break; }
+                }
+            }
+            resolve();
+        });
+    }
+
+    /**
+     * Helper function to get the path from a localStorage key
+     * @param {string} key 
+     */
+    getPathFromStorageKey(key) {
+        return key.slice(this._storageKeysPrefix.length);
+    }
+
+    /**
+     * Helper function to get the localStorage key for a path
+     * @param {string} path 
+     */
+    getStorageKeyForPath(path) {
+        return `${this._storageKeysPrefix}${path}`;
     }
 }
 
@@ -4840,7 +4932,7 @@ const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappi
 const { AceBaseLocalSettings } = require('./acebase-local');
 const { BrowserAceBase } = require('./acebase-browser');
 const { LocalStorageSettings } = require('./storage-localstorage');
-const { CustomStorageSettings, CustomStorageHelpers } = require('./storage-custom');
+const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('./storage-custom');
 
 const acebase = {
     AceBase: BrowserAceBase, 
@@ -4853,6 +4945,7 @@ const acebase = {
     TypeMappingOptions,
     LocalStorageSettings,
     CustomStorageSettings,
+    CustomStorageTransaction,
     CustomStorageHelpers
 };
 
@@ -5546,6 +5639,7 @@ module.exports = {
 },{"./node-info":34,"./node-value-types":36,"./storage":40,"colors":22}],38:[function(require,module,exports){
 const { debug, ID, PathReference, PathInfo, ascii85 } = require('acebase-core');
 const { NodeInfo } = require('./node-info');
+const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES } = require('./node-value-types');
 const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
 
@@ -5577,34 +5671,122 @@ class ICustomStorageNode extends ICustomStorageNodeMetaData {
 
 /** Enables get/set/remove operations to be wrapped in transactions to improve performance and reliability. */
 class CustomStorageTransaction {
+
+    /**
+     * @param {{ path: string, write: boolean }} target Which path the transaction is taking place on, and whether it is a read or read/write lock. If your storage backend does not support transactions, is synchronous, or if you are able to lock resources based on path: use storage.nodeLocker to ensure threadsafe transactions
+     */
+    constructor(target) {
+        this.target = {
+            get originalPath() { return target.path; },
+            path: target.path,
+            get write() { return target.write; }
+        };
+        /** @type {string} Transaction ID */
+        this.id = ID.generate();
+    }
+
     /**
      * @param {string} path 
      * @returns {Promise<ICustomStorageNode>}
      */
     get(path) { throw new Error(`CustomStorageTransaction.get must be overridden by subclass`); }
+    
     /**
      * @param {string} path 
      * @param {ICustomStorageNode} node
      * @returns {Promise<any>}
      */
     set(path, node) { throw new Error(`CustomStorageTransaction.set must be overridden by subclass`); }
+    
     /**
      * @param {string} path
      * @returns {Promise<any>}
      */
     remove(path) { throw new Error(`CustomStorageTransaction.remove must be overridden by subclass`); }
+    
     /**
-     * @param {string} reason 
+     * 
+     * @param {string} path Parent path to load children of
+     * @param {object} include 
+     * @param {boolean} include.metadata Whether metadata needs to be loaded
+     * @param {boolean} include.value  Whether value needs to be loaded
+     * @param {(childPath: string) => boolean} checkCallback callback method to precheck if child needs to be added, perform before loading metadata/value if possible
+     * @param {(childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean} addCallback callback method that adds the child node. Returns whether or not to keep calling with more children
+     * @returns {Promise<any>} Returns a promise that resolves when there are no more children to be streamed
+     */
+    childrenOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.childrenOf must be overridden by subclass`); }
+
+    /**
+     * 
+     * @param {string} path Parent path to load descendants of
+     * @param {object} include 
+     * @param {boolean} include.metadata Whether metadata needs to be loaded
+     * @param {boolean} include.value  Whether value needs to be loaded
+     * @param {(childPath: string) => boolean} checkCallback callback method to precheck if descendant needs to be added, perform before loading metadata/value if possible
+     * @param {(childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean} addCallback callback method that adds the descendant node. Returns whether or not to keep calling with more children
+     * @returns {Promise<any>} Returns a promise that resolves when there are no more descendants to be streamed
+     */
+    descendantsOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.descendantsOf must be overridden by subclass`); }
+
+    /**
+     * Default implementation of getMultiple that executes .get for each given path. Override for custom logic
+     * @param {string[]} paths
+     * @returns {Promise<Map<string, ICustomStorageNode>>} Returns promise with a Map of paths to nodes
+     */
+    getMultiple(paths) {
+        const map = new Map();
+        return Promise.all(paths.map(path => this.get(path).then(val => map.set(path, val))))
+        .then(done => map);
+    }
+
+    /**
+     * Default implementation of setMultiple that executes .set for each given path. Override for custom logic
+     * @param {Array<{ path: string, node: ICustomStorageNode }>} nodes 
+     */
+    async setMultiple(nodes) {
+        await Promise.all(paths.map(({ path, node }) => this.set(path, node)));
+    }
+
+    /**
+     * Default implementation of removeMultiple that executes .remove for each given path. Override for custom logic
+     * @param {string[]} paths 
+     */
+    async removeMultiple(paths) {
+        await Promise.all(paths.map(path => this.remove(path)));
+    }
+
+    /**
+     * @param {Error} reason 
      * @returns {Promise<any>}
      */
     rollback(reason) { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
+
     /**
      * @returns {Promise<any>}
      */
     commit() { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
-    constructor() {
-        /** @type {string} Transaction ID */
-        this.id = ID.generate();
+    
+    /**
+     * Moves the transaction path to the parent node. If node locking is used, it will request a new lock
+     * Used internally, must not be overridden unless custom locking mechanism is required
+     * @param {string} targetPath;
+     */
+    async moveToParentPath(targetPath) {
+        const currentPath = (this._lock && this._lock.path) || this.target.path;
+        if (currentPath === targetPath) {
+            return targetPath; // Already on the right path
+        }
+        const pathInfo = CustomStorageHelpers.PathInfo.get(targetPath);
+        if (pathInfo.isParentOf(currentPath)) {
+            if (this._lock) {
+                this._lock = await this._lock.moveToParent();
+            }
+        }
+        else {
+            throw new Error(`Locking issue. Locked path "${this._lock.path}" is not a child/descendant of "${targetPath}"`);
+        }
+        this.target.path = targetPath;
+        return targetPath;
     }
 }
 
@@ -5613,59 +5795,67 @@ class CustomStorageTransaction {
  * to get, set and remove data and you're done.
  */
 class CustomStorageSettings extends StorageSettings {
+
     /**
      * 
      * @param {object} settings 
-     * @param {string} settings.name Name of the custom storage adapter
+     * @param {string} [settings.name] Name of the custom storage adapter
+     * @param {boolean} [settings.locking=true] Whether default node locking should be used. Set to false if your storage backend disallows multiple simultanious write transactions (eg IndexedDB). Set to true if your storage backend does not support transactions (eg LocalStorage) or allows multiple simultanious write transactions (eg AceBase binary).
      * @param {() => Promise<any>} settings.ready Function that returns a Promise that resolves once your data store backend is ready for use
-     * @param {(path: string) => Promise<ICustomStorageNode|null>} settings.get Function that gets the node with given path from your custom data store, must return null if it doesn't exist
-     * @param {(path: string, value: ICustomStorageNode) => Promise<void>} settings.set Function that inserts or updates a node with given path in your custom data store
-     * @param {(path: string) => Promise<void>} settings.remove Function that removes the node with given path from your custom data store
-     * @param {(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (childPath: string) => boolean, addCallback: (childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean) => Promise<any>} settings.childrenOf Function that streams all stored nodes that are direct children of the given path. For path "parent/path", results must include paths such as "parent/path/key" AND "parent/path[0]". 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false.
-     * @param {(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (childPath: string) => boolean, addCallback: (descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean) => Promise<any>} settings.descendantsOf Function that streams all stored nodes that are descendants of the given path. For path "parent/path", results must include paths such as "parent/path/key", "parent/path/key/subkey", "parent/path[0]", "parent/path[12]/key" etc. 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false.
-     * @param {(paths: string[]) => Promise<Map<string, ICustomStorageNode|null>>} [settings.getMultiple] (optional, not used yet) Function that gets multiple nodes (metadata AND value) from your custom data store at once. Must return a Promise that resolves with Map<path,node>
-     * @param {(paths: string[]) => Promise<void>} [settings.removeMultiple] (optional) Function that removes multiple nodes from your custom data store at once
+     * @param {(target: { path: string, write: boolean }, nodeLocker: NodeLocker) => Promise<CustomStorageTransaction>} settings.getTransaction Function that starts a transaction for read/write operations on a specific path and/or child paths
      */
-     constructor(settings) {
+    constructor(settings) {
         super(settings);
         settings = settings || {};
         if (typeof settings.ready !== 'function') {
             throw new Error(`ready must be a function`);
         }
-        if (typeof settings.get !== 'function') {
-            throw new Error(`get must be a function`);
-        }
-        if (typeof settings.set !== 'function') {
-            throw new Error(`set must be a function`);
-        }
-        if (typeof settings.remove !== 'function') {
-            throw new Error(`remove must be a function`);
-        }
-        if (typeof settings.childrenOf !== 'function') {
-            throw new Error(`childrenOf must be a function`);
-        }
-        if (typeof settings.descendantsOf !== 'function') {
-            throw new Error(`descendantsOf must be a function`);
+        if (typeof settings.getTransaction !== 'function') {
+            throw new Error(`getTransaction must be a function`);
         }
         this.name = settings.name;
         this.info = `${this.name || 'CustomStorage'} realtime database`;
+        this.locking = settings.locking !== false;
         this.ready = settings.ready;
-        this.get = settings.get;
-        this.getMultiple = settings.getMultiple 
-            || (paths => {
-                const map = new Map();
-                return Promise.all(paths.map(path => this.get(path).then(val => map.set(path, val))))
-                .then(done => map);
-            });
-        this.set = settings.set;
-        this.remove = settings.remove;
-        this.removeMultiple = settings.removeMultiple 
-            || (paths => {
-                return Promise.all(paths.map(path => this.remove(path)))
-                .then(done => true);
-            });
-        this.childrenOf = settings.childrenOf;
-        this.descendantsOf = settings.descendantsOf;
+
+        // Hijack getTransaction to add locking
+        const useLocking = this.locking;
+        const nodeLocker = useLocking ? new NodeLocker() : null;
+        this.getTransaction = async ({ path, write }) => {
+            // console.log(`${write ? 'WRITE' : 'READ'} transaction requested for path "${path}"`)
+            const transaction = await settings.getTransaction({ path, write });
+            console.assert(typeof transaction.id === 'string', `transaction id not set`);
+            // console.log(`Got transaction ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
+
+            // Hijack rollback and commit
+            const rollback = transaction.rollback;
+            const commit = transaction.commit;
+            transaction.commit = async () => {
+                // console.log(`COMMIT ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
+                const ret = await commit.call(transaction);
+                // console.log(`COMMIT DONE ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
+                if (useLocking) {
+                    await transaction._lock.release('commit');
+                }
+                return ret;
+            }
+            transaction.rollback = async (reason) => {
+                // const reasonText = reason instanceof Error ? reason.message : reason.toString();
+                // console.error(`ROLLBACK ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}":`, reason);
+                const ret = await rollback.call(transaction, reason);
+                // console.log(`ROLLBACK DONE ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
+                if (useLocking) {
+                    await transaction._lock.release('rollback');
+                }
+                return ret;
+            }
+
+            if (useLocking) {
+                // Lock the path before continuing
+                transaction._lock = await nodeLocker.lock(path, transaction.id, write, `${this.name}::getTransaction`);
+            }
+            return transaction;
+        }
     }
 };
 
@@ -5772,8 +5962,7 @@ class CustomStorage extends Storage {
         this._init();
     }
 
-
-    _init() {
+    async _init() {
         /** @type {CustomStorageSettings} */
         this._customImplementation = this.settings;
         this.debug.log(`Database "${this.name}" details:`.intro);
@@ -5783,34 +5972,28 @@ class CustomStorage extends Storage {
         this.debug.log(`- Autoremove undefined props: ${this.settings.removeVoidProperties}`);
 
         // Create root node if it's not there yet
-        return this._customImplementation.ready()
-        .then(ready => this.getNodeInfo(''))
-        .then(info => {
-            if (!info.exists) {
-                return this._writeNode('', {});
-            }
-        })
-        .then(() => {
-            return this.indexes.supported && this.indexes.load();
-        })
-        .then(() => {
-            this.emit('ready');
-        });
+        await this._customImplementation.ready();
+        const transaction = await this._customImplementation.getTransaction({ path: '', write: true });
+        const info = await this.getNodeInfo('', { transaction });
+        if (!info.exists) {
+            await this._writeNode('', {}, { transaction });
+        }
+        await transaction.commit();
+        if (this.indexes.supported) {
+            await this.indexes.load();
+        }
+        this.emit('ready');
     }
 
     /**
      * 
      * @param {string} path 
-     * @param {object} info 
-     * @param {number} info.type
-     * @param {any} info.value
-     * @param {string} info.revision
-     * @param {number} info.revision_nr
-     * @param {number} info.created
-     * @param {number} info.modified
+     * @param {ICustomStorageNode} node 
+     * @param {object} options
+     * @param {CustomStorageTransaction} options.transaction
      * @returns {Promise<void>}
      */
-    _storeNode(path, info) {
+    _storeNode(path, node, options) {
         // serialize the value to store
         const getTypedChildValue = val => {
             if (val === null) {
@@ -5835,34 +6018,34 @@ class CustomStorage extends Storage {
         }
 
         const unprocessed = `Caller should have pre-processed the value by converting it to a string`;
-        if (info.type === VALUE_TYPES.ARRAY && info.value instanceof Array) {
+        if (node.type === VALUE_TYPES.ARRAY && node.value instanceof Array) {
             // Convert array to object with numeric properties
             // NOTE: caller should have done this already
             console.warn(`Unprocessed array. ${unprocessed}`);
             const obj = {};
-            for (let i = 0; i < info.value.length; i++) {
-                obj[i] = info.value[i];
+            for (let i = 0; i < node.value.length; i++) {
+                obj[i] = node.value[i];
             }
-            info.value = obj;
+            node.value = obj;
         }
-        if (info.type === VALUE_TYPES.BINARY && typeof info.value !== 'string') {
+        if (node.type === VALUE_TYPES.BINARY && typeof node.value !== 'string') {
             console.warn(`Unprocessed binary value. ${unprocessed}`);
-            info.value = ascii85.encode(info.value);
+            node.value = ascii85.encode(node.value);
         }
-        if (info.type === VALUE_TYPES.REFERENCE && info.value instanceof PathReference) {
+        if (node.type === VALUE_TYPES.REFERENCE && node.value instanceof PathReference) {
             console.warn(`Unprocessed path reference. ${unprocessed}`);
-            info.value = info.value.path;
+            node.value = node.value.path;
         }
-        if ([VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(info.type)) {
-            const original = info.value;
-            info.value = {};
+        if ([VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type)) {
+            const original = node.value;
+            node.value = {};
             // If original is an array, it'll automatically be converted to an object now
             Object.keys(original).forEach(key => {
-                info.value[key] = getTypedChildValue(original[key]);
+                node.value[key] = getTypedChildValue(original[key]);
             });
         }
 
-        return this._customImplementation.set(path, info);
+        return options.transaction.set(path, node);
     }
 
     /**
@@ -5928,9 +6111,14 @@ class CustomStorage extends Storage {
         }
     }
 
-    async _readNode(path) {
+    /**
+     * @param {string} path 
+     * @param {object} options 
+     * @param {CustomStorageTransaction} options.transaction
+     */
+    async _readNode(path, options) {
         // deserialize a stored value (always an object with "type", "value", "revision", "revision_nr", "created", "modified")
-        let node = await this._customImplementation.get(path);
+        let node = await options.transaction.get(path);
         if (node === null) { return null; }
         if (typeof node !== 'object') {
             throw new Error(`CustomStorage get function must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
@@ -5980,11 +6168,13 @@ class CustomStorage extends Storage {
      * Creates or updates a node in its own record. DOES NOT CHECK if path exists in parent node, or if parent paths exist! Calling code needs to do this
      * @param {string} path 
      * @param {any} value 
-     * @param {object} [options] 
-     * @param {CustomStorageTransaction} [options.transaction] TODO: implement
+     * @param {object} options]
+     * @param {CustomStorageTransaction} options.transaction
+     * @param {boolean} [options.merge=false]
+     * @param {string} [options.revision]
      * @returns {Promise<void>}
      */
-    async _writeNode(path, value, options = { merge: false, revision: null, transaction: null }) {
+    async _writeNode(path, value, options) {
         if (this.valueFitsInline(value) && path !== '') {
             throw new Error(`invalid value to store in its own node`);
         }
@@ -5992,9 +6182,11 @@ class CustomStorage extends Storage {
             throw new Error(`Invalid root node value. Must be an object`);
         }
         
+        const transaction = options.transaction;
+
         // Get info about current node at path
-        const currentRow = await this._readNode(path);
-        const newRevision = (options && options.revision) || ID.generate();
+        const currentRow = await this._readNode(path, { transaction });
+        const revision = options.revision || ID.generate();
         let mainNode = {
             type: VALUE_TYPES.OBJECT,
             value: {}
@@ -6104,7 +6296,7 @@ class CustomStorage extends Storage {
                     keys.push(key);
                     return true; // Keep streaming
                 }
-                await this._customImplementation.childrenOf(path, { metadata: false, value: false }, includeChildCheck, addChildPath);
+                await transaction.childrenOf(path, { metadata: false, value: false }, includeChildCheck, addChildPath);
                 
                 children.current = children.current.concat(keys);
                 if (newIsObjectOrArray) {
@@ -6128,7 +6320,7 @@ class CustomStorage extends Storage {
                 const writePromises = Object.keys(childNodeValues).map(key => {
                     const childPath = pathInfo.childPath(key); // PathInfo.getChildPath(path, key);
                     const childValue = childNodeValues[key];
-                    return this._writeNode(childPath, childValue, { revision: newRevision, merge: false });
+                    return this._writeNode(childPath, childValue, { transaction, revision, merge: false });
                 });
 
                 // Delete all child nodes that were stored in their own record, but are being removed 
@@ -6137,7 +6329,7 @@ class CustomStorage extends Storage {
                 const deleteDedicatedKeys = changes.delete.concat(movingNodes);
                 const deletePromises = deleteDedicatedKeys.map(key => {
                     const childPath = pathInfo.childPath(key); //PathInfo.getChildPath(path, key);
-                    return this._deleteNode(childPath);
+                    return this._deleteNode(childPath, { transaction });
                 });
 
                 const promises = writePromises.concat(deletePromises);
@@ -6145,6 +6337,7 @@ class CustomStorage extends Storage {
             }
 
             // Update main node
+            // TODO: Check if revision should change?
             return await this._storeNode(path, {
                 type: mainNode.type,
                 value: mainNode.value,
@@ -6152,6 +6345,8 @@ class CustomStorage extends Storage {
                 revision_nr: currentRow.revision_nr + 1,
                 created: currentRow.created,
                 modified: Date.now()
+            }, {
+                transaction
             });
         }
         else {
@@ -6162,17 +6357,19 @@ class CustomStorage extends Storage {
             const promises = Object.keys(childNodeValues).map(key => {
                 const childPath = PathInfo.getChildPath(path, key);
                 const childValue = childNodeValues[key];
-                return this._writeNode(childPath, childValue, { revision: newRevision, merge: false });
+                return this._writeNode(childPath, childValue, { transaction, revision, merge: false });
             });
 
             // Create current node
             const p = this._storeNode(path, {
                 type: mainNode.type,
                 value: mainNode.value,
-                revision: newRevision,
+                revision,
                 revision_nr: 1,
                 created: Date.now(),
                 modified: Date.now()
+            }, { 
+                transaction 
             });
             promises.push(p);
             return Promise.all(promises);
@@ -6182,8 +6379,10 @@ class CustomStorage extends Storage {
     /**
      * Deletes (dedicated) node and all subnodes without checking for existence. Use with care - all removed nodes will lose their revision stats! DOES NOT REMOVE INLINE CHILD NODES!
      * @param {string} path 
+     * @param {object} options
+     * @param {CustomStorageTransaction} options.transaction
      */
-    async _deleteNode(path) {
+    async _deleteNode(path, options) {
         const pathInfo = PathInfo.get(path);
         this.debug.log(`Node "/${path}" is being deleted`.cyan);
 
@@ -6204,19 +6403,23 @@ class CustomStorage extends Storage {
             deletePaths.push(descPath);
             return true;
         };
-        await this._customImplementation.descendantsOf(path, { metadata: false, value: false }, includeDescendantCheck, addDescendant);
+        const transaction = options.transaction;
+        await transaction.descendantsOf(path, { metadata: false, value: false }, includeDescendantCheck, addDescendant);
 
         this.debug.log(`Nodes ${deletePaths.map(p => `"/${p}"`).join(',')} are being deleted`.cyan);
-        return this._customImplementation.removeMultiple(deletePaths);
+        return transaction.removeMultiple(deletePaths);
     }
 
     /**
      * Enumerates all children of a given Node for reflection purposes
      * @param {string} path 
+     * @param {object} [options]
+     * @param {CustomStorageTransaction} [options.transaction]
      * @param {string[]|number[]} [options.keyFilter]
      */
-    getChildren(path, options = { keyFilter: undefined, tid: undefined }) {
+    getChildren(path, options) {
         // return generator
+        options = options || {};
         var callback; //, resolve, reject;
         const generator = {
             /**
@@ -6229,128 +6432,159 @@ class CustomStorage extends Storage {
                 return start();
             }
         };
-        const start = () => {
-            let lock, canceled = false;
-            const tid = (options && options.tid) || ID.generate();
-            return this.nodeLocker.lock(path, tid, false, 'getChildren')
-            .then(async l => {
-                lock = l;
+        const start = async () => {
+            // let lock;
+            const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
+            // return this.nodeLocker.lock(path, transaction.id, false, 'getChildren')
+            // .then(async l => {
+            //     lock = l;
+            try {
+                let canceled = false;
+                await (async () => {
+                    let node = await this._readNode(path, { transaction });
+                    if (!node) { throw new NodeNotFoundError(`Node "/${path}" does not exist`); }
+                    // node = JSON.parse(node);
 
-                let node = await this._readNode(path);
-                if (!node) { throw new NodeNotFoundError(`Node "/${path}" does not exist`); }
-                // node = JSON.parse(node);
-
-                if (![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type)) {
-                    // No children
-                    return;
-                }
-                const isArray = node.type === VALUE_TYPES.ARRAY;
-                const value = node.value;
-                let keys = Object.keys(value);
-                if (options.keyFilter) {
-                    keys = keys.filter(key => options.keyFilter.includes(key));
-                }
-                const pathInfo = PathInfo.get(path);
-                keys.length > 0 && keys.every(key => {
-                    let child = this._getTypeFromStoredValue(value[key]);
-
-                    const info = new CustomStorageNodeInfo({
-                        path: pathInfo.childPath(key),
-                        key: isArray ? null : key,
-                        index: isArray ? key : null,
-                        type: child.type,
-                        address: null,
-                        exists: true,
-                        value: child.value,
-                        revision: node.revision,
-                        revision_nr: node.revision_nr,
-                        created: node.created,
-                        modified: node.modified
-                    });
-
-                    canceled = callback(info) === false;
-                    return !canceled; // stop .every loop if canceled
-                });
-                if (canceled) {
-                    return;
-                }
-
-                // Go on... get other children
-                let checkExecuted = false;
-                const includeChildCheck = (childPath) => {
-                    checkExecuted = true;
-                    if (!pathInfo.isParentOf(childPath)) {
-                        // Double check failed
-                        throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
+                    if (![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type)) {
+                        // No children
+                        return;
                     }
+                    const isArray = node.type === VALUE_TYPES.ARRAY;
+                    const value = node.value;
+                    let keys = Object.keys(value);
                     if (options.keyFilter) {
-                        const key = PathInfo.get(childPath).key;
-                        return options.keyFilter.includes(key);
+                        keys = keys.filter(key => options.keyFilter.includes(key));
                     }
-                    return true;           
-                };
+                    const pathInfo = PathInfo.get(path);
+                    keys.length > 0 && keys.every(key => {
+                        let child = this._getTypeFromStoredValue(value[key]);
 
-                /**
-                 * 
-                 * @param {string} childPath 
-                 * @param {ICustomStorageNodeMetaData} node 
-                 */
-                const addChildNode = (childPath, node) => {
-                    if (!checkExecuted) {
-                        throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
-                    }
-                    const key = PathInfo.get(childPath).key;
-                    const info = new CustomStorageNodeInfo({
-                        path: childPath,
-                        type: node.type,
-                        key: isArray ? null : key,
-                        index: isArray ? key : null,
-                        address: new CustomStorageNodeAddress(childPath),
-                        exists: true,
-                        value: null, // not loaded
-                        revision: node.revision,
-                        revision_nr: node.revision_nr,
-                        created: new Date(node.created),
-                        modified: new Date(node.modified)
+                        const info = new CustomStorageNodeInfo({
+                            path: pathInfo.childPath(key),
+                            key: isArray ? null : key,
+                            index: isArray ? key : null,
+                            type: child.type,
+                            address: null,
+                            exists: true,
+                            value: child.value,
+                            revision: node.revision,
+                            revision_nr: node.revision_nr,
+                            created: node.created,
+                            modified: node.modified
+                        });
+
+                        canceled = callback(info) === false;
+                        return !canceled; // stop .every loop if canceled
                     });
+                    if (canceled) {
+                        return;
+                    }
 
-                    canceled = callback(info) === false;
-                    return !canceled;
-                };
-                return this._customImplementation.childrenOf(path, { metadata: true, value: false }, includeChildCheck, addChildNode);
-            })
-            .then(() => {
-                lock.release();
+                    // Go on... get other children
+                    let checkExecuted = false;
+                    const includeChildCheck = (childPath) => {
+                        checkExecuted = true;
+                        if (!pathInfo.isParentOf(childPath)) {
+                            // Double check failed
+                            throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
+                        }
+                        if (options.keyFilter) {
+                            const key = PathInfo.get(childPath).key;
+                            return options.keyFilter.includes(key);
+                        }
+                        return true;           
+                    };
+
+                    /**
+                     * 
+                     * @param {string} childPath 
+                     * @param {ICustomStorageNodeMetaData} node 
+                     */
+                    const addChildNode = (childPath, node) => {
+                        if (!checkExecuted) {
+                            throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                        }
+                        const key = PathInfo.get(childPath).key;
+                        const info = new CustomStorageNodeInfo({
+                            path: childPath,
+                            type: node.type,
+                            key: isArray ? null : key,
+                            index: isArray ? key : null,
+                            address: new CustomStorageNodeAddress(childPath),
+                            exists: true,
+                            value: null, // not loaded
+                            revision: node.revision,
+                            revision_nr: node.revision_nr,
+                            created: new Date(node.created),
+                            modified: new Date(node.modified)
+                        });
+
+                        canceled = callback(info) === false;
+                        return !canceled;
+                    };
+                    await transaction.childrenOf(path, { metadata: true, value: false }, includeChildCheck, addChildNode);
+                })();
+                if (!options.transaction) {
+                    // transaction was created by us, commit
+                    await transaction.commit();
+                }                
                 return canceled;
-            })
-            .catch(err => {
-                lock.release();
+            }
+            catch (err) {
+                if (!options.transaction) {
+                    // transaction was created by us, rollback
+                    await transaction.rollback(err);
+                }
                 throw err;
-            });            
+            }
+
+            // })
+            // .then(() => {
+            //     lock.release();
+            //     return canceled;
+            // })
+            // .catch(err => {
+            //     lock.release();
+            //     throw err;
+            // });            
         }; // start()
         return generator;
     }
 
-    getNode(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
+    /**
+     * 
+     * @param {string} path 
+     * @param {object} [options] 
+     * @param {string[]} [options.include]
+     * @param {string[]} [options.exclude]
+     * @param {boolean} [options.child_objects=true]
+     * @param {CustomStorageTransaction} [options.transaction]
+     * @returns {Promise<ICustomStorageNode>}
+     */
+    async getNode(path, options) {
         // path = path.replace(/'/g, '');  // prevent sql injection, remove single quotes
 
-        const tid = (options && options.tid )|| ID.generate();
-        let lock;
-        return this.nodeLocker.lock(path, tid, false, 'getNode')
-        .then(async l => {
-            lock = l;
-
-            // Get path, path/* and path[*
-            const filtered = options && (options.include || options.exclude || options.child_objects === false);
-            const pathInfo = PathInfo.get(path);
-            const targetNode = await this._readNode(path);
-            if (!targetNode) {
-                // Lookup parent node
-                if (path === '') { return { value: null }; } // path is root. There is no parent.
-                return lock.moveToParent()
-                .then(async parentLock => {
-                    lock = parentLock;
-                    let parentNode = await this._readNode(pathInfo.parentPath);
+        options = options || {};
+        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
+        // let lock;
+        // return this.nodeLocker.lock(path, tid, false, 'getNode')
+        // .then(async l => {
+        //     lock = l;
+        try {
+            const node = await (async () => {
+                // Get path, path/* and path[*
+                const filtered = options.include || options.exclude || options.child_objects === false;
+                const pathInfo = PathInfo.get(path);
+                const targetNode = await this._readNode(path, { transaction });
+                if (!targetNode) {
+                    // Lookup parent node
+                    if (path === '') { return { value: null }; } // path is root. There is no parent.
+                    const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
+                    console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
+                    // return lock.moveToParent()
+                    // .then(async parentLock => {
+                    //     lock = parentLock;
+                    let parentNode = await this._readNode(pathInfo.parentPath, { transaction });
                     if (parentNode && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode) {
                         const childValueInfo = this._getTypeFromStoredValue(parentNode.value[pathInfo.key]);
                         return { 
@@ -6363,198 +6597,215 @@ class CustomStorage extends Storage {
                         };
                     }
                     return { value: null };
-                });
-            }
-
-            const includeCheck = options.include 
-                ? new RegExp('^' + options.include.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
-                : null;
-            const excludeCheck = options.exclude 
-                ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
-                : null;
-
-            let checkExecuted = false;
-            const includeDescendantCheck = (descPath) => {
-                checkExecuted = true;
-                if (!pathInfo.isAncestorOf(descPath)) {
-                    // Double check failed
-                    throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
+                    // });
                 }
-                if (!filtered) { return true; }
 
-                // Apply include & exclude filters
-                let checkPath = descPath.slice(path.length);
-                if (checkPath[0] === '/') { checkPath = checkPath.slice(1); }
-                let include = (includeCheck ? includeCheck.test(checkPath) : true) 
-                    && (excludeCheck ? !excludeCheck.test(checkPath) : true);
+                const includeCheck = options.include 
+                    ? new RegExp('^' + options.include.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
+                    : null;
+                const excludeCheck = options.exclude 
+                    ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
+                    : null;
 
-                // Apply child_objects filter
-                if (include 
-                    && options.child_objects === false 
-                    && (pathInfo.isParentOf(descPath) && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(childNode.type)
-                    || PathInfo.getPathKeys(descPath).length > pathInfo.pathKeys.length + 1)
-                ) {
-                    include = false;
+                let checkExecuted = false;
+                const includeDescendantCheck = (descPath) => {
+                    checkExecuted = true;
+                    if (!pathInfo.isAncestorOf(descPath)) {
+                        // Double check failed
+                        throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
+                    }
+                    if (!filtered) { return true; }
+
+                    // Apply include & exclude filters
+                    let checkPath = descPath.slice(path.length);
+                    if (checkPath[0] === '/') { checkPath = checkPath.slice(1); }
+                    let include = (includeCheck ? includeCheck.test(checkPath) : true) 
+                        && (excludeCheck ? !excludeCheck.test(checkPath) : true);
+
+                    // Apply child_objects filter
+                    if (include 
+                        && options.child_objects === false 
+                        && (pathInfo.isParentOf(descPath) && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(childNode.type)
+                        || PathInfo.getPathKeys(descPath).length > pathInfo.pathKeys.length + 1)
+                    ) {
+                        include = false;
+                    }
+                    return include;
                 }
-                return include;
-            }
 
-            const descRows = [];
-            /**
-             * 
-             * @param {string} descPath 
-             * @param {ICustomStorageNode} node 
-             */
-            const addDescendant = (descPath, node) => {
-                if (!checkExecuted) {
-                    throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+                const descRows = [];
+                /**
+                 * 
+                 * @param {string} descPath 
+                 * @param {ICustomStorageNode} node 
+                 */
+                const addDescendant = (descPath, node) => {
+                    if (!checkExecuted) {
+                        throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+                    }
+                    
+                    // Process the value
+                    this._processReadNodeValue(node);
+                    
+                    // Add node
+                    node.path = descPath;
+                    descRows.push(node);
+
+                    return true; // Keep streaming
+                };
+
+                await transaction.descendantsOf(path, { metadata: true, value: true }, includeDescendantCheck, addDescendant);
+
+                this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}descendants from ${descRows.length + 1} records`.magenta);
+
+                const result = targetNode;
+
+                const objectToArray = obj => {
+                    // Convert object value to array
+                    const arr = [];
+                    Object.keys(obj).forEach(key => {
+                        let index = parseInt(key);
+                        arr[index] = obj[index];
+                    });
+                    return arr;                
+                };
+
+                if (targetNode.type === VALUE_TYPES.ARRAY) {
+                    result.value = objectToArray(result.value);
                 }
-                
-                // Process the value
-                this._processReadNodeValue(node);
-                
-                // Add node
-                node.path = descPath;
-                descRows.push(node);
 
-                return true; // Keep streaming
-            };
-
-            await this._customImplementation.descendantsOf(path, { metadata: true, value: true }, includeDescendantCheck, addDescendant);
-
-            this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${descRows.length + 1} records`.magenta);
-
-            const result = targetNode;
-
-            const objectToArray = obj => {
-                // Convert object value to array
-                const arr = [];
-                Object.keys(obj).forEach(key => {
-                    let index = parseInt(key);
-                    arr[index] = obj[index];
-                });
-                return arr;                
-            };
-
-            if (targetNode.type === VALUE_TYPES.ARRAY) {
-                result.value = objectToArray(result.value);
-            }
-
-            if (targetNode.type === VALUE_TYPES.OBJECT || targetNode.type === VALUE_TYPES.ARRAY) {
-                // target node is an object or array
-                // merge with other found (child) nodes
-                const targetPathKeys = PathInfo.getPathKeys(path);
-                let value = targetNode.value;
-                for (let i = 0; i < descRows.length; i++) {
-                    const otherNode = descRows[i];
-                    const pathKeys = PathInfo.getPathKeys(otherNode.path);
-                    const trailKeys = pathKeys.slice(targetPathKeys.length);
-                    let parent = value;
-                    for (let j = 0 ; j < trailKeys.length; j++) {
-                        console.assert(typeof parent === 'object', 'parent must be an object/array to have children!!');
-                        const key = trailKeys[j];
-                        const isLast = j === trailKeys.length-1;
-                        const nodeType = isLast 
-                            ? otherNode.type 
-                            : typeof trailKeys[j+1] === 'number'
-                                ? VALUE_TYPES.ARRAY
-                                : VALUE_TYPES.OBJECT;
-                        let nodeValue;
-                        if (!isLast) {
-                            nodeValue = nodeType === VALUE_TYPES.OBJECT ? {} : [];
-                        }
-                        else {
-                            nodeValue = otherNode.value;
-                            if (nodeType === VALUE_TYPES.ARRAY) {
-                                nodeValue = objectToArray(nodeValue);
+                if (targetNode.type === VALUE_TYPES.OBJECT || targetNode.type === VALUE_TYPES.ARRAY) {
+                    // target node is an object or array
+                    // merge with other found (child) nodes
+                    const targetPathKeys = PathInfo.getPathKeys(path);
+                    let value = targetNode.value;
+                    for (let i = 0; i < descRows.length; i++) {
+                        const otherNode = descRows[i];
+                        const pathKeys = PathInfo.getPathKeys(otherNode.path);
+                        const trailKeys = pathKeys.slice(targetPathKeys.length);
+                        let parent = value;
+                        for (let j = 0 ; j < trailKeys.length; j++) {
+                            console.assert(typeof parent === 'object', 'parent must be an object/array to have children!!');
+                            const key = trailKeys[j];
+                            const isLast = j === trailKeys.length-1;
+                            const nodeType = isLast 
+                                ? otherNode.type 
+                                : typeof trailKeys[j+1] === 'number'
+                                    ? VALUE_TYPES.ARRAY
+                                    : VALUE_TYPES.OBJECT;
+                            let nodeValue;
+                            if (!isLast) {
+                                nodeValue = nodeType === VALUE_TYPES.OBJECT ? {} : [];
                             }
+                            else {
+                                nodeValue = otherNode.value;
+                                if (nodeType === VALUE_TYPES.ARRAY) {
+                                    nodeValue = objectToArray(nodeValue);
+                                }
+                            }
+                            if (key in parent) {
+                                // Merge with parent
+                                console.assert(typeof parent[key] === typeof nodeValue && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeType), 'Merging child values can only be done if existing and current values are both an array or object');
+                                Object.keys(nodeValue).forEach(childKey => {
+                                    console.assert(!(childKey in parent[key]), 'child key is in parent value already?! HOW?!');
+                                    parent[key][childKey] = nodeValue[childKey];
+                                });
+                            }
+                            else {
+                                parent[key] = nodeValue;
+                            }
+                            parent = parent[key];
                         }
-                        if (key in parent) {
-                            // Merge with parent
-                            console.assert(typeof parent[key] === typeof nodeValue && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeType), 'Merging child values can only be done if existing and current values are both an array or object');
-                            Object.keys(nodeValue).forEach(childKey => {
-                                console.assert(!(childKey in parent[key]), 'child key is in parent value already?! HOW?!');
-                                parent[key][childKey] = nodeValue[childKey];
+                    }
+                }
+                else if (descRows.length > 0) {
+                    throw new Error(`multiple records found for non-object value!`);
+                }
+
+                // Post process filters to remove any data that got though because they were
+                // not stored in dedicated records. This will happen with smaller values because
+                // they are stored inline in their parent node.
+                // eg:
+                // { number: 1, small_string: 'small string', bool: true, obj: {}, arr: [] }
+                // All properties of this object are stored inline, 
+                // if exclude: ['obj'], or child_objects: false was passed, these will still
+                // have to be removed from the value
+
+                if (options.child_objects === false) {
+                    Object.keys(result.value).forEach(key => {
+                        if (typeof result.value[key] === 'object' && result.value[key].constructor === Object) {
+                            // This can only happen if the object was empty
+                            console.assert(Object.keys(result.value[key]).length === 0);
+                            delete result.value[key];
+                        }
+                    })
+                }
+
+                if (options.exclude) {
+                    const process = (obj, keys) => {
+                        if (typeof obj !== 'object') { return; }
+                        const key = keys[0];
+                        if (key === '*') {
+                            Object.keys(obj).forEach(k => {
+                                process(obj[k], keys.slice(1));
                             });
                         }
-                        else {
-                            parent[key] = nodeValue;
+                        else if (keys.length > 1) {
+                            key in obj && process(obj[key], keys.slice(1));
                         }
-                        parent = parent[key];
-                    }
+                        else {
+                            delete obj[key];
+                        }
+                    };
+                    options.exclude.forEach(path => {
+                        const checkKeys = PathInfo.getPathKeys(path);
+                        process(result.value, checkKeys);
+                    });
                 }
+       
+                return result;
+            })();
+            if (!options.transaction) {
+                // transaction was created by us, commit
+                await transaction.commit();
+            }            
+            return node;
+        }
+        catch (err) {
+            if (!options.transaction) {
+                // transaction was created by us, rollback
+                await transaction.rollback(err);
             }
-            else if (descRows.length > 0) {
-                throw new Error(`multiple records found for non-object value!`);
-            }
-
-            // Post process filters to remove any data that got though because they were
-            // not stored in dedicated records. This will happen with smaller values because
-            // they are stored inline in their parent node.
-            // eg:
-            // { number: 1, small_string: 'small string', bool: true, obj: {}, arr: [] }
-            // All properties of this object are stored inline, 
-            // if exclude: ['obj'], or child_objects: false was passed, these will still
-            // have to be removed from the value
-
-            if (options.child_objects === false) {
-                Object.keys(result.value).forEach(key => {
-                    if (typeof result.value[key] === 'object' && result.value[key].constructor === Object) {
-                        // This can only happen if the object was empty
-                        console.assert(Object.keys(result.value[key]).length === 0);
-                        delete result.value[key];
-                    }
-                })
-            }
-
-            if (options.exclude) {
-                const process = (obj, keys) => {
-                    if (typeof obj !== 'object') { return; }
-                    const key = keys[0];
-                    if (key === '*') {
-                        Object.keys(obj).forEach(k => {
-                            process(obj[k], keys.slice(1));
-                        });
-                    }
-                    else if (keys.length > 1) {
-                        key in obj && process(obj[key], keys.slice(1));
-                    }
-                    else {
-                        delete obj[key];
-                    }
-                };
-                options.exclude.forEach(path => {
-                    const checkKeys = PathInfo.getPathKeys(path);
-                    process(result.value, checkKeys);
-                });
-            }
-            return result;
-        })
-        .then(result => {
-            lock.release();
-            return result;
-        })
-        .catch(err => {
-            lock.release();
             throw err;
-        });
+        }
+        // })
+        // .then(result => {
+        //     lock.release();
+        //     return result;
+        // })
+        // .catch(err => {
+        //     lock.release();
+        //     throw err;
+        // });
     }
 
     /**
      * 
      * @param {string} path 
-     * @param {*} options 
+     * @param {object} [options]
+     * @param {CustomStorageTransaction} [options.transaction]
      * @returns {Promise<CustomStorageNodeInfo>}
      */
-    getNodeInfo(path, options = { tid: undefined }) {
+    async getNodeInfo(path, options) {
+        options = options || {};
         const pathInfo = PathInfo.get(path);
-        const tid = (options && options.tid) || ID.generate();
-        let lock;
-        return this.nodeLocker.lock(path, tid, false, 'getNodeInfo')
-        .then(async l => {
-            lock = l;
-
-            const node = await this._readNode(path);
+        // let lock;
+        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
+        // return this.nodeLocker.lock(path, transaction.id, false, 'getNodeInfo')
+        // .then(async l => {
+        //     lock = l;
+        try {
+            const node = await this._readNode(path, { transaction });
             const info = new CustomStorageNodeInfo({ 
                 path, 
                 key: typeof pathInfo.key === 'string' ? pathInfo.key : null,
@@ -6568,15 +6819,16 @@ class CustomStorage extends Storage {
                 revision_nr: node ? node.revision_nr : null
             });
 
-            if (node || path === '') {
-                return info;
-            }
+            if (!node && path !== '') {
+                // Try parent node
 
-            // Try parent node
-            return lock.moveToParent()
-            .then(async parentLock => {
-                lock = parentLock;
-                const parent = await this._readNode(pathInfo.parentPath);
+                // return lock.moveToParent()
+                // .then(async parentLock => {
+                //     lock = parentLock;
+
+                const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
+                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
+                const parent = await this._readNode(pathInfo.parentPath, { transaction });
                 if (parent && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parent.type) && pathInfo.key in parent.value) {
                     // Stored in parent node
                     info.exists = true;
@@ -6592,146 +6844,236 @@ class CustomStorage extends Storage {
                     // Parent doesn't exist, so the node we're looking for cannot exist either
                     info.address = null;
                 }
-                return info;
-            })
-        })
-        .then(info => {
-            lock.release();
+            }
+
+            if (!options.transaction) {
+                // transaction was created by us, commit
+                await transaction.commit();
+            }                
             return info;
-        })
-        .catch(err => {
-            lock && lock.release();
+            // })     
+        }
+        catch (err) {
+            if (!options.transaction) {
+                // transaction was created by us, rollback
+                await transaction.rollback(err);
+            }
             throw err;
-        });
+        }        
+        // })
+        // .then(info => {
+        //     lock.release();
+        //     return info;
+        // })
+        // .catch(err => {
+        //     lock && lock.release();
+        //     throw err;
+        // });
     }
 
     // TODO: Move to Storage base class?
-    removeNode(path, options = { tid: undefined }) {
+    /**
+     * 
+     * @param {string} path 
+     * @param {object} [options]
+     * @param {CustomStorageTransaction} [options.transaction]
+     * @returns {Promise<void>}
+     */
+    async removeNode(path, options) {
         if (path === '') { 
             return Promise.reject(new Error(`Cannot remove the root node`)); 
         }
         
+        options = options || {};
         const pathInfo = PathInfo.get(path);
-        const tid = (options && options.tid) || ID.generate();
-        return this.nodeLocker.lock(pathInfo.parentPath, tid, true, 'removeNode')
-        .then(lock => {
-            return this.updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { tid })
-            .then(result => {
-                lock.release();
-                return result;
-            })
-            .catch(err => {
-                lock.release();
-                throw err;
-            });            
-        });
+        const transaction = options.transaction || this._customImplementation.getTransaction({ path, write: true });
+        // return this.nodeLocker.lock(pathInfo.parentPath, transaction.id, true, 'removeNode')
+        // .then(lock => {
+        try {
+            await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { transaction });
+            if (!options.transaction) {
+                // transaction was created by us, commit
+                await transaction.commit();
+            }            
+        }
+        catch (err) {
+            if (!options.transaction) {
+                // transaction was created by us, rollback
+                await transaction.rollback(err);
+            }
+            throw err;
+        }
+        //     .then(result => {
+        //         lock.release();
+        //         return result;
+        //     })
+        //     .catch(err => {
+        //         lock.release();
+        //         throw err;
+        //     });            
+        // });
     }
 
     // TODO: Move to Storage base class?
-    setNode(path, value, options = { assert_revision: undefined, tid: undefined }) {        
+    /**
+     * 
+     * @param {string} path 
+     * @param {any} value
+     * @param {object} [options]
+     * @param {string} [options.assert_revision]
+     * @param {CustomStorageTransaction} [options.transaction]
+     * @returns {Promise<CustomStorageNodeInfo>}
+     */
+    async setNode(path, value, options) {        
         const pathInfo = PathInfo.get(path);
 
-        let lock;
-        const tid = (options && options.tid) || ID.generate();
-        return this.nodeLocker.lock(path, tid, true, 'setNode')
-        .then(l => {
-            lock = l;
+        // let lock;
+        options = options || {};
+        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
+        // return this.nodeLocker.lock(path, transaction.id, true, 'setNode')
+        // .then(l => {
+        //     lock = l;
+        try {
 
             if (path === '') {
                 if (value === null || typeof value !== 'object' || value instanceof Array || value instanceof ArrayBuffer || ('buffer' in value && value.buffer instanceof ArrayBuffer)) {
-                    return Promise.reject(new Error(`Invalid value for root node: ${value}`));
+                    throw new Error(`Invalid value for root node: ${value}`);
                 }
-
-                return this._writeNodeWithTracking('', value, { merge: false, tid })
+                await this._writeNodeWithTracking('', value, { merge: false, transaction })
             }
-
-            if (options && typeof options.assert_revision !== 'undefined') {
-                return this.getNodeInfo(path, { tid: lock.tid })
-                .then(info => {
-                    if (info.revision !== options.assert_revision) {
-                        throw new NodeRevisionError(`revision '${info.revision}' does not match requested revision '${options.assert_revision}'`);
-                    }
-                    if (info.address && info.address.path === path && !this.valueFitsInline(value)) {
-                        // Overwrite node
-                        return this._writeNodeWithTracking(path, value, { merge: false, tid });
-                    }
-                    else {
-                        // Update parent node
-                        return lock.moveToParent()
-                        .then(parentLock => {
-                            lock = parentLock;
-                            return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid });
-                        });
-                    }
-                })
+            else if ( typeof options.assert_revision !== 'undefined') {
+                const info = await this.getNodeInfo(path, { transaction })
+                // .then(info => {
+                if (info.revision !== options.assert_revision) {
+                    throw new NodeRevisionError(`revision '${info.revision}' does not match requested revision '${options.assert_revision}'`);
+                }
+                if (info.address && info.address.path === path && !this.valueFitsInline(value)) {
+                    // Overwrite node
+                    await this._writeNodeWithTracking(path, value, { merge: false, transaction });
+                }
+                else {
+                    // Update parent node
+                    // return lock.moveToParent()
+                    // .then(parentLock => {
+                    //     lock = parentLock;
+                    const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
+                    console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
+                    await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, transaction });
+                    // });
+                }
+                // })
             }
             else {
                 // Delegate operation to update on parent node
-                return lock.moveToParent()
-                .then(parentLock => {
-                    lock = parentLock;                
-                    return this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { tid });
-                });
+                // return lock.moveToParent()
+                // .then(parentLock => {
+                //     lock = parentLock;
+                const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
+                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
+                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction });
+                // });
             }
-        })
-        .then(result => {
-            lock.release();
-            return result;
-        })
-        .catch(err => {
-            lock.release();
+            if (!options.transaction) {
+                // transaction was created by us, commit
+                await transaction.commit();
+            }
+        }
+        catch (err) {
+            if (!options.transaction) {
+                // transaction was created by us, rollback
+                await transaction.rollback(err);
+            }
             throw err;
-        });        
+        }            
+        // })
+        // .then(result => {
+        //     lock.release();
+        //     return result;
+        // })
+        // .catch(err => {
+        //     lock.release();
+        //     throw err;
+        // });        
     }
 
     // TODO: Move to Storage base class?
-    updateNode(path, updates, options = { tid: undefined }) {
+    /**
+     * 
+     * @param {string} path 
+     * @param {*} updates 
+     * @param {object} [options] 
+     * @param {CustomStorageTransaction} [options.transaction]
+     */
+    async updateNode(path, updates, options) {
 
         if (typeof updates !== 'object') { //  || Object.keys(updates).length === 0
-            return Promise.reject(new Error(`invalid updates argument`)); //. Must be a non-empty object or array
+            throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
         }
 
-        const tid = (options && options.tid) || ID.generate();
-        let lock;
-        return this.nodeLocker.lock(path, tid, true, 'updateNode')
-        .then(l => {
-            lock = l;
+        options = options || {};
+        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
+        // const tid = (options && options.tid) || ID.generate();
+        // let lock;
+        // return this.nodeLocker.lock(path, tid, true, 'updateNode')
+        // .then(l => {
+        //     lock = l;
+
+        try {
             // Get info about current node
-            return this.getNodeInfo(path, { tid: lock.tid });    
-        })
-        .then(nodeInfo => {
+            const nodeInfo = await this.getNodeInfo(path, { transaction });    
+
+        // })
+        // .then(nodeInfo => {
+
             const pathInfo = PathInfo.get(path);
             if (nodeInfo.exists && nodeInfo.address && nodeInfo.address.path === path) {
                 // Node exists and is stored in its own record.
                 // Update it
-                return this._writeNodeWithTracking(path, updates, { merge: true, tid });
+                await this._writeNodeWithTracking(path, updates, { transaction, merge: true });
             }
             else if (nodeInfo.exists) {
                 // Node exists, but is stored in its parent node.
                 const pathInfo = PathInfo.get(path);
-                return lock.moveToParent()
-                .then(parentLock => {
-                    lock = parentLock;
-                    return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid });
-                });
+                // return lock.moveToParent()
+                // .then(parentLock => {
+                //     lock = parentLock;
+                const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
+                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
+                await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction, merge: true });
+                // });
             }
             else {
                 // The node does not exist, it's parent doesn't have it either. Update the parent instead
-                return lock.moveToParent()
-                .then(parentLock => {
-                    lock = parentLock;
-                    return this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { tid });
-                });
+                // return lock.moveToParent()
+                // .then(parentLock => {
+                //     lock = parentLock;
+                const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
+                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
+                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction });
+                // });
             }
-        })
-        .then(result => {
-            lock.release();
-            return result;
-        })
-        .catch(err => {
-            lock.release();
+            if (!options.transaction) {
+                // transaction was created by us, commit
+                await transaction.commit();
+            }
+        }
+        catch (err) {
+            if (!options.transaction) {
+                // transaction was created by us, rollback
+                await transaction.rollback(err);
+            }
             throw err;
-        });        
+        }
+
+        // })
+        // .then(result => {
+        //     lock.release();
+        //     return result;
+        // })
+        // .catch(err => {
+        //     lock.release();
+        //     throw err;
+        // });        
     }
 
 }
@@ -6742,10 +7084,11 @@ module.exports = {
     CustomStorage,
     CustomStorageSettings,
     CustomStorageHelpers,
+    CustomStorageTransaction,
     ICustomStorageNodeMetaData,
     ICustomStorageNode
 }
-},{"./node-info":34,"./node-value-types":36,"./storage":40,"acebase-core":11}],39:[function(require,module,exports){
+},{"./node-info":34,"./node-lock":35,"./node-value-types":36,"./storage":40,"acebase-core":11}],39:[function(require,module,exports){
 const { debug, ID, PathReference, PathInfo, ascii85 } = require('acebase-core');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
@@ -8364,10 +8707,12 @@ class Storage extends EventEmitter {
      * @param {object} [options] 
      * @returns {Promise<void>}
      */
-    _writeNodeWithTracking(path, value, options = { merge: false, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true }) {
-        if (!options || !options.tid) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid!`); }
+    _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true }) {
+        options = options || {};
+        if (!options.tid && !options.transaction) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid OR transaction!`); }
         options.merge = options.merge === true;
         const tid = options.tid;
+        const transaction = options.transaction;
 
         // Is anyone interested in the values changing on this path?
         let topEventData = null;
@@ -8466,13 +8811,13 @@ class Storage extends EventEmitter {
             }
         }
 
-        return this.getNodeInfo(topEventPath, { tid })
+        return this.getNodeInfo(topEventPath, { transaction, tid })
         .then(eventNodeInfo => {
             if (!eventNodeInfo.exists) {
                 // Node doesn't exist
                 return null;
             }
-            let valueOptions = { tid };
+            let valueOptions = { transaction, tid };
             // if (!hasValueSubscribers && options.merge === true) {
             //     // Only load current value for properties being updated
             //     valueOptions.include = Object.keys(value);

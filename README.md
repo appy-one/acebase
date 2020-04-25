@@ -863,60 +863,92 @@ const db = AceBase.WithIndexedDB('dbname');
 
 It is now possible to store data in your own custom storage backend. To do this, you only have to provide a couple of methods to get, set and remove data and you're done. 
 
-The example below shows how to implement a ```CustomStorage``` class that uses the browser's localStorage (NOTE: you can also use ```LocalStorageSettings``` described above to do the same):
+The example below shows how to implement a ```CustomStorage``` class that uses the browser's localStorage (NOTE: you can also use ```AceBase.WithLocalStorage``` described above to do the same):
 
 ```javascript
-const { AceBase, CustomStorageSettings, CustomStorageHelpers } = require('acebase');
+const { AceBase, CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('acebase');
 
-// Helper functions to prefix all localStorage keys with dbname
-// to allows multiple db's in localStorage:
 const dbname = 'test';
-const storageKeysPrefix = `${dbname}.acebase::`;
-function getPathFromStorageKey(key) {
-    return key.slice(storageKeysPrefix.length);
-}
-function getStorageKeyForPath(path) {
-    return `${storageKeysPrefix}${path}`;
-}
 
 // Setup our CustomStorageSettings
-const customStorageSettings = new CustomStorageSettings({
-    info: 'Custom LocalStorage',
+const storageSettings = new CustomStorageSettings({
+    name: 'LocalStorage',
+    locking: true, // Let AceBase handle resource locking to prevent multiple simultanious updates to the same data. NOTE: This does not prevent multiple tabs from doing this!!
+    
     ready() {
+        // LocalStorage is always ready
         return Promise.resolve();
     },
+
+    getTransaction(target) {
+        // Create an instance of our transaction class
+        const context = {
+            debug: true,
+            dbname
+        }
+        const transaction = new LocalStorageTransaction(context, target);
+        return Promise.resolve(transaction);
+    }
+});
+
+// Setup CustomStorageTransaction for browser's LocalStorage
+class LocalStorageTransaction extends CustomStorageTransaction {
+
+    /**
+     * @param {{debug: boolean, dbname: string}} context
+     * @param {{path: string, write: boolean}} target
+     */
+    constructor(context, target) {
+        super(target);
+        this.context = context;
+        this._storageKeysPrefix = `${this.context.dbname}.acebase::`;
+    }
+
+    commit() {
+        // All changes have already been committed
+        return Promise.resolve();
+    }
+    
+    rollback(err) {
+        // Not able to rollback changes, because we did not keep track
+        return Promise.resolve();
+    }
+
     get(path) {
         // Gets value from localStorage, wrapped in Promise
         return new Promise(resolve => {
-            const json = localStorage.getItem(getStorageKeyForPath(path));
+            const json = localStorage.getItem(this.getStorageKeyForPath(path));
             const val = JSON.parse(json);
             resolve(val);
         });
-    },
+    }
+
     set(path, val) {
         // Sets value in localStorage, wrapped in Promise
         return new Promise(resolve => {
             const json = JSON.stringify(val);
-            localStorage.setItem(getStorageKeyForPath(path), json);
+            localStorage.setItem(this.getStorageKeyForPath(path), json);
             resolve();
         });
-    },
+    }
+
     remove(path) {
         // Removes a value from localStorage, wrapped in Promise
         return new Promise(resolve => {
-            localStorage.removeItem(getStorageKeyForPath(path));
+            localStorage.removeItem(this.getStorageKeyForPath(path));
             resolve();
         });
-    },
+    }
+
     childrenOf(path, include, checkCallback, addCallback) {
-        // Gets all child paths
+        // Streams all child paths
         // Cannot query localStorage, so loop through all stored keys to find children
         return new Promise(resolve => {
             const pathInfo = CustomStorageHelpers.PathInfo.get(path);
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
-                if (!key.startsWith(storageKeysPrefix)) { continue; }                
-                let otherPath = getPathFromStorageKey(key);
+                if (!key.startsWith(this._storageKeysPrefix)) { continue; }                
+                let otherPath = this.getPathFromStorageKey(key);
                 if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
                     let node;
                     if (include.metadata || include.value) {
@@ -929,16 +961,17 @@ const customStorageSettings = new CustomStorageSettings({
             }
             resolve();
         });
-    },
+    }
+
     descendantsOf(path, include, checkCallback, addCallback) {
-        // Gets all descendant paths
+        // Streams all descendant paths
         // Cannot query localStorage, so loop through all stored keys to find descendants
         return new Promise(resolve => {
             const pathInfo = CustomStorageHelpers.PathInfo.get(path);
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
-                if (!key.startsWith(storageKeysPrefix)) { continue; }
-                let otherPath = getPathFromStorageKey(key);
+                if (!key.startsWith(this._storageKeysPrefix)) { continue; }
+                let otherPath = this.getPathFromStorageKey(key);
                 if (pathInfo.isAncestorOf(otherPath) && checkCallback(otherPath)) {
                     let node;
                     if (include.metadata || include.value) {
@@ -952,11 +985,29 @@ const customStorageSettings = new CustomStorageSettings({
             resolve();
         });
     }
-});
 
-// Now create AceBase instance using our custom storage:
-const db = new AceBase(dbname, { logLevel: 'log', storage: customStorageSettings });
-// That's all!
+    /**
+     * Helper function to get the path from a localStorage key
+     * @param {string} key 
+     */
+    getPathFromStorageKey(key) {
+        return key.slice(this._storageKeysPrefix.length);
+    }
+
+    /**
+     * Helper function to get the localStorage key for a path
+     * @param {string} path 
+     */
+    getStorageKeyForPath(path) {
+        return `${this._storageKeysPrefix}${path}`;
+    }
+}
+
+// Now, create the database
+const db = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
+db.ready(ready => {
+    // That's it!
+})
 ```
 
 ## Reflect API

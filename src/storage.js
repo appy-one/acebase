@@ -606,10 +606,12 @@ class Storage extends EventEmitter {
      * @param {object} [options] 
      * @returns {Promise<void>}
      */
-    _writeNodeWithTracking(path, value, options = { merge: false, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true }) {
-        if (!options || !options.tid) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid!`); }
+    _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true }) {
+        options = options || {};
+        if (!options.tid && !options.transaction) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid OR transaction!`); }
         options.merge = options.merge === true;
         const tid = options.tid;
+        const transaction = options.transaction;
 
         // Is anyone interested in the values changing on this path?
         let topEventData = null;
@@ -708,13 +710,13 @@ class Storage extends EventEmitter {
             }
         }
 
-        return this.getNodeInfo(topEventPath, { tid })
+        return this.getNodeInfo(topEventPath, { transaction, tid })
         .then(eventNodeInfo => {
             if (!eventNodeInfo.exists) {
                 // Node doesn't exist
                 return null;
             }
-            let valueOptions = { tid };
+            let valueOptions = { transaction, tid };
             // if (!hasValueSubscribers && options.merge === true) {
             //     // Only load current value for properties being updated
             //     valueOptions.include = Object.keys(value);
