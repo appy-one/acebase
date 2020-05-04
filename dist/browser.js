@@ -7039,7 +7039,7 @@ class CustomStorage extends Storage {
                 //     lock = parentLock;
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                 console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
-                await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction, merge: true });
+                await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, merge: true });
                 // });
             }
             else {
