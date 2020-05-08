@@ -4,7 +4,6 @@ const { StorageSettings } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
 const { MSSQLStorage, MSSQLStorageSettings } = require('./storage-mssql');
-const { LocalStorage, LocalStorageSettings } = require('./storage-localstorage');
 const { CustomStorage, CustomStorageSettings } = require('./storage-custom');
 const { Node } = require('./node');
 const { DataIndex } = require('./data-index');
@@ -27,9 +26,6 @@ class LocalApi extends Api {
             }
             else if (MSSQLStorageSettings && (settings.storage instanceof MSSQLStorageSettings || settings.storage.type === 'mssql')) {
                 this.storage = new MSSQLStorage(dbname, settings.storage);
-            }
-            else if (LocalStorageSettings && (settings.storage instanceof LocalStorageSettings || settings.storage.type === 'localstorage')) {
-                this.storage = new LocalStorage(dbname, settings.storage);
             }
             else if (CustomStorageSettings && (settings.storage instanceof CustomStorageSettings || settings.storage.type === 'custom')) {
                 this.storage = new CustomStorage(dbname, settings.storage);
@@ -830,7 +826,7 @@ class LocalApi extends Api {
                         key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index,
                         type: childInfo.valueTypeName,
                         value: childInfo.value,
-                        // address is now only added when storage is acebase. Not when eg sqlite, mssql, localstorage
+                        // address is now only added when storage is acebase. Not when eg sqlite, mssql
                         address: typeof childInfo.address === 'object' && 'pageNr' in childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined
                     });
                 }

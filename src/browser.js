@@ -21,7 +21,6 @@
 const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, TypeMappingOptions } = require('acebase-core');
 const { AceBaseLocalSettings } = require('./acebase-local');
 const { BrowserAceBase } = require('./acebase-browser');
-const { LocalStorageSettings } = require('./storage-localstorage');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('./storage-custom');
 
 const acebase = {
@@ -33,7 +32,6 @@ const acebase = {
     PathReference, 
     TypeMappings, 
     TypeMappingOptions,
-    LocalStorageSettings,
     CustomStorageSettings,
     CustomStorageTransaction,
     CustomStorageHelpers
