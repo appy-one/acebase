@@ -216,6 +216,48 @@ db.ref('messages').update(newMessages)
 };
 ```
 
+### Using arrays
+
+AceBase supports storage of arrays, but there are some caveats when working with them. For instance, you cannot remove or insert items that are not at the end of the array. AceBase arrays work like a stack, you can add and remove from the top, not within. It is possible however to edit individual entries, or to overwrite the entire array. The safest way to edit arrays is with a ```transaction```, which requires all data to be loaded and stored again. In many cases, it is wiser to use object collections instead.
+
+You can use arrays when:
+* The number of items are small and finite, meaning you could estimate the typical average number of items in it.
+* There is no need to retrieve/edit individual items using their stored path. If you reorder the items in an array, their paths change (eg from ```"playlist/songs[4]"``` to ```"playlist/songs[1]"```)
+* The entries stored are small and do not have a lot of nested data (small strings or simple objects, eg: ```chat/members``` with user id's array ```['ewout','john','pete']```)
+* The collection does not need to be edited frequently.
+
+Use object collections instead when:
+* The collection keeps growing (eg: user generated content)
+* The path of items are important and preferably not change, eg ```"playlist/songs[4]"``` might point to a different entry if the array is edited. When using an object collection, ```playlist/songs/jld2cjxh0000qzrmn831i7rn``` will always refer to that same item.
+* The entries stored are large (eg large strings / blobs / objects with lots of nested data)
+* You have to edit the collection frequently.
+
+Having said that, here's how to safely work with arrays:
+```javascript
+// Store an array with 2 songs:
+db.ref('playlist/songs').set([
+    { id: 13535, title: 'Daughters', artist: 'John Mayer' }, 
+    { id: 22345,  title: 'Crazy', artist: 'Gnarls Barkley' }
+]);
+
+// Editing an array safely:
+db.ref('playlist/songs').transaction(snap => {
+    const songs = snap.val();
+    // Add a song:
+    songs.push({ id: 7855, title: 'Formidable', artist: 'Stromae' });
+    // Edit the second song:
+    songs[1].title += ' (Live)';
+    // Remove the first song:
+    songs.splice(0, 1);
+    // Store the edited array:
+    return songs;
+});
+```
+
+To summarize: the most important thing to note when working with arrays: ALWAYS use a ``transaction`` to edit arrays, AVOID accessing individual items by their index. Eg: DON'T use ```arrayRef.update({ 0: 'this is dangerous' })```, ```arrayRef.child(1).set('also dangerous')``` or ```db.ref('some/array[12]/title').update('What am I doing?!')```. If you need to update items individually, use object collections instead!
+
+Also NOTE: you CANNOT use ```ref.push()``` to add entries to an array! It can only be used with with object collections.
+
 ### Limit nested data loading  
 
 If your database structure is using nesting (eg storing posts in ```'users/someuser/posts'``` instead of in ```'posts'```), you might want to limit to amount of data you are retrieving in most cases. Eg: if you want to get the details of a user, but don't want to load all nested data, you can explicitly limit the nested data retrieval by passing ```exclude```, ```include```, and/or ```child_objects``` options to ```.get```:
@@ -479,11 +521,11 @@ function gotMatches(snaps) {
 }
 function matchAdded(match) {
     // add book to results
-    fiveStarBooks[match.snap.key] = match.snapshot.val();
+    fiveStarBooks[match.snapshot.key] = match.snapshot.val();
 }
 function matchChanged(match) {
     // update book details
-    fiveStarBooks[match.snap.key] = match.snapshot.val();
+    fiveStarBooks[match.snapshot.key] = match.snapshot.val();
 }
 function matchRemoved(match) {
     // remove book from results
@@ -819,7 +861,7 @@ const db = new AceBase('mydb', new MSSQLStorageSettings({ server: 'localhost', p
 <a name="browser"></a>
 ## Running AceBase in the browser (NEW v0.9.0)
 
-Exciting news! From v0.9.0+, AceBase is now able to run stand-alone in the browser! It uses IndexedDB (NEW v0.9.25) or localStorage to store the data, or sessionStorage if you want a temporary database.
+From v0.9.0+, AceBase is now able to run stand-alone in the browser! It uses IndexedDB (NEW v0.9.25) or localStorage to store the data, or sessionStorage if you want a temporary database.
 
 NOTE: If you want to connect to a remote AceBase [acebase-server](https://www.npmjs.com/package/acebase-server) from the browser instead of running one locally, use [acebase-client](https://www.npmjs.com/package/acebase-client) instead.
 
@@ -847,9 +889,6 @@ You can also use a local database in the browser to sync with an AceBase server.
 
     // Or, Create an AceBase db using localStorage:
     const db2 = AceBase.WithLocalStorage('mydb', { temp: false }); // temp:true to use sessionStorage instead
-    
-    // NOTE: to use the OLD (deprecated) localStorage adapter:
-    const db3 = new AceBase('myolddb', { storage: new LocalStorageSettings({ session: false }) });
 </script>
 ```
 
