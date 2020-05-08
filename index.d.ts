@@ -27,12 +27,13 @@ export class AceBase extends acebasecore.AceBaseBase {
     static WithIndexedDB(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error' }): AceBase;
 
     /**
-     * Only available in browser context - Creates an AceBase database instance using LocalStorage or SessionStorage as storage engine
+     * Creates an AceBase database instance using LocalStorage or SessionStorage as storage engine. When running in non-browser environments, set
+     * settings.provider to a custom LocalStorage provider, eg 'node-localstorage'
      * @param dbname Name of the database
      * @param settings optional settings
      * @param settings.logLevel what level to use for logging to the console
      * @param settings.temp whether to use sessionStorage instead of localStorage
-     * @param settings.provider Alternate localStorage provider. Eg using 'node-localstorage'
+     * @param settings.provider Alternate localStorage provider for running in non-browser environments. Eg using 'node-localstorage'
      */    
     static WithLocalStorage(dbname: string, settings: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean, provider?: any }): AceBase
 }
