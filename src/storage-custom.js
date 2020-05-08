@@ -529,7 +529,7 @@ class CustomStorage extends Storage {
      * Creates or updates a node in its own record. DOES NOT CHECK if path exists in parent node, or if parent paths exist! Calling code needs to do this
      * @param {string} path 
      * @param {any} value 
-     * @param {object} options]
+     * @param {object} options
      * @param {CustomStorageTransaction} options.transaction
      * @param {boolean} [options.merge=false]
      * @param {string} [options.revision]
@@ -547,9 +547,19 @@ class CustomStorage extends Storage {
 
         // Get info about current node at path
         const currentRow = await this._readNode(path, { transaction });
+        
+        if (options.merge && currentRow) {
+            if (currentRow.type === VALUE_TYPES.ARRAY && !(value instanceof Array) && typeof value === 'object' && Object.keys(value).some(key => isNaN(key))) {
+                throw new Error(`Cannot merge existing array of path "${path}" with an object`);
+            }
+            if (value instanceof Array && currentRow.type !== VALUE_TYPES.ARRAY) {
+                throw new Error(`Cannot merge existing object of path "${path}" with an array`);
+            }
+        }
+
         const revision = options.revision || ID.generate();
         let mainNode = {
-            type: VALUE_TYPES.OBJECT,
+            type: currentRow && currentRow.type === VALUE_TYPES.ARRAY ? VALUE_TYPES.ARRAY : VALUE_TYPES.OBJECT,
             value: {}
         };
         const childNodeValues = {};
@@ -630,6 +640,7 @@ class CustomStorage extends Storage {
         }
 
         // Insert or update node
+        const isArray = mainNode.type === VALUE_TYPES.ARRAY;
         if (currentRow) {
             // update
             this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.cyan);
@@ -654,7 +665,7 @@ class CustomStorage extends Storage {
                         throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
                     }
                     const key = PathInfo.get(childPath).key;
-                    keys.push(key);
+                    keys.push(key.toString()); // .toString to make sure all keys are compared as strings
                     return true; // Keep streaming
                 }
                 await transaction.childrenOf(path, { metadata: false, value: false }, includeChildCheck, addChildPath);
@@ -673,12 +684,27 @@ class CustomStorage extends Storage {
 
                 const changes = {
                     insert: children.new.filter(key => !children.current.includes(key)),
-                    update: children.new.filter(key => children.current.includes(key)),
+                    update: [], 
                     delete: options && options.merge ? Object.keys(value).filter(key => value[key] === null) : children.current.filter(key => !children.new.includes(key)),
                 };
+                changes.update = children.new.filter(key => children.current.includes(key) && !changes.delete.includes(key));
+
+                if (isArray && options.merge && (changes.insert.length > 0 || changes.delete.length > 0)) {
+                    // deletes or inserts of individual array entries are not allowed, unless it is the last entry:
+                    // - deletes would cause the paths of following items to change, which is unwanted because the actual data does not change,
+                    // eg: removing index 3 on array of size 10 causes entries with index 4 to 9 to 'move' to indexes 3 to 8
+                    // - inserts might introduce gaps in indexes,
+                    // eg: adding to index 7 on an array of size 3 causes entries with indexes 3 to 6 to go 'missing'
+                    const newArrayKeys = changes.update.concat(changes.insert);
+                    const isExhaustive = newArrayKeys.every((k, index, arr) => arr.includes(index.toString()));
+                    if (!isExhaustive) {
+                        throw new Error(`Elements cannot be inserted beyond, or removed before the end of an array. Rewrite the whole array at path "${path}" or change your schema to use an object collection instead`);
+                    }
+                }
 
                 // (over)write all child nodes that must be stored in their own record
                 const writePromises = Object.keys(childNodeValues).map(key => {
+                    if (isArray) { key = parseInt(key); }
                     const childPath = pathInfo.childPath(key); // PathInfo.getChildPath(path, key);
                     const childValue = childNodeValues[key];
                     return this._writeNode(childPath, childValue, { transaction, revision, merge: false });
@@ -689,6 +715,7 @@ class CustomStorage extends Storage {
                 const movingNodes = keys.filter(key => key in mainNode.value); // moving from dedicated to inline value
                 const deleteDedicatedKeys = changes.delete.concat(movingNodes);
                 const deletePromises = deleteDedicatedKeys.map(key => {
+                    if (isArray) { key = parseInt(key); }
                     const childPath = pathInfo.childPath(key); //PathInfo.getChildPath(path, key);
                     return this._deleteNode(childPath, { transaction });
                 });
@@ -715,7 +742,17 @@ class CustomStorage extends Storage {
             // write all child nodes that must be stored in their own record
             this.debug.log(`Node "/${path}" is being created`.cyan);
 
+            if (isArray) {
+                // Check if the array is "intact" (all entries have an index from 0 to the end with no gaps)
+                const arrayKeys = Object.keys(mainNode.value).concat(Object.keys(childNodeValues));
+                const isExhaustive = arrayKeys.every((k, index, arr) => arr.includes(index.toString()));
+                if (!isExhaustive) {
+                    throw new Error(`Cannot store arrays with missing entries`);
+                }
+            }
+
             const promises = Object.keys(childNodeValues).map(key => {
+                if (isArray) { key = parseInt(key); }
                 const childPath = PathInfo.getChildPath(path, key);
                 const childValue = childNodeValues[key];
                 return this._writeNode(childPath, childValue, { transaction, revision, merge: false });

@@ -2640,6 +2640,13 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
 
         const childValuePromises = [];
 
+        if (isArray) {
+            // keys to update must be integers
+            for (let i = 0; i < affectedKeys.length; i++) {
+                if (isNaN(affectedKeys[i])) { throw new Error(`Cannot merge existing array of path "${nodeInfo.path}" with an object`); }
+                affectedKeys[i] = +affectedKeys[i]; // Now an index
+            }
+        }
         return nodeReader.getChildStream({ keyFilter: affectedKeys })
         .next(child => {
 
@@ -2866,6 +2873,12 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
                     mergedValue[change.keyOrIndex] = change.newValue;
                 });
 
+                if (isArray) {
+                    const isExhaustive = mergedValue.filter(val => typeof val !== 'undefined').length === mergedValue.length;
+                    if (!isExhaustive) {
+                        throw new Error(`Elements cannot be inserted beyond, or removed before the end of an array. Rewrite the whole array at path "${nodeInfo.path}" or change your schema to use an object collection instead`);
+                    }
+                }
                 return _writeNode(storage, nodeInfo.path, mergedValue, lock, nodeReader.recordInfo);
             });
         }
@@ -2976,9 +2989,13 @@ function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
     
     if (isArray) {
         // Store array
+        const isExhaustive = value.filter(val => typeof val !== 'undefined' && val !== null).length === value.length;
+        if (!isExhaustive) {
+            throw new Error(`Cannot store arrays with missing entries`);
+        }
         value.forEach((val, index) => {
-            if (typeof val === "undefined" || val === null || typeof val === "function") {
-                throw `Array at index ${index} has invalid value. Cannot store null, undefined or functions`;
+            if (typeof val === "function") {
+                throw new Error(`Array at index ${index} has invalid value. Cannot store functions`);
             }
             const childPath = `${path}[${index}]`;
             let s = _serializeValue(storage, childPath, index, val, lock.tid);
