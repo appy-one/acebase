@@ -2624,7 +2624,7 @@ function compareValues (oldVal, newVal) {
     else if (voids.indexOf(oldVal) >= 0 && voids.indexOf(newVal) < 0) { return "added"; }
     else if (voids.indexOf(oldVal) < 0 && voids.indexOf(newVal) >= 0) { return "removed"; }
     else if (typeof oldVal !== typeof newVal) { return "changed"; }
-    else if (typeof oldVal === "object") { 
+    else if (typeof oldVal === "object" && !(oldVal instanceof Date)) {
         // Do key-by-key comparison of objects
         const isArray = oldVal instanceof Array;
         const oldKeys = isArray 
