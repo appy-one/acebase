@@ -3000,7 +3000,7 @@ function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
             const childPath = `${path}[${index}]`;
             let s = _serializeValue(storage, childPath, index, val, lock.tid);
             const add = (s) => {
-                serialized.push(s);
+                serialized[index] = s; // Fixed: Array order getting messed up (with serialized.push after promises resolving)
             }
             if (s instanceof Promise) {
                 s = s.then(add);
