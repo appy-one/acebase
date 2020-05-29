@@ -528,7 +528,11 @@ class DataReference {
         if (typeof updates !== "object" || updates instanceof Array || updates instanceof ArrayBuffer || updates instanceof Date) {
             promise = this.set(updates);
         }
-        else {
+        else if (Object.keys(updates).length === 0) {
+            console.warn(`update called on path "/${this.path}", but there is nothing to update`);
+            return Promise.resolve();
+        }
+        else {            
             updates = this.db.types.serialize(this.path, updates);
             promise = this.db.api.update(this.path, updates);
         }
@@ -3568,18 +3572,17 @@ class BrowserAceBase extends AceBase {
 
         const storageSettings = new CustomStorageSettings({
             name: 'IndexedDB',
-            locking: false,
+            locking: true, // IndexedDB transactions are short-lived, so we'll use AceBase's path based locking
             ready() {
                 return readyPromise;
             },
-            async getTransaction(target) {
+            getTransaction(target) {
                 const context = {
                     debug: true,
                     db
                 }
                 const transaction = new IndexedDBStorageTransaction(context, target);
-                await transaction.start();
-                return transaction;
+                return Promise.resolve(transaction);
             }
         });
         return new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
@@ -3588,7 +3591,10 @@ class BrowserAceBase extends AceBase {
 
 class IndexedDBStorageTransaction extends CustomStorageTransaction {
 
-    /**
+    /** Creates a transaction object for IndexedDB usage. Because IndexedDB automatically commits
+     * transactions when they have not been touched for a number of microtasks (eg promises 
+     * resolving whithout querying data), we will actually create seperate IndexedDB transactions 
+     * for each get, set and remove operation. Rollbacks are not possible for this reason.
      * @param {{debug: boolean, db: typeof IndexedDB }} context
      * @param {{path: string, write: boolean}} target 
      * @param {NodeLocker} nodeLocker 
@@ -3598,29 +3604,26 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         this.context = context;
     }
 
-    start() {
-        // Start transaction
-        return new Promise((resolve, reject) => {
-            this._tx = this.context.db.transaction(['nodes', 'content'], this.target.write ? 'readwrite' : 'readonly');
-            resolve();
-        })
+    _createTransaction(write = false) {
+        const tx = this.context.db.transaction(['nodes', 'content'], write ? 'readwrite' : 'readonly');
+        return tx;
     }
     
     commit() {
-        const tx = this._tx;
-        tx.commit && tx.commit();
+        // All changes have already been committed
+        return Promise.resolve();
     }
     
     rollback(err) {
-        const tx = this._tx;
-        tx.abort && tx.abort();        
+        // Not able to rollback changes, because we did not keep track
+        return Promise.resolve();
     }
 
     get(path) {
         // Get metadata from "nodes" object store
-        const tx = this._tx;
-        const request = tx.objectStore('nodes').get(path);
         return new Promise((resolve, reject) => {
+            const tx = this._createTransaction(false);
+            const request = tx.objectStore('nodes').get(path);
             request.onsuccess = event => {
                 /** @type {IIndexedDBNodeData} */
                 const data = request.result;
@@ -3633,13 +3636,18 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                 // Node exists, get content from "content" object store
                 const contentReq = tx.objectStore('content').get(path);
                 contentReq.onsuccess = e => {
+                    tx.commit && tx.commit();
                     node.value = contentReq.result;
                     resolve(node);
                 };
-                contentReq.onerror = e => reject(e);
+                contentReq.onerror = e => {
+                    tx.abort && tx.abort();
+                    reject(e);
+                }
             }
             request.onerror = e => {
                 console.error(`IndexedDB get error`, e);
+                tx.abort && tx.abort();
                 reject(e);
             }
         });
@@ -3659,16 +3667,22 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
             metadata
         }
         return new Promise((resolve, reject) => {
-            const tx = this._tx;
             // Insert into "nodes" object store first
+            const tx = this._createTransaction(true);
             const request = tx.objectStore('nodes').put(obj);
-            request.onerror = e => reject(e);
+            request.onerror = e => {
+                tx.abort && tx.abort();
+                reject(e);
+            };
             request.onsuccess = e => {
                 // Now add to "content" object store
                 const contentReq = tx.objectStore('content').put(value, path);
-                contentReq.onsuccess = e => resolve();
+                contentReq.onsuccess = e => {
+                    tx.commit && tx.commit();
+                    resolve();
+                }
                 contentReq.onerror = e => {
-                    tx.abort(); // rollback transaction
+                    tx.abort && tx.abort(); // rollback transaction
                     reject(e);
                 }
             };
@@ -3676,33 +3690,42 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
     }
 
     remove(path) {
-        const tx = this._tx;
         return new Promise((resolve, reject) => {
             // First, remove from "content" object store
+            const tx = this._createTransaction(true);
             const r1 = tx.objectStore('content').delete(path);
-            r1.onerror = e => reject(e);
+            r1.onerror = e => {
+                tx.abort && tx.abort();
+                reject(e);
+            }
             r1.onsuccess = e => {
                 // Now, remove from "nodes" data store
                 const r2 = tx.objectStore('nodes').delete(path);
                 r2.onerror = e => {
-                    tx.abort(); // rollback transaction
+                    tx.abort && tx.abort(); // rollback transaction
                     reject(e);
                 };
-                r2.onsuccess = e => resolve();
+                r2.onsuccess = e => {
+                    tx.commit && tx.commit();
+                    resolve();
+                }
             }
         });
     }
 
     childrenOf(path, include, checkCallback, addCallback) {
         // Use cursor to loop from path on
-        const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-        const tx = this._tx;
-        const store = tx.objectStore('nodes');
-        const query = IDBKeyRange.lowerBound(path, true);
         return new Promise((resolve, reject) => {
+            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+            const tx = this._createTransaction(false);
+            const store = tx.objectStore('nodes');
+            const query = IDBKeyRange.lowerBound(path, true);
             /** @type {IDBRequest<IDBCursorWithValue>|IDBRequest<IDBCursor>} */
             const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
-            cursor.onerror = e => reject(e);
+            cursor.onerror = e => {
+                tx.abort && tx.abort();
+                reject(e);
+            }
             cursor.onsuccess = async e => {
                 /** type {string} */
                 const otherPath = cursor.result ? cursor.result.key : null;
@@ -3727,12 +3750,13 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                         if (include.value) {
                             // Load value!
                             const req = tx.objectStore('content').get(otherPath);
-                            await new Promise((resolve, reject) => {
-                                req.onerror = e => reject(e);
+                            node.value = await new Promise((resolve, reject) => {
+                                req.onerror = e => {
+                                    resolve(null); // Value missing?
+                                };
                                 req.onsuccess = e => {
-                                    node.value = req.result;
-                                    resolve();
-                                }
+                                    resolve(req.result);
+                                };
                             });
                         }
                     }
@@ -3746,6 +3770,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     }
                 }
                 if (!keepGoing) {
+                    tx.commit && tx.commit();
                     resolve();
                 }
             };
@@ -3755,14 +3780,17 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
     descendantsOf(path, include, checkCallback, addCallback) {
         // Use cursor to loop from path on
         // NOTE: Implementation is almost identical to childrenOf, consider merging them
-        const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-        const tx = this._tx;
-        const store = tx.objectStore('nodes');
-        const query = IDBKeyRange.lowerBound(path, true);
         return new Promise((resolve, reject) => {
+            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+            const tx = this._createTransaction(false);
+            const store = tx.objectStore('nodes');
+            const query = IDBKeyRange.lowerBound(path, true);
             /** @type {IDBRequest<IDBCursorWithValue>|IDBRequest<IDBCursor>} */
             const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
-            cursor.onerror = e => reject(e);
+            cursor.onerror = e => {
+                tx.abort && tx.abort();
+                reject(e);
+            }
             cursor.onsuccess = async e => {
                 /** @type {string} */
                 const otherPath = cursor.result ? cursor.result.key : null;
@@ -3787,12 +3815,13 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                         if (include.value) {
                             // Load value!
                             const req = tx.objectStore('content').get(otherPath);
-                            await new Promise((resolve, reject) => {
-                                req.onerror = e => reject(e);
+                            node.value = await new Promise((resolve, reject) => {
+                                req.onerror = e => {
+                                    resolve(null); // Value missing?
+                                };
                                 req.onsuccess = e => {
-                                    node.value = req.result;
-                                    resolve();
-                                }
+                                    resolve(req.result);
+                                };
                             });
                         }
                     }
@@ -3806,11 +3835,12 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     }
                 }
                 if (!keepGoing) {
+                    tx.commit && tx.commit();
                     resolve();
                 }
             };
         });
-    }            
+    }
 
 }
 
