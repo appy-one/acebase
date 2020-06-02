@@ -3589,6 +3589,15 @@ class BrowserAceBase extends AceBase {
     }
 }
 
+function _requestToPromise(request) {
+    return new Promise((resolve, reject) => { 
+        request.onsuccess = event => {
+            return resolve(request.result || null);
+        }
+        request.onerror = reject;
+    });
+}
+
 class IndexedDBStorageTransaction extends CustomStorageTransaction {
 
     /** Creates a transaction object for IndexedDB usage. Because IndexedDB automatically commits
@@ -3602,6 +3611,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
     constructor(context, target) {
         super(target);
         this.context = context;
+        this._pending = [];
     }
 
     _createTransaction(write = false) {
@@ -3610,50 +3620,70 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
     }
     
     commit() {
-        // All changes have already been committed
-        return Promise.resolve();
+        // console.log(`*** COMMIT ${this._pending.length} operations ****`);
+        if (this._pending.length === 0) { return Promise.resolve(); }
+        const ops = this._pending.splice(0);
+        const tx = this._createTransaction(true);
+        const promises = ops.map(op => {
+            if (op.action === 'set') { return this._set(tx, op.path, op.node); }
+            else if (op.action === 'remove') { return this._remove(tx, op.path); }
+            else { throw new Error('Unknown pending operation'); }
+        });
+        return Promise.all(promises)
+        .then(() => {
+            tx.commit && tx.commit();
+            // console.log(`*** COMMIT DONE! ***`);
+        })
+        .catch(err => {
+            console.error(err);
+            tx.abort && tx.abort();
+        });
     }
     
     rollback(err) {
-        // Not able to rollback changes, because we did not keep track
+        // Nothing has committed yet, so we'll leave it like that
+        this._pending = [];
         return Promise.resolve();
     }
 
     get(path) {
-        // Get metadata from "nodes" object store
-        return new Promise((resolve, reject) => {
-            const tx = this._createTransaction(false);
-            const request = tx.objectStore('nodes').get(path);
-            request.onsuccess = event => {
-                /** @type {IIndexedDBNodeData} */
-                const data = request.result;
-                if (!data) {
-                    return resolve(null);
-                }
-                /** @type {ICustomStorageNode} */
-                const node = data.metadata;
-
-                // Node exists, get content from "content" object store
-                const contentReq = tx.objectStore('content').get(path);
-                contentReq.onsuccess = e => {
-                    tx.commit && tx.commit();
-                    node.value = contentReq.result;
-                    resolve(node);
-                };
-                contentReq.onerror = e => {
-                    tx.abort && tx.abort();
-                    reject(e);
-                }
+        const tx = this._createTransaction(false);
+        const r1 = _requestToPromise(tx.objectStore('nodes').get(path)); // Get metadata from "nodes" object store
+        const r2 = _requestToPromise(tx.objectStore('content').get(path)); // Get content from "content" object store
+        return Promise.all([r1, r2])
+        .then(results => {
+            tx.commit && tx.commit();
+            /** @type {IIndexedDBNodeData} */
+            const info = results[0];
+            if (!info) {
+                // Node doesn't exist
+                return null; 
             }
-            request.onerror = e => {
-                console.error(`IndexedDB get error`, e);
-                tx.abort && tx.abort();
-                reject(e);
-            }
+            /** @type {ICustomStorageNode} */
+            const node = info.metadata;
+            node.value = results[1];
+            return node;
+        })
+        .catch(err => {
+            tx.abort && tx.abort();
+            console.error(`IndexedDB get error`, err);
+            throw err;
         });
     }
 
     set(path, node) {
+        // Queue the operation until commit
+        this._pending.push({ action: 'set', path, node });
+        return Promise.resolve();
+    }
+
+    remove(path) {
+        // Queue the operation until commit
+        this._pending.push({ action: 'remove', path });
+        return Promise.resolve();
+    }
+
+    _set(tx, path, node) {
         /** @type {ICustomStorageNode} */
         const copy = {};
         const value = node.value;
@@ -3666,51 +3696,15 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
             path,
             metadata
         }
-        return new Promise((resolve, reject) => {
-            // Insert into "nodes" object store first
-            const tx = this._createTransaction(true);
-            const request = tx.objectStore('nodes').put(obj);
-            request.onerror = e => {
-                tx.abort && tx.abort();
-                reject(e);
-            };
-            request.onsuccess = e => {
-                // Now add to "content" object store
-                const contentReq = tx.objectStore('content').put(value, path);
-                contentReq.onsuccess = e => {
-                    tx.commit && tx.commit();
-                    resolve();
-                }
-                contentReq.onerror = e => {
-                    tx.abort && tx.abort(); // rollback transaction
-                    reject(e);
-                }
-            };
-        });
+        const r1 = _requestToPromise(tx.objectStore('nodes').put(obj)); // Insert into "nodes" object store
+        const r2 = _requestToPromise(tx.objectStore('content').put(value, path)); // Add value to "content" object store
+        return Promise.all([r1, r2]);
     }
 
-    remove(path) {
-        return new Promise((resolve, reject) => {
-            // First, remove from "content" object store
-            const tx = this._createTransaction(true);
-            const r1 = tx.objectStore('content').delete(path);
-            r1.onerror = e => {
-                tx.abort && tx.abort();
-                reject(e);
-            }
-            r1.onsuccess = e => {
-                // Now, remove from "nodes" data store
-                const r2 = tx.objectStore('nodes').delete(path);
-                r2.onerror = e => {
-                    tx.abort && tx.abort(); // rollback transaction
-                    reject(e);
-                };
-                r2.onsuccess = e => {
-                    tx.commit && tx.commit();
-                    resolve();
-                }
-            }
-        });
+    _remove(tx, path) {
+        const r1 = _requestToPromise(tx.objectStore('content').delete(path)); // Remove from "content" object store
+        const r2 = _requestToPromise(tx.objectStore('nodes').delete(path)); // Remove from "nodes" data store
+        return Promise.all([r1, r2]);
     }
 
     childrenOf(path, include, checkCallback, addCallback) {
