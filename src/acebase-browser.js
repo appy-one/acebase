@@ -83,6 +83,9 @@ class BrowserAceBase extends AceBase {
                 return readyPromise;
             },
             getTransaction(target) {
+                if (!db) {
+                    throw new Error(`IndexedDB not ready yet`);
+                }
                 const context = {
                     debug: true,
                     db
