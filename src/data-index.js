@@ -3307,9 +3307,16 @@ class FullTextIndex extends DataIndex {
                 includeChars: '*?'
             });
 
-            // NEW: Ignore any wildcard words that do not meet the set minimum length
+            // Ignore any wildcard words that do not meet the set minimum length
             // This is to safeguard the system against (possibly unwanted) very large 
             // result sets
+            let i;
+            while (i = info.words.findIndex(w => /^[\*\?]+$/.test(w.word)), i >= 0) {
+                // Word is wildcards only. Ignore
+                info.ignored.push(info.words[i].word);
+                info.words.splice(i, 1);
+            }
+
             if (options.minimumWildcardWordLength > 0) {
                 for (let i = 0; i < info.words.length; i++) {
                     const starIndex = info.words[i].word.indexOf('*');
