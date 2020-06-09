@@ -473,7 +473,7 @@ class Storage extends EventEmitter {
                                     : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey); //NodePath(subscriptionPath).childPath(childKey); 
                             }
-                            if (dataPath !== null) { // && subscribers.findIndex(s => s.type === sub.type && s.dataPath === dataPath) < 0
+                            if (dataPath !== null && !subscribers.some(s => s.type === sub.type && s.eventPath === eventPath)) { // && subscribers.findIndex(s => s.type === sub.type && s.dataPath === dataPath) < 0
                                 subscribers.push({ type: sub.type, eventPath, dataPath, subscriptionPath });
                             }
                         });
@@ -648,12 +648,12 @@ class Storage extends EventEmitter {
             return this._writeNode(path, value, options);            
         }
 
-        // TODO: FIX indexes on higher path not being updated. 
-        // Now, updates on an indexed property does not update the index!
-        // issue example: 
+        // FIXED: indexes on higher path not being updated. 
+        // Previously, updates on an indexed property did not update the index
+        // example: 
         // a geo index on path 'restaurants', key 'location'
-        // updates on 'restaurant/1' will update the index
-        // BUT updates on 'restaurent/1/location' WILL NOT!!!!
+        // updates on 'restaurant/1' would update the index,
+        // but updates on 'restaurent/1/location' would not
         const indexes = this.indexes.getAll(path, { childPaths: true, parentPaths: true })
             .map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
             .sort((a, b) => {
@@ -1160,6 +1160,8 @@ class Storage extends EventEmitter {
      */
     matchNode(path, criteria, options = { tid: undefined }) {
 
+        // TODO: Try implementing nested property matching, eg: filter('address/city', '==', 'Amsterdam')
+        
         const tid = (options && options.tid) || ID.generate();
 
         /**
