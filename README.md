@@ -1,6 +1,6 @@
 # AceBase realtime database engine
 
-A fast, low memory, transactional, index & query enabled NoSQL database engine and server for node.js with realtime data change notifications. Includes built-in user authentication and authorization. Inspired by the Firebase realtime database, with additional functionality and less data sharding/duplication. Capable of storing up to 2^48 (281 trillion) object nodes in a binary database file that can theoretically grow to a max filesize of 8 petabytes. AceBase can run anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, wherever you want. On top of this, AceBase can now also run in the browser!
+A fast, low memory, transactional, index & query enabled NoSQL database engine and server for node.js with realtime data change notifications. The server version includes built-in user authentication and authorization. Inspired by the Firebase realtime database, with additional functionality and less data sharding/duplication. Capable of storing up to 2^48 (281 trillion) object nodes in a binary database file that can theoretically grow to a max filesize of 8 petabytes. AceBase can run anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, wherever you want. On top of this, AceBase can now also run in the browser!
 
 Natively supports storing of JSON objects, arrays, numbers, strings, booleans, dates and binary (ArrayBuffer) data. Custom classes can automatically be shape-shifted to and from plain objects by adding type mappings => Store a ```User```, get a ```User```. Store a ```Chat``` that has a collection of ```Messages```, get a ```Chat``` with ```Messages``` back from the database. Any class specific methods can be executed directly on the objects you get back from the db, because they will be an ```instanceof``` your class.
 
@@ -549,8 +549,8 @@ Indexing data will dramatically improve the speed of queries on your data, espec
 ```javascript
 Promise.all([
     // creates indexes if they don't exist
-    db.createIndex('songs', 'year'),
-    db.createIndex('songs', 'genre')
+    db.indexes.create('songs', 'year'),
+    db.indexes.create('songs', 'genre')
 ])
 .then(() => {
     return db.query('songs')
@@ -568,7 +568,7 @@ Promise.all([
 Because nesting data is recommended in AceBase (as opposed to Firebase that discourages this), you are able to index and query data that is scattered accross your database in a structered manner. For example, you might want to store ```posts``` for each ```user``` in their own user node, and index (and query) all posts by any user:
 
 ```javascript
-db.createIndex('users/*/posts', 'date') // Index date of any post by any user
+db.indexes.create('users/*/posts', 'date') // Index date of any post by any user
 .then(() => {
     let now = new Date();
     let today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -588,7 +588,7 @@ db.createIndex('users/*/posts', 'date') // Index date of any post by any user
 If your query uses filters on multiple keys you could create separate indexes on each key, but you can also include that data into a single index. This will speed up queries even more in most cases:
 
 ```javascript
-db.createIndex('songs', 'year', { include: ['genre'] })
+db.indexes.create('songs', 'year', { include: ['genre'] })
 .then(() => {
     return db.query('songs')
     .filter('year', '==', 2010) // uses the index on year
@@ -603,7 +603,7 @@ db.createIndex('songs', 'year', { include: ['genre'] })
 If you are filtering data on one key, and are sorting on another key, it is highly recommended to include the ```sort``` key in your index on the ```filter``` key, because this will greatly increase sorting performance:
 
 ```javascript
-db.createIndex('songs', 'title', { include: ['year', 'genre'] })
+db.indexes.create('songs', 'title', { include: ['year', 'genre'] })
 .then(() => {
     return db.query('songs')
     .filter('title', 'like', 'Love *') // queries the index
@@ -637,7 +637,7 @@ chats: {
 By adding an index to the ```members``` key, this will speed up queries to get all chats a specific user is in.
 
 ```javascript
-db.createIndex('chats', 'members', { type: 'array' });
+db.indexes.create('chats', 'members', { type: 'array' });
 .then(() => {
     return db.query('chats')
     .filter('members', 'contains', 'ewout'); // also possible without index, but now way faster
@@ -671,7 +671,7 @@ db.query('chats')
 A fulltext index will index all individual words and their relative positions in string nodes. A normal index on text nodes is only capable of searching for exact matches quickly, or proximate like/regexp matches by scanning through the index. A fulltext index makes it possible to quickly find text nodes that contain multiple words, a selection of words or parts of them, in any order in the text.
 
 ```javascript
-db.createIndex('chats/*/messages', 'text', { type: 'fulltext' });
+db.indexes.create('chats/*/messages', 'text', { type: 'fulltext' });
 .then(() => {
     return db.query('chats/*/messages')
     .filter('text', 'fulltext:contains', `confidential OR secret OR "don't tell"`); // not possible without fulltext index
@@ -718,7 +718,7 @@ landmarks: {
 To query all landmarks in a range of a given location, create a _geo_ index on nodes containing ```lat``` and ```long``` keys. Then use the ```geo:nearby``` filter:
 
 ```javascript
-db.createIndex('landmarks', 'location', { type: 'geo' });
+db.indexes.create('landmarks', 'location', { type: 'geo' });
 .then(() => {
     return db.query('landmarks')
     .filter('location', 'geo:nearby', { lat: 52.359157, long: 4.884155, radius: 100 });
