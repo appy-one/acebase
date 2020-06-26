@@ -1043,9 +1043,9 @@ class DataIndex {
             : DataIndex.STATE.BUILD;
         this._buildError = null;
         const path = this.path;
-        const hasWildcards = path.indexOf('*') >= 0;
-        const nrOfWildcards = hasWildcards ? /\*/g.exec(this.path).length : 0;
-        const wildcardsPattern = '^' + path.replace(/\*/g, "([a-z0-9\-_$]+)") + '/';
+        const wildcardNames = path.match(/\*|\$[a-z0-9_]+/gi) || [];
+        // const hasWildcards = wildcardNames.length > 0;
+        const wildcardsPattern = '^' + path.replace(/\*|\$[a-z0-9_]+/gi, "([a-z0-9_]+)") + '/';
         const wildcardRE = new RegExp(wildcardsPattern, 'i');
         // let treeBuilder = new BPlusTreeBuilder(false, FILL_FACTOR, this.allMetadataKeys); //(30, false);
         // let idx; // Once using binary file to write to
@@ -1131,6 +1131,7 @@ class DataIndex {
                         });
                     }
                 }
+                const isWildcardKey = key => key === '*' || key.startsWith('$');
                 const getAll = (currentPath, keyIndex) => {
                     // "users/*/posts" 
                     // --> Get all children of "users", 
@@ -1138,7 +1139,7 @@ class DataIndex {
                     // --> get their children to index
 
                     let path = currentPath;
-                    while (keys[keyIndex] && keys[keyIndex] !== '*') {
+                    while (keys[keyIndex] && !isWildcardKey(keys[keyIndex])) {
                         path = PathInfo.getChildPath(path, keys[keyIndex]); // += keys[keyIndex];
                         keyIndex++;
                     }
@@ -1175,7 +1176,7 @@ class DataIndex {
                             // a is our max batch size, we'll use 500
                             // c is our depth (nrOfWildcards) so we know this
                             // b is our unknown start number
-                            const maxBatchSize = Math.round(Math.pow(500, Math.pow(0.5, nrOfWildcards))); 
+                            const maxBatchSize = Math.round(Math.pow(500, Math.pow(0.5, wildcardNames.length))); 
                             let batches = [];
                             while (children.length > 0) {
                                 let batchChildren = children.splice(0, maxBatchSize);
@@ -1193,7 +1194,9 @@ class DataIndex {
                                     }
                                     else {
                                         // We have to index this child, get all required values for the entry
-                                        const keyFilter = [this.key].concat(this.includeKeys);
+                                        const wildcardValues = childPath.match(wildcardRE).slice(1);
+                                        const neededKeys = [this.key].concat(this.includeKeys);
+                                        const keyFilter = neededKeys.filter(key => key !== '{key}' && !wildcardNames.includes(key));
                                         let keyValue = null; // initialize to null so we can check if it had a valid indexable value
                                         const metadata = (() => {
                                             // create properties for each included key, if they are not set by the loop they will still be in the metadata (which is required for B+Tree metadata)
@@ -1212,20 +1215,29 @@ class DataIndex {
                                             else { metadata[key] = value; };
                                         };
                                         let valuePromise;
-                                        if (this.key === '{key}' && (!this.includedKeys || this.includedKeys.length === 0)) {
-                                            // Index this child's key only, no need to fetch their value
-                                            keyValue = childKey;
+                                        const gotNamedWildcardKeys = ['{key}'].concat(wildcardNames).filter(key => key !== '*');
+                                        
+                                        neededKeys.filter(key => gotNamedWildcardKeys.includes(key)).forEach(key => {
+                                            if (key === '{key}') { 
+                                                keyValue = childKey; 
+                                            }
+                                            else {
+                                                const index = wildcardNames.indexOf(key);
+                                                if (index < 0) { throw new Error(`Requested key variable "${key}" not found index path`); }
+                                                const value = wildcardValues[index];
+                                                addValue(key, value);
+                                            }
+                                        });
+
+                                        const gotAllData = neededKeys.every(key => gotNamedWildcardKeys.includes(key));
+                                        if (gotAllData) {
+                                            // No need to fetch node value, we've got all data needed
                                             valuePromise = Promise.resolve();
                                         }
                                         else {
                                             // Get child values
                                             const keyPromises = [];
-                                            const seenKeys = [];
-                                            if (this.key === '{key}') {
-                                                keyFilter.splice(0, 1); // Remove from selection
-                                                seenKeys.push(this.key);
-                                                keyValue = childKey;
-                                            }
+                                            const seenKeys = gotNamedWildcardKeys.slice();
                                             valuePromise = Node.getChildren(this.storage, childPath, keyFilter)
                                             .next(childInfo => {
                                                 // What can be indexed? 
@@ -1308,16 +1320,11 @@ class DataIndex {
                                             if (keyValue !== null) { // typeof keyValue !== 'undefined' && 
                                                 // Add it to the index, using value as the index key, a record pointer as the value
                                                 // Create record pointer
-                                                let wildcards = [];
-                                                if (hasWildcards) {
-                                                    const match = wildcardRE.exec(childPath);
-                                                    wildcards = match.slice(1);
-                                                }
-                                                const recordPointer = _createRecordPointer(wildcards, childKey); //, child.address);
+                                                const recordPointer = _createRecordPointer(wildcardValues, childKey); //, child.address);
                                                 // const entryValue = new BinaryBPlusTree.EntryValue(recordPointer, metadata)
                                                 // Add it to the index
                                                 if (options && options.addCallback) {
-                                                    keyValue = options.addCallback(addIndexValue, keyValue, recordPointer, metadata, { path: childPath, wildcards, key: childKey });
+                                                    keyValue = options.addCallback(addIndexValue, keyValue, recordPointer, metadata, { path: childPath, wildcards: wildcardValues, key: childKey });
                                                 }
                                                 else {
                                                     addIndexValue(keyValue, recordPointer, metadata);

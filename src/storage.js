@@ -262,13 +262,21 @@ class Storage extends EventEmitter {
              * @returns {DataIndex[]}
              */
             get(path, key = null) {
-                return _indexes.filter(index => index.path === path && (key === null || key === index.key));
+                const matchesNamedWildcardPath = index => {
+                    if (!index.path.includes('$')) { return false; }
+                    const pattern = '^' + index.path.replace(/\$[a-z0-9_]+/gi, '[a-z0-9_]+|\\*') + '$';
+                    const re = new RegExp(pattern, 'i');
+                    return re.test(path);
+                };
+                return _indexes.filter(index => (index.path === path || matchesNamedWildcardPath(index)) && (key === null || key === index.key));
             },
 
             /**
              * Returns all indexes on a target path, optionally includes indexes on child and parent paths
-             * @param {string} targetPath 
-             * @param {boolean} [childPaths=true] 
+             * @param {string} targetPath
+             * @param {object} [options] 
+             * @param {boolean} [options.parentPaths=true] 
+             * @param {boolean} [options.childPaths=true] 
              * @returns {DataIndex[]}
              */
             getAll(targetPath, options = { parentPaths: true, childPaths: true }) {
