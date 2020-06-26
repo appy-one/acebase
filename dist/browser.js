@@ -3578,16 +3578,13 @@ class BrowserAceBase extends AceBase {
             ready() {
                 return readyPromise;
             },
-            getTransaction(target) {
-                if (!db) {
-                    throw new Error(`IndexedDB not ready yet`);
-                }
+            async getTransaction(target) {
+                await readyPromise;
                 const context = {
                     debug: true,
                     db
                 }
-                const transaction = new IndexedDBStorageTransaction(context, target);
-                return Promise.resolve(transaction);
+                return new IndexedDBStorageTransaction(context, target);
             }
         });
         return new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
@@ -4260,15 +4257,53 @@ class LocalApi extends Api {
             });                
         };
 
-        const isWildcardPath = path.indexOf('*') >= 0 || path.indexOf('$') >= 0;
+        const isWildcardPath = path.includes('*');
 
         const availableIndexes = this.storage.indexes.get(path);
         const usingIndexes = [];
+
+        // Check if there are path specific indexes
+        // eg: index on "users/$uid/posts", key "$uid", including "title" (or key "title", including "$uid")
+        // Which are very useful for queries on "users/98sdfkb37/posts" with filter or sort on "title"
+        // const indexesOnPath = availableIndexes
+        //     .map(index => {
+        //         if (!index.path.includes('$')) { return null; }
+        //         const pattern = '^' + index.path.replace(/(\$[a-z0-9_]+)/gi, (match, name) => `(?<${name}>[a-z0-9_]+|\\*)`) + '$';
+        //         const re = new RegExp(pattern, 'i');
+        //         const match = path.match(re);
+        //         const canBeUsed = index.key[0] === '$' 
+        //             ? match.groups[index.key] !== '*' // Index key value MUST be present in the path
+        //             : null !== query.filters.find(filter => filter.key === index.key); // Index key MUST be in a filter
+        //         if (!canBeUsed) { return null; }
+        //         return {
+        //             index,
+        //             wildcards: match.groups, // eg: { "$uid": "98sdfkb37" }
+        //             filters: Object.keys(match.groups).filter(name => match.groups[name] !== '*').length
+        //         }
+        //     })
+        //     .filter(info => info !== null)
+        //     .sort((a, b) => {
+        //         a.filters > b.filters ? -1 : 1
+        //     });
+
+        // TODO:
+        // if (query.filters.length === 0 && indexesOnPath.length > 0) {
+        //     query.filters = query.filters.concat({ key: })
+        //     usingIndexes.push({ index: filter.index, description: filter.index.description});
+        // }
+
         query.filters.forEach(filter => {
-            if (filter.index) { 
+            if (filter.index) {  
                 // Index has been assigned already
                 return; 
             }
+
+            // // Check if there are path indexes we can use
+            // const pathIndexesWithKey = DataIndex.validOperators.includes(filter.op) 
+            //     ? indexesOnPath.filter(info => info.index.key === filter.key || info.index.includeKeys.includes(filter.key))
+            //     : [];
+
+            // Check if there are indexes on this filter key
             const indexesOnKey = availableIndexes
                 .filter(index => index.key === filter.key)
                 .filter(index => {
@@ -7416,13 +7451,21 @@ class Storage extends EventEmitter {
              * @returns {DataIndex[]}
              */
             get(path, key = null) {
-                return _indexes.filter(index => index.path === path && (key === null || key === index.key));
+                const matchesNamedWildcardPath = index => {
+                    if (!index.path.includes('$')) { return false; }
+                    const pattern = '^' + index.path.replace(/\$[a-z0-9_]+/gi, '[a-z0-9_]+|\\*') + '$';
+                    const re = new RegExp(pattern, 'i');
+                    return re.test(path);
+                };
+                return _indexes.filter(index => (index.path === path || matchesNamedWildcardPath(index)) && (key === null || key === index.key));
             },
 
             /**
              * Returns all indexes on a target path, optionally includes indexes on child and parent paths
-             * @param {string} targetPath 
-             * @param {boolean} [childPaths=true] 
+             * @param {string} targetPath
+             * @param {object} [options] 
+             * @param {boolean} [options.parentPaths=true] 
+             * @param {boolean} [options.childPaths=true] 
              * @returns {DataIndex[]}
              */
             getAll(targetPath, options = { parentPaths: true, childPaths: true }) {

@@ -82,16 +82,13 @@ class BrowserAceBase extends AceBase {
             ready() {
                 return readyPromise;
             },
-            getTransaction(target) {
-                if (!db) {
-                    throw new Error(`IndexedDB not ready yet`);
-                }
+            async getTransaction(target) {
+                await readyPromise;
                 const context = {
                     debug: true,
                     db
                 }
-                const transaction = new IndexedDBStorageTransaction(context, target);
-                return Promise.resolve(transaction);
+                return new IndexedDBStorageTransaction(context, target);
             }
         });
         return new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
