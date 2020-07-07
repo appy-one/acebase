@@ -555,14 +555,16 @@ class DataReference {
     }
 
     /**
-     * Sets the value a node using a transaction: it runs you callback function with the current value, uses its return value as the new value to store.
-     * @param {(currentValue: DataSnapshot) => void} callback - callback function(currentValue) => newValue: is called with a snapshot of the current value, must return a new value to store in the database
+     * Sets the value a node using a transaction: it runs your callback function with the current value, uses its return value as the new value to store.
+     * The transaction is canceled if your callback returns undefined, or throws an error. If your callback returns null, the target node will be removed.
+     * @param {(currentValue: DataSnapshot) => any} callback - callback function that performs the transaction on the node's current value. It must return the new value to store (or promise with new value), undefined to cancel the transaction, or null to remove the node.
      * @returns {Promise<DataReference>} returns a promise that resolves with the DataReference once the transaction has been processed
      */
     transaction(callback) {
         if (this.isWildcardPath) {
             throw new Error(`Cannot start a transaction on a path with wildcards and/or variables`);
-        }        
+        }
+        let throwError;
         let cb = (currentValue) => {
             currentValue = this.db.types.deserialize(this.path, currentValue);
             const snap = new DataSnapshot(this, currentValue);
@@ -571,12 +573,18 @@ class DataReference {
                 newValue = callback(snap);
             }
             catch(err) {
-                // Make sure an exception thrown in client code cancels the transaction
-                return;
+                // callback code threw an error
+                throwError = err; // Remember error
+                return; // cancel transaction by returning undefined
             }
             if (newValue instanceof Promise) {
-                return newValue.then((val) => {
+                return newValue
+                .then((val) => {
                     return this.db.types.serialize(this.path, val);
+                })
+                .catch(err => {
+                    throwError = err; // Remember error
+                    return; // cancel transaction by returning undefined
                 });
             }
             else {
@@ -585,6 +593,10 @@ class DataReference {
         }
         return this.db.api.transaction(this.path, cb)
         .then(result => {
+            if (throwError) {
+                // Rethrow error from callback code
+                throw throwError;
+            }
             return this;
         });
     }
