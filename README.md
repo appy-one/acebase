@@ -1,6 +1,6 @@
 # AceBase realtime database engine
 
-A fast, low memory, transactional, index & query enabled NoSQL database engine and server for node.js with realtime data change notifications. The server version includes built-in user authentication and authorization. Inspired by the Firebase realtime database, with additional functionality and less data sharding/duplication. Capable of storing up to 2^48 (281 trillion) object nodes in a binary database file that can theoretically grow to a max filesize of 8 petabytes. AceBase can run anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, wherever you want. On top of this, AceBase can now also run in the browser!
+A fast, low memory, transactional, index & query enabled NoSQL database engine and server for node.js with realtime data change notifications. Includes built-in user authentication and authorization ([acebase-server](https://www.npmjs.com/package/acebase-server)). Inspired by the Firebase realtime database, with additional functionality and less data sharding/duplication. Capable of storing up to 2^48 (281 trillion) object nodes in a binary database file that can theoretically grow to a max filesize of 8 petabytes. AceBase can run anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, wherever you want. On top of this, AceBase can now also run in the browser!
 
 Natively supports storing of JSON objects, arrays, numbers, strings, booleans, dates and binary (ArrayBuffer) data. Custom classes can automatically be shape-shifted to and from plain objects by adding type mappings => Store a ```User```, get a ```User```. Store a ```Chat``` that has a collection of ```Messages```, get a ```Chat``` with ```Messages``` back from the database. Any class specific methods can be executed directly on the objects you get back from the db, because they will be an ```instanceof``` your class.
 
@@ -206,8 +206,8 @@ postRef.set({
 const newMessages = {};
 // We got messages from somewhere else (eg imported from file or other db)
 messages.forEach(message => {
-    const key = db.ref('messages').push();
-    newMessages[key] = message;
+    const ref = db.ref('messages').push();
+    newMessages[ref.key] = message;
 })
 console.log(`About to add multiple messages in 1 update operation`);
 db.ref('messages').update(newMessages)
@@ -260,7 +260,7 @@ Also NOTE: you CANNOT use ```ref.push()``` to add entries to an array! It can on
 
 ### Limit nested data loading  
 
-If your database structure is using nesting (eg storing posts in ```'users/someuser/posts'``` instead of in ```'posts'```), you might want to limit to amount of data you are retrieving in most cases. Eg: if you want to get the details of a user, but don't want to load all nested data, you can explicitly limit the nested data retrieval by passing ```exclude```, ```include```, and/or ```child_objects``` options to ```.get```:
+If your database structure is using nesting (eg storing posts in ```'users/someuser/posts'``` instead of in ```'posts'```), you might want to limit the amount of data you are retrieving in most cases. Eg: if you want to get the details of a user, but don't want to load all nested data, you can explicitly limit the nested data retrieval by passing ```exclude```, ```include```, and/or ```child_objects``` options to ```.get```:
 
 ```javascript
 // Exclude specific nested data:
