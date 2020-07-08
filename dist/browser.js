@@ -145,6 +145,7 @@ class AceBaseBase extends EventEmitter {
 
         if (!options) { options = {}; }
 
+        this.setMaxListeners(50); // Prevent warning for >10 "ready" event listeners, increase to 50
         this.once("ready", () => {
             this._ready = true;
         });
@@ -484,14 +485,26 @@ class DataReference {
      * @returns {Promise<DataReference>} promise that resolves with this reference when completed (when not using onComplete callback)
      */
     set(value, onComplete = undefined) {
+        const handleError = err => {
+            if (typeof onComplete === 'function') {
+                try { onComplete(err); } catch(err) { console.error(`Error in onComplete callback:`, err); }
+            }
+            else {
+                // throw again
+                return Promise.reject(err);
+            }
+        };
         if (this.isWildcardPath) {
-            throw new Error(`Cannot set the value of a path with wildcards and/or variables`);
+            return handleError(new Error(`Cannot set the value of wildcard path "/${this.path}"`));
         }
         if (this.parent === null) {
-            throw new Error(`Cannot set the root object. Use update, or set individual child properties`);
+            return handleError(new Error(`Cannot set the root object. Use update, or set individual child properties`));
         }
         if (typeof value === 'undefined') {
-            throw new TypeError(`Cannot store value undefined`);
+            return handleError(new TypeError(`Cannot store undefined value in "/${this.path}"`));
+        }
+        if (!this.db.isReady) {
+            return this.db.ready().then(() => this.set(value, onComplete));
         }
         value = this.db.types.serialize(this.path, value);
         return this.db.api.set(this.path, value)
@@ -501,13 +514,7 @@ class DataReference {
             }
         })
         .catch(err => {
-            if (typeof onComplete === 'function') {
-                try { onComplete(err); } catch(err) { console.error(`Error in onComplete callback:`, err); }
-            }
-            else {
-                // throw again
-                throw err;
-            }
+            return handleError(err);
         })
         .then(() => {
             return this;
@@ -521,8 +528,17 @@ class DataReference {
      * @return {Promise<DataReference>} returns promise that resolves with this reference once completed (when not using onComplete callback)
      */
     update(updates, onComplete = undefined) {
+        const handleError = err => {
+            if (typeof onComplete === 'function') {
+                try { onComplete(err); } catch(err) { console.error(`Error in onComplete callback:`, err); }
+            }
+            else {
+                // throw again
+                return Promise.reject(err);
+            }
+        };
         if (this.isWildcardPath) {
-            throw new Error(`Cannot update the value of a path with wildcards and/or variables`);
+            return handleError(new Error(`Cannot update the value of wildcard path "/${this.path}"`));
         }
         let promise;
         if (typeof updates !== "object" || updates instanceof Array || updates instanceof ArrayBuffer || updates instanceof Date) {
@@ -530,7 +546,10 @@ class DataReference {
         }
         else if (Object.keys(updates).length === 0) {
             console.warn(`update called on path "/${this.path}", but there is nothing to update`);
-            return Promise.resolve();
+            promise = Promise.resolve();
+        }
+        else if (!this.db.isReady) {
+            return this.db.ready().then(() => this.update(updates, onComplete));
         }
         else {            
             updates = this.db.types.serialize(this.path, updates);
@@ -542,12 +561,7 @@ class DataReference {
             }
         })
         .catch(err => {
-            if (typeof onComplete === 'function') {
-                try { onComplete(err); } catch(err) { console.error(`Error in onComplete callback:`, err); }
-            }
-            else {
-                throw err;
-            }
+            return handleError(err);
         })
         .then(() => {
             return this;
@@ -562,7 +576,10 @@ class DataReference {
      */
     transaction(callback) {
         if (this.isWildcardPath) {
-            throw new Error(`Cannot start a transaction on a path with wildcards and/or variables`);
+            return Promise.reject(new Error(`Cannot start a transaction on wildcard path "/${this.path}"`));
+        }
+        if (!this.db.isReady) {
+            return this.db.ready().then(() => this.transaction(callback));
         }
         let throwError;
         let cb = (currentValue) => {
@@ -663,79 +680,88 @@ class DataReference {
         };
         this[_private].callbacks.push(cb);
 
-        let authorized = this.db.api.subscribe(this.path, event, cb.ours);
-        const allSubscriptionsStoppedCallback = () => {
-            let callbacks = this[_private].callbacks;
-            callbacks.splice(callbacks.indexOf(cb), 1);
-            this.db.api.unsubscribe(this.path, event, cb.ours);
-        };
-        if (authorized instanceof Promise) {
-            // Web API now returns a promise that resolves if the request is allowed
-            // and rejects when access is denied by the set security rules
-            authorized.then(() => {
-                // Access granted
-                eventPublisher.start(allSubscriptionsStoppedCallback);
-            })
-            .catch(err => {
-                // Access denied?
-                // Cancel subscription
+        const subscribe = () => {
+            let authorized = this.db.api.subscribe(this.path, event, cb.ours);
+            const allSubscriptionsStoppedCallback = () => {
                 let callbacks = this[_private].callbacks;
                 callbacks.splice(callbacks.indexOf(cb), 1);
                 this.db.api.unsubscribe(this.path, event, cb.ours);
+            };
+            if (authorized instanceof Promise) {
+                // Web API now returns a promise that resolves if the request is allowed
+                // and rejects when access is denied by the set security rules
+                authorized.then(() => {
+                    // Access granted
+                    eventPublisher.start(allSubscriptionsStoppedCallback);
+                })
+                .catch(err => {
+                    // Access denied?
+                    // Cancel subscription
+                    let callbacks = this[_private].callbacks;
+                    callbacks.splice(callbacks.indexOf(cb), 1);
+                    this.db.api.unsubscribe(this.path, event, cb.ours);
 
-                // Call cancelCallbacks
-                eventPublisher.cancel(err.message);
-                cancelCallback && cancelCallback(err.message);
-            });
+                    // Call cancelCallbacks
+                    eventPublisher.cancel(err.message);
+                    cancelCallback && cancelCallback(err.message);
+                });
+            }
+            else {
+                // Local API, always authorized
+                eventPublisher.start(allSubscriptionsStoppedCallback);
+            }
+
+            if (callback && !this.isWildcardPath) {
+                // If callback param is supplied (either a callback function or true or something else truthy),
+                // it will fire events for current values right now.
+                // Otherwise, it expects the .subscribe methode to be used, which will then
+                // only be called for future events
+                if (event === "value") {
+                    this.get(snap => {
+                        eventPublisher.publish(snap);
+                        useCallback && callback(snap);
+                    });
+                }
+                else if (event === "child_added") {
+                    this.get(snap => {
+                        const val = snap.val();
+                        if (val === null || typeof val !== "object") { return; }
+                        Object.keys(val).forEach(key => {
+                            let childSnap = new DataSnapshot(this.child(key), val[key]);
+                            eventPublisher.publish(childSnap);
+                            useCallback && callback(childSnap);
+                        });
+                    });
+                }
+                else if (event === "notify_child_added") {
+                    // Use the reflect API to get current children. 
+                    // NOTE: This does not work with AceBaseServer <= v0.9.7, only when signed in as admin
+                    const step = 100;
+                    let limit = step, skip = 0;
+                    const more = () => {
+                        this.db.api.reflect(this.path, "children", { limit, skip })
+                        .then(children => {
+                            children.list.forEach(child => {
+                                const childRef = this.child(child.key);
+                                eventPublisher.publish(childRef);
+                                useCallback && callback(childRef);
+                            })
+                            if (children.more) {
+                                skip += step;
+                                more();
+                            }
+                        });
+                    };
+                    more();
+                }
+            }
+        };
+
+        if (this.db.isReady) {
+            subscribe();
         }
         else {
-            // Local API, always authorized
-            eventPublisher.start(allSubscriptionsStoppedCallback);
-        }
-
-        if (callback && !this.isWildcardPath) {
-            // If callback param is supplied (either a callback function or true or something else truthy),
-            // it will fire events for current values right now.
-            // Otherwise, it expects the .subscribe methode to be used, which will then
-            // only be called for future events
-            if (event === "value") {
-                this.get(snap => {
-                    eventPublisher.publish(snap);
-                    useCallback && callback(snap);
-                });
-            }
-            else if (event === "child_added") {
-                this.get(snap => {
-                    const val = snap.val();
-                    if (val === null || typeof val !== "object") { return; }
-                    Object.keys(val).forEach(key => {
-                        let childSnap = new DataSnapshot(this.child(key), val[key]);
-                        eventPublisher.publish(childSnap);
-                        useCallback && callback(childSnap);
-                    });
-                });
-            }
-            else if (event === "notify_child_added") {
-                // Use the reflect API to get current children. 
-                // NOTE: This does not work with AceBaseServer <= v0.9.7, only when signed in as admin
-                const step = 100;
-                let limit = step, skip = 0;
-                const more = () => {
-                    this.db.api.reflect(this.path, "children", { limit, skip })
-                    .then(children => {
-                        children.list.forEach(child => {
-                            const childRef = this.child(child.key);
-                            eventPublisher.publish(childRef);
-                            useCallback && callback(childRef);
-                        })
-                        if (children.more) {
-                            skip += step;
-                            more();
-                        }
-                    });
-                };
-                more();
-            }
+            this.db.ready(subscribe);
         }
 
         return eventStream;
@@ -763,7 +789,15 @@ class DataReference {
                 cb.subscr.unsubscribe();
             });
         }
-        this.db.api.unsubscribe(this.path, event, callback);
+        const unsubscribe = () => {
+            this.db.api.unsubscribe(this.path, event, callback);
+        };
+        if (this.db.isReady) {
+            unsubscribe();
+        }
+        else {
+            this.db.ready(unsubscribe);
+        }
         return this;
     }
 
@@ -774,8 +808,9 @@ class DataReference {
      * @returns {Promise<DataSnapshot>|void} returns a promise that resolves with a snapshot of the data, or nothing if callback is used
      */
     get(optionsOrCallback = undefined, callback = undefined) {
-        if (this.isWildcardPath) {
-            throw new Error(`Cannot get the value of a path with wildcards and/or variables. Use .query() instead`);
+        if (!this.db.isReady) {
+            const promise = this.db.ready().then(() => this.get(optionsOrCallback, callback));
+            return typeof optionsOrCallback !== 'function' && typeof callback !== 'function' ? promise : undefined; // only return promise if no callback is used
         }
 
         callback = 
@@ -784,6 +819,12 @@ class DataReference {
             : typeof callback === 'function'
                 ? callback
                 : undefined;
+
+        if (this.isWildcardPath) {
+            const error = new Error(`Cannot get value of wildcard path "/${this.path}". Use .query() instead`);
+            if (typeof callback === 'function') { throw err; }
+            return Promise.reject(error);
+        }
 
         const options = 
             typeof optionsOrCallback === 'object' 
@@ -854,7 +895,9 @@ class DataReference {
      */
     push(value = undefined, onComplete = undefined) {
         if (this.isWildcardPath) {
-            throw new Error(`Cannot push to a path with wildcards and/or variables`);
+            const error = new Error(`Cannot push to wildcard path "/${this.path}"`);
+            if (typeof value === 'undefined' || typeof onComplete === 'function') { throw error; }
+            return Promise.reject(error);
         }
 
         const id = ID.generate(); //uuid62.v1({ node: [0x61, 0x63, 0x65, 0x62, 0x61, 0x73] });
@@ -874,10 +917,10 @@ class DataReference {
      */
     remove() {
         if (this.isWildcardPath) {
-            throw new Error(`Cannot remove a path with wildcards and/or variables. Use query().remove instead`);
+            return Promise.reject(new Error(`Cannot remove wildcard path "/${this.path}". Use query().remove instead`));
         }
         if (this.parent === null) {
-            throw new Error(`Cannot remove the top node`);
+            throw Promise.reject(new Error(`Cannot remove the root node`));
         }
         return this.set(null);
     }
@@ -888,7 +931,10 @@ class DataReference {
      */
     exists() {
         if (this.isWildcardPath) {
-            throw new Error(`Cannot push to a path with wildcards and/or variables`);
+            return Promise.reject(new Error(`Cannot check wildcard path "/${this.path}" existence`));
+        }
+        else if (!this.db.isReady) {
+            return this.db.ready().then(() => this.exists());
         }
         return this.db.api.exists(this.path);
     }
@@ -902,13 +948,22 @@ class DataReference {
     }
 
     reflect(type, args) {
-        if (this.pathHasVariables) {
-            throw new Error(`Cannot reflect on a path with wildcards and/or variables`);
+        if (this.isWildcardPath) {
+            return Promise.reject(new Error(`Cannot reflect on wildcard path "/${this.path}"`));
+        }
+        else if (!this.db.isReady) {
+            return this.db.ready().then(() => this.reflect(type, args));
         }
         return this.db.api.reflect(this.path, type, args);
     }
 
     export(stream, options = { format: 'json' }) {
+        if (this.isWildcardPath) {
+            return Promise.reject(new Error(`Cannot export wildcard path "/${this.path}"`));
+        }
+        else if (!this.db.isReady) {
+            return this.db.ready().then(() => this.export(stream, options));
+        }
         return this.db.api.export(this.path, stream, options);
     }
 } 
@@ -1014,6 +1069,10 @@ class DataReferenceQuery {
      * @returns {Promise<DataSnapshotsArray>|Promise<DataReferencesArray>|void} returns an Promise that resolves with an array of DataReferences or DataSnapshots, or void if a callback is used instead
      */
     get(optionsOrCallback = undefined, callback = undefined) {
+        if (!this.ref.db.isReady) {
+            return this.ref.db.ready().then(() => this.get(optionsOrCallback, callback));
+        }
+
         callback = 
             typeof optionsOrCallback === 'function' 
             ? optionsOrCallback 
@@ -7634,7 +7693,7 @@ class Storage extends EventEmitter {
                                 dataPath = PathInfo.getChildPath(eventPath, childKey);
                             }
                             
-                            if (dataPath !== null && valueSubscribers.findIndex(s => s.type === sub.type && s.path === eventPath) < 0) {
+                            if (dataPath !== null && !valueSubscribers.includes(s => s.type === sub.type && s.eventPath === eventPath)) {
                                 valueSubscribers.push({ type: sub.type, eventPath, dataPath, subscriptionPath });
                             }
                         });
@@ -7682,7 +7741,7 @@ class Storage extends EventEmitter {
                                     : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey); //NodePath(subscriptionPath).childPath(childKey); 
                             }
-                            if (dataPath !== null && !subscribers.some(s => s.type === sub.type && s.eventPath === eventPath)) { // && subscribers.findIndex(s => s.type === sub.type && s.dataPath === dataPath) < 0
+                            if (dataPath !== null && !subscribers.some(s => s.type === sub.type && s.eventPath === eventPath && s.subscriptionPath === subscriptionPath)) { // && subscribers.findIndex(s => s.type === sub.type && s.dataPath === dataPath) < 0
                                 subscribers.push({ type: sub.type, eventPath, dataPath, subscriptionPath });
                             }
                         });
