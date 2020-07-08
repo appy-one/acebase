@@ -433,7 +433,7 @@ class Storage extends EventEmitter {
                                 dataPath = PathInfo.getChildPath(eventPath, childKey);
                             }
                             
-                            if (dataPath !== null && valueSubscribers.findIndex(s => s.type === sub.type && s.path === eventPath) < 0) {
+                            if (dataPath !== null && !valueSubscribers.includes(s => s.type === sub.type && s.eventPath === eventPath)) {
                                 valueSubscribers.push({ type: sub.type, eventPath, dataPath, subscriptionPath });
                             }
                         });
@@ -481,7 +481,7 @@ class Storage extends EventEmitter {
                                     : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey); //NodePath(subscriptionPath).childPath(childKey); 
                             }
-                            if (dataPath !== null && !subscribers.some(s => s.type === sub.type && s.eventPath === eventPath)) { // && subscribers.findIndex(s => s.type === sub.type && s.dataPath === dataPath) < 0
+                            if (dataPath !== null && !subscribers.some(s => s.type === sub.type && s.eventPath === eventPath && s.subscriptionPath === subscriptionPath)) { // && subscribers.findIndex(s => s.type === sub.type && s.dataPath === dataPath) < 0
                                 subscribers.push({ type: sub.type, eventPath, dataPath, subscriptionPath });
                             }
                         });
