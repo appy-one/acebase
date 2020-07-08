@@ -44,7 +44,8 @@
     "localStorage",
     "mssql",
     "sqlite",
-    "binary"
+    "binary",
+    "IndexedDB"
   ],
   "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
   "license": "MIT",
