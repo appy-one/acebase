@@ -1092,7 +1092,7 @@ class Storage extends EventEmitter {
     transactNode(path, callback, options = { no_lock: false }) {
         let checkRevision;
 
-        const tid = ID.generate();
+        const tid = this.nodeLocker.createTid(); // ID.generate();
         const lockPromise = options && options.no_lock === true 
             ? Promise.resolve({ tid, release() {} }) // Fake lock, we'll use revision checking & retrying instead
             : this.nodeLocker.lock(path, tid, true, 'transactNode');

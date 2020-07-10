@@ -663,6 +663,12 @@ class AceBaseStorage extends Storage {
                         return error(err, `Failed to open database file`);
                     }
                     this.file = fd = file;
+
+                    // const logfile = fs.openSync(`${this.settings.path}/${this.name}.acebase/log`, 'as');
+                    // this.logwrite = (action) => {
+                    //     fs.appendFile(logfile, JSON.stringify(action), () => {});
+                    // }; 
+            
                     const data = Buffer.alloc(64);
                     fs.read(fd, data, 0, data.length, 0, (err, bytesRead) => {
                         if (err) {
@@ -856,7 +862,7 @@ class AceBaseStorage extends Storage {
             }
         };
         const start = () => {
-            const tid = ID.generate();
+            const tid = this.nodeLocker.createTid(); //ID.generate();
             let canceled = false;
             var lock;
             return this.nodeLocker.lock(path, tid, false, `Node.getChildren "/${path}"`)
@@ -901,7 +907,7 @@ class AceBaseStorage extends Storage {
      * @returns {Promise<{ revision: string, value: any}>}
      */
     getNode(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
-        const tid = options.tid || ID.generate();
+        const tid = options.tid || this.nodeLocker.createTid(); // ID.generate();
         var lock;
         return this.nodeLocker.lock(path, tid, false, `Node.getValue "/${path}"`)
         .then(l => {
@@ -963,7 +969,7 @@ class AceBaseStorage extends Storage {
         // _currentNodeLookups.set(path, []);
         const pathInfo = PathInfo.get(path); // getPathInfo(path);
         const parentPath = pathInfo.parentPath; //pathInfo.parent;
-        const tid = options.tid || ID.generate();
+        const tid = options.tid || this.nodeLocker.createTid(); //ID.generate();
 
         // Performance issue: 250 requests for different children of a single parent.
         // They will all wait until 1 figures out the parent's address, and then
@@ -1048,7 +1054,7 @@ class AceBaseStorage extends Storage {
     _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false }) {
         // this.debug.log(`Update request for node "/${path}"`);
 
-        const tid = options.tid || ID.generate();
+        const tid = options.tid || this.nodeLocker.createTid(); // ID.generate();
         const pathInfo = PathInfo.get(path);
 
         if (value === null) {
@@ -2376,15 +2382,12 @@ class NodeReader {
                             let address = allocation.addresses[readingRecordIndex];
                             let fileIndex = this.storage.getRecordFileIndex(address.pageNr, address.recordNr);
                             let moreData = new Uint8Array(bytesPerRecord);
-                            this.storage.readData(fileIndex, moreData.buffer)
+                            return this.storage.readData(fileIndex, moreData.buffer)
                             .then(() => {
                                 data = concatTypedArrays(data, moreData);
                                 view = new DataView(data.buffer);
-                                readAllocationTable()
-                                .then(resolve)
-                                .catch(reject);
+                                readAllocationTable().then(resolve).catch(reject);
                             });
-                            return;
                         }
 
                         const type = view.getUint8(offset);
@@ -3528,7 +3531,8 @@ function _write(storage, path, type, bytes, debugValue, hasKeyTree, currentRecor
 
             storage.nodeCache.update(nodeInfo); // NodeCache.update(address, type);
             storage.debug.log(`Node "/${address.path}" saved at address ${address.pageNr},${address.recordNr} - ${allocation.totalAddresses} addresses, ${bytesWritten} bytes written in ${chunks} chunk(s)`.green);
-            
+            // storage.logwrite({ address: address, allocation, chunks, bytesWritten });
+
             let recordInfo;
             if (useExistingAllocation) {
                 // By using the exising info, caller knows it should not release the allocation
