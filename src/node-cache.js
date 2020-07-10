@@ -22,7 +22,7 @@ class NodeCacheEntry {
     }
 
     keepAlive() {
-        this.expires = (this.created || this.updated) + NodeCache.CACHE_DURATION;
+        this.expires = (this.updated || this.created) + NodeCache.CACHE_DURATION;
     }
 
     /**
