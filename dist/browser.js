@@ -242,7 +242,7 @@ class AceBaseBase extends EventEmitter {
 }
 
 module.exports = { AceBaseBase, AceBaseSettings };
-},{"./data-reference":7,"./type-mappings":16,"events":41}],5:[function(require,module,exports){
+},{"./data-reference":7,"./type-mappings":17,"events":42}],5:[function(require,module,exports){
 
 class Api {
     // interface for local and web api's
@@ -1250,7 +1250,7 @@ module.exports = {
     DataRetrievalOptions,
     QueryDataRetrievalOptions
 };
-},{"./data-snapshot":8,"./debug":9,"./id":10,"./path-info":12,"./subscription":14}],8:[function(require,module,exports){
+},{"./data-snapshot":8,"./debug":9,"./id":10,"./path-info":12,"./subscription":15}],8:[function(require,module,exports){
 const { DataReference } = require('./data-reference');
 const { getPathKeys } = require('./path-info');
 
@@ -1417,6 +1417,7 @@ const { TypeMappings, TypeMappingOptions } = require('./type-mappings');
 const Utils = require('./utils');
 const { PathInfo } = require('./path-info');
 const ascii85 = require('./ascii85');
+const { SimpleCache } = require('./simple-cache');
 
 module.exports = {
     AceBaseBase, AceBaseSettings,
@@ -1431,10 +1432,10 @@ module.exports = {
     TypeMappings, TypeMappingOptions,
     Utils,
     PathInfo,
-    ascii85
+    ascii85,
+    SimpleCache
 };
-},{"./acebase-base":4,"./api":5,"./ascii85":6,"./data-reference":7,"./data-snapshot":8,"./debug":9,"./id":10,"./path-info":12,"./path-reference":13,"./subscription":14,"./transport":15,"./type-mappings":16,"./utils":17}],12:[function(require,module,exports){
-
+},{"./acebase-base":4,"./api":5,"./ascii85":6,"./data-reference":7,"./data-snapshot":8,"./debug":9,"./id":10,"./path-info":12,"./path-reference":13,"./simple-cache":14,"./subscription":15,"./transport":16,"./type-mappings":17,"./utils":18}],12:[function(require,module,exports){
 /**
  * 
  * @param {string} path 
@@ -1706,7 +1707,7 @@ class PathInfo {
      */
     equals(otherPath) {
         if (this.path === otherPath) { return true; } // they are identical
-        const keys = getPathKeys(this.path);
+        const keys = this.pathKeys;
         const otherKeys = getPathKeys(otherPath);
         if (keys.length !== otherKeys.length) { return false; }
         return keys.every((key, index) => {
@@ -1725,7 +1726,7 @@ class PathInfo {
     isAncestorOf(descendantPath) {
         if (descendantPath === '' || this.path === descendantPath) { return false; }
         if (this.path === '') { return true; }
-        const ancestorKeys = getPathKeys(this.path);
+        const ancestorKeys = this.pathKeys;
         const descendantKeys = getPathKeys(descendantPath);
         if (ancestorKeys.length >= descendantKeys.length) { return false; }
         return ancestorKeys.every((key, index) => {
@@ -1745,10 +1746,27 @@ class PathInfo {
         if (this.path === '' || this.path === ancestorPath) { return false; }
         if (ancestorPath === '') { return true; }
         const ancestorKeys = getPathKeys(ancestorPath);
-        const descendantKeys = getPathKeys(this.path);
+        const descendantKeys = this.pathKeys;
         if (ancestorKeys.length >= descendantKeys.length) { return false; }
         return ancestorKeys.every((key, index) => {
             const otherKey = descendantKeys[index];
+            return otherKey === key 
+                || (typeof otherKey === 'string' && (otherKey === "*" || otherKey[0] === '$'))
+                || (typeof key === 'string' && (key === "*" ||  key[0] === '$'));
+        });
+    }
+
+    /**
+     * Checks if the other path is on the same trail as this path. Paths on the same trail if they share a
+     * common ancestor. Eg: "posts" is on the trail of "posts/1234/title" and vice versa.
+     * @param {string} otherPath 
+     */
+    isOnTrailOf(otherPath) {
+        if (this.path.length === 0 || otherPath.length === 0) { return true; }
+        if (this.path === otherPath) { return true; }
+        const otherKeys = getPathKeys(otherPath);
+        return this.pathKeys.every((key, index) => {
+            const otherKey = otherKeys[index];
             return otherKey === key 
                 || (typeof otherKey === 'string' && (otherKey === "*" || otherKey[0] === '$'))
                 || (typeof key === 'string' && (key === "*" ||  key[0] === '$'));
@@ -1791,6 +1809,33 @@ class PathReference {
 }
 module.exports = { PathReference };
 },{}],14:[function(require,module,exports){
+class SimpleCache {
+    constructor(expirySeconds) {
+        this.expirySeconds = expirySeconds;
+        this.cache = new Map();
+        setInterval(() => { this.cleanUp(); }, 60 * 1000); // Cleanup every minute
+    }
+    set(key, value) {
+        this.cache.set(key, { value, expires: Date.now() + (this.expirySeconds * 1000) })
+    }
+    get(key) {
+        const entry = this.cache.get(key);
+        if (!entry || entry.expires <= Date.now()) { return null; }
+        return entry.value;
+    }
+    remove(key) {
+        this.cache.delete(key);
+    }
+    cleanUp() {
+        const now = Date.now();
+        this.cache.forEach((entry, key) => {
+            if (entry.expires <= now) { this.cache.delete(key); }
+        });
+    }
+}
+
+module.exports = { SimpleCache };
+},{}],15:[function(require,module,exports){
 class EventSubscription {
     /**
      * 
@@ -1998,7 +2043,7 @@ class EventStream {
 }
 
 module.exports = { EventStream, EventPublisher, EventSubscription };
-},{}],15:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 const { PathReference } = require('./path-reference');
 //const { DataReference } = require('./data-reference');
 const { cloneObject } = require('./utils');
@@ -2099,7 +2144,7 @@ module.exports = {
         };
     }        
 };
-},{"./ascii85":6,"./path-reference":13,"./utils":17}],16:[function(require,module,exports){
+},{"./ascii85":6,"./path-reference":13,"./utils":18}],17:[function(require,module,exports){
 const { cloneObject } = require('./utils');
 const { PathInfo } = require('./path-info');
 const { AceBaseBase } = require('./acebase-base');
@@ -2447,7 +2492,7 @@ module.exports = {
     TypeMappingOptions
 }
 
-},{"./acebase-base":4,"./data-reference":7,"./data-snapshot":8,"./path-info":12,"./utils":17}],17:[function(require,module,exports){
+},{"./acebase-base":4,"./data-reference":7,"./data-snapshot":8,"./path-info":12,"./utils":18}],18:[function(require,module,exports){
 (function (Buffer){
 const { PathReference } = require('./path-reference');
 
@@ -2762,7 +2807,7 @@ module.exports = {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./data-snapshot":8,"./path-reference":13,"buffer":40}],18:[function(require,module,exports){
+},{"./data-snapshot":8,"./path-reference":13,"buffer":41}],19:[function(require,module,exports){
 /*
 
 The MIT License (MIT)
@@ -2965,7 +3010,7 @@ for (var map in colors.maps) {
 
 defineProps(colors, init());
 
-},{"./custom/trap":19,"./custom/zalgo":20,"./maps/america":23,"./maps/rainbow":24,"./maps/random":25,"./maps/zebra":26,"./styles":27,"./system/supports-colors":29,"util":46}],19:[function(require,module,exports){
+},{"./custom/trap":20,"./custom/zalgo":21,"./maps/america":24,"./maps/rainbow":25,"./maps/random":26,"./maps/zebra":27,"./styles":28,"./system/supports-colors":30,"util":47}],20:[function(require,module,exports){
 module['exports'] = function runTheTrap(text, options) {
   var result = '';
   text = text || 'Run the trap, drop the bass';
@@ -3013,7 +3058,7 @@ module['exports'] = function runTheTrap(text, options) {
   return result;
 };
 
-},{}],20:[function(require,module,exports){
+},{}],21:[function(require,module,exports){
 // please no
 module['exports'] = function zalgo(text, options) {
   text = text || '   he is here   ';
@@ -3125,7 +3170,7 @@ module['exports'] = function zalgo(text, options) {
 };
 
 
-},{}],21:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 var colors = require('./colors');
 
 module['exports'] = function() {
@@ -3231,7 +3276,7 @@ module['exports'] = function() {
   };
 };
 
-},{"./colors":18}],22:[function(require,module,exports){
+},{"./colors":19}],23:[function(require,module,exports){
 var colors = require('./colors');
 module['exports'] = colors;
 
@@ -3246,7 +3291,7 @@ module['exports'] = colors;
 //
 require('./extendStringPrototype')();
 
-},{"./colors":18,"./extendStringPrototype":21}],23:[function(require,module,exports){
+},{"./colors":19,"./extendStringPrototype":22}],24:[function(require,module,exports){
 module['exports'] = function(colors) {
   return function(letter, i, exploded) {
     if (letter === ' ') return letter;
@@ -3258,7 +3303,7 @@ module['exports'] = function(colors) {
   };
 };
 
-},{}],24:[function(require,module,exports){
+},{}],25:[function(require,module,exports){
 module['exports'] = function(colors) {
   // RoY G BiV
   var rainbowColors = ['red', 'yellow', 'green', 'blue', 'magenta'];
@@ -3272,7 +3317,7 @@ module['exports'] = function(colors) {
 };
 
 
-},{}],25:[function(require,module,exports){
+},{}],26:[function(require,module,exports){
 module['exports'] = function(colors) {
   var available = ['underline', 'inverse', 'grey', 'yellow', 'red', 'green',
     'blue', 'white', 'cyan', 'magenta'];
@@ -3284,14 +3329,14 @@ module['exports'] = function(colors) {
   };
 };
 
-},{}],26:[function(require,module,exports){
+},{}],27:[function(require,module,exports){
 module['exports'] = function(colors) {
   return function(letter, i, exploded) {
     return i % 2 === 0 ? letter : colors.inverse(letter);
   };
 };
 
-},{}],27:[function(require,module,exports){
+},{}],28:[function(require,module,exports){
 /*
 The MIT License (MIT)
 
@@ -3370,7 +3415,7 @@ Object.keys(codes).forEach(function(key) {
   style.close = '\u001b[' + val[1] + 'm';
 });
 
-},{}],28:[function(require,module,exports){
+},{}],29:[function(require,module,exports){
 (function (process){
 /*
 MIT License
@@ -3409,7 +3454,7 @@ module.exports = function(flag, argv) {
 };
 
 }).call(this,require('_process'))
-},{"_process":44}],29:[function(require,module,exports){
+},{"_process":45}],30:[function(require,module,exports){
 (function (process){
 /*
 The MIT License (MIT)
@@ -3564,7 +3609,7 @@ module.exports = {
 };
 
 }).call(this,require('_process'))
-},{"./has-flag.js":28,"_process":44,"os":43}],30:[function(require,module,exports){
+},{"./has-flag.js":29,"_process":45,"os":44}],31:[function(require,module,exports){
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
@@ -3912,7 +3957,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { BrowserAceBase };
-},{"./acebase-local":31,"./storage-custom":38}],31:[function(require,module,exports){
+},{"./acebase-local":32,"./storage-custom":39}],32:[function(require,module,exports){
 /**
    ________________________________________________________________________________
    
@@ -4118,7 +4163,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":32,"./storage":39,"./storage-custom":38,"acebase-core":11}],32:[function(require,module,exports){
+},{"./api-local":33,"./storage":40,"./storage-custom":39,"acebase-core":11}],33:[function(require,module,exports){
 const { Api, Utils } = require('acebase-core');
 const { AceBase } = require('./acebase-local');
 const { StorageSettings } = require('./storage');
@@ -5040,7 +5085,7 @@ class LocalApi extends Api {
 }
 
 module.exports = { LocalApi };
-},{"./acebase-local":31,"./data-index":40,"./node":37,"./storage":39,"./storage-acebase":40,"./storage-custom":38,"./storage-mssql":40,"./storage-sqlite":40,"acebase-core":11}],33:[function(require,module,exports){
+},{"./acebase-local":32,"./data-index":41,"./node":38,"./storage":40,"./storage-acebase":41,"./storage-custom":39,"./storage-mssql":41,"./storage-sqlite":41,"acebase-core":11}],34:[function(require,module,exports){
 /*
     * This file is used to create a browser bundle, 
     (re)generate it with: npm run browserify
@@ -5086,7 +5131,7 @@ window.acebase = acebase;
 window.AceBase = BrowserAceBase;
 // Expose classes for module imports:
 module.exports = acebase;
-},{"./acebase-browser":30,"./acebase-local":31,"./storage-custom":38,"acebase-core":11}],34:[function(require,module,exports){
+},{"./acebase-browser":31,"./acebase-local":32,"./storage-custom":39,"acebase-core":11}],35:[function(require,module,exports){
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
 
@@ -5146,7 +5191,7 @@ class NodeInfo {
 }
 
 module.exports = { NodeInfo };
-},{"./node-value-types":36,"acebase-core":11}],35:[function(require,module,exports){
+},{"./node-value-types":37,"acebase-core":11}],36:[function(require,module,exports){
 const { PathInfo } = require('acebase-core');
 
 const SECOND = 1000;
@@ -5171,19 +5216,26 @@ class NodeLocker {
          * @type {NodeLock[]}
          */
         this._locks = [];
+        this._lastTid = 0;
+    }
+
+    createTid() {
+        return ++this._lastTid;
     }
 
     _allowLock(path, tid, forWriting) {
         // Can this lock be granted now or do we have to wait?
         const pathInfo = PathInfo.get(path);
+
+        // Check if this tid has a write lock on this path's trail (on higher or deeper paths)
         const existing = this._locks.find(otherLock => 
             otherLock.tid === tid 
             && otherLock.state === LOCK_STATE.LOCKED 
-            && (otherLock.path === path || pathInfo.isDescendantOf(otherLock.path)) // other lock is on the same or a higher path
-            && (otherLock.forWriting || !forWriting) // other lock is for writing, or requested lock isn't
+            && pathInfo.isOnTrailOf(otherLock.path) // other lock is on the same, higher or deeper path
+            && otherLock.forWriting // other lock is for writing
         );
         if (typeof existing === 'object') {
-            // Current tid already has a granted lock on this path
+            // Current tid has a granted write lock on this trail
             return { allow: true };
         }
 
@@ -5196,15 +5248,11 @@ class NodeLocker {
                     (forWriting || otherLock.forWriting)
 
                     // and requested lock is on the same or deeper path
-                    && (
-                        path === otherLock.path
-                        || pathInfo.isDescendantOf(otherLock.path)
-                    )
+                    && pathInfo.isOnTrailOf(otherLock.path)
                 );
             });
 
-        const clashes = typeof conflict !== 'undefined';
-        return { allow: !clashes, conflict };
+        return { allow: !conflict, conflict };
     }
 
     _processLockQueue() {
@@ -5253,6 +5301,7 @@ class NodeLocker {
             return Promise.reject(new Error(`lock on tid ${tid} has expired, not allowed to continue`));
         }
         else {
+            DEBUG_MODE && console.log(`${forWriting ? "write" : "read"} lock requested on "${path}" by tid ${tid}`.red);
 
             // // Test the requested lock path
             // let duplicateKeys = getPathKeys(path)
@@ -5277,6 +5326,7 @@ class NodeLocker {
         }
 
         if (proceed) {
+            DEBUG_MODE && console.log(`${lock.forWriting ? "write" : "read"} lock ALLOWED on "${lock.path}" by tid ${lock.tid}`.red);
             lock.state = LOCK_STATE.LOCKED;
             if (typeof lock.granted === "number") {
                 //debug.warn(`lock :: ALLOWING ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
@@ -5334,6 +5384,7 @@ class NodeLocker {
         lock.state = LOCK_STATE.DONE;
         clearTimeout(lock.timeout);
         this._locks.splice(i, 1);
+        DEBUG_MODE && console.log(`${lock.forWriting ? "write" : "read"} lock RELEASED on "${lock.path}" by tid ${lock.tid}`.red);
         //debug.warn(`unlock :: RELEASED ${lock.forWriting ? "write" : "read" } lock on "/${lock.path}" for tid ${lock.tid}; ${lock.comment}; ${comment}`);
         processQueue && this._processLockQueue();
         return Promise.resolve(lock);
@@ -5427,7 +5478,7 @@ class NodeLock {
 }
 
 module.exports = { NodeLocker, NodeLock };
-},{"acebase-core":11}],36:[function(require,module,exports){
+},{"acebase-core":11}],37:[function(require,module,exports){
 const VALUE_TYPES = {
     // Native types:
     OBJECT: 1,
@@ -5457,7 +5508,7 @@ function getValueTypeName(valueType) {
 }
 
 module.exports = { VALUE_TYPES, getValueTypeName };
-},{}],37:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
@@ -5767,7 +5818,7 @@ module.exports = {
     Node,
     NodeInfo
 };
-},{"./node-info":34,"./node-value-types":36,"./storage":39,"colors":22}],38:[function(require,module,exports){
+},{"./node-info":35,"./node-value-types":37,"./storage":40,"colors":23}],39:[function(require,module,exports){
 const { debug, ID, PathReference, PathInfo, ascii85 } = require('acebase-core');
 const { NodeInfo } = require('./node-info');
 const { NodeLocker } = require('./node-lock');
@@ -7256,7 +7307,7 @@ module.exports = {
     ICustomStorageNodeMetaData,
     ICustomStorageNode
 }
-},{"./node-info":34,"./node-lock":35,"./node-value-types":36,"./storage":39,"acebase-core":11}],39:[function(require,module,exports){
+},{"./node-info":35,"./node-lock":36,"./node-value-types":37,"./storage":40,"acebase-core":11}],40:[function(require,module,exports){
 (function (process){
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85 } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
@@ -8352,7 +8403,7 @@ class Storage extends EventEmitter {
     transactNode(path, callback, options = { no_lock: false }) {
         let checkRevision;
 
-        const tid = ID.generate();
+        const tid = this.nodeLocker.createTid(); // ID.generate();
         const lockPromise = options && options.no_lock === true 
             ? Promise.resolve({ tid, release() {} }) // Fake lock, we'll use revision checking & retrying instead
             : this.nodeLocker.lock(path, tid, true, 'transactNode');
@@ -8812,9 +8863,9 @@ module.exports = {
     NodeRevisionError
 };
 }).call(this,require('_process'))
-},{"./data-index":40,"./node-info":34,"./node-lock":35,"./node-value-types":36,"./promise-fs":40,"_process":44,"acebase-core":11,"colors":22,"events":41}],40:[function(require,module,exports){
+},{"./data-index":41,"./node-info":35,"./node-lock":36,"./node-value-types":37,"./promise-fs":41,"_process":45,"acebase-core":11,"colors":23,"events":42}],41:[function(require,module,exports){
 
-},{}],41:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -9339,7 +9390,7 @@ function functionBindPolyfill(context) {
   };
 }
 
-},{}],42:[function(require,module,exports){
+},{}],43:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -9364,7 +9415,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],43:[function(require,module,exports){
+},{}],44:[function(require,module,exports){
 exports.endianness = function () { return 'LE' };
 
 exports.hostname = function () {
@@ -9415,7 +9466,7 @@ exports.homedir = function () {
 	return '/'
 };
 
-},{}],44:[function(require,module,exports){
+},{}],45:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -9601,14 +9652,14 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],45:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],46:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -10198,5 +10249,5 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":45,"_process":44,"inherits":42}]},{},[33])(33)
+},{"./support/isBuffer":46,"_process":45,"inherits":43}]},{},[34])(34)
 });
