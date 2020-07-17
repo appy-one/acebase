@@ -5,7 +5,6 @@ const MINUTE = 60000;
 
 const DEBUG_MODE = false;
 const LOCK_TIMEOUT = DEBUG_MODE ? 15 * MINUTE : 90 * SECOND;
-const SIMPLE_LOCKING = true;
 
 const LOCK_STATE = {
     PENDING: 'pending',
@@ -24,8 +23,6 @@ class NodeLocker {
          */
         this._locks = [];
         this._lastTid = 0;
-        this._writeLockTid = null;
-        this._readLocks = 0;
     }
 
     createTid() {
@@ -33,50 +30,29 @@ class NodeLocker {
     }
 
     _allowLock(path, tid, forWriting) {
-        if (SIMPLE_LOCKING) {
-            let allow = false;
-            if (this._writeLockTid === null) {
-                if (!forWriting) { allow = true; }
-                else if (this._readLocks === 0) {
-                    this._writeLockTid = tid;
-                    allow = true;
-                }
-            }
-            else if (this._writeLockTid === tid) {
-                allow = true;
-            }
-            if (allow && !forWriting) { this._readLocks++; }
-            return { allow };
-        }
+        /**
+         * Disabled path locking because of the following issue:
+         * 
+         * Process 1 requests WRITE lock on "/users/ewout", is GRANTED
+         * Process 2 requests READ lock on "", is DENIED (process 1 writing to a descendant)
+         * Process 3 requests WRITE lock on "/posts/post1", is GRANTED
+         * Process 1 requests READ lock on "/" because of bound events, is DENIED (3 is writing to a descendant)
+         * Process 3 requests READ lock on "/" because of bound events, is DENIED (1 is wriitng to a descendant)
+         * 
+         * --> DEADLOCK!
+         * 
+         * Now simply makes sure one transaction has write access at the same time, 
+         * might change again in the future...
+         */
 
-        // Can this lock be granted now or do we have to wait?
-        const pathInfo = PathInfo.get(path);
-
-        // Check if this tid has a write lock on this path's trail (on higher or deeper paths)
-        const existing = this._locks.find(otherLock => 
-            otherLock.tid === tid 
-            && otherLock.state === LOCK_STATE.LOCKED 
-            && pathInfo.isOnTrailOf(otherLock.path) // other lock is on the same, higher or deeper path
-            && otherLock.forWriting // other lock is for writing
-        );
-        if (typeof existing === 'object') {
-            // Current tid has a granted write lock on this trail
-            return { allow: true };
-        }
-
-        const conflict = this._locks
-            .filter(otherLock => otherLock.tid !== tid && otherLock.state === LOCK_STATE.LOCKED)
+         const conflict = this._locks
             .find(otherLock => {
                 return (
-                    // Other lock clashes with requested lock, if:
-                    // One (or both) of them is for writing
-                    (forWriting || otherLock.forWriting)
-
-                    // and requested lock is on the same or deeper path
-                    && pathInfo.isOnTrailOf(otherLock.path)
+                    otherLock.tid !== tid 
+                    && otherLock.state === LOCK_STATE.LOCKED
+                    && (forWriting || otherLock.forWriting)
                 );
             });
-
         return { allow: !conflict, conflict };
     }
 
@@ -127,7 +103,7 @@ class NodeLocker {
             return Promise.reject(new Error(`lock on tid ${tid} has expired, not allowed to continue`));
         }
         else {
-            DEBUG_MODE && console.log(`${forWriting ? "write" : "read"} lock requested on "${path}" by tid ${tid}`.red);
+            DEBUG_MODE && console.error(`${forWriting ? "write" : "read"} lock requested on "${path}" by tid ${tid}`);
 
             // // Test the requested lock path
             // let duplicateKeys = getPathKeys(path)
@@ -152,7 +128,7 @@ class NodeLocker {
         }
 
         if (proceed) {
-            DEBUG_MODE && console.log(`${lock.forWriting ? "write" : "read"} lock ALLOWED on "${lock.path}" by tid ${lock.tid}`.red);
+            DEBUG_MODE && console.error(`${lock.forWriting ? "write" : "read"} lock ALLOWED on "${lock.path}" by tid ${lock.tid}`);
             lock.state = LOCK_STATE.LOCKED;
             if (typeof lock.granted === "number") {
                 //debug.warn(`lock :: ALLOWING ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
@@ -210,18 +186,8 @@ class NodeLocker {
         lock.state = LOCK_STATE.DONE;
         clearTimeout(lock.timeout);
         this._locks.splice(i, 1);
-        DEBUG_MODE && console.log(`${lock.forWriting ? "write" : "read"} lock RELEASED on "${lock.path}" by tid ${lock.tid}`.red);
+        DEBUG_MODE && console.error(`${lock.forWriting ? "write" : "read"} lock RELEASED on "${lock.path}" by tid ${lock.tid}`);
         //debug.warn(`unlock :: RELEASED ${lock.forWriting ? "write" : "read" } lock on "/${lock.path}" for tid ${lock.tid}; ${lock.comment}; ${comment}`);
-
-        if (SIMPLE_LOCKING) {
-            if (!lock.forWriting) { 
-                this._readLocks--; 
-                console.assert(this._readLocks >= 0);
-            }
-            if (this._writeLockTid === lock.tid && !this._locks.find(l => l.tid === lock.tid)) {
-                this._writeLockTid = null;
-            }
-        }
 
         processQueue && this._processLockQueue();
         return Promise.resolve(lock);
