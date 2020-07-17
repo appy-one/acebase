@@ -5,6 +5,7 @@ const MINUTE = 60000;
 
 const DEBUG_MODE = false;
 const LOCK_TIMEOUT = DEBUG_MODE ? 15 * MINUTE : 90 * SECOND;
+const SIMPLE_LOCKING = true;
 
 const LOCK_STATE = {
     PENDING: 'pending',
@@ -23,6 +24,8 @@ class NodeLocker {
          */
         this._locks = [];
         this._lastTid = 0;
+        this._writeLockTid = null;
+        this._readLocks = 0;
     }
 
     createTid() {
@@ -30,6 +33,22 @@ class NodeLocker {
     }
 
     _allowLock(path, tid, forWriting) {
+        if (SIMPLE_LOCKING) {
+            let allow = false;
+            if (this._writeLockTid === null) {
+                if (!forWriting) { allow = true; }
+                else if (this._readLocks === 0) {
+                    this._writeLockTid = tid;
+                    allow = true;
+                }
+            }
+            else if (this._writeLockTid === tid) {
+                allow = true;
+            }
+            if (allow && !forWriting) { this._readLocks++; }
+            return { allow };
+        }
+
         // Can this lock be granted now or do we have to wait?
         const pathInfo = PathInfo.get(path);
 
@@ -65,7 +84,8 @@ class NodeLocker {
         const pending = this._locks
             .filter(lock => 
                 lock.state === LOCK_STATE.PENDING
-                && (lock.waitingFor === null || lock.waitingFor.state !== LOCK_STATE.LOCKED)
+                // && (lock.waitingFor === null || lock.waitingFor.state !== LOCK_STATE.LOCKED)
+                // Commented out above, because waitingFor lock might have moved to a different non-conflicting path in the meantime
             )
             .sort((a,b) => {
                 // // Writes get higher priority so all reads get the most recent data
@@ -192,6 +212,17 @@ class NodeLocker {
         this._locks.splice(i, 1);
         DEBUG_MODE && console.log(`${lock.forWriting ? "write" : "read"} lock RELEASED on "${lock.path}" by tid ${lock.tid}`.red);
         //debug.warn(`unlock :: RELEASED ${lock.forWriting ? "write" : "read" } lock on "/${lock.path}" for tid ${lock.tid}; ${lock.comment}; ${comment}`);
+
+        if (SIMPLE_LOCKING) {
+            if (!lock.forWriting) { 
+                this._readLocks--; 
+                console.assert(this._readLocks >= 0);
+            }
+            if (this._writeLockTid === lock.tid && !this._locks.find(l => l.tid === lock.tid)) {
+                this._writeLockTid = null;
+            }
+        }
+
         processQueue && this._processLockQueue();
         return Promise.resolve(lock);
     }
@@ -231,10 +262,12 @@ class NodeLock {
         this.comment = "";
         this.waitingFor = null;
         this.id = ++lastid;
+        this.history = [];
     }
 
     release(comment) {
         //return this.storage.unlock(this.path, this.tid, comment);
+        this.history.push({ action: 'release', path: this.path, forWriting: this.forWriting, comment })
         return this.locker.unlock(this, comment || this.comment);
     }
 
@@ -242,9 +275,10 @@ class NodeLock {
         const parentPath = PathInfo.get(this.path).parentPath; //getPathInfo(this.path).parent;
         const allowed = this.locker.isAllowed(parentPath, this.tid, this.forWriting); //_allowLock(parentPath, this.tid, this.forWriting);
         if (allowed) {
+            this.history.push({ path: this.path, forWriting: this.forWriting, action: 'moving to parent' });
             this.waitingFor = null;
             this.path = parentPath;
-            this.comment = `moved to parent: ${this.comment}`;
+            // this.comment = `moved to parent: ${this.comment}`;
             return Promise.resolve(this);
         }
         else {
@@ -252,8 +286,10 @@ class NodeLock {
             this.locker.unlock(this, `moveLockToParent: ${this.comment}`, false);
 
             // Lock parent node with priority to jump the queue
-            return this.locker.lock(parentPath, this.tid, this.forWriting, `moved to parent (queued): ${this.comment}`, { withPriority: true })
+            return this.locker.lock(parentPath, this.tid, this.forWriting, this.comment, { withPriority: true }) // `moved to parent (queued): ${this.comment}`
             .then(newLock => {
+                newLock.history = this.history;
+                newLock.history.push({ path: this.path, forWriting: this.forWriting, action: 'moving to parent through queue' });
                 return newLock;
             });
         }
@@ -263,10 +299,11 @@ class NodeLock {
         //const check = _allowLock(otherPath, this.tid, forWriting);
         const allowed = this.locker.isAllowed(otherPath, this.tid, forWriting);
         if (allowed) {
+            this.history.push({ path: this.path, forWriting: this.forWriting, action: `moving to "${otherPath}"` });
             this.waitingFor = null;
             this.path = otherPath;
             this.forWriting = forWriting;
-            this.comment = `moved to "/${otherPath}": ${this.comment}`;
+            // this.comment = `moved to "/${otherPath}": ${this.comment}`;
             return Promise.resolve(this);
         }
         else {
@@ -274,8 +311,10 @@ class NodeLock {
             this.locker.unlock(this, `moving to "/${otherPath}": ${this.comment}`, false);
 
             // Lock other node with priority to jump the queue
-            return this.locker.lock(otherPath, this.tid, forWriting, `moved to "/${otherPath}" (queued): ${this.comment}`, { withPriority: true })
+            return this.locker.lock(otherPath, this.tid, forWriting, this.comment, { withPriority: true }) // `moved to "/${otherPath}" (queued): ${this.comment}`
             .then(newLock => {
+                newLock.history = this.history
+                newLock.history.push({ path: this.path, forWriting: this.forWriting, action: `moved to "${otherPath}" through queue` });
                 return newLock;
             });
         }
