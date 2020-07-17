@@ -2960,6 +2960,10 @@ class TextInfo {
         this.words = [];
         this.ignored = [];
         if (text === null) { return; }
+        else if (typeof text === 'undefined') {
+            // debugger;
+            return;
+        }
 
         /** @type {Map<string, WordInfo>} */
         let words = new Map();
@@ -3219,6 +3223,9 @@ class FullTextIndex extends DataIndex {
         const addCallback = (add, text, recordPointer, metadata, env) => {
             if (typeof text === 'object' && text instanceof Array) {
                 text = text.join(' ');
+            }
+            if (typeof text === 'undefined') {
+                text = '';
             }
             const locale = env.locale || this.textLocale;
             const textInfo = new TextInfo(text, { locale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
