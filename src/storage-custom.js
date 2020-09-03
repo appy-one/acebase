@@ -983,7 +983,7 @@ class CustomStorage extends Storage {
                     // .then(async parentLock => {
                     //     lock = parentLock;
                     let parentNode = await this._readNode(pathInfo.parentPath, { transaction });
-                    if (parentNode && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode) {
+                    if (parentNode && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode.value) {
                         const childValueInfo = this._getTypeFromStoredValue(parentNode.value[pathInfo.key]);
                         return { 
                             revision: parentNode.revision, 
