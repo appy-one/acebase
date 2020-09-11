@@ -2743,11 +2743,27 @@ function cloneObject(original, stack) {
 
 function compareValues (oldVal, newVal) {
     const voids = [undefined, null];
+    const isTypedArray = val => typeof val === 'object' && ['ArrayBuffer','Buffer','Uint8Array','Uint16Array','Uint32Array','Int8Array','Int16Array','Int32Array'].includes(val.constructor.name);
     if (oldVal === newVal) { return "identical"; }
     else if (voids.indexOf(oldVal) >= 0 && voids.indexOf(newVal) < 0) { return "added"; }
     else if (voids.indexOf(oldVal) < 0 && voids.indexOf(newVal) >= 0) { return "removed"; }
     else if (typeof oldVal !== typeof newVal) { return "changed"; }
-    else if (typeof oldVal === "object" && !(oldVal instanceof Date)) {
+    else if (isTypedArray(oldVal) || isTypedArray(newVal)) {
+        // One or both values are typed arrays.
+        if (!isTypedArray(oldVal) || !isTypedArray(newVal)) { return "changed"; }
+        // Both are typed. Compare lengths and byte content of typed arrays
+        const typed1 = oldVal instanceof Uint8Array ? oldVal : oldVal instanceof ArrayBuffer ? Uint8Array.from(oldVal) : new Uint8Array(oldVal.buffer, oldVal.byteOffset, oldVal.byteLength);
+        const typed2 = newVal instanceof Uint8Array ? newVal : newVal instanceof ArrayBuffer ? Uint8Array.from(newVal) : new Uint8Array(newVal.buffer, newVal.byteOffset, newVal.byteLength);
+        if (typed1.byteLength !== typed2.byteLength) { return "changed"; }
+        return typed1.some((val, i) => typed2[i] !== val) ? "changed" : "identical";
+    }
+    else if (oldVal instanceof Date || newVal instanceof Date) { 
+        // One or both values are dates
+        if (!(oldVal instanceof Date) || !(newVal instanceof Date)) { return "changed"; }
+        // Both are dates
+        return oldVal.getTime() !== newVal.getTime() ? "changed" : "identical"; 
+    }
+    else if (typeof oldVal === "object") {
         // Do key-by-key comparison of objects
         const isArray = oldVal instanceof Array;
         const oldKeys = isArray 
@@ -6438,6 +6454,15 @@ class CustomStorage extends Storage {
         if (newIsObjectOrArray) {
             // Object or array. Determine which properties can be stored in the main node, 
             // and which should be stored in their own nodes
+            if (!options.merge) {
+                // Check which keys are present in the old object, but not in newly given object
+                Object.keys(mainNode.value).forEach(key => {
+                    if (!(key in value)) {
+                        // Property that was in old object, is not in new value -> set to null to mark deletion!
+                        value[key] = null;
+                    }
+                });
+            }
             Object.keys(value).forEach(key => {
                 const val = value[key];
                 delete mainNode.value[key]; // key is being overwritten, moved from inline to dedicated, or deleted. TODO: check if this needs to be done SQLite & MSSQL implementations too
@@ -8238,6 +8263,7 @@ class Storage extends EventEmitter {
 
             const triggerAllEvents = () => {
                 // Notify all event subscriptions, should be executed with a delay (process.nextTick)
+                // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
                 eventSubscriptions.map(sub => {
                     const keys = PathInfo.getPathKeys(sub.dataPath);
                     return {
