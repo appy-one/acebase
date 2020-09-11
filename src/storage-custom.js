@@ -611,6 +611,15 @@ class CustomStorage extends Storage {
         if (newIsObjectOrArray) {
             // Object or array. Determine which properties can be stored in the main node, 
             // and which should be stored in their own nodes
+            if (!options.merge) {
+                // Check which keys are present in the old object, but not in newly given object
+                Object.keys(mainNode.value).forEach(key => {
+                    if (!(key in value)) {
+                        // Property that was in old object, is not in new value -> set to null to mark deletion!
+                        value[key] = null;
+                    }
+                });
+            }
             Object.keys(value).forEach(key => {
                 const val = value[key];
                 delete mainNode.value[key]; // key is being overwritten, moved from inline to dedicated, or deleted. TODO: check if this needs to be done SQLite & MSSQL implementations too

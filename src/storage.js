@@ -921,6 +921,7 @@ class Storage extends EventEmitter {
 
             const triggerAllEvents = () => {
                 // Notify all event subscriptions, should be executed with a delay (process.nextTick)
+                // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
                 eventSubscriptions.map(sub => {
                     const keys = PathInfo.getPathKeys(sub.dataPath);
                     return {
