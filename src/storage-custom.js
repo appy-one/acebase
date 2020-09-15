@@ -1348,13 +1348,13 @@ class CustomStorage extends Storage {
                 }
                 await this._writeNodeWithTracking('', value, { merge: false, transaction })
             }
-            else if ( typeof options.assert_revision !== 'undefined') {
+            else if (typeof options.assert_revision !== 'undefined') {
                 const info = await this.getNodeInfo(path, { transaction })
                 // .then(info => {
                 if (info.revision !== options.assert_revision) {
                     throw new NodeRevisionError(`revision '${info.revision}' does not match requested revision '${options.assert_revision}'`);
                 }
-                if (info.address && info.address.path === path && !this.valueFitsInline(value)) {
+                if (info.address && info.address.path === path && value !== null && !this.valueFitsInline(value)) {
                     // Overwrite node
                     await this._writeNodeWithTracking(path, value, { merge: false, transaction });
                 }

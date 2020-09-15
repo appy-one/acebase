@@ -7191,13 +7191,13 @@ class CustomStorage extends Storage {
                 }
                 await this._writeNodeWithTracking('', value, { merge: false, transaction })
             }
-            else if ( typeof options.assert_revision !== 'undefined') {
+            else if (typeof options.assert_revision !== 'undefined') {
                 const info = await this.getNodeInfo(path, { transaction })
                 // .then(info => {
                 if (info.revision !== options.assert_revision) {
                     throw new NodeRevisionError(`revision '${info.revision}' does not match requested revision '${options.assert_revision}'`);
                 }
-                if (info.address && info.address.path === path && !this.valueFitsInline(value)) {
+                if (info.address && info.address.path === path && value !== null && !this.valueFitsInline(value)) {
                     // Overwrite node
                     await this._writeNodeWithTracking(path, value, { merge: false, transaction });
                 }
@@ -8263,7 +8263,7 @@ class Storage extends EventEmitter {
 
             const triggerAllEvents = () => {
                 // Notify all event subscriptions, should be executed with a delay (process.nextTick)
-                // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
+                // this.debug.warn(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
                 eventSubscriptions.map(sub => {
                     const keys = PathInfo.getPathKeys(sub.dataPath);
                     return {
