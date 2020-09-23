@@ -4369,10 +4369,15 @@ class LocalApi extends Api {
                         }
                         else {
                             results.push(result);
-                            if (!stepsExecuted.skipped && results.length > query.skip + query.take) {
+                            if (!stepsExecuted.skipped && results.length > query.skip + Math.abs(query.take)) {
                                 // we can toss a value! sort, toss last one 
                                 sortMatches(results);
-                                results.pop(); // toss last value
+                                if (query.take < 0) { 
+                                    results.shift(); // toss first value
+                                }
+                                else {
+                                    results.pop(); // toss last value
+                                }
                             }
                         }
                     });
@@ -4456,7 +4461,7 @@ class LocalApi extends Api {
                     const forBoth = forOtherFilters.concat(forSorting.filter(index => forOtherFilters.indexOf(index) < 0));
                     const points = {
                         filters: forOtherFilters.length,
-                        sorting: forSorting.length * (query.take > 0 ? forSorting.length : 1),
+                        sorting: forSorting.length * (query.take !== 0 ? forSorting.length : 1),
                         both: forBoth.length * forBoth.length,
                         get total() {
                             return this.filters + this.sorting + this.both;
@@ -4494,7 +4499,7 @@ class LocalApi extends Api {
             }
         });
 
-        if (query.order.length > 0 && query.take > 0) {
+        if (query.order.length > 0 && query.take !== 0) {
             query.order.forEach(sort => {
                 if (sort.index) {
                     // Index has been assigned already
@@ -4592,11 +4597,12 @@ class LocalApi extends Api {
         if (query.filters.length === 0 && query.order.length > 0 && query.order[0].index) {
             const sortIndex = query.order[0].index;
             this.storage.debug.log(`Using index for sorting: ${sortIndex.description}`);
-            const promise = sortIndex.take(query.skip, query.take, query.order[0].ascending)
+            let ascending = query.take < 0 ? !query.order[0].ascending : query.order[0].ascending;
+            const promise = sortIndex.take(query.skip, Math.abs(query.take), ascending)
             .then(results => {
-                options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: filter.index.description, stats: results.stats });
+                options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
                 if (results.hints.length > 0) {
-                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: filter.index.description, hints: results.hints });
+                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: sortIndex.description, hints: results.hints });
                 }
                 return results;
             });
@@ -4653,10 +4659,14 @@ class LocalApi extends Api {
                     }
                     stepsExecuted.sorted = true;
                     if (!stepsExecuted.skipped && query.skip > 0) {
-                        indexedResults = indexedResults.slice(query.skip);
+                        indexedResults = query.take < 0 
+                            ? indexedResults.slice(0, -query.skip)
+                            : indexedResults.slice(query.skip);
                     }
-                    if (!stepsExecuted.taken && query.take > 0) {
-                        indexedResults = indexedResults.slice(0, query.take);
+                    if (!stepsExecuted.taken && query.take !== 0) {
+                        indexedResults = query.take < 0 
+                            ? indexedResults.slice(query.take) 
+                            : indexedResults.slice(0, query.take);
                     }
                     stepsExecuted.skipped = true;
                     stepsExecuted.taken = true;
@@ -4686,10 +4696,14 @@ class LocalApi extends Api {
                         }
                         stepsExecuted.sorted = true;
                         if (query.skip > 0) {
-                            results = results.slice(query.skip);
+                            results = results.take < 0
+                                ? results.slice(0, -query.skip)
+                                : results.slice(query.skip);
                         }
-                        if (query.take > 0) {
-                            results = results.slice(0, query.take);
+                        if (query.take !== 0) {
+                            results = query.take < 0 
+                                ? results.slice(query.take)
+                                : results.slice(0, query.take);
                         }
                         stepsExecuted.skipped = true;
                         stepsExecuted.taken = true;
@@ -4759,17 +4773,22 @@ class LocalApi extends Api {
 
                         if (result !== null) {
                             matches.push(result);
-                            if (query.take > 0 && matches.length > query.take + query.skip) {
+                            if (query.take !== 0 && matches.length > Math.abs(query.take) + query.skip) {
                                 if (query.order.length > 0) {
                                     // A query order has been set. If this value falls in between it can replace some other value
                                     // matched before. 
                                     sortMatches(matches);
                                 }
-                                else {
+                                else if (query.take > 0) {
                                     // No query order set, we can stop after 'take' + 'skip' results
                                     preliminaryStop = true; // Flags the loop that no more nodes have to be checked
                                 }
-                                matches.pop(); // toss last value
+                                if (query.take < 0) {
+                                    matches.shift(); // toss first value
+                                }
+                                else {
+                                    matches.pop(); // toss last value
+                                }
                             }
                         }
                     });
@@ -4793,12 +4812,16 @@ class LocalApi extends Api {
                     }
                     stepsExecuted.sorted = true;
                     if (query.skip > 0) {
-                        matches = matches.slice(query.skip);
+                        matches = query.take < 0
+                            ? matches.slice(0, -query.skip)
+                            : matches.slice(query.skip);
                     }
                     stepsExecuted.skipped = true;
-                    if (query.take > 0) {
+                    if (query.take !== 0) {
                         // (should not be necessary, basically it has already been done in the loop?)
-                        matches = matches.slice(0, query.take);
+                        matches = query.take < 0
+                            ? matches.slice(query.take)
+                            : matches.slice(0, query.take);
                     }
                     stepsExecuted.taken = true;
 
@@ -4826,10 +4849,14 @@ class LocalApi extends Api {
 
             // Limit result set
             if (!stepsExecuted.skipped && query.skip > 0) {
-                matches = matches.slice(query.skip);
+                matches = query.take < 0
+                    ? matches.slice(0, -query.skip)
+                    : matches.slice(query.skip);
             }
-            if (!stepsExecuted.taken && query.take > 0) {
-                matches = matches.slice(0, query.take);
+            if (!stepsExecuted.taken && query.take !== 0) {
+                matches = query.take < 0
+                    ? matches.slice(query.take)
+                    : matches.slice(0, query.take);
             }
 
             // NEW: Check if this is a realtime query - future updates must send query result updates
@@ -8263,7 +8290,7 @@ class Storage extends EventEmitter {
 
             const triggerAllEvents = () => {
                 // Notify all event subscriptions, should be executed with a delay (process.nextTick)
-                // this.debug.warn(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
+                // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
                 eventSubscriptions.map(sub => {
                     const keys = PathInfo.getPathKeys(sub.dataPath);
                     return {
@@ -8525,8 +8552,13 @@ class Storage extends EventEmitter {
                 return Promise.resolve(true); // No criteria, so yes... It matches!
             }
             const criteriaKeys = criteria.reduce((keys, cr) => {
-                if (keys.indexOf(cr.key) < 0) {
-                    keys.push(cr.key);
+                let key = cr.key;
+                if (key.includes('/')) {
+                    // Descendant key criterium, use child key only (eg 'address' of 'address/city')
+                    key = key.slice(0, key.indexOf('/'));
+                }
+                if (keys.indexOf(key) < 0) {
+                    keys.push(key);
                 }
                 return keys;
             }, []);
@@ -8537,12 +8569,31 @@ class Storage extends EventEmitter {
             return this.getChildren(path, { tid, keyFilter: criteriaKeys })
             .next(childInfo => {
                 unseenKeys.includes(childInfo.key) && unseenKeys.splice(unseenKeys.indexOf(childInfo.key), 1);
+
                 const keyCriteria = criteria
                     .filter(cr => cr.key === childInfo.key)
                     .map(cr => ({ op: cr.op, compare: cr.compare }));
-                const result = checkChild(childInfo, keyCriteria);
-                isMatch = result.isMatch;
-                delayedMatchPromises.push(...result.promises);
+
+                const keyResult = keyCriteria.length > 0 ? checkChild(childInfo, keyCriteria) : { isMatch: true, promises: [] };
+                isMatch = keyResult.isMatch;
+                if (isMatch) {
+                    delayedMatchPromises.push(...keyResult.promises);
+
+                    const childCriteria = criteria
+                        .filter(cr => cr.key.startsWith(`${childInfo.key}/`))
+                        .map(cr => {
+                            const key = cr.key.slice(cr.key.indexOf('/') + 1);
+                            return { key, op: cr.op, compare: cr.compare }
+                        });
+
+                    if (childCriteria.length > 0) {
+                        const childPath = PathInfo.getChildPath(path, childInfo.key);
+                        const childPromise = 
+                            checkNode(childPath, childCriteria)
+                            .then(isMatch => ({ isMatch }));
+                        delayedMatchPromises.push(childPromise);
+                    }
+                }
                 if (!isMatch || unseenKeys.length === 0) {
                     return false; // Stop iterating
                 }
@@ -8557,13 +8608,29 @@ class Storage extends EventEmitter {
             })
             .then(() => {
                 if (!isMatch) { return false; }
+                
                 // Now, also check keys that weren't found in the node. (a criterium may be "!exists")
                 isMatch = unseenKeys.every(key => {
-                    const child = new NodeInfo({ key, exists: false });
+
+                    const childInfo = new NodeInfo({ key, exists: false });
+
+                    const childCriteria = criteria
+                        .filter(cr => cr.key.startsWith(`${key}/`))
+                        .map(cr => ({ op: cr.op, compare: cr.compare }));
+
+                    if (childCriteria.length > 0 && !checkChild(childInfo, childCriteria).isMatch) {
+                        return false;
+                    }
+
                     const keyCriteria = criteria
                         .filter(cr => cr.key === key)
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
-                    const result = checkChild(child, keyCriteria);
+
+                    if (keyCriteria.length === 0) {
+                        return true; // There were only child criteria, and they matched (otherwise we wouldn't be here)
+                    }
+
+                    const result = checkChild(childInfo, keyCriteria);
                     return result.isMatch;
                 });
                 return isMatch;
@@ -8573,7 +8640,6 @@ class Storage extends EventEmitter {
                 throw err;
             });
         }; // checkNode
-
 
         /**
          * 
@@ -8594,40 +8660,6 @@ class Storage extends EventEmitter {
                     proceed = false;
                 }
                 else {
-                    // const isMatch = (val) => {
-                    //     if (f.op === "<") { return val < f.compare; }
-                    //     if (f.op === "<=") { return val <= f.compare; }
-                    //     if (f.op === "==") { return val === f.compare; }
-                    //     if (f.op === "!=") { return val !== f.compare; }
-                    //     if (f.op === ">") { return val > f.compare; }
-                    //     if (f.op === ">=") { return val >= f.compare; }
-                    //     if (f.op === "in") { return f.compare.indexOf(val) >= 0; }
-                    //     if (f.op === "!in") { return f.compare.indexOf(val) < 0; }
-                    //     if (f.op === "like" || f.op === "!like") {
-                    //         const pattern = f.compare.replace(/[-[\]{}()+.,\\^$|#\s]/g, '\\$&').replace(/\?/g, '.').replace(/\*/g, '.*?');
-                    //         const re = new RegExp(pattern, 'i');
-                    //         const isMatch = re.test(val.toString());
-                    //         return f.op === "like" ? isMatch : !isMatch;
-                    //     }
-                    //     if (f.op === "matches") {
-                    //         return f.compare.test(val.toString());
-                    //     }
-                    //     if (f.op === "!matches") {
-                    //         return !f.compare.test(val.toString());
-                    //     }
-                    //     if (f.op === "between") {
-                    //         return val >= f.compare[0] && val <= f.compare[1];
-                    //     }
-                    //     if (f.op === "!between") {
-                    //         return val < f.compare[0] || val > f.compare[1];
-                    //     }
-                    //     // DISABLED 2019/10/23 because "custom" only works locally and is not fully implemented
-                    //     // if (f.op === "custom") {
-                    //     //     return f.compare(val);
-                    //     // }
-                    //     return false;
-                    // };
-                    
                     if (child.address) {
                         if (child.valueType === VALUE_TYPES.OBJECT && ["has","!has"].indexOf(f.op) >= 0) {
                             const op = f.op === "has" ? "exists" : "!exists";
