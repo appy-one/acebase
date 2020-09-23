@@ -186,10 +186,15 @@ class LocalApi extends Api {
                         }
                         else {
                             results.push(result);
-                            if (!stepsExecuted.skipped && results.length > query.skip + query.take) {
+                            if (!stepsExecuted.skipped && results.length > query.skip + Math.abs(query.take)) {
                                 // we can toss a value! sort, toss last one 
                                 sortMatches(results);
-                                results.pop(); // toss last value
+                                if (query.take < 0) { 
+                                    results.shift(); // toss first value
+                                }
+                                else {
+                                    results.pop(); // toss last value
+                                }
                             }
                         }
                     });
@@ -273,7 +278,7 @@ class LocalApi extends Api {
                     const forBoth = forOtherFilters.concat(forSorting.filter(index => forOtherFilters.indexOf(index) < 0));
                     const points = {
                         filters: forOtherFilters.length,
-                        sorting: forSorting.length * (query.take > 0 ? forSorting.length : 1),
+                        sorting: forSorting.length * (query.take !== 0 ? forSorting.length : 1),
                         both: forBoth.length * forBoth.length,
                         get total() {
                             return this.filters + this.sorting + this.both;
@@ -311,7 +316,7 @@ class LocalApi extends Api {
             }
         });
 
-        if (query.order.length > 0 && query.take > 0) {
+        if (query.order.length > 0 && query.take !== 0) {
             query.order.forEach(sort => {
                 if (sort.index) {
                     // Index has been assigned already
@@ -409,11 +414,12 @@ class LocalApi extends Api {
         if (query.filters.length === 0 && query.order.length > 0 && query.order[0].index) {
             const sortIndex = query.order[0].index;
             this.storage.debug.log(`Using index for sorting: ${sortIndex.description}`);
-            const promise = sortIndex.take(query.skip, query.take, query.order[0].ascending)
+            let ascending = query.take < 0 ? !query.order[0].ascending : query.order[0].ascending;
+            const promise = sortIndex.take(query.skip, Math.abs(query.take), ascending)
             .then(results => {
-                options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: filter.index.description, stats: results.stats });
+                options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
                 if (results.hints.length > 0) {
-                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: filter.index.description, hints: results.hints });
+                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: sortIndex.description, hints: results.hints });
                 }
                 return results;
             });
@@ -470,10 +476,14 @@ class LocalApi extends Api {
                     }
                     stepsExecuted.sorted = true;
                     if (!stepsExecuted.skipped && query.skip > 0) {
-                        indexedResults = indexedResults.slice(query.skip);
+                        indexedResults = query.take < 0 
+                            ? indexedResults.slice(0, -query.skip)
+                            : indexedResults.slice(query.skip);
                     }
-                    if (!stepsExecuted.taken && query.take > 0) {
-                        indexedResults = indexedResults.slice(0, query.take);
+                    if (!stepsExecuted.taken && query.take !== 0) {
+                        indexedResults = query.take < 0 
+                            ? indexedResults.slice(query.take) 
+                            : indexedResults.slice(0, query.take);
                     }
                     stepsExecuted.skipped = true;
                     stepsExecuted.taken = true;
@@ -503,10 +513,14 @@ class LocalApi extends Api {
                         }
                         stepsExecuted.sorted = true;
                         if (query.skip > 0) {
-                            results = results.slice(query.skip);
+                            results = results.take < 0
+                                ? results.slice(0, -query.skip)
+                                : results.slice(query.skip);
                         }
-                        if (query.take > 0) {
-                            results = results.slice(0, query.take);
+                        if (query.take !== 0) {
+                            results = query.take < 0 
+                                ? results.slice(query.take)
+                                : results.slice(0, query.take);
                         }
                         stepsExecuted.skipped = true;
                         stepsExecuted.taken = true;
@@ -576,17 +590,22 @@ class LocalApi extends Api {
 
                         if (result !== null) {
                             matches.push(result);
-                            if (query.take > 0 && matches.length > query.take + query.skip) {
+                            if (query.take !== 0 && matches.length > Math.abs(query.take) + query.skip) {
                                 if (query.order.length > 0) {
                                     // A query order has been set. If this value falls in between it can replace some other value
                                     // matched before. 
                                     sortMatches(matches);
                                 }
-                                else {
+                                else if (query.take > 0) {
                                     // No query order set, we can stop after 'take' + 'skip' results
                                     preliminaryStop = true; // Flags the loop that no more nodes have to be checked
                                 }
-                                matches.pop(); // toss last value
+                                if (query.take < 0) {
+                                    matches.shift(); // toss first value
+                                }
+                                else {
+                                    matches.pop(); // toss last value
+                                }
                             }
                         }
                     });
@@ -610,12 +629,16 @@ class LocalApi extends Api {
                     }
                     stepsExecuted.sorted = true;
                     if (query.skip > 0) {
-                        matches = matches.slice(query.skip);
+                        matches = query.take < 0
+                            ? matches.slice(0, -query.skip)
+                            : matches.slice(query.skip);
                     }
                     stepsExecuted.skipped = true;
-                    if (query.take > 0) {
+                    if (query.take !== 0) {
                         // (should not be necessary, basically it has already been done in the loop?)
-                        matches = matches.slice(0, query.take);
+                        matches = query.take < 0
+                            ? matches.slice(query.take)
+                            : matches.slice(0, query.take);
                     }
                     stepsExecuted.taken = true;
 
@@ -643,10 +666,14 @@ class LocalApi extends Api {
 
             // Limit result set
             if (!stepsExecuted.skipped && query.skip > 0) {
-                matches = matches.slice(query.skip);
+                matches = query.take < 0
+                    ? matches.slice(0, -query.skip)
+                    : matches.slice(query.skip);
             }
-            if (!stepsExecuted.taken && query.take > 0) {
-                matches = matches.slice(0, query.take);
+            if (!stepsExecuted.taken && query.take !== 0) {
+                matches = query.take < 0
+                    ? matches.slice(query.take)
+                    : matches.slice(0, query.take);
             }
 
             // NEW: Check if this is a realtime query - future updates must send query result updates
