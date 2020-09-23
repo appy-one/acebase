@@ -1183,8 +1183,13 @@ class Storage extends EventEmitter {
                 return Promise.resolve(true); // No criteria, so yes... It matches!
             }
             const criteriaKeys = criteria.reduce((keys, cr) => {
-                if (keys.indexOf(cr.key) < 0) {
-                    keys.push(cr.key);
+                let key = cr.key;
+                if (key.includes('/')) {
+                    // Descendant key criterium, use child key only (eg 'address' of 'address/city')
+                    key = key.slice(0, key.indexOf('/'));
+                }
+                if (keys.indexOf(key) < 0) {
+                    keys.push(key);
                 }
                 return keys;
             }, []);
@@ -1195,12 +1200,31 @@ class Storage extends EventEmitter {
             return this.getChildren(path, { tid, keyFilter: criteriaKeys })
             .next(childInfo => {
                 unseenKeys.includes(childInfo.key) && unseenKeys.splice(unseenKeys.indexOf(childInfo.key), 1);
+
                 const keyCriteria = criteria
                     .filter(cr => cr.key === childInfo.key)
                     .map(cr => ({ op: cr.op, compare: cr.compare }));
-                const result = checkChild(childInfo, keyCriteria);
-                isMatch = result.isMatch;
-                delayedMatchPromises.push(...result.promises);
+
+                const keyResult = keyCriteria.length > 0 ? checkChild(childInfo, keyCriteria) : { isMatch: true, promises: [] };
+                isMatch = keyResult.isMatch;
+                if (isMatch) {
+                    delayedMatchPromises.push(...keyResult.promises);
+
+                    const childCriteria = criteria
+                        .filter(cr => cr.key.startsWith(`${childInfo.key}/`))
+                        .map(cr => {
+                            const key = cr.key.slice(cr.key.indexOf('/') + 1);
+                            return { key, op: cr.op, compare: cr.compare }
+                        });
+
+                    if (childCriteria.length > 0) {
+                        const childPath = PathInfo.getChildPath(path, childInfo.key);
+                        const childPromise = 
+                            checkNode(childPath, childCriteria)
+                            .then(isMatch => ({ isMatch }));
+                        delayedMatchPromises.push(childPromise);
+                    }
+                }
                 if (!isMatch || unseenKeys.length === 0) {
                     return false; // Stop iterating
                 }
@@ -1215,13 +1239,29 @@ class Storage extends EventEmitter {
             })
             .then(() => {
                 if (!isMatch) { return false; }
+                
                 // Now, also check keys that weren't found in the node. (a criterium may be "!exists")
                 isMatch = unseenKeys.every(key => {
-                    const child = new NodeInfo({ key, exists: false });
+
+                    const childInfo = new NodeInfo({ key, exists: false });
+
+                    const childCriteria = criteria
+                        .filter(cr => cr.key.startsWith(`${key}/`))
+                        .map(cr => ({ op: cr.op, compare: cr.compare }));
+
+                    if (childCriteria.length > 0 && !checkChild(childInfo, childCriteria).isMatch) {
+                        return false;
+                    }
+
                     const keyCriteria = criteria
                         .filter(cr => cr.key === key)
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
-                    const result = checkChild(child, keyCriteria);
+
+                    if (keyCriteria.length === 0) {
+                        return true; // There were only child criteria, and they matched (otherwise we wouldn't be here)
+                    }
+
+                    const result = checkChild(childInfo, keyCriteria);
                     return result.isMatch;
                 });
                 return isMatch;
@@ -1231,7 +1271,6 @@ class Storage extends EventEmitter {
                 throw err;
             });
         }; // checkNode
-
 
         /**
          * 
@@ -1252,40 +1291,6 @@ class Storage extends EventEmitter {
                     proceed = false;
                 }
                 else {
-                    // const isMatch = (val) => {
-                    //     if (f.op === "<") { return val < f.compare; }
-                    //     if (f.op === "<=") { return val <= f.compare; }
-                    //     if (f.op === "==") { return val === f.compare; }
-                    //     if (f.op === "!=") { return val !== f.compare; }
-                    //     if (f.op === ">") { return val > f.compare; }
-                    //     if (f.op === ">=") { return val >= f.compare; }
-                    //     if (f.op === "in") { return f.compare.indexOf(val) >= 0; }
-                    //     if (f.op === "!in") { return f.compare.indexOf(val) < 0; }
-                    //     if (f.op === "like" || f.op === "!like") {
-                    //         const pattern = f.compare.replace(/[-[\]{}()+.,\\^$|#\s]/g, '\\$&').replace(/\?/g, '.').replace(/\*/g, '.*?');
-                    //         const re = new RegExp(pattern, 'i');
-                    //         const isMatch = re.test(val.toString());
-                    //         return f.op === "like" ? isMatch : !isMatch;
-                    //     }
-                    //     if (f.op === "matches") {
-                    //         return f.compare.test(val.toString());
-                    //     }
-                    //     if (f.op === "!matches") {
-                    //         return !f.compare.test(val.toString());
-                    //     }
-                    //     if (f.op === "between") {
-                    //         return val >= f.compare[0] && val <= f.compare[1];
-                    //     }
-                    //     if (f.op === "!between") {
-                    //         return val < f.compare[0] || val > f.compare[1];
-                    //     }
-                    //     // DISABLED 2019/10/23 because "custom" only works locally and is not fully implemented
-                    //     // if (f.op === "custom") {
-                    //     //     return f.compare(val);
-                    //     // }
-                    //     return false;
-                    // };
-                    
                     if (child.address) {
                         if (child.valueType === VALUE_TYPES.OBJECT && ["has","!has"].indexOf(f.op) >= 0) {
                             const op = f.op === "has" ? "exists" : "!exists";
