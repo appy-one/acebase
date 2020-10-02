@@ -2803,7 +2803,14 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
                 // Changed behaviour: 
                 // previously, if 1 operation failed, the tree was rebuilt. If any operation thereafter failed, it stopped processing
                 // now, processOperations() will be called after each rebuild, so all operations will be processed
+                const debugOpCounts = [];
                 const processOperations = (retry = 0, prevRecordInfo = nodeReader.recordInfo) => {
+                    if (retry > 1 && operations.length === debugOpCounts[debugOpCounts.length-1]) {
+                        // Number of pending operations did not decrease after rebuild?!
+                        debugger;
+                        throw new Error(`DEV: Tree rebuild did not fix ${operations.length} pending operation(s) failing to execute. Debug this!`);
+                    }
+                    debugOpCounts.push(operations.length);
                     return tree.transaction(operations)
                     .then(() => {
                         // Successfully updated!
@@ -2814,16 +2821,44 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
                         storage.debug.log(`Could not update tree for "/${nodeInfo.path}"${retry > 0 ? ` (retry ${retry})` : ''}: ${err.message}`.yellow);
                         // Failed to update the binary data, we need to recreate the whole tree
         
-                        // Rebuild the tree the old-fashioned in-memory way. 
-                        // TODO: rebuild tree on disk with streams. See data-index.js
-                        let bytes = [];
-                        let writer = BinaryWriter.forArray(bytes);
-                        return tree.rebuild(writer)
-                        .then(() => {
-                            return _write(storage, nodeInfo.path, nodeReader.recordInfo.valueType, bytes, undefined, true, nodeReader.recordInfo);
+                        // NEW: Rebuild tree to a temp file
+                        const tempFilepath = `${storage.settings.path}/${storage.name}.acebase/tree-${ID.generate()}.tmp`;
+                        let bytesWritten = 0;
+                        return pfs.open(tempFilepath, pfs.flags.readAndWriteAndCreate)
+                        .then(fd => {
+                            const writer = BinaryWriter.forFunction((data, index) => {
+                                return pfs.write(fd, data, 0, data.length, index)
+                                .then(() => {
+                                    bytesWritten += data.length;
+                                });
+                            });
+                            return tree.rebuild(writer)
+                            .then(() => fd);
+                        })
+                        .then(fd => {
+                            // Now write the record with data read from the temp file
+                            let readOffset = 0;
+                            const reader = length => {
+                                const buffer = new Uint8Array(length);
+                                return pfs.read(fd, buffer, 0, buffer.length, readOffset)
+                                .then(() => {
+                                    readOffset += length;
+                                    return buffer;
+                                });
+                            };
+                            return _write(storage, nodeInfo.path, nodeReader.recordInfo.valueType, bytesWritten, true, reader, nodeReader.recordInfo)
+                            .then(recordInfo => {
+                                // Close and remove the tmp file, don't wait for this
+                                pfs.close(fd)
+                                .then(() => pfs.rm(tempFilepath))
+                                .catch(err => {
+                                    // Error removing the file?
+                                    storage.debug.error(`Can't remove temp rebuild file ${tempFilepath}: `, err);
+                                });
+                                return recordInfo;
+                            });
                         })
                         .then(recordInfo => {
-                            bytes = null; // Help GC
                             if (retry >= 1 && prevRecordInfo !== recordInfo) {
                                 // If this is a 2nd+ call to processOperations, we have to release the previous allocation here
                                 discardAllocation.ranges.push(...prevRecordInfo.allocation.ranges);
@@ -2840,7 +2875,7 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
                                 // Retry remaining operations
                                 return processOperations(retry+1, recordInfo);
                             });
-                        })
+                        });
                     });
                 }
                 return processOperations();
@@ -2969,16 +3004,24 @@ function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
         throw new Error(`Cannot write to node "/${path}" because lock is on the wrong path or not for writing`);
     }
 
+    const write = (valueType, buffer, keyTree = false) => {
+        let readOffset = 0;
+        const reader = (length) => {
+            const slice = buffer.slice(readOffset, readOffset + length);
+            readOffset += length;
+            return Promise.resolve(slice);
+        };
+        return _write(storage, path, valueType, buffer.length, keyTree, reader, currentRecordInfo);
+    };
+
     if (typeof value === "string") {
-        const encoded = encodeString(value); //textEncoder.encode(value);
-        return _write(storage, path, VALUE_TYPES.STRING, encoded, value, false, currentRecordInfo);
+        return write(VALUE_TYPES.STRING, encodeString(value));
     }
     else if (value instanceof PathReference) {
-        const encoded = encodeString(value.path); // textEncoder.encode(value.path);
-        return _write(storage, path, VALUE_TYPES.REFERENCE, encoded, value, false, currentRecordInfo);
+        return write(VALUE_TYPES.REFERENCE, encodeString(value.path));
     }
     else if (value instanceof ArrayBuffer) {
-        return _write(storage, path, VALUE_TYPES.BINARY, new Uint8Array(value), value, false, currentRecordInfo);
+        return write(VALUE_TYPES.BINARY, new Uint8Array(value));
     }
     else if (typeof value !== "object") {
         throw new TypeError(`Unsupported type to store in stand-alone record`);
@@ -3065,7 +3108,11 @@ function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
                 let binaryValue = _getValueBytes(kvp);
                 builder.add(isArray ? kvp.index : kvp.key, binaryValue);
             });
+
             // TODO: switch from array to Uint8ArrayBuilder:
+            // Investigate how often this happens - 
+            // does this happen only once when the node becomes big enough for tree creation?
+
             let bytes = [];
             return builder.create().toBinary(true, BinaryWriter.forArray(bytes))
             .then(() => {
@@ -3111,7 +3158,7 @@ function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
     })
     .then(result => {
         // Now write the record
-        return _write(storage, path, isArray ? VALUE_TYPES.ARRAY : VALUE_TYPES.OBJECT, result.data, serialized, result.keyTree, currentRecordInfo);
+        return write(isArray ? VALUE_TYPES.ARRAY : VALUE_TYPES.OBJECT, result.data, result.keyTree);
     });
 }
 
@@ -3310,13 +3357,13 @@ function _serializeValue (storage, path, keyOrIndex, val, parentTid) {
  * @param {AceBaseStorage} storage 
  * @param {string} path 
  * @param {number} type 
- * @param {Uint8Array|Number[]} bytes 
- * @param {any} debugValue 
+ * @param {number} length 
  * @param {boolean} hasKeyTree 
+ * @param {(length: number) => Promise<Uint8Array|Number[]>} reader
  * @param {RecordInfo} currentRecordInfo
  * @returns {Promise<RecordInfo>}
  */
-function _write(storage, path, type, bytes, debugValue, hasKeyTree, currentRecordInfo = undefined) {
+function _write(storage, path, type, length, hasKeyTree, reader, currentRecordInfo = undefined) {
     // Record layout:
     // record           := record_header, record_data
     // record_header    := record_info, value_type, chunk_table, last_record_len
@@ -3383,31 +3430,24 @@ function _write(storage, path, type, bytes, debugValue, hasKeyTree, currentRecor
     // value_record_nr  := 2 byte number
     //
 
-    if (bytes instanceof Array) {
-        bytes = Uint8Array.from(bytes);
-    }
-    else if (!(bytes instanceof Uint8Array)) {
-        throw new Error(`bytes must be Uint8Array or plain byte Array`);
-    }
-
     const bytesPerRecord = storage.settings.recordSize;
-    let headerBytes, totalBytes, requiredRecords, lastChunkSize;
+    let headerByteLength, totalBytes, requiredRecords, lastChunkSize;
 
     const calculateStorageNeeds = (nrOfChunks) => {
         // Calculate amount of bytes and records needed
-        headerBytes = 4; // Minimum length: 1 byte record_info and value_type, 1 byte CT (ct_entry_type 0), 2 bytes last_chunk_length
-        totalBytes = (bytes.length + headerBytes);
+        headerByteLength = 4; // Minimum length: 1 byte record_info and value_type, 1 byte CT (ct_entry_type 0), 2 bytes last_chunk_length
+        totalBytes = (length + headerByteLength);
         requiredRecords = Math.ceil(totalBytes / bytesPerRecord);
         if (requiredRecords > 1) {
             // More than 1 record, header size increases
-            headerBytes += 3; // Add 3 bytes: 1 byte for ct_entry_type 1, 2 bytes for nr_records
-            headerBytes += (nrOfChunks - 1) * 9; // Add 9 header bytes for each additional range (1 byte ct_entry_type 2, 4 bytes start_page_nr, 2 bytes start_record_nr, 2 bytes nr_records)
+            headerByteLength += 3; // Add 3 bytes: 1 byte for ct_entry_type 1, 2 bytes for nr_records
+            headerByteLength += (nrOfChunks - 1) * 9; // Add 9 header bytes for each additional range (1 byte ct_entry_type 2, 4 bytes start_page_nr, 2 bytes start_record_nr, 2 bytes nr_records)
             // Recalc total bytes and required records
-            totalBytes = (bytes.length + headerBytes);
+            totalBytes = (length + headerByteLength);
             requiredRecords = Math.ceil(totalBytes / bytesPerRecord);
         }
-        lastChunkSize = requiredRecords === 1 ? bytes.length : totalBytes % bytesPerRecord;
-        if (lastChunkSize === 0 && bytes.length > 0) {
+        lastChunkSize = requiredRecords === 1 ? length : totalBytes % bytesPerRecord;
+        if (lastChunkSize === 0 && length > 0) {
             // Data perfectly fills up the last record!
             // If we don't set it to bytesPerRecord, reading later will fail: 0 bytes will be read from the last record...
             lastChunkSize = bytesPerRecord;
@@ -3447,9 +3487,8 @@ function _write(storage, path, type, bytes, debugValue, hasKeyTree, currentRecor
         }
         
         // Build the binary header data
-        let header = new Uint8Array(headerBytes);
+        let header = new Uint8Array(headerByteLength);
         let headerView = new DataView(header.buffer, 0, header.length);
-        header.fill(0);     // Set all zeroes
         header[0] = type; // value_type
         if (hasKeyTree) {
             header[0] |= FLAG_KEY_TREE;
@@ -3482,50 +3521,53 @@ function _write(storage, path, type, bytes, debugValue, hasKeyTree, currentRecor
         headerView.setUint16(offset, lastChunkSize);  // last_chunk_size, 2 bytes
         offset += 2;
 
+        let bytesRead = 0;
+        const readChunk = (length) => {
+            let headerBytes;
+            if (bytesRead < header.byteLength) {
+                headerBytes = header.slice(bytesRead, bytesRead + length);
+                bytesRead += headerBytes.byteLength;
+                length -= headerBytes.byteLength;
+                if (length === 0) { return Promise.resolve(headerBytes); }
+            }
+            return reader(length)
+            .then(dataBytes => {
+                bytesRead += dataBytes.byteLength;
+                if (dataBytes instanceof Array) {
+                    dataBytes = Uint8Array.from(dataBytes);
+                }
+                else if (!(dataBytes instanceof Uint8Array)) {
+                    throw new Error(`bytes must be Uint8Array or plain byte Array`);
+                }
+                if (headerBytes) {
+                    dataBytes = concatTypedArrays(headerBytes, dataBytes);
+                }
+                return dataBytes;
+            });
+        };
+    
         // Create and write all chunks
-        bytes = concatTypedArrays(header, bytes);   // NEW: concat header and bytes for simplicity
-        const writes = [];
-        let copyOffset = 0;
-        chunkTable.ranges.forEach((range, r) => {
-            const chunk = {
-                data: new Uint8Array(range.length * bytesPerRecord),
-                get length() { return this.data.length; }
-            };
-
-            //chunk.data.fill(0); // not necessary
-
-            // if (r === 0) {
-            //     chunk.data.set(header, 0); // Copy header data into first chunk
-            //     const view = new Uint8Array(bytes.buffer, 0, Math.min(bytes.length, chunk.length - header.length));
-            //     chunk.data.set(view, header.length); // Copy first chunk of data into range
-            //     copyOffset += view.length;
-            // }
-            // else {
-
-            // Copy chunk data from source data
-            const view = new Uint8Array(bytes.buffer, copyOffset, Math.min(bytes.length - copyOffset, chunk.length));
-            chunk.data.set(view, 0);
-            copyOffset += chunk.length;
-            
-            // }
+        const allWritten = chunkTable.ranges.reduce((promise, range, r) => {
             const fileIndex = storage.getRecordFileIndex(range.pageNr, range.recordNr);
             if (isNaN(fileIndex)) {
                 throw new Error(`fileIndex is NaN!!`);
             }
-            const promise = storage.writeData(fileIndex, chunk.data);
-            writes.push(promise);
-            // const p = promiseTimeout(30000, promise).catch(err => {
-            //     // Timeout? 30s to write some data is quite long....
-            //     storage.debug.error(`Failed to write ${chunk.data.length} byte chunk for node "/${path}" at file index ${fileIndex}: ${err}`);
-            //     throw err;
-            // });
-            // writes.push(p);
-        });
+            let bytesWritten = 0;
+            return promise
+            .then(totalBytes => {
+                bytesWritten = totalBytes;
+                return readChunk(range.length * bytesPerRecord);
+            })
+            .then(data => {
+                bytesWritten += data.byteLength;
+                return storage.writeData(fileIndex, data);
+            })
+            .then(() => bytesWritten);
+        }, Promise.resolve(0));
 
-        return Promise.all(writes)
-        .then((results) => {
-            const bytesWritten = results.reduce((a,b) => a + b, 0);
-            const chunks = results.length;
+        return allWritten
+        .then(bytesWritten => {
+            const chunks = chunkTable.ranges.length;
             const address = new NodeAddress(path, allocation.ranges[0].pageNr, allocation.ranges[0].recordNr);
             const nodeInfo = new NodeInfo({ path, type, exists: true, address });
 
@@ -3539,11 +3581,11 @@ function _write(storage, path, type, bytes, debugValue, hasKeyTree, currentRecor
                 recordInfo = currentRecordInfo;
                 recordInfo.allocation = allocation; // Necessary?
                 recordInfo.hasKeyIndex = hasKeyTree;
-                recordInfo.headerLength = headerBytes;
+                recordInfo.headerLength = headerByteLength;
                 recordInfo.lastChunkSize = lastChunkSize;
             }
             else {
-                recordInfo = new RecordInfo(address.path, hasKeyTree, type, allocation, headerBytes, lastChunkSize, bytesPerRecord);
+                recordInfo = new RecordInfo(address.path, hasKeyTree, type, allocation, headerByteLength, lastChunkSize, bytesPerRecord);
                 recordInfo.fileIndex = storage.getRecordFileIndex(address.pageNr, address.recordNr);
             }
             recordInfo.timestamp = Date.now();
