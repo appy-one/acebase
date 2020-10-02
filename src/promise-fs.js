@@ -172,7 +172,7 @@ function readFile(path, options) {
 pfs.readFile = readFile;
 
 /**
- * Truncatates a file asynchronously
+ * Truncates a file asynchronously
  * @param {string|Buffer|URL} path 
  * @param {number} [len=0] byte length the file will be truncated to, default is 0.
  * @returns {Promise<void>} returns a promise that resolves once the file has been truncated
@@ -188,7 +188,7 @@ function truncate(path, len) {
 pfs.truncate = truncate;
 
 /**
- * Truncatates an open file asynchronously
+ * Truncates an open file asynchronously
  * @param {number} fd file descriptor
  * @param {number} [len=0] byte length the file will be truncated to, default is 0.
  * @returns {Promise<void>} returns a promise that resolves once the file has been truncated
