@@ -1360,7 +1360,8 @@ class DataIndex {
             // Group them and write to .build.n files in batches of 10.000 keys
 
             if (indexedValues === 0) {
-                return Promise.resolve();
+                // Remove build file, nothing else to do
+                return pfs.rm(buildFile).catch(err => {}); 
             }
 
             return pfs.exists(mergeFile)
@@ -1908,25 +1909,10 @@ class DataIndex {
                 }
             });
 
-            if (indexedValues === 0) {
-                // NEW: Create empty B+Tree
-                return BinaryBPlusTree.create({
-                    getLeafStartKeys(entriesPerLeaf) { return Promise.resolve([]); },
-                    getEntries(n) { return Promise.resolve([])},
-                    writer,
-                    treeStatistics, 
-                    fillFactor: FILL_FACTOR, //50, 
-                    maxEntriesPerNode: 255, 
-                    isUnique: false, 
-                    keepFreeSpace: true, 
-                    metadataKeys: this.allMetadataKeys
-                })
-                .then(() => {
-                    return pfs.close(writeFD);
-                });
-            }
 
-            const reader = new BinaryReader(readFD);
+            const reader = indexedValues > 0 
+                ? new BinaryReader(readFD)
+                : new BinaryReader((index, length) => Promise.resolve(Buffer.from([])));
             return BinaryBPlusTree.createFromEntryStream(
                 reader, 
                 writer, 
@@ -1942,7 +1928,7 @@ class DataIndex {
             .then(() => {
                 return Promise.all([
                     pfs.close(writeFD),
-                    pfs.close(readFD)
+                    indexedValues > 0 && pfs.close(readFD)
                 ]);
             });
         })
@@ -3859,8 +3845,12 @@ class GeoIndex extends DataIndex {
 
     build() {
         const addCallback = (add, obj, recordPointer, metadata) => {
+            if (typeof obj !== 'object') {
+                this.storage.debug.warn(`GeoIndex cannot index location because value "${obj}" is not an object`);
+                return;
+            }
             if (typeof obj.lat !== 'number' || typeof obj.long !== 'number') {
-                this.storage.debug.warn(`Cannot index location because lat (${obj.lat}) or long (${obj.long}) are invalid`)
+                this.storage.debug.warn(`GeoIndex cannot index location because lat (${obj.lat}) or long (${obj.long}) are invalid`)
                 return;
             }
             const geohash = _getGeoHash(obj);
