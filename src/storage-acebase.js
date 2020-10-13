@@ -2818,7 +2818,7 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
                         return prevRecordInfo;
                     })
                     .catch(err => {
-                        storage.debug.log(`Could not update tree for "/${nodeInfo.path}"${retry > 0 ? ` (retry ${retry})` : ''}: ${err.message}`.yellow);
+                        storage.debug.log(`Could not update tree for "/${nodeInfo.path}"${retry > 0 ? ` (retry ${retry})` : ''}: ${err.message}`.yellow, err.codes);
                         // Failed to update the binary data, we need to recreate the whole tree
         
                         // NEW: Rebuild tree to a temp file
