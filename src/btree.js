@@ -3608,11 +3608,11 @@ class BinaryBPlusTree {
             : this._requestFreeSpace(bytesNeeded); // request free space
 
         return allocPromise
-        .catch(err => {
-            // Not enough space available?
-            console.log(`Can't get ${bytesNeeded} bytes to rebuild leaf: ${err.message}`); // , leaf, options
-            throw err;
-        })
+        // .catch(err => {
+        //     // Not enough space available?
+        //     console.log(`Can't get ${bytesNeeded} bytes to rebuild leaf: ${err.message}`); // , leaf, options
+        //     throw err;
+        // })
         .then(allocated => {
 
             // Create new leaf
@@ -3676,10 +3676,10 @@ class BinaryBPlusTree {
                     //         return result;
                     //     })
                     // })
-                    .catch(err => {
-                        console.error(`failed to write new leaf: ${err.message}`);
-                        throw err;
-                    });
+                    // .catch(err => {
+                    //     console.error(`failed to write new leaf: ${err.message}`);
+                    //     throw err;
+                    // });
                 },
                 rollback: () => {
                     // release allocated space again
@@ -3772,25 +3772,215 @@ class BinaryBPlusTree {
         .catch(err => {
             throw new DetailedError('rebuild-leaf-failed', `Failed to rebuild leaf: ${err.message}`, err);
         });
-
     }
 
-    _splitLeaf(leaf, options = { nextLeaf: null, maxEntries: 0, cancelCallback: null }) {
-        // split leaf if it could not be written.
-        // There needs to be enough free space to store another leaf the size of current leaf,
+    /**
+     * 
+     * @param {BinaryBPlusTreeNode} node 
+     * @param {object} options 
+     * @returns {Promise<{ node1: BinaryBPlusTreeNode, node2: BinaryBPlusTreeNode }>}
+     */
+    _splitNode(node, options = { maxEntries: 0, cancelCallback: null }) {
+        // split node if it could not be written.
+        // There needs to be enough free space to store another leaf the size of current node,
         // and the parent node must not be full.
 
-        console.assert(
-            typeof options.cancelCallback === 'function', 
-            'specify options.cancelCallback to undo any changes when a rollback needs to be performed'
-        );
+        if (typeof options.cancelCallback !== 'function') { 
+            throw new Error('specify options.cancelCallback to undo any changes when a rollback needs to be performed');
+        }
+        
+        return Promise.try(() => {
+            if (!node.parentNode) {
+                throw new DetailedError('cannot-split-top-level-node', `Cannot split top-level node, tree rebuild is needed`);
+            }
+
+            if (node.parentNode.entries.length >= this.info.entriesPerNode) {
+                // Split parent node, try again
+                return this._splitNode(node.parentNode, { cancelCallback() {} })
+                .then(({ node1, node2 }) => {
+                    // find out if this node is now a child of node1 or node2, update properties and try again
+                    let parentEntry = node1.entries.find(e => node1.index + e.ltChildOffset === node.index); //node1.entries.find(entry => entry === node.parentEntry); // 
+                    if (parentEntry) { 
+                        node.parentNode = node1; 
+                        node.parentEntry = parentEntry; 
+                    }
+                    else if (node1.index + node1.gtChildOffset === node.index) {
+                        node.parentNode = node1;
+                        node.parentEntry = null;
+                    }
+                    else {
+                        node.parentNode = node2;
+                        node.parentEntry = node2.entries.find(e => node1.index + e.ltChildOffset === node.index); // null if gtChild
+                                                
+                        if (node.parentEntry === null && node.entries[0].key <= node2.entries[node2.entries.length-1].key) {
+                            debugger;
+                            throw new Error(`Node's first entry key (${node.entries[0].key}) <= node2's last entry key ${node2.entries[node2.entries.length-1].key}`);
+                        }
+                    }
+
+                    // Retry
+                    return this._splitNode(node, options);
+                });
+            }
+
+            if (typeof options.maxEntries !== 'number' || options.maxEntries === 0) {
+                options.maxEntries = Math.floor(node.entries.length / 2);
+            }
+
+            const movingEntries = node.entries.slice(-options.maxEntries);
+            const newNodeLength = node.length; // Use same length as current node
+    
+            return this._requestFreeSpace(newNodeLength)
+            .then(allocated => {
+    
+                // console.log(`Splitting node "${node.entries[0].key}" to "${node.entries.slice(-1)[0].key}", cutting at "${movingEntries[0].key}"`);
+    
+                // Create new node
+                const newNode = new BinaryBPlusTreeNode({
+                    isLeaf: false,
+                    length: newNodeLength,
+                    index: allocated.index,
+                    tree: node.tree
+                });
+    
+                // move entries
+                node.entries.splice(-options.maxEntries);
+                newNode.entries.push(...movingEntries);
+                // console.log(`Creating new node for ${movingEntries.length} entries`);
+    
+                // Update parent node entry pointing to this node
+                const oldParentNode = new BinaryBPlusTreeNode({
+                    isLeaf: false,
+                    index: node.parentNode.index,
+                    length: node.parentNode.length,
+                    free: node.parentNode.free
+                })
+                oldParentNode.gtChildIndex = node.parentNode.gtChildIndex;
+                oldParentNode.entries = node.parentNode.entries.map(entry => { 
+                    let newEntry = new BinaryBPlusTreeNodeEntry(entry.key);
+                    newEntry.ltChildIndex = entry.ltChildIndex;
+                    return newEntry;
+                });
+    
+                if (node.parentEntry !== null) {
+                    // Current node is a parent node entry's ltChild
+                    // eg: current node [10,11,12, ... ,18,19] is parent node [10,20,30] second entry's (20) ltChild.
+                    // When splitting to [10, ..., 14] and [15, ..., 19], we have to add key 15 to parent: [10,15,20,30]
+                    const newEntryKey = node.parentEntry.key;       // (20 in above example)
+                    node.parentEntry.key = movingEntries[0].key;    // (15 in above example)
+                    // Add new node entry for created node
+                    const insertIndex = node.parentNode.entries.indexOf(node.parentEntry)+1;
+                    const newNodeEntry = new BinaryBPlusTreeNodeEntry(newEntryKey);
+                    newNodeEntry.ltChildIndex = newNode.index; // Set the target index, so _writeNode knows it must calculate the target offset
+                    node.parentNode.entries.splice(insertIndex, 0, newNodeEntry);
+                }
+                else {
+                    // Current node is parent node's gtChild
+                    const newNodeEntry = new BinaryBPlusTreeNodeEntry(movingEntries[0].key);
+                    newNodeEntry.ltChildIndex = node.index;
+                    node.parentNode.entries.push(newNodeEntry);
+                    node.parentNode.gtChildIndex = newNode.index;
+                }
+    
+                // Start transaction
+                const tx = new TX();
+    
+                // Write new node:
+                tx.queue({
+                    name: 'write new node',
+                    action: () => {
+                        return this._writeNode(newNode);
+                    },
+                    rollback: () => {
+                        // Release allocated space again
+                        return this._registerFreeSpace(allocated.index, allocated.length);
+                    }
+                    // No need to add rollback step to remove new node. It'll be overwritten later
+                });
+    
+                // Rewrite this node:
+                tx.queue({
+                    name: 'rewrite current node',
+                    action: () => {
+                        return this._writeNode(node);
+                    },
+                    rollback: () => {
+                        node.entries.push(...movingEntries);
+                        let p = options.cancelCallback();
+                        if (p instanceof Promise) {
+                            return p.then(() => {
+                                return this._writeNode(node);
+                            });
+                        }
+                        return this._writeNode(node);
+                    }
+                });
+    
+                // Rewrite parent node:
+                tx.queue({
+                    name: 'rewrite parent node',
+                    action: () => {
+                        return this._writeNode(node.parentNode);
+                    },
+                    rollback: () => {
+                        // this is the last step, we don't need to rollback if we are running the tx sequentially. 
+                        // Because we run parallel, we need rollback code here:
+                        return this._writeNode(oldParentNode);
+                    }
+                });
+            
+                return tx.execute(true) // run parallel
+                .then(() => ({ node1: node, node2: newNode }));
+            });
+        })
+        .catch(err => {
+            throw new DetailedError('split-node-failed', `Unable to split node: ${err.message}`, err);
+        });    
+    }
+
+    /**
+     * 
+     * @param {BinaryBPlusTreeLeaf} leaf 
+     * @param {object} options 
+     */
+    _splitLeaf(leaf, options = { nextLeaf: null, maxEntries: 0, cancelCallback: null }) {
+        // split leaf if it could not be written.
+        // There needs to be enough free space to store another leaf the size of current leaf
+
+        if (typeof options.cancelCallback !== 'function') { 
+            throw new Error('specify options.cancelCallback to undo any changes when a rollback needs to be performed');
+        }
         
         if (leaf.parentNode.entries.length >= this.info.entriesPerNode) {
-            // TODO: split parent node! 
-            // return this._splitNode(leaf.parentNode).then(({ node1, node2 }) => {
-            //      // find out if leaf is now a child of node1 or node2, update properties and try again
-            // })
             return Promise.reject(new DetailedError('parent-node-full', `Cannot split leaf because parent node is full`));
+            
+            // NEW: split parent node!
+            /* TODO: Thorough testing before enabling 
+            return this._splitNode(leaf.parentNode, { cancelCallback() {} })
+            .then(({ node1, node2 }) => {
+                // find out if leaf is now a child of node1 or node2, update properties and try again
+                let parentEntry = node1.entries.find(e => node1.index + e.ltChildOffset === leaf.index); //node1.entries.find(entry => entry === node.parentEntry); // 
+                if (parentEntry) { 
+                    leaf.parentNode = node1; 
+                    leaf.parentEntry = parentEntry; 
+                }
+                else if (node1.index + node1.gtChildOffset === leaf.index) {
+                    leaf.parentNode = node1;
+                    leaf.parentEntry = null;
+                }
+                else {
+                    leaf.parentNode = node2;
+                    leaf.parentEntry = node2.entries.find(e => node1.index + e.ltChildOffset === leaf.index); // null if gtChild
+                                            
+                    if (leaf.parentEntry === null && leaf.entries[0].key <= node2.entries[node2.entries.length-1].key) {
+                        debugger;
+                        throw new Error(`Leaf's first entry key (${leaf.entries[0].key}) <= node2's last entry key ${node2.entries[node2.entries.length-1].key}`);
+                    }
+                }
+
+                // Retry
+                return this._splitLeaf(leaf, options);
+            }); */
         }
 
         if (typeof options.maxEntries !== 'number' || options.maxEntries === 0) {
@@ -3819,165 +4009,149 @@ class BinaryBPlusTree {
             });
         }
 
-        const movingEntries = leaf.entries.slice(-options.maxEntries);
-        // const movingExtDataLength =  movingEntry.extData ? Math.ceil((movingEntry.extData.length - movingEntry.extData.freeBytes) * 1.1) : 0;
-        const movingExtDataLength = Math.ceil(movingEntries.reduce((length, entry) => {
-            return length + (entry.extData ? entry.extData.length + 8 - entry.extData.freeBytes : 0);
-        }, 0)  / movingEntries.length * this.info.entriesPerNode);
+        return Promise.try(() => {
+            const movingEntries = leaf.entries.slice(-options.maxEntries);
+            // const movingExtDataLength =  movingEntry.extData ? Math.ceil((movingEntry.extData.length - movingEntry.extData.freeBytes) * 1.1) : 0;
+            const movingExtDataLength = Math.ceil(movingEntries.reduce((length, entry) => {
+                return length + (entry.extData ? entry.extData.length + 8 - entry.extData.freeBytes : 0);
+            }, 0)  / movingEntries.length * this.info.entriesPerNode);
 
-        const newLeafExtDataLength = Math.ceil(movingExtDataLength * 1.1);
-        const newLeafLength = leaf.length; // Use same length as current leaf
+            const newLeafExtDataLength = Math.ceil(movingExtDataLength * 1.1);
+            const newLeafLength = leaf.length; // Use same length as current leaf
 
-        // if (this.info.freeSpace < newLeafLength + newLeafExtDataLength) {
-        //     if (this.autoGrow) {
-        //         return this._growTree(newLeafLength + newLeafExtDataLength)
-        //         .then(() => {
-        //             // Do it again
-        //             return this._splitLeaf(leaf, options);
-        //         });
-        //     }
-        //     else {
-        //         return Promise.reject(new Error(`Not enough free space left to split leaf`));
-        //     }
-        // }
+            return this._requestFreeSpace(newLeafLength + newLeafExtDataLength)
+            .then(allocated => {
 
-        return this._requestFreeSpace(newLeafLength + newLeafExtDataLength)
-        .then(allocated => {
+                // console.log(`Splitting leaf "${leaf.entries[0].key}" to "${leaf.entries.slice(-1)[0].key}", cutting at "${movingEntries[0].key}"`);
 
-            // console.log(`Splitting leaf "${leaf.entries[0].key}" to "${leaf.entries.slice(-1)[0].key}", cutting at "${movingEntries[0].key}"`);
+                const nextLeaf = options.nextLeaf;
 
-            const nextLeaf = options.nextLeaf;
-
-            // Create new leaf
-            const newLeaf = new BinaryBPlusTreeLeaf({
-                isLeaf: true,
-                length: newLeafLength,
-                index: allocated.index, //(this.info.byteLength - this.info.freeSpace) //+ 1,
-                tree: leaf.tree,
-                hasExtData: newLeafExtDataLength > 0
-            });
-            if (newLeafExtDataLength > 0) {
-                newLeaf.extData = {
-                    loaded: true,
-                    length: newLeafExtDataLength,
-                    freeBytes: newLeafExtDataLength - movingExtDataLength
-                };
-            }
-
-            // Adjust free space length and prev & next offsets
-            // this.info.freeSpace -= newLeafLength + newLeafExtDataLength;
-            newLeaf.prevLeafIndex = leaf.index;
-            newLeaf.nextLeafIndex = nextLeaf ? nextLeaf.index : 0;
-            leaf.nextLeafIndex = newLeaf.index;
-            if (nextLeaf) {
-                nextLeaf.prevLeafIndex = newLeaf.index;
-            }
-
-            // move entries
-            leaf.entries.splice(-options.maxEntries);
-            newLeaf.entries.push(...movingEntries);
-            // console.log(`Creating new leaf for ${movingEntries.length} entries`);
-
-            // Update parent node entry pointing to this leaf
-            const oldParentNode = new BinaryBPlusTreeNode({
-                isLeaf: false,
-                index: leaf.parentNode.index,
-                length: leaf.parentNode.length,
-                free: leaf.parentNode.free
-            })
-            oldParentNode.gtChildIndex = leaf.parentNode.gtChildIndex;
-            oldParentNode.entries = leaf.parentNode.entries.map(entry => { 
-                let newEntry = new BinaryBPlusTreeNodeEntry(entry.key);
-                newEntry.ltChildIndex = entry.ltChildIndex;
-                return newEntry;
-            });
-
-            if (leaf.parentEntry !== null) {
-                // Current leaf is a parent node entry's ltChild
-                leaf.parentEntry.key = movingEntries[0].key;
-                // Add new node entry for created leaf
-                const insertIndex = leaf.parentNode.entries.indexOf(leaf.parentEntry)+1;
-                const newNodeEntry = new BinaryBPlusTreeNodeEntry(nextLeaf.entries[0].key);
-                newNodeEntry.ltChildIndex = newLeaf.index; // Set the target index, so _writeNode knows it must calculate the target offset
-                leaf.parentNode.entries.splice(insertIndex, 0, newNodeEntry);
-            }
-            else {
-                // Current leaf is parent node's gtChild
-                const newNodeEntry = new BinaryBPlusTreeNodeEntry(movingEntries[0].key);
-                newNodeEntry.ltChildIndex = leaf.index;
-                leaf.parentNode.entries.push(newNodeEntry);
-                leaf.parentNode.gtChildIndex = newLeaf.index;
-            }
-
-            // Start transaction
-            const tx = new TX();
-
-            // // Update free space info:
-            // tx.queue({
-            //     action: () => {
-            //         return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), this.info.freeSpaceIndex)
-            //     },
-            //     rollback: () => {
-            //         // Rollback
-            //         this.info.freeSpace += newLeafLength + newLeafExtDataLength;
-            //         return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), this.info.freeSpaceIndex);
-            //     }
-            // });
-
-            // Write new leaf:
-            tx.queue({
-                action: () => {
-                    return this._writeLeaf(newLeaf);
-                },
-                rollback: () => {
-                    // Release allocated space again
-                    return this._registerFreeSpace(allocated.index, allocated.length);
+                // Create new leaf
+                const newLeaf = new BinaryBPlusTreeLeaf({
+                    isLeaf: true,
+                    length: newLeafLength,
+                    index: allocated.index, //(this.info.byteLength - this.info.freeSpace) //+ 1,
+                    tree: leaf.tree,
+                    hasExtData: newLeafExtDataLength > 0
+                });
+                if (newLeafExtDataLength > 0) {
+                    newLeaf.extData = {
+                        loaded: true,
+                        length: newLeafExtDataLength,
+                        freeBytes: newLeafExtDataLength - movingExtDataLength
+                    };
                 }
-                // No need to add rollback step to remove new leaf. It'll be overwritten later
-            });
 
-            // Rewrite next leaf:
-            nextLeaf && tx.queue({
-                action: () => {
-                    return this._writeLeaf(nextLeaf);
-                },
-                rollback: () => {
-                    nextLeaf.prevLeafIndex = leaf.index;
-                    return this._writeLeaf(nextLeaf);                
+                // Adjust free space length and prev & next offsets
+                // this.info.freeSpace -= newLeafLength + newLeafExtDataLength;
+                newLeaf.prevLeafIndex = leaf.index;
+                newLeaf.nextLeafIndex = nextLeaf ? nextLeaf.index : 0;
+                leaf.nextLeafIndex = newLeaf.index;
+                if (nextLeaf) {
+                    nextLeaf.prevLeafIndex = newLeaf.index;
                 }
-            });
 
-            // Rewrite this leaf:
-            tx.queue({
-                action: () => {
-                    return this._writeLeaf(leaf);
-                },
-                rollback: () => {
-                    leaf.entries.push(...movingEntries);
-                    leaf.nextLeafIndex = nextLeaf ? nextLeaf.index : 0;
-                    let p = options.cancelCallback();
-                    if (p instanceof Promise) {
-                        return p.then(() => {
-                            return this._writeLeaf(leaf);
-                        });
+                // move entries
+                leaf.entries.splice(-options.maxEntries);
+                newLeaf.entries.push(...movingEntries);
+                // console.log(`Creating new leaf for ${movingEntries.length} entries`);
+
+                // Update parent node entry pointing to this leaf
+                const oldParentNode = new BinaryBPlusTreeNode({
+                    isLeaf: false,
+                    index: leaf.parentNode.index,
+                    length: leaf.parentNode.length,
+                    free: leaf.parentNode.free
+                })
+                oldParentNode.gtChildIndex = leaf.parentNode.gtChildIndex;
+                oldParentNode.entries = leaf.parentNode.entries.map(entry => { 
+                    let newEntry = new BinaryBPlusTreeNodeEntry(entry.key);
+                    newEntry.ltChildIndex = entry.ltChildIndex;
+                    return newEntry;
+                });
+
+                if (leaf.parentEntry !== null) {
+                    // Current leaf is a parent node entry's ltChild
+                    // eg: current leaf [10,11,12, ... ,18,19] is parent node [10,20,30] second entry's (20) ltChild.
+                    // When splitting to [10, ..., 14] and [15, ..., 19], we have to add key 15 to parent: [10,15,20,30]
+                    const newEntryKey = leaf.parentEntry.key;       // (20 in above example)
+                    leaf.parentEntry.key = movingEntries[0].key;    // (15 in above example)
+                    // Add new node entry for created leaf
+                    const insertIndex = leaf.parentNode.entries.indexOf(leaf.parentEntry)+1;
+                    const newNodeEntry = new BinaryBPlusTreeNodeEntry(newEntryKey);
+                    newNodeEntry.ltChildIndex = newLeaf.index; // Set the target index, so _writeNode knows it must calculate the target offset
+                    leaf.parentNode.entries.splice(insertIndex, 0, newNodeEntry);
+                }
+                else {
+                    // Current leaf is parent node's gtChild
+                    const newNodeEntry = new BinaryBPlusTreeNodeEntry(movingEntries[0].key);
+                    newNodeEntry.ltChildIndex = leaf.index;
+                    leaf.parentNode.entries.push(newNodeEntry);
+                    leaf.parentNode.gtChildIndex = newLeaf.index;
+                }
+
+                // Start transaction
+                const tx = new TX();
+
+                // Write new leaf:
+                tx.queue({
+                    name: 'write new leaf',
+                    action: () => {
+                        return this._writeLeaf(newLeaf);
+                    },
+                    rollback: () => {
+                        // Release allocated space again
+                        return this._registerFreeSpace(allocated.index, allocated.length);
                     }
-                    return this._writeLeaf(leaf);
-                }
-            });
+                    // No need to add rollback step to remove new leaf. It'll be overwritten later
+                });
 
-            // Rewrite parent node:
-            tx.queue({
-                action: () => {
-                    return this._writeNode(leaf.parentNode);
-                },
-                rollback: () => {
-                    // this is the last step, we don't need to rollback if we are running the tx sequentially. 
-                    // Because we run parallel, we need rollback code here:
-                    return this._writeNode(oldParentNode);
-                }
+                // Rewrite next leaf:
+                nextLeaf && tx.queue({
+                    name: 'rewrite next leaf',
+                    action: () => {
+                        return this._writeLeaf(nextLeaf);
+                    },
+                    rollback: () => {
+                        nextLeaf.prevLeafIndex = leaf.index;
+                        return this._writeLeaf(nextLeaf);                
+                    }
+                });
+
+                // Rewrite this leaf:
+                tx.queue({
+                    name: 'rewrite current leaf',
+                    action: () => {
+                        return this._writeLeaf(leaf);
+                    },
+                    rollback: () => {
+                        leaf.entries.push(...movingEntries);
+                        leaf.nextLeafIndex = nextLeaf ? nextLeaf.index : 0;
+                        let p = options.cancelCallback();
+                        if (p instanceof Promise) {
+                            return p.then(() => {
+                                return this._writeLeaf(leaf);
+                            });
+                        }
+                        return this._writeLeaf(leaf);
+                    }
+                });
+
+                // Rewrite parent node:
+                tx.queue({
+                    name: 'rewrite parent node',
+                    action: () => {
+                        return this._writeNode(leaf.parentNode);
+                    },
+                    rollback: () => {
+                        // this is the last step, we don't need to rollback if we are running the tx sequentially. 
+                        // Because we run parallel, we need rollback code here:
+                        return this._writeNode(oldParentNode);
+                    }
+                });
+            
+                return tx.execute(true); // run parallel
             });
-        
-            return tx.execute(true); // run parallel
         })
         .catch(err => {
             throw new DetailedError('split-leaf-failed', `Unable to split leaf: ${err.message}`, err);
@@ -4118,10 +4292,10 @@ class BinaryBPlusTree {
                     return this._rebuildLeaf(leaf, { 
                         growData: true, 
                         growExtData: true
-                    })
-                    .catch(err => {
-                        throw new DetailedError('add-key-failed', `Can't add key '${key}': ${err.message}`, err);
                     });
+                    // .catch(err => {
+                    //     throw new DetailedError('add-key-failed', `Can't add key '${key}': ${err.message}`, err);
+                    // });
                 });
             }
  
@@ -4147,15 +4321,15 @@ class BinaryBPlusTree {
             }
 
             // Split leaf
-            return this._splitLeaf(leaf, { cancelCallback: undoAdd })
-            .catch(err => {
-                throw new DetailedError('split-leaf-failed', `Can't add key '${key}': ${err.message}`, err);
-            });
+            return this._splitLeaf(leaf, { cancelCallback: undoAdd });
+            // .catch(err => {
+            //     throw new DetailedError('split-leaf-failed', `Can't add key '${key}': ${err.message}`, err);
+            // });
 
         })
         .catch(err => {
             lock.release();
-            throw err;
+            throw new DetailedError('add-key-failed', `Can't add key '${key}': ${err.message}`, err);
         })
         .then(() => {
             lock.release();
