@@ -5237,6 +5237,7 @@ class NodeInfo {
 module.exports = { NodeInfo };
 },{"./node-value-types":37,"acebase-core":11}],36:[function(require,module,exports){
 const { PathInfo } = require('acebase-core');
+const storage = require('./storage');
 
 const SECOND = 1000;
 const MINUTE = 60000;
@@ -5376,18 +5377,33 @@ class NodeLocker {
                 if (options.noTimeout !== true) {
                     lock.expires = Date.now() + LOCK_TIMEOUT;
                     //debug.warn(`lock :: GRANTED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
-                    lock.timeout = setTimeout(() => {
-                        // In the right situation, this timeout never fires. Target: Bugfree code
+
+                    let timeoutCount = 0;
+                    const timeoutHandler = () => {
+                        // Autorelease timeouts must only fire when there is something wrong in the 
+                        // executing (AceBase) code, eg an unhandled promise rejection causing a lock not
+                        // to be released. To guard against programming errors, we will issue 3 warning
+                        // messages before releasing the lock.
 
                         if (lock.state !== LOCK_STATE.LOCKED) { return; }
-                        console.error(`lock :: ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} took too long, ${lock.comment}`);
+
+                        timeoutCount++;
+                        if (timeoutCount <= 3) {
+                            // Warn first.
+                            console.warn(`${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) is taking a long time to complete [${timeoutCount}]`);
+                            lock.timeout = setTimeout(timeoutHandler, LOCK_TIMEOUT / 3);
+                            return;
+                        }
+                        console.error(`lock :: ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) took too long`);
                         lock.state = LOCK_STATE.EXPIRED;
                         // let allTransactionLocks = _locks.filter(l => l.tid === lock.tid).sort((a,b) => a.requested < b.requested ? -1 : 1);
                         // let transactionsDebug = allTransactionLocks.map(l => `${l.state} ${l.forWriting ? "WRITE" : "read"} ${l.comment}`).join("\n");
                         // debug.error(transactionsDebug);
 
                         this._processLockQueue();
-                    }, LOCK_TIMEOUT);
+                    };
+
+                    lock.timeout = setTimeout(timeoutHandler, LOCK_TIMEOUT / 3);
                 }
             }
             return Promise.resolve(lock);
@@ -5527,7 +5543,7 @@ class NodeLock {
 }
 
 module.exports = { NodeLocker, NodeLock };
-},{"acebase-core":11}],37:[function(require,module,exports){
+},{"./storage":40,"acebase-core":11}],37:[function(require,module,exports){
 const VALUE_TYPES = {
     // Native types:
     OBJECT: 1,
