@@ -2062,7 +2062,6 @@ class NodeReader {
 
                 // Index child keys or array indexes
                 while(index < binary.length) {
-                    childCount++;
                     let startIndex = index;
                     // let child = {
                     //     key: undefined,
@@ -2081,8 +2080,9 @@ class NodeReader {
                     try {
                         if (isArray) {
                             //child.path = `${this.address.path}[${childCount-1}]`;
-                            child.path = PathInfo.getChildPath(this.address.path, childCount-1);
-                            child.index = childCount-1;
+                            const childIndex = childCount; // childCount is now incremented at the end of try block, to avoid missing index(es) upon TruncatedDataErrors
+                            child.path = PathInfo.getChildPath(this.address.path, childIndex);
+                            child.index = childIndex;
                         }
                         else {
                             assert(2);
@@ -2122,6 +2122,7 @@ class NodeReader {
                         }
 
                         children.push(child);
+                        childCount++;
                     }
                     catch(err) {
                         if (err instanceof TruncatedDataError) { //if (err.message === "corrupt") { throw err; }
