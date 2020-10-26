@@ -947,6 +947,13 @@ class DataReference {
         return new DataReferenceQuery(this);
     }
 
+    count() {
+        return this.reflect("info", { child_count: true })
+        .then(info => {
+            return info.children.count;
+        })
+    }
+
     reflect(type, args) {
         if (this.isWildcardPath) {
             return Promise.reject(new Error(`Cannot reflect on wildcard path "/${this.path}"`));
@@ -5100,11 +5107,12 @@ class LocalApi extends Api {
                     type: 'unknown',
                     value: undefined,
                     children: {
+                        count: 0,
                         more: false,
                         list: []
                     }
                 };
-                return Node.getInfo(this.storage, path)
+                return Node.getInfo(this.storage, path, { include_child_count: args.child_count === true })
                 .then(nodeInfo => {
                     info.key = nodeInfo.key;
                     info.exists = nodeInfo.exists;
@@ -5112,7 +5120,13 @@ class LocalApi extends Api {
                     info.value = nodeInfo.value;
                     let hasChildren = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
                     if (hasChildren) {
-                        return getChildren(path, args.child_limit, args.child_skip);
+                        if (args.child_count === true) {
+                            // return child count instead of enumerating
+                            return { count: nodeInfo.childCount };
+                        }
+                        else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
+                            return getChildren(path, args.child_limit, args.child_skip);
+                        }
                     }
                 })
                 .then(children => {
@@ -5189,6 +5203,7 @@ class NodeInfo {
      * @param {boolean} [info.exists]
      * @param {NodeAddress} [info.address]
      * @param {any} [info.value]
+     * @param {number} [info.childCount]
      */
     constructor(info) {
         this.path = info.path;
@@ -5198,6 +5213,7 @@ class NodeInfo {
         this.exists = info.exists;
         this.address = info.address;
         this.value = info.value;
+        this.childCount = info.childCount;
 
         if (typeof this.path === 'string' && (typeof this.key === 'undefined' && typeof this.index === 'undefined')) {
             let pathInfo = PathInfo.get(this.path);
@@ -5587,12 +5603,14 @@ class Node {
      * @param {string} path 
      * @param {object} [options]
      * @param {boolean} [options.no_cache=false] Whether to use cache for lookups
+     * @param {boolean} [options.include_child_count=false] whether to include child count
      * @returns {Promise<NodeInfo>} promise that resolves with info about the node
      */
-    static getInfo(storage, path, options = { no_cache: false }) {
+    static getInfo(storage, path, options = { no_cache: false, include_child_count: false }) {
 
         // Check if the info has been cached
-        if (options && !options.no_cache) {
+        const cacheable = options && !options.no_cache && !options.include_child_count;
+        if (cacheable) {
             let cachedInfo = storage.nodeCache.find(path);
             if (cachedInfo) {
                 return Promise.resolve(cachedInfo);
@@ -5600,9 +5618,9 @@ class Node {
         }
 
         // Cache miss. Check if node is being looked up already
-        return storage.getNodeInfo(path)
+        return storage.getNodeInfo(path, { include_child_count: options.include_child_count })
         .then(info => {
-            if (options && !options.no_cache) {
+            if (cacheable) {
                 storage.nodeCache.update(info);
             }
             return info;
@@ -6866,7 +6884,7 @@ class CustomStorage extends Storage {
         try {
             const node = await (async () => {
                 // Get path, path/* and path[*
-                const filtered = options.include || options.exclude || options.child_objects === false;
+                const filtered = (options.include && options.include.length > 0) || (options.exclude && options.exclude.length > 0) || options.child_objects === false;
                 const pathInfo = PathInfo.get(path);
                 const targetNode = await this._readNode(path, { transaction });
                 if (!targetNode) {
@@ -6893,12 +6911,12 @@ class CustomStorage extends Storage {
                     // });
                 }
 
-                const includeCheck = options.include 
-                    ? new RegExp('^' + options.include.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
-                    : null;
-                const excludeCheck = options.exclude 
-                    ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
-                    : null;
+                // const includeCheck = options.include && options.include.length > 0
+                //     ? new RegExp('^' + options.include.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
+                //     : null;
+                // const excludeCheck = options.exclude && options.exclude.length > 0
+                //     ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
+                //     : null;
 
                 let checkExecuted = false;
                 const includeDescendantCheck = (descPath) => {
@@ -6912,8 +6930,15 @@ class CustomStorage extends Storage {
                     // Apply include & exclude filters
                     let checkPath = descPath.slice(path.length);
                     if (checkPath[0] === '/') { checkPath = checkPath.slice(1); }
-                    let include = (includeCheck ? includeCheck.test(checkPath) : true) 
-                        && (excludeCheck ? !excludeCheck.test(checkPath) : true);
+                    // let include = (includeCheck ? includeCheck.test(checkPath) : true) 
+                    //     && (excludeCheck ? !excludeCheck.test(checkPath) : true);
+                    const checkPathInfo = new PathInfo(checkPath);
+                    let include = (options.include && options.include.length > 0 
+                        ? options.include.some(k => checkPathInfo.equals(k) || checkPathInfo.isAncestorOf(k))
+                        : true) 
+                        && (options.exclude && options.exclude.length > 0
+                        ? !options.exclude.some(k => checkPathInfo.equals(k) || checkPathInfo.isAncestorOf(k))
+                        : true);
 
                     // Apply child_objects filter
                     if (include 
@@ -7032,6 +7057,10 @@ class CustomStorage extends Storage {
                             delete result.value[key];
                         }
                     })
+                }
+
+                if (options.include) {
+                    // TODO: remove any unselected children that did get through
                 }
 
                 if (options.exclude) {
@@ -8421,9 +8450,10 @@ class Storage extends EventEmitter {
      * @param {string} path 
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {boolean} [options.include_child_count=false] whether to include child count if node is an object or array
      * @returns {Promise<NodeInfo>}
      */
-    getNodeInfo(path, options = { tid: undefined }) {
+    getNodeInfo(path, options = { tid: undefined, include_child_count: false }) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
