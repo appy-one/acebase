@@ -980,7 +980,7 @@ class CustomStorage extends Storage {
         try {
             const node = await (async () => {
                 // Get path, path/* and path[*
-                const filtered = options.include || options.exclude || options.child_objects === false;
+                const filtered = (options.include && options.include.length > 0) || (options.exclude && options.exclude.length > 0) || options.child_objects === false;
                 const pathInfo = PathInfo.get(path);
                 const targetNode = await this._readNode(path, { transaction });
                 if (!targetNode) {
@@ -1007,12 +1007,12 @@ class CustomStorage extends Storage {
                     // });
                 }
 
-                const includeCheck = options.include 
-                    ? new RegExp('^' + options.include.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
-                    : null;
-                const excludeCheck = options.exclude 
-                    ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
-                    : null;
+                // const includeCheck = options.include && options.include.length > 0
+                //     ? new RegExp('^' + options.include.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
+                //     : null;
+                // const excludeCheck = options.exclude && options.exclude.length > 0
+                //     ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
+                //     : null;
 
                 let checkExecuted = false;
                 const includeDescendantCheck = (descPath) => {
@@ -1026,8 +1026,15 @@ class CustomStorage extends Storage {
                     // Apply include & exclude filters
                     let checkPath = descPath.slice(path.length);
                     if (checkPath[0] === '/') { checkPath = checkPath.slice(1); }
-                    let include = (includeCheck ? includeCheck.test(checkPath) : true) 
-                        && (excludeCheck ? !excludeCheck.test(checkPath) : true);
+                    // let include = (includeCheck ? includeCheck.test(checkPath) : true) 
+                    //     && (excludeCheck ? !excludeCheck.test(checkPath) : true);
+                    const checkPathInfo = new PathInfo(checkPath);
+                    let include = (options.include && options.include.length > 0 
+                        ? options.include.some(k => checkPathInfo.equals(k) || checkPathInfo.isAncestorOf(k))
+                        : true) 
+                        && (options.exclude && options.exclude.length > 0
+                        ? !options.exclude.some(k => checkPathInfo.equals(k) || checkPathInfo.isAncestorOf(k))
+                        : true);
 
                     // Apply child_objects filter
                     if (include 
@@ -1146,6 +1153,10 @@ class CustomStorage extends Storage {
                             delete result.value[key];
                         }
                     })
+                }
+
+                if (options.include) {
+                    // TODO: remove any unselected children that did get through
                 }
 
                 if (options.exclude) {
