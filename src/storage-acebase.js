@@ -939,9 +939,10 @@ class AceBaseStorage extends Storage {
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @param {boolean} [options.no_cache=false] 
+     * @param {boolean} [options.include_child_count=false] whether to include child count if node is an object or array
      * @returns {Promise<NodeInfo>}
      */
-    getNodeInfo(path, options = { tid: undefined, no_cache: false }) {
+    getNodeInfo(path, options = { tid: undefined, no_cache: false, include_child_count: false }) {
         options = options || {};
         options.no_cache = options.no_cache === true;
 
@@ -952,14 +953,16 @@ class AceBaseStorage extends Storage {
             return Promise.resolve(new NodeInfo({ path, address: this.rootRecord.address, exists: true, type: VALUE_TYPES.OBJECT }));
         }
 
-        // Check if the info has been cached
-        let cachedInfo = this.nodeCache.find(path, true);
-        if (cachedInfo instanceof Promise) {
-            // not currently cached, but it was announced
-            return cachedInfo;
-        }
-        else if (cachedInfo) {
-            return Promise.resolve(cachedInfo);
+        if (!options.include_child_count) {
+            // Check if the info has been cached
+            let cachedInfo = this.nodeCache.find(path, true);
+            if (cachedInfo instanceof Promise) {
+                // not currently cached, but it was announced
+                return cachedInfo;
+            }
+            else if (cachedInfo) {
+                return Promise.resolve(cachedInfo);
+            }
         }
 
         // Cache miss, announce the lookup
@@ -986,7 +989,7 @@ class AceBaseStorage extends Storage {
         })
         .then(parentInfo => {
 
-            if (!parentInfo.exists || [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].indexOf(parentInfo.valueType) < 0 || !parentInfo.address) {
+            if (!parentInfo.exists || ![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentInfo.valueType) || !parentInfo.address) {
                 // Parent does not exist, is not an object or array, or has no children (object not stored in own address)
                 // so child doesn't exist
                 const childInfo = new NodeInfo({ path, exists: false });
@@ -998,8 +1001,27 @@ class AceBaseStorage extends Storage {
             return reader.getChildInfo(pathInfo.key);
         })
         .then(childInfo => {
+            if (options.include_child_count && [VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(childInfo.valueType)) {
+                // Get number of children
+                let lock;
+                return this.nodeLocker.lock(path, tid, false, `Node.getInfo "/${path}"`)
+                .then(l => {
+                    lock = l;
+                    const reader = new NodeReader(this, childInfo.address, lock, true);
+                    return reader.getChildCount();
+                })
+                .then(childCount => {
+                    lock.release(`Node.getInfo: done with path "/${path}"`);
+                    childInfo.childCount = childCount;
+                    return childInfo;
+                });
+            }
+            return childInfo;
+        }).
+        then(childInfo => {
             lock.release(`Node.getInfo: done with path "/${parentPath}"`);
             this.nodeCache.update(childInfo, true); // NodeCache.update(childInfo); // Don't have to, nodeReader will have done it already
+            
             return childInfo;
         });
     }
@@ -1555,8 +1577,10 @@ class NodeReader {
                     const promises = [];
                     const obj = isArray ? [] : {};
                     const streamOptions = { };
-                    if (options.include && options.include.length > 0) {
-                        const keyFilter = options.include.filter(key => key !== '*' && key.indexOf('/') < 0);
+                    if (options.include && options.include.length > 0 && options.include.find(k => k[0] !== '*')) {
+                        const keyFilter = options.include
+                            .map(key => key.includes('/') ? key.slice(0, key.indexOf('/')) : key)
+                            .reduce((keys, key) => (keys.includes(key) || keys.push(key)) && keys, []);
                         if (keyFilter.length > 0) { 
                             streamOptions.keyFilter = keyFilter;
                         }
@@ -1568,9 +1592,9 @@ class NodeReader {
                             // Options specify not to include any child objects
                             return;
                         }
-                        if (options.include && options.include.length > 0 && !options.include.includes('*') && !options.include.includes(child.key)) { 
+                        if (options.include && options.include.length > 0 && !options.include.find(k => k[0] === '*') && !options.include.includes(child.key)) { 
                             // This particular child is not in the include list
-                            return; 
+                            return;
                         }
                         if (options.exclude && options.exclude.length > 0 && options.exclude.includes(child.key)) {
                             // This particular child is on the exclude list
@@ -2153,6 +2177,23 @@ class NodeReader {
         }
 
         return generator;
+    }
+
+    /**
+     * Gets the number of children of this node. 
+     * NEEDS OPTIMIZATION - currently uses getChildStream to get count, 
+     * but this is quite heavy for the purpose
+     */
+    getChildCount() {
+        let count = 0;
+        return this.getChildStream()
+        .next(childInfo => {
+            count++;
+            return true; // next!
+        })
+        .then(() => {
+            return count;
+        })
     }
 
     /**
