@@ -11,6 +11,7 @@ class NodeInfo {
      * @param {boolean} [info.exists]
      * @param {NodeAddress} [info.address]
      * @param {any} [info.value]
+     * @param {number} [info.childCount]
      */
     constructor(info) {
         this.path = info.path;
@@ -20,6 +21,7 @@ class NodeInfo {
         this.exists = info.exists;
         this.address = info.address;
         this.value = info.value;
+        this.childCount = info.childCount;
 
         if (typeof this.path === 'string' && (typeof this.key === 'undefined' && typeof this.index === 'undefined')) {
             let pathInfo = PathInfo.get(this.path);

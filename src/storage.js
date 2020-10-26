@@ -1036,9 +1036,10 @@ class Storage extends EventEmitter {
      * @param {string} path 
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {boolean} [options.include_child_count=false] whether to include child count if node is an object or array
      * @returns {Promise<NodeInfo>}
      */
-    getNodeInfo(path, options = { tid: undefined }) {
+    getNodeInfo(path, options = { tid: undefined, include_child_count: false }) {
         throw new Error(`This method must be implemented by subclass`);
     }
 

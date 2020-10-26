@@ -11,12 +11,14 @@ class Node {
      * @param {string} path 
      * @param {object} [options]
      * @param {boolean} [options.no_cache=false] Whether to use cache for lookups
+     * @param {boolean} [options.include_child_count=false] whether to include child count
      * @returns {Promise<NodeInfo>} promise that resolves with info about the node
      */
-    static getInfo(storage, path, options = { no_cache: false }) {
+    static getInfo(storage, path, options = { no_cache: false, include_child_count: false }) {
 
         // Check if the info has been cached
-        if (options && !options.no_cache) {
+        const cacheable = options && !options.no_cache && !options.include_child_count;
+        if (cacheable) {
             let cachedInfo = storage.nodeCache.find(path);
             if (cachedInfo) {
                 return Promise.resolve(cachedInfo);
@@ -24,9 +26,9 @@ class Node {
         }
 
         // Cache miss. Check if node is being looked up already
-        return storage.getNodeInfo(path)
+        return storage.getNodeInfo(path, { include_child_count: options.include_child_count })
         .then(info => {
-            if (options && !options.no_cache) {
+            if (cacheable) {
                 storage.nodeCache.update(info);
             }
             return info;

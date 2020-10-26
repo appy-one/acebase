@@ -917,11 +917,12 @@ class LocalApi extends Api {
                     type: 'unknown',
                     value: undefined,
                     children: {
+                        count: 0,
                         more: false,
                         list: []
                     }
                 };
-                return Node.getInfo(this.storage, path)
+                return Node.getInfo(this.storage, path, { include_child_count: args.child_count === true })
                 .then(nodeInfo => {
                     info.key = nodeInfo.key;
                     info.exists = nodeInfo.exists;
@@ -929,7 +930,13 @@ class LocalApi extends Api {
                     info.value = nodeInfo.value;
                     let hasChildren = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
                     if (hasChildren) {
-                        return getChildren(path, args.child_limit, args.child_skip);
+                        if (args.child_count === true) {
+                            // return child count instead of enumerating
+                            return { count: nodeInfo.childCount };
+                        }
+                        else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
+                            return getChildren(path, args.child_limit, args.child_skip);
+                        }
                     }
                 })
                 .then(children => {
