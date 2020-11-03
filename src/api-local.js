@@ -56,20 +56,20 @@ class LocalApi extends Api {
         this.storage.subscriptions.remove(path, event, callback);
     }
 
-    set(path, value, flags = undefined) {
-        return Node.update(this.storage, path, value, { merge: false });
+    set(path, value, options = { context: null }) {
+        return Node.update(this.storage, path, value, { merge: false, context: options.context });
     }
 
-    update(path, updates, flags = undefined) {
-        return Node.update(this.storage, path, updates, { merge: true });
+    update(path, updates, options = { context: null }) {
+        return Node.update(this.storage, path, updates, { merge: true, context: options.context });
     }
 
     get(path, options) {
         return Node.getValue(this.storage, path, options);
     }
 
-    transaction(path, callback) {
-        return Node.transaction(this.storage, path, callback);
+    transaction(path, callback, options = { context: null }) {
+        return Node.transaction(this.storage, path, callback, { context: options.context });
     }
 
     exists(path) {
