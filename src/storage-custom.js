@@ -1289,48 +1289,48 @@ class CustomStorage extends Storage {
         // });
     }
 
-    // TODO: Move to Storage base class?
-    /**
-     * 
-     * @param {string} path 
-     * @param {object} [options]
-     * @param {CustomStorageTransaction} [options.transaction]
-     * @returns {Promise<void>}
-     */
-    async removeNode(path, options) {
-        if (path === '') { 
-            return Promise.reject(new Error(`Cannot remove the root node`)); 
-        }
+    // // TODO: Move to Storage base class?
+    // /**
+    //  * 
+    //  * @param {string} path 
+    //  * @param {object} [options]
+    //  * @param {CustomStorageTransaction} [options.transaction]
+    //  * @returns {Promise<void>}
+    //  */
+    // async removeNode(path, options) {
+    //     if (path === '') { 
+    //         return Promise.reject(new Error(`Cannot remove the root node`)); 
+    //     }
         
-        options = options || {};
-        const pathInfo = PathInfo.get(path);
-        const transaction = options.transaction || this._customImplementation.getTransaction({ path, write: true });
-        // return this.nodeLocker.lock(pathInfo.parentPath, transaction.id, true, 'removeNode')
-        // .then(lock => {
-        try {
-            await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { transaction });
-            if (!options.transaction) {
-                // transaction was created by us, commit
-                await transaction.commit();
-            }            
-        }
-        catch (err) {
-            if (!options.transaction) {
-                // transaction was created by us, rollback
-                await transaction.rollback(err);
-            }
-            throw err;
-        }
-        //     .then(result => {
-        //         lock.release();
-        //         return result;
-        //     })
-        //     .catch(err => {
-        //         lock.release();
-        //         throw err;
-        //     });            
-        // });
-    }
+    //     options = options || {};
+    //     const pathInfo = PathInfo.get(path);
+    //     const transaction = options.transaction || this._customImplementation.getTransaction({ path, write: true });
+    //     // return this.nodeLocker.lock(pathInfo.parentPath, transaction.id, true, 'removeNode')
+    //     // .then(lock => {
+    //     try {
+    //         await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { transaction });
+    //         if (!options.transaction) {
+    //             // transaction was created by us, commit
+    //             await transaction.commit();
+    //         }            
+    //     }
+    //     catch (err) {
+    //         if (!options.transaction) {
+    //             // transaction was created by us, rollback
+    //             await transaction.rollback(err);
+    //         }
+    //         throw err;
+    //     }
+    //     //     .then(result => {
+    //     //         lock.release();
+    //     //         return result;
+    //     //     })
+    //     //     .catch(err => {
+    //     //         lock.release();
+    //     //         throw err;
+    //     //     });            
+    //     // });
+    // }
 
     // TODO: Move to Storage base class?
     /**
@@ -1340,13 +1340,13 @@ class CustomStorage extends Storage {
      * @param {object} [options]
      * @param {string} [options.assert_revision]
      * @param {CustomStorageTransaction} [options.transaction]
+     * @param {any} [options.context]
      * @returns {Promise<CustomStorageNodeInfo>}
      */
-    async setNode(path, value, options) {        
+    async setNode(path, value, options = { context: null }) {        
         const pathInfo = PathInfo.get(path);
 
         // let lock;
-        options = options || {};
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
         // return this.nodeLocker.lock(path, transaction.id, true, 'setNode')
         // .then(l => {
@@ -1357,7 +1357,7 @@ class CustomStorage extends Storage {
                 if (value === null || typeof value !== 'object' || value instanceof Array || value instanceof ArrayBuffer || ('buffer' in value && value.buffer instanceof ArrayBuffer)) {
                     throw new Error(`Invalid value for root node: ${value}`);
                 }
-                await this._writeNodeWithTracking('', value, { merge: false, transaction })
+                await this._writeNodeWithTracking('', value, { merge: false, transaction, context: options.context })
             }
             else if (typeof options.assert_revision !== 'undefined') {
                 const info = await this.getNodeInfo(path, { transaction })
@@ -1367,7 +1367,7 @@ class CustomStorage extends Storage {
                 }
                 if (info.address && info.address.path === path && value !== null && !this.valueFitsInline(value)) {
                     // Overwrite node
-                    await this._writeNodeWithTracking(path, value, { merge: false, transaction });
+                    await this._writeNodeWithTracking(path, value, { merge: false, transaction, context: options.context });
                 }
                 else {
                     // Update parent node
@@ -1376,7 +1376,7 @@ class CustomStorage extends Storage {
                     //     lock = parentLock;
                     const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                     console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
-                    await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, transaction });
+                    await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, transaction, context: options.context });
                     // });
                 }
                 // })
@@ -1388,7 +1388,7 @@ class CustomStorage extends Storage {
                 //     lock = parentLock;
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                 console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
-                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction });
+                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction, context: options.context });
                 // });
             }
             if (!options.transaction) {
@@ -1421,14 +1421,14 @@ class CustomStorage extends Storage {
      * @param {*} updates 
      * @param {object} [options] 
      * @param {CustomStorageTransaction} [options.transaction]
+     * @param {any} [options.context]
      */
-    async updateNode(path, updates, options) {
+    async updateNode(path, updates, options = { context: null }) {
 
         if (typeof updates !== 'object') { //  || Object.keys(updates).length === 0
             throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
         }
 
-        options = options || {};
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
         // const tid = (options && options.tid) || ID.generate();
         // let lock;
@@ -1447,7 +1447,7 @@ class CustomStorage extends Storage {
             if (nodeInfo.exists && nodeInfo.address && nodeInfo.address.path === path) {
                 // Node exists and is stored in its own record.
                 // Update it
-                await this._writeNodeWithTracking(path, updates, { transaction, merge: true });
+                await this._writeNodeWithTracking(path, updates, { transaction, merge: true, context: options.context });
             }
             else if (nodeInfo.exists) {
                 // Node exists, but is stored in its parent node.
@@ -1457,7 +1457,7 @@ class CustomStorage extends Storage {
                 //     lock = parentLock;
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                 console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
-                await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, merge: true });
+                await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, merge: true, context: options.context });
                 // });
             }
             else {
@@ -1467,7 +1467,7 @@ class CustomStorage extends Storage {
                 //     lock = parentLock;
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                 console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
-                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction });
+                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, context: options.context });
                 // });
             }
             if (!options.transaction) {

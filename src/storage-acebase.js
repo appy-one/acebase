@@ -1026,17 +1026,17 @@ class AceBaseStorage extends Storage {
         });
     }
 
-    /**
-     * Removes a node by delegating to updateNode on the parent with null value.
-     * Throws an Error if path is root ('')
-     * @param {string} path
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {Promise<void>}
-     */
-    removeNode(path, options = { tid: undefined }) {
-        throw new Error(`This method must be implemented by subclass`);
-    }
+    // /**
+    //  * Removes a node by delegating to updateNode on the parent with null value.
+    //  * Throws an Error if path is root ('')
+    //  * @param {string} path
+    //  * @param {object} [options] optional options used by implementation for recursive calls
+    //  * @param {string} [options.tid] optional transaction id for node locking purposes
+    //  * @returns {Promise<void>}
+    //  */
+    // removeNode(path, options = { tid: undefined }) {
+    //     throw new Error(`This method must be implemented by subclass`);
+    // }
 
     /**
      * Delegates to legacy update method that handles everything
@@ -1044,10 +1044,11 @@ class AceBaseStorage extends Storage {
      * @param {any} value
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {any} [options.context=null]
      * @returns {Promise<void>}
      */
-    setNode(path, value, options = { tid: undefined }) {
-        return this._updateNode(path, value, { merge: false, tid: options.tid });
+    setNode(path, value, options = { tid: undefined, context: null }) {
+        return this._updateNode(path, value, { merge: false, tid: options.tid, context: options.context });
     }
 
     /**
@@ -1058,8 +1059,8 @@ class AceBaseStorage extends Storage {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @returns {Promise<void>}
      */    
-    updateNode(path, updates, options = { tid: undefined }) {
-        return this._updateNode(path, updates, { merge: true, tid: options.tid });
+    updateNode(path, updates, options = { tid: undefined, context: null }) {
+        return this._updateNode(path, updates, { merge: true, tid: options.tid, context: options.context });
     }
 
     /**
@@ -1071,9 +1072,10 @@ class AceBaseStorage extends Storage {
      * @param {object} updates object with key/value pairs
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {any} [options.context=null]
      * @returns {Promise<void>}
      */
-    _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false }) {
+    _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false, context: null }) {
         // this.debug.log(`Update request for node "/${path}"`);
 
         const tid = options.tid || this.nodeLocker.createTid(); // ID.generate();
@@ -1081,12 +1083,12 @@ class AceBaseStorage extends Storage {
 
         if (value === null) {
             // Deletion of node is requested. Update parent
-            return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { merge: true, tid });
+            return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { merge: true, tid, context: options.context });
         }
 
         if (path !== "" && this.valueFitsInline(value)) {
             // Simple value, update parent instead
-            return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid });
+            return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, context: options.context });
         }
 
         let lock;
@@ -1114,6 +1116,7 @@ class AceBaseStorage extends Storage {
                 return this._writeNodeWithTracking(path, value, { 
                     tid,
                     merge,
+                    context: options.context,
                     _customWriteFunction: write // Will use this function instead of this._writeNode
                 });
             }
@@ -1133,7 +1136,7 @@ class AceBaseStorage extends Storage {
                 .then(parentLock => {
                     // console.error(`Got parent ${parentLock.forWriting ? 'WRITE' : 'read'} lock on "${pathInfo.parentPath}", tid ${lock.tid}`)
                     lock = parentLock;
-                    return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: new InternalNodeReference(recordInfo.valueType, recordInfo.address) }, { merge: true, tid, _internal: true })
+                    return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: new InternalNodeReference(recordInfo.valueType, recordInfo.address) }, { merge: true, tid, _internal: true, context: options.context })
                     .then(() => true); // return true for parentUpdated
                 });
             }

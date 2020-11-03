@@ -44,16 +44,17 @@ class Node {
      * @param {any} value Any value will do. If the value is small enough to be stored in a parent record, it will take care of it
      * @param {object} [options]
      * @param {boolean} [options.merge=true] whether to merge or overwrite the current value if node exists
+     * @param {any} [options.context=null] Context to be passed along with data events
      */
-    static update(storage, path, value, options = { merge: true }) {
+    static update(storage, path, value, options = { merge: true, context: null }) {
 
         // debug.log(`Update request for node "/${path}"`);
 
         if (options.merge) {
-            return storage.updateNode(path, value);
+            return storage.updateNode(path, value, { context: options.context });
         }
         else {
-            return storage.setNode(path, value);
+            return storage.setNode(path, value, { context: options.context });
         }
     }
 
@@ -123,23 +124,25 @@ class Node {
         return storage.getChildren(path, { keyFilter });
     }
 
-    /**
-     * Removes a Node. Short for Node.update with value null
-     * @param {Storage} storage 
-     * @param {string} path 
-     */
-    static remove(storage, path) {
-        return storage.removeNode(path);
-    }
+    // /**
+    //  * Removes a Node. Short for Node.update with value null
+    //  * @param {Storage} storage 
+    //  * @param {string} path 
+    //  */
+    // static remove(storage, path) {
+    //     return storage.removeNode(path);
+    // }
 
     /**
      * Sets the value of a Node. Short for Node.update with option { merge: false }
      * @param {Storage} storage 
      * @param {string} path 
      * @param {any} value 
+     * @param {any} [options]
+     * @param {any} [options.context=null]
      */
-    static set(storage, path, value) {
-        return Node.update(storage, path, value, { merge: false });
+    static set(storage, path, value, options = { context: null }) {
+        return Node.update(storage, path, value, { merge: false, context: options.context });
     }
 
     /**
@@ -147,9 +150,11 @@ class Node {
      * @param {Storage} storage 
      * @param {string} path 
      * @param {(currentValue: any) => Promise<any>} callback callback is called with the current value. The returned value (or promise) will be used as the new value. When the callbacks returns undefined, the transaction will be canceled. When callback returns null, the node will be removed.
+     * @param {any} [options]
+     * @param {any} [options.context=null]
      */
-    static transaction(storage, path, callback) {
-        return storage.transactNode(path, callback);
+    static transaction(storage, path, callback, options = { context: null }) {
+        return storage.transactNode(path, callback, { context: options.context });
     }
 
     /**
