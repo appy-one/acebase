@@ -353,7 +353,7 @@ class Storage extends EventEmitter {
 
         // Subscriptions
         const _subs = {};
-        const _supportedEvents = ["value","child_added","child_changed","child_removed"];
+        const _supportedEvents = ["value","child_added","child_changed","child_removed","mutated"];
         // Add 'notify_*' event types for each event to enable data-less notifications, so data retrieval becomes optional
         _supportedEvents.push(..._supportedEvents.map(event => `notify_${event}`)); 
         this.subscriptions = {
@@ -417,18 +417,26 @@ class Storage extends EventEmitter {
                 const valueSubscribers = [];
                 Object.keys(_subs).forEach(subscriptionPath => {
                     if (pathInfo.equals(subscriptionPath) || pathInfo.isDescendantOf(subscriptionPath)) {
+                        // path being updated === subscriptionPath, or a child/descendant path of it
+                        // eg path === "posts/123/title"
+                        // and subscriptionPath is "posts/123/title", "posts/$postId/title", "posts/123", "posts/*", "posts" etc
                         let pathSubs = _subs[subscriptionPath];
                         const eventPath = PathInfo.fillVariables(subscriptionPath, path);
-                        pathSubs.forEach(sub => {
+                        pathSubs
+                        .filter(sub => !sub.type.startsWith("notify_")) // notify events don't need additional value loading
+                        .forEach(sub => {
                             let dataPath = null;
-                            if (sub.type === "value" || sub.type === "notify_value") { 
+                            if (sub.type === "value") { // ["value", "notify_value"].includes(sub.type)
                                 dataPath = eventPath;
                             }
-                            else if ((sub.type === "child_changed" || sub.type === "notify_child_changed") && path !== eventPath) {
+                            else if (sub.type === 'mutated' && pathInfo.isDescendantOf(eventPath)) { //["mutated", "notify_mutated"].includes(sub.type)
+                                dataPath = path; // Only needed data is the properties being updated in the targeted path
+                            }
+                            else if (sub.type === "child_changed" && path !== eventPath) { // ["child_changed", "notify_child_changed"].includes(sub.type)
                                 let childKey = PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey);
-                             }
-                            else if (["child_added", "child_removed", "notify_child_added", "notify_child_removed"].includes(sub.type) && pathInfo.isChildOf(eventPath)) { 
+                            }
+                            else if (["child_added", "child_removed"].includes(sub.type) && pathInfo.isChildOf(eventPath)) { //["child_added", "child_removed", "notify_child_added", "notify_child_removed"]
                                 let childKey = PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey);
                             }
@@ -450,10 +458,11 @@ class Storage extends EventEmitter {
                 const pathInfo = PathInfo.get(path);
                 const subscribers = [];
                 Object.keys(_subs).forEach(subscriptionPath => {
-                    if (pathInfo.equals(subscriptionPath) //path === subscriptionPath 
-                        || pathInfo.isDescendantOf(subscriptionPath) 
-                        || pathInfo.isAncestorOf(subscriptionPath)
-                    ) {
+                    // if (pathInfo.equals(subscriptionPath) //path === subscriptionPath 
+                    //     || pathInfo.isDescendantOf(subscriptionPath) 
+                    //     || pathInfo.isAncestorOf(subscriptionPath)
+                    // ) {
+                    if (pathInfo.isOnTrailOf(subscriptionPath)) {
                         let pathSubs = _subs[subscriptionPath];
                         const eventPath = PathInfo.fillVariables(subscriptionPath, path);
 
@@ -462,11 +471,14 @@ class Storage extends EventEmitter {
                             if (sub.type === "value" || sub.type === "notify_value") { 
                                 dataPath = eventPath; 
                             }
-                            else if (sub.type === "child_changed" || sub.type === "notify_child_changed") { 
+                            else if (["child_changed", "notify_child_changed"].includes(sub.type)) { 
                                 let childKey = path === eventPath || pathInfo.isAncestorOf(eventPath) 
                                     ? "*" 
                                     : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey);
+                            }
+                            else if (["mutated", "notify_mutated"].includes(sub.type)) { 
+                                dataPath = path;
                             }
                             else if (
                                 ["child_added", "child_removed", "notify_child_added", "notify_child_removed"].includes(sub.type) 
@@ -497,13 +509,14 @@ class Storage extends EventEmitter {
              * @param {string} dataPath - path to the node the value is stored
              * @param {any} oldValue - old value
              * @param {any} newValue - new value
+             * @param {any} context - context used by the client that updated this data
              */
-            trigger(event, path, dataPath, oldValue, newValue) {
+            trigger(event, path, dataPath, oldValue, newValue, context) {
                 //console.warn(`Event "${event}" triggered on node "/${path}" with data of "/${dataPath}": `, newValue);
                 const pathSubscriptions = _subs[path] || [];
                 pathSubscriptions.filter(sub => sub.type === event)
                 .forEach(sub => {
-                    sub.callback(null, dataPath, newValue, oldValue);
+                    sub.callback(null, dataPath, newValue, oldValue, context);
                     // if (event.startsWith('notify_')) {
                     //     // Notify only event, run callback without data
                     //     sub.callback(null, dataPath);
@@ -614,7 +627,7 @@ class Storage extends EventEmitter {
      * @param {object} [options] 
      * @returns {Promise<void>}
      */
-    _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true }) {
+    _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true, context: null }) {
         options = options || {};
         if (!options.tid && !options.transaction) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid OR transaction!`); }
         options.merge = options.merge === true;
@@ -642,7 +655,7 @@ class Storage extends EventEmitter {
                 });
             let first = eventPaths[0];
             topEventPath = first.path;
-            if (valueSubscribers.filter(sub => sub.dataPath === topEventPath).every(sub => sub.type.startsWith('notify_'))) {
+            if (valueSubscribers.filter(sub => sub.dataPath === topEventPath).every(sub => sub.type === 'mutated' || sub.type.startsWith('notify_'))) {
                 // Prevent loading of all data on path, so it'll only load changing properties
                 hasValueSubscribers = false;
             }
@@ -788,6 +801,11 @@ class Storage extends EventEmitter {
                 newTopEventData = modifiedData = value;
             }
 
+            const dataChanges = compareValues(topEventData, newTopEventData);
+            if (dataChanges === 'identical') {
+                return result;
+            }
+
             // Find out if there are indexes that need to be updated
             // const updatedData = (() => {
             //     let topPathKeys = PathInfo.getPathKeys(topEventPath);
@@ -892,7 +910,10 @@ class Storage extends EventEmitter {
                 if (type.startsWith('notify_')) {
                     type = type.slice('notify_'.length);
                 }
-                if (type === "child_changed" && (oldValue === null || newValue === null)) {
+                if (type === "mutated") {
+                    return; // Ignore here, requires different logic
+                }
+                else if (type === "child_changed" && (oldValue === null || newValue === null)) {
                     trigger = false;
                 }
                 else if (type === "value" || type === "child_changed") {
@@ -916,13 +937,15 @@ class Storage extends EventEmitter {
                     const safeVarName = variable.name === '*' ? '\\*' : variable.name.replace('$', '\\$');
                     dataPath = dataPath.replace(new RegExp(`(^|/)${safeVarName}([/\[]|$)`), `$1${variable.value}$2`);
                 });
-                trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue);
+                trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
             };
 
             const triggerAllEvents = () => {
                 // Notify all event subscriptions, should be executed with a delay (process.nextTick)
                 // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
-                eventSubscriptions.map(sub => {
+                eventSubscriptions
+                .filter(sub => !['mutated', 'notify_mutated'].includes(sub.type))
+                .map(sub => {
                     const keys = PathInfo.getPathKeys(sub.dataPath);
                     return {
                         sub,
@@ -971,7 +994,82 @@ class Storage extends EventEmitter {
                         callSubscriberWithValues(sub, oldValue, newValue, variables);
                     };
 
-                    process(topEventPath, topEventData, newTopEventData);
+                    if (sub.type.startsWith('notify_') && PathInfo.get(sub.eventPath).isAncestorOf(topEventPath)) {
+                        // Notify event on a higher path than we have loaded data on
+                        // We can trigger the notify event on the subscribed path
+                        // Eg: 
+                        // path === 'users/ewout', updates === { name: 'Ewout Stortenbeker' }
+                        // sub.path === 'users' or '', sub.type === 'notify_child_changed'
+                        // => OK to trigger if dataChanges !== 'removed' and 'added'
+                        const isOnParentPath = PathInfo.get(sub.eventPath).isParentOf(topEventPath);
+                        const trigger = 
+                            (sub.type === 'notify_value')
+                            || (sub.type === 'notify_child_changed' && (!isOnParentPath || !['added','removed'].includes(dataChanges)))
+                            || (sub.type === 'notify_child_removed' && dataChanges === 'removed' && isOnParentPath)
+                            || (sub.type === 'notify_child_added' && dataChanges === 'added' && isOnParentPath)
+                        trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, sub.dataPath, null, null, options.context);
+                    }
+                    else {
+                        // Subscription is on current or deeper path
+                        process(topEventPath, topEventData, newTopEventData);
+                    }
+                });
+
+                // The only events we haven't processed now are 'mutated' events.
+                // They require different logic: we'll call them for all nested properties of the updated path, that 
+                // actually did change. They do not bubble up like 'child_changed' does.
+                const triggerMutationEvents = (sub, currentPath, oldValue, newValue, compareResult) => {
+                    const result = compareResult || compareValues(oldValue, newValue);
+                    if (result === 'identical') {
+                        return; // no changes on subscribed path
+                    }
+                    else if (typeof result === 'string') {
+                        // We are on a path that has an actual change
+                        this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
+                    }
+                    else if (oldValue instanceof Array || newValue instanceof Array) {
+                        // Trigger mutated event on the array itself instead of on individual indexes
+                        this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
+                    }
+                    else {
+                        // DISABLED array handling here, because if a client is using a cache db this will cause problems
+                        // because individual array entries should never be modified.
+                        // if (oldValue instanceof Array && newValue instanceof Array) {
+                        //     // Make sure any removed events on arrays will be triggered from last to first
+                        //     result.removed.sort((a,b) => a < b ? 1 : -1);
+                        // }
+                        result.changed.forEach(info => {
+                            const childPath = PathInfo.getChildPath(currentPath, info.key);
+                            let childValues = getChildValues(info.key, oldValue, newValue);
+                            triggerMutationEvents(sub, childPath, childValues.oldValue, childValues.newValue, info.change);
+                        });
+                        result.added.forEach(key => {
+                            const childPath = PathInfo.getChildPath(currentPath, key);
+                            this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, null, newValue[key], options.context);
+                        });
+                        result.removed.forEach(key => {
+                            const childPath = PathInfo.getChildPath(currentPath, key);
+                            this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, oldValue[key], null, options.context);
+                        });
+                    }
+                };
+
+                eventSubscriptions.filter(sub => ['mutated', 'notify_mutated'].includes(sub.type))
+                .forEach(sub => {
+                    // Get the target data this subscription is interested in
+                    let currentPath = path;
+                    let trailPath = sub.eventPath.slice(currentPath.length).replace(/^\//, '');
+                    let trailKeys = PathInfo.getPathKeys(trailPath);
+                    let oldValue = topEventData, newValue = newTopEventData;
+                    while (trailKeys.length > 0) {
+                        let subKey = trailKeys.shift();
+                        currentPath = PathInfo.getChildPath(currentPath, subKey);
+                        let childValues = getChildValues(subKey, oldValue, newValue);
+                        oldValue = childValues.oldValue;
+                        newValue = childValues.newValue;
+                    }
+
+                    triggerMutationEvents(sub, currentPath, oldValue, newValue);
                 });
             };
 
@@ -1043,17 +1141,18 @@ class Storage extends EventEmitter {
         throw new Error(`This method must be implemented by subclass`);
     }
 
-    /**
-     * Removes a node by delegating to updateNode on the parent with null value.
-     * Throws an Error if path is root ('')
-     * @param {string} path
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {Promise<void>}
-     */
-    removeNode(path, options = { tid: undefined }) {
-        throw new Error(`This method must be implemented by subclass`);
-    }
+    // /**
+    //  * Removes a node by delegating to updateNode on the parent with null value.
+    //  * Throws an Error if path is root ('')
+    //  * @param {string} path
+    //  * @param {object} [options] optional options used by implementation for recursive calls
+    //  * @param {string} [options.tid] optional transaction id for node locking purposes
+    //  * @param {string} [options.context] context info used by the client
+    //  * @returns {Promise<void>}
+    //  */
+    // removeNode(path, options = { tid: undefined, context: null }) {
+    //     throw new Error(`This method must be implemented by subclass`);
+    // }
 
     /**
      * Creates or overwrites a node. Delegates to updateNode on a parent if
@@ -1062,9 +1161,10 @@ class Storage extends EventEmitter {
      * @param {any} value
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    setNode(path, value, options = { tid: undefined }) {
+    setNode(path, value, options = { tid: undefined, context: null }) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -1075,9 +1175,10 @@ class Storage extends EventEmitter {
      * @param {object} updates object with key/value pairs
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    updateNode(path, updates, options = { tid: undefined }) {
+    updateNode(path, updates, options = { tid: undefined, context: null }) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -1089,9 +1190,10 @@ class Storage extends EventEmitter {
      * @param {(value: any) => any} callback function that transforms current value and returns the new value to be stored. Can return a Promise
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    transactNode(path, callback, options = { no_lock: false }) {
+    transactNode(path, callback, options = { no_lock: false, context: null }) {
         let checkRevision;
 
         const tid = this.nodeLocker.createTid(); // ID.generate();
@@ -1137,7 +1239,7 @@ class Storage extends EventEmitter {
                 if (changed) {
                     return Promise.reject(new NodeRevisionError(`Node changed`));
                 }
-                return this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid });
+                return this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid, context: options.context });
             })
             .then(result => {
                 lock.release();
