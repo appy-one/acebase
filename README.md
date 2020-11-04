@@ -1,19 +1,20 @@
 # AceBase realtime database engine
 
-A fast, low memory, transactional, index & query enabled NoSQL database engine and server for node.js with realtime data change notifications. Includes built-in user authentication and authorization ([acebase-server](https://www.npmjs.com/package/acebase-server)). Inspired by the Firebase realtime database, with additional functionality and less data sharding/duplication. Capable of storing up to 2^48 (281 trillion) object nodes in a binary database file that can theoretically grow to a max filesize of 8 petabytes. AceBase can run anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, wherever you want. On top of this, AceBase can now also run in the browser!
+A fast, low memory, transactional, index & query enabled NoSQL database engine and server for node.js and browser with realtime data change notifications. Supports storing of JSON objects, arrays, numbers, strings, booleans, dates and binary (ArrayBuffer) data.
 
-Natively supports storing of JSON objects, arrays, numbers, strings, booleans, dates and binary (ArrayBuffer) data. Custom classes can automatically be shape-shifted to and from plain objects by adding type mappings => Store a ```User```, get a ```User```. Store a ```Chat``` that has a collection of ```Messages```, get a ```Chat``` with ```Messages``` back from the database. Any class specific methods can be executed directly on the objects you get back from the db, because they will be an ```instanceof``` your class.
+Inspired by (and largely compatible with) the Firebase realtime database, with additional functionality and less data sharding/duplication. Capable of storing up to 2^48 (281 trillion) object nodes in a binary database file that can theoretically grow to a max filesize of 8 petabytes.
+
+AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, the browser, wherever you want!
 
 ## Getting Started
 
 AceBase is split up into multiple packages:
 * **acebase**: local AceBase database engine ([github](https://github.com/appy-one/acebase), [npm](https://www.npmjs.com/package/acebase))
-* **acebase-server**: AceBase webserver endpoint to enable remote connections ([github](https://github.com/appy-one/acebase-server), [npm](https://www.npmjs.com/package/acebase-server))
-* **acebase-client**: client to access an AceBase webserver ([github](https://github.com/appy-one/acebase-client), [npm](https://www.npmjs.com/package/acebase-client))
+* **acebase-server**: AceBase server endpoint to enable remote connections. Includes built-in user authentication and authorization, supports using external OAuth providers such as Facebook and Google ([github](https://github.com/appy-one/acebase-server), [npm](https://www.npmjs.com/package/acebase-server)).
+* **acebase-client**: client to connect to an external AceBase server ([github](https://github.com/appy-one/acebase-client), [npm](https://www.npmjs.com/package/acebase-client))
 * **acebase-core**: shared functionality, dependency of above packages ([github](https://github.com/appy-one/acebase-core), [npm](https://www.npmjs.com/package/acebase-core))
 
-**IMPORTANT**: AceBase is in beta stage! If you run into errors, make sure you have the latest version of each package you are using. The database files created
-by older releases might be incompatible with newer versions, so you might have to start from scratch after updating. **Do not use in production yet**!
+**IMPORTANT**: AceBase is in beta stage. If you run into errors, make sure you have the latest version of each package you are using. The database files created by older releases might be incompatible with newer versions, so you might have to start from scratch after updating. **Do not use in production yet**!
 
 ### Prerequisites
 
@@ -916,7 +917,8 @@ Indexed locations are stored using 10 character geohashes, which have a precisio
 
 ## Mapping data to custom classes
 
-Mapping data to your own classes allows you to store and load objects to/from the database without them losing their class type. Once you have mapped a database path to a class, you won't ever have to worry about serialization or deserialization of the objects.
+Mapping data to your own classes allows you to store and load objects to/from the database without them losing their class type. Once you have mapped a database path to a class, you won't ever have to worry about serialization or deserialization of the objects => Store a ```User```, get a ```User```. Store a ```Chat``` that has a collection of ```Messages```, get a ```Chat``` with ```Messages``` back from the database. Any class specific methods can be executed directly on the objects you get back from the db, because they will be an ```instanceof``` your class.
+
 By default, AceBase runs your class constructor with a snapshot of the data to instantiate new objects, and uses all properties of your class to serialize them for storage. 
 
 ```javascript
