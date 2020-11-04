@@ -242,7 +242,7 @@ class AceBaseBase extends EventEmitter {
 }
 
 module.exports = { AceBaseBase, AceBaseSettings };
-},{"./data-reference":7,"./type-mappings":17,"events":42}],5:[function(require,module,exports){
+},{"./data-reference":8,"./type-mappings":18,"events":43}],5:[function(require,module,exports){
 
 class Api {
     // interface for local and web api's
@@ -340,11 +340,330 @@ const ascii85 = {
 
 module.exports = ascii85;
 },{}],7:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LiveDataProxy = void 0;
+const path_info_1 = require("./path-info");
+const path_reference_1 = require("./path-reference");
+// Use this import when editing:
+// Not needed anymore once above files have been ported to Typescript
+// import { DataReference, DataSnapshot, PathInfo, PathReference } from '../index';
+class LiveDataProxy {
+    /**
+     * Creates a live data proxy for the given reference. The data of the reference's path will be loaded, and kept in-sync
+     * with live data by listening for 'mutated' events. Any changes made to the value by the client will be synced back
+     * to the database.
+     * @param ref DataReference to create proxy for.
+     * @example
+     * const ref = db.ref('chats/chat1');
+     * const proxy = await ref.proxy();
+     * const chat = proxy.value;
+     * console.log(`Got chat "${chat.title}":`, chat);
+     * // chat: { message: 'This is an example chat', members: ['Ewout'], messages: { message1: { from: 'Ewout', text: 'Welcome to the proxy chat example' } } }
+     *
+     * // Change title:
+     * chat.title = 'Changing the title in the database too!';
+     *
+     * // Add participants to the members array:
+     * chat.members.push('John', 'Jack', 'Pete');
+     *
+     * // Add a message to the messages collection (NOTE: automatically generates an ID)
+     * chat.messages.push({ from: 'Ewout', message: 'I am changing the database without programming against it!' });
+     */
+    static async create(ref) {
+        let cache, loaded = false;
+        const proxyId = ref.push().key;
+        let onMutationCallback;
+        let onErrorCallback = err => {
+            console.error(err.message, err.details);
+        };
+        // Subscribe to mutated events on the target path
+        const subscription = ref.on('mutated').subscribe(async (mutationSnap) => {
+            if (!loaded) {
+                return;
+            }
+            const context = mutationSnap.ref.context();
+            const remoteChange = context.proxy_id !== proxyId;
+            let reloadCache = false;
+            if (remoteChange) {
+                // Make changes to cached object
+                const mutatedPath = snap.ref.path;
+                const trailPath = mutatedPath.slice(ref.path.length);
+                const trailKeys = path_info_1.PathInfo.getPathKeys(trailPath);
+                let target = cache;
+                while (trailKeys.length > 1) {
+                    const key = trailKeys.shift();
+                    if (!(key in target)) {
+                        // Have we missed an event, or are local pending mutations creating this conflict?
+                        // Do not proceed, reload entire value into cache
+                        reloadCache = true;
+                        console.warn(`Cached value appears outdated, will be reloaded`);
+                        break;
+                        // target[key] = typeof trailKeys[0] === 'number' ? [] : {}
+                    }
+                    target = target[key];
+                }
+                if (!reloadCache) {
+                    const prop = trailKeys.shift();
+                    const newValue = snap.val();
+                    if (newValue === null) {
+                        // Remove it
+                        target instanceof Array ? target.splice(prop, 1) : delete target[prop];
+                    }
+                    else {
+                        // Set or update it
+                        target[prop] = newValue;
+                    }
+                }
+            }
+            if (reloadCache) {
+                const newSnap = await ref.get();
+                // Remove all children of cache object, to keep the same reference
+                Object.keys(cache).forEach(key => delete cache[key]);
+                // Set new properties
+                const newCache = newSnap.val();
+                Object.keys(newCache).forEach(key => cache[key] = newCache[key]);
+                // Set mutationSnap to our new value snapshot, with the original context
+                newSnap.ref.context(mutationSnap.ref.context());
+                mutationSnap = newSnap;
+            }
+            onMutationCallback && onMutationCallback(mutationSnap, remoteChange);
+        });
+        // Setup updating functionality: enqueue all updates, process them at next tick in the order they were issued 
+        let processQueueTimeout, processPromise = Promise.resolve();
+        const overwriteQueue = [];
+        const flagOverwritten = (target) => {
+            // flag target for overwriting, if an ancestor (or itself) has not been already.
+            // it will remove the flag for any descendants target previously set
+            const ancestorOrSelf = overwriteQueue.find(otherTarget => otherTarget.length <= target.length && otherTarget.every((key, i) => key === target[i]));
+            if (ancestorOrSelf) {
+                return;
+            }
+            // remove ancestors
+            const descendants = overwriteQueue.filter(otherTarget => otherTarget.length > target.length && otherTarget.every((key, i) => key === target[i]));
+            descendants.forEach(d => overwriteQueue.splice(descendants.indexOf(d), 1));
+            // add to the queue
+            overwriteQueue.push(target);
+            // schedule database updates
+            if (!processQueueTimeout) {
+                processQueueTimeout = setTimeout(() => {
+                    const targets = overwriteQueue.splice(0);
+                    // Group targets into parent updates
+                    const updates = targets.reduce((updates, target) => {
+                        const parentTarget = target.slice(0, -1);
+                        const key = target.slice(-1)[0];
+                        const parentRef = parentTarget.reduce((ref, key) => ref.child(key), ref);
+                        const parentUpdate = updates.find(update => update.ref.path === parentRef.path);
+                        const cacheValue = target.reduce((value, key) => value[key], cache);
+                        if (parentUpdate) {
+                            parentUpdate.value[key] = cacheValue;
+                        }
+                        else {
+                            updates.push({ ref: parentRef, value: { [key]: cacheValue } });
+                        }
+                        return updates;
+                    }, []);
+                    console.log(`Processing ${updates.length} db updates`);
+                    processQueueTimeout = null;
+                    processPromise = updates.reduce(async (promise, update) => {
+                        await promise;
+                        return update.ref.update(update.value)
+                            .catch(err => {
+                            onErrorCallback({ source: 'update', message: `Error processing update of "/${ref.path}"`, details: err });
+                        });
+                    }, processPromise);
+                });
+            }
+        };
+        const snap = await ref.get();
+        loaded = true;
+        cache = snap.val();
+        const proxy = createProxy({ root: { ref, cache }, target: [], id: proxyId, flag: flagOverwritten });
+        return {
+            destroy() {
+                subscription.stop();
+            },
+            value: proxy,
+            onMutation(callback) {
+                // Fires callback each time anything changes
+                onMutationCallback = (...args) => {
+                    try {
+                        callback(...args);
+                    }
+                    catch (err) {
+                        onErrorCallback({ source: 'mutation_callback', message: 'Error in dataproxy onMutation callback', details: err });
+                    }
+                };
+            },
+            onError(callback) {
+                // Fires callback each time anything goes wrong
+                onErrorCallback = (...args) => {
+                    try {
+                        callback(...args);
+                    }
+                    catch (err) {
+                        console.error(`Error in dataproxy onError callback: ${err.message}`);
+                    }
+                };
+            }
+        };
+    }
+}
+exports.LiveDataProxy = LiveDataProxy;
+function getTargetValue(obj, target) {
+    let val = obj;
+    for (let key of target) {
+        val = typeof val === 'object' && val !== null && key in val ? val[key] : null;
+    }
+    return val;
+}
+function getTargetRef(ref, target) {
+    let targetRef = ref;
+    for (let key of target) {
+        targetRef = targetRef.child(key);
+    }
+    return targetRef;
+}
+//update(ref: DataReference, value: any): void
+function createProxy(context) {
+    let targetRef = getTargetRef(context.root.ref, context.target);
+    targetRef.context({ proxy_id: context.id });
+    const handler = {
+        get(target, prop, receiver) {
+            if (typeof prop === 'symbol') {
+                throw new Error(`Symbols are not allowed as proxy properties`);
+            }
+            target = getTargetValue(context.root.cache, context.target);
+            if (typeof target === null || typeof target === 'undefined') {
+                throw new Error(`Cannot read ${prop} of ${context.target.join('/')} because the underlying data is unavailable`);
+            }
+            // If the property contains a simple value, return it. 
+            const value = target[prop];
+            if (['string', 'number', 'boolean'].includes(typeof value)
+                || value instanceof Date
+                || value instanceof path_reference_1.PathReference
+                || value instanceof ArrayBuffer
+                || (typeof value === 'object' && 'buffer' in value)) {
+                return value;
+            }
+            const isArray = target instanceof Array;
+            if (isArray && typeof value === 'function') {
+                const writeArray = ret => {
+                    context.flag(context.target);
+                    return ret;
+                };
+                if (prop === 'push') {
+                    return function push(...items) {
+                        const ret = target.push(...items); // push the items to the cache array
+                        return writeArray(ret);
+                    };
+                }
+                else if (prop === 'pop') {
+                    return function pop() {
+                        const ret = target.pop();
+                        return writeArray(ret);
+                    };
+                }
+                else if (prop === 'splice') {
+                    return function splice(start, deleteCount, ...items) {
+                        const ret = target.splice(start, deleteCount, ...items);
+                        return writeArray(ret);
+                    };
+                }
+                else if (prop === 'shift') {
+                    return function shift() {
+                        const ret = target.shift();
+                        return writeArray(ret);
+                    };
+                }
+                else if (prop === 'unshift') {
+                    return function unshift(...items) {
+                        const ret = target.unshift(...items);
+                        return writeArray(ret);
+                    };
+                }
+                else if (prop === 'sort') {
+                    return function sort(compareFn) {
+                        const ret = target.sort(compareFn);
+                        return writeArray(ret);
+                    };
+                }
+                else if (prop === 'reverse') {
+                    return function reverse() {
+                        const ret = target.reverse();
+                        return writeArray(ret);
+                    };
+                }
+                else {
+                    // Other array function, does not alter its value
+                    return function fn(...args) {
+                        return target[prop](...args);
+                    };
+                }
+            }
+            else if (!isArray && prop === 'push') {
+                // Push item to an object collection
+                return function push(item) {
+                    const childRef = targetRef.push();
+                    // Add item to cache collection
+                    target[childRef.key] = item;
+                    // // Add it to the database, return promise
+                    // return childRef.set(item);
+                    context.flag(context.target.concat(childRef.key)); //(childRef, item);
+                };
+            }
+            else if (!(prop in target)) {
+                return undefined;
+            }
+            // Proxify any other value
+            return createProxy({ root: context.root, target: context.target.concat(prop), id: context.id, flag: context.flag });
+        },
+        set(target, prop, value, receiver) {
+            // Eg: chats.chat1.title = 'New chat title';
+            // target === chats.chat1, prop === 'title'
+            if (typeof prop === 'symbol') {
+                throw new Error(`Symbols are not allowed as proxy properties`);
+            }
+            target = getTargetValue(context.root.cache, context.target); // let parentValue = createTarget(args.root.cache, args.target, prop);
+            if (target === null || typeof target === 'undefined') {
+                throw new Error(`Cannot set property "${prop}" because the value of path "/${targetRef.path}" is ${target}`);
+            }
+            if (target instanceof Array && (typeof prop !== 'number' && !/^[0-9]+$/.test(prop))) {
+                throw new Error(`Cannot set property "${prop}" on array value of path "/${targetRef.path}"`);
+            }
+            // Set cached value:
+            // let success = Reflect.set(target, prop, value, receiver);
+            target[prop] = value;
+            if (target instanceof Array) {
+                // Flag the entire array to be overwritten
+                context.flag(context.target); //(targetRef, target);
+            }
+            else {
+                // Flag child property
+                context.flag(context.target.concat(prop)); //(targetRef.child(prop), value);
+            }
+            return true;
+        },
+        ownKeys(target) {
+            target = getTargetValue(context.root.cache, context.target);
+            return Reflect.ownKeys(target);
+        },
+        has(target, prop) {
+            target = getTargetValue(context.root.cache, context.target);
+            return Reflect.has(target, prop);
+        }
+    };
+    return new Proxy({}, handler);
+}
+
+},{"./path-info":13,"./path-reference":14}],8:[function(require,module,exports){
 const { DataSnapshot } = require('./data-snapshot');
 const { EventStream, EventPublisher } = require('./subscription');
 const { ID } = require('./id');
 const debug = require('./debug');
 const { PathInfo } = require('./path-info');
+const { PathReference } = require('./path-reference');
+const { LiveDataProxy } = require('./data-proxy');
 
 class DataRetrievalOptions {
     /**
@@ -427,9 +746,52 @@ class DataReference {
             get path() { return path; },
             get key() { return key; },
             get callbacks() { return callbacks; },
-            vars: vars || {}
+            vars: vars || {},
+            context: null
         };
         this.db = db; //Object.defineProperty(this, "db", ...)
+    }
+
+    /**
+     * Adds contextual info for database updates through this reference. 
+     * This allows you to identify the event source (and/or reason) of 
+     * data change events being triggered. You can use this for example 
+     * to track if data updates were performed by the local client, a 
+     * remote client, or the server. And, why it was changed, and by whom.
+     * @param {any} [context] Context to set for this reference.
+     * @returns {DataReference|any} returns this instance, or the previously set context when calling context()
+     * @example
+     * // Somewhere in your frontend code:
+     * db.ref('accounts/123/balance').on('value', snap => {
+     *      // Account balance changed
+     *      const newBalance = snap.val();
+     *      const updateContext = snap.ref.context();
+     *      switch (updateContext.action) {
+     *          case 'payment': alert('Your payment was processed!'); break;
+     *          case 'deposit': alert('Money was added to your account'); break;
+     *          case 'withdraw': alert('You just withdrew money from your account'); break;
+     *      }
+     * });
+     * 
+     * // Somewhere in your backend code:
+     * db.ref('accounts/123/balance')
+     *  .context({ action: 'withdraw', description: 'ATM withdrawal of €50' })
+     *  .transaction(snap => {
+     *      let balance = snap.val();
+     *      return balance - 50;
+     *  })
+     */
+    context(context = undefined) {
+        if (typeof context === 'object') {
+            this[_private].context = context;
+            return this;
+        }
+        else if (typeof context === 'undefined') {
+            return this[_private].context;
+        }
+        else {
+            throw new Error('Invalid context argument');
+        }
     }
 
     /**
@@ -454,7 +816,7 @@ class DataReference {
         if (info.parentPath === null) {
             return null;
         }
-        return new DataReference(this.db, info.parentPath);
+        return new DataReference(this.db, info.parentPath).context(this[_private].context);
     }
 
     /**
@@ -475,7 +837,7 @@ class DataReference {
         childPath = typeof childPath === 'number' ? childPath : childPath.replace(/^\/|\/$/g, "");
         const currentPath = PathInfo.fillVariables2(this.path, this.vars);
         const targetPath = PathInfo.getChildPath(currentPath, childPath);
-        return new DataReference(this.db, targetPath); //  `${this.path}/${childPath}`
+        return new DataReference(this.db, targetPath).context(this[_private].context); //  `${this.path}/${childPath}`
     }
     
     /**
@@ -507,7 +869,7 @@ class DataReference {
             return this.db.ready().then(() => this.set(value, onComplete));
         }
         value = this.db.types.serialize(this.path, value);
-        return this.db.api.set(this.path, value)
+        return this.db.api.set(this.path, value, { context: this[_private].context })
         .then(res => {
             if (typeof onComplete === 'function') {
                 try { onComplete(null, this);} catch(err) { console.error(`Error in onComplete callback:`, err); }
@@ -553,7 +915,7 @@ class DataReference {
         }
         else {            
             updates = this.db.types.serialize(this.path, updates);
-            promise = this.db.api.update(this.path, updates);
+            promise = this.db.api.update(this.path, updates, { context: this[_private].context });
         }
         return promise.then(() => {
             if (typeof onComplete === 'function') {
@@ -608,7 +970,7 @@ class DataReference {
                 return this.db.types.serialize(this.path, newValue);
             }
         }
-        return this.db.api.transaction(this.path, cb)
+        return this.db.api.transaction(this.path, cb, { context: this[_private].context })
         .then(result => {
             if (throwError) {
                 // Rethrow error from callback code
@@ -630,8 +992,9 @@ class DataReference {
      * @returns {EventStream} returns an EventStream
      */
     on(event, callback, cancelCallbackOrContext, context) {
-        if (this.path === '' && ['value','notify_value','child_changed','notify_child_changed'].includes(event)) {
-            console.warn(`WARNING: Listening for value and child_changed events on the root node is a bad practice`);
+        if (this.path === '' && ['value', 'child_changed'].includes(event)) {
+            // Removed 'notify_value' and 'notify_child_changed' events from the list, they do not require additional data loading anymore.
+            console.warn(`WARNING: Listening for value and child_changed events on the root node is a bad practice. These events require loading of all data (value event), or potentially lots of data (child_changed event) each time they are fired`);
         }
         const cancelCallback = typeof cancelCallbackOrContext === 'function' && cancelCallbackOrContext;
         context = typeof cancelCallbackOrContext === 'object' ? cancelCallbackOrContext : context
@@ -646,12 +1009,12 @@ class DataReference {
         let cb = { 
             subscr: eventStream,
             original: callback, 
-            ours: (err, path, newValue, oldValue) => {
+            ours: (err, path, newValue, oldValue, eventContext) => {
                 if (err) {
                     debug.error(`Error getting data for event ${event} on path "${path}"`, err);
                     return;
                 }
-                let ref = this.db.ref(path);
+                let ref = this.db.ref(path).context(eventContext || {});
                 ref[_private].vars = PathInfo.extractVariables(this.path, path);
                 
                 let callbackObject;
@@ -660,10 +1023,17 @@ class DataReference {
                     callbackObject = ref;
                 }
                 else {
-                    const isRemoved = event === "child_removed";
-                    const val = this.db.types.deserialize(path, isRemoved ? oldValue : newValue);
-                    const snap = new DataSnapshot(ref, val, isRemoved);
-                    callbackObject = snap;
+                    const values = { 
+                        previous: this.db.types.deserialize(path, oldValue),
+                        current: this.db.types.deserialize(path, newValue)
+                    };
+                    if (event === 'child_removed') {
+                        callbackObject = new DataSnapshot(ref, values.previous, true, values.previous);
+                    }
+                    else {
+                        const isRemoved = event === 'mutated' && values.current === null;
+                        callbackObject = new DataSnapshot(ref, values.current, isRemoved, values.previous);
+                    }
                 }
 
                 try { useCallback && callback.call(context || null, callbackObject); }
@@ -973,6 +1343,74 @@ class DataReference {
         }
         return this.db.api.export(this.path, stream, options);
     }
+
+    proxy() {
+        return LiveDataProxy.create(this, { arrayFunctionsReturn: 'native' })
+    }
+
+    observe(options) {
+        // options should not be used yet - we can't prevent/filter mutation events on excluded paths atm 
+
+        if (this.isWildcardPath) {
+            return Promise.reject(new Error(`Cannot observe wildcard path "/${this.path}"`));
+        }
+        else if (!this.db.isReady) {
+            return this.db.ready().then(() => this.observe(options));
+        }
+        let Observable;
+        try {
+            Observable = require('rxjs').Observable;
+        }
+        catch(err) {
+            return Promise.reject(`RxJS not installed. Add it to your project with: npm install rxjs --save`)
+        }
+        return new Observable(observer => {
+            let cache, resolved = false;
+            let promise = this.get(options).then(snap => {
+                resolved = true;
+                cache = snap.val();
+                observer.next(cache);
+            });
+
+            const updateCache = (snap) => {
+                if (!resolved) { 
+                    promise = promise.then(() => updateCache(snap));
+                    return; 
+                }
+                const mutatedPath = snap.ref.path;
+                const trailPath = mutatedPath.slice(this.path.length + 1);
+                const trailKeys = PathInfo.getPathKeys(trailPath);
+                let target = cache;
+                while (trailKeys.length > 1) {
+                    const key = trailKeys.shift();
+                    if (!(key in target)) {
+                        // Happens if initial loaded data did not include / excluded this data, 
+                        // or we missed out on an event
+                        target[key] = typeof trailKeys[0] === 'number' ? [] : {}
+                    }
+                    target = target[key];
+                }
+                const prop = trailKeys.shift();
+                const newValue = snap.val();
+                if (newValue === null) {
+                    // Remove it
+                    target instanceof Array ? target.splice(prop, 1) : delete target[prop];                    
+                }
+                else {
+                    // Set or update it
+                    target[prop] = newValue;
+                }
+                observer.next(cache);
+            };
+
+            this.on('mutated', updateCache);
+
+            // Return unsubscribe function
+            return () => {
+                this.off('mutated', updateCache);
+            };
+        });
+    }
 } 
 
 class DataReferenceQuery {
@@ -1257,7 +1695,7 @@ module.exports = {
     DataRetrievalOptions,
     QueryDataRetrievalOptions
 };
-},{"./data-snapshot":8,"./debug":9,"./id":10,"./path-info":12,"./subscription":15}],8:[function(require,module,exports){
+},{"./data-proxy":7,"./data-snapshot":9,"./debug":10,"./id":11,"./path-info":13,"./path-reference":14,"./subscription":16,"rxjs":42}],9:[function(require,module,exports){
 const { DataReference } = require('./data-reference');
 const { getPathKeys } = require('./path-info');
 
@@ -1291,9 +1729,10 @@ class DataSnapshot {
      * @param {DataReference} ref 
      * @param {any} value 
      */
-    constructor(ref, value, isRemoved = false) {
+    constructor(ref, value, isRemoved = false, prevValue) {
         this.ref = ref;
         this.val = () => { return value; };
+        this.previous = () => { return prevValue; }
         this.exists = () => { 
             if (isRemoved) { return false; } 
             return value !== null && typeof value !== "undefined"; 
@@ -1379,7 +1818,7 @@ class DataSnapshot {
 }
 
 module.exports = { DataSnapshot };
-},{"./data-reference":7,"./path-info":12}],9:[function(require,module,exports){
+},{"./data-reference":8,"./path-info":13}],10:[function(require,module,exports){
 class DebugLogger {
     constructor(level = "log", prefix = '') {
         this.prefix = prefix;
@@ -1397,7 +1836,7 @@ class DebugLogger {
 }
 
 module.exports = DebugLogger;
-},{}],10:[function(require,module,exports){
+},{}],11:[function(require,module,exports){
 const cuid = require('cuid');
 // const uuid62 = require('uuid62');
 
@@ -1410,7 +1849,7 @@ class ID {
 }
 
 module.exports = { ID };
-},{"cuid":1}],11:[function(require,module,exports){
+},{"cuid":1}],12:[function(require,module,exports){
 const { AceBaseBase, AceBaseSettings } = require('./acebase-base');
 const { Api } = require('./api');
 const { DataReference, DataReferenceQuery, DataRetrievalOptions, QueryDataRetrievalOptions } = require('./data-reference');
@@ -1442,13 +1881,14 @@ module.exports = {
     ascii85,
     SimpleCache
 };
-},{"./acebase-base":4,"./api":5,"./ascii85":6,"./data-reference":7,"./data-snapshot":8,"./debug":9,"./id":10,"./path-info":12,"./path-reference":13,"./simple-cache":14,"./subscription":15,"./transport":16,"./type-mappings":17,"./utils":18}],12:[function(require,module,exports){
+},{"./acebase-base":4,"./api":5,"./ascii85":6,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./path-info":13,"./path-reference":14,"./simple-cache":15,"./subscription":16,"./transport":17,"./type-mappings":18,"./utils":19}],13:[function(require,module,exports){
 /**
  * 
  * @param {string} path 
  * @returns {Array<string|number>}
  */
 function getPathKeys(path) {
+    path = path.replace(/^\//, ""); // Remove leading slash
     if (path.length === 0) { return []; }
     let keys = path.replace(/\[/g, "/[").split("/");
     keys.forEach((key, index) => {
@@ -1460,6 +1900,7 @@ function getPathKeys(path) {
 }
 
 function getPathInfo(path) {
+    path = path.replace(/^\//, ""); // Remove leading slash
     if (path.length === 0) {
         return { parent: null, key: "" };
     }
@@ -1488,9 +1929,14 @@ function getPathInfo(path) {
  * @returns {string}
  */
 function getChildPath(path, key) {
+    path = path.replace(/^\//, ""); // Remove leading slash
+    key = typeof key === "string" ? key.replace(/^\//, "") : key; // Remove leading slash
     if (path.length === 0) {
         if (typeof key === "number") { throw new TypeError("Cannot add array index to root path!"); }
         return key;
+    }
+    if (typeof key === "string" && key.length === 0) {
+        return path;
     }
     if (typeof key === "number") {
         return `${path}[${key}]`;
@@ -1685,7 +2131,7 @@ class PathInfo {
     /**
      * Replaces all variables in a path with the values in the vars argument
      * @param {string} varPath path containing variables
-     * @param {object} variables variables object such as one gotten from PathInfo.extractVariables
+     * @param {object} vars variables object such as one gotten from PathInfo.extractVariables
      */
     static fillVariables2(varPath, vars) {
         if (typeof vars !== 'object' || Object.keys(vars).length === 0) {
@@ -1805,7 +2251,7 @@ class PathInfo {
 }
 
 module.exports = { getPathInfo, getChildPath, getPathKeys, PathInfo };
-},{}],13:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
 class PathReference {
     /**
      * Creates a reference to a path that can be stored in the database. Use this to create cross-references to other data in your database
@@ -1816,7 +2262,7 @@ class PathReference {
     }
 }
 module.exports = { PathReference };
-},{}],14:[function(require,module,exports){
+},{}],15:[function(require,module,exports){
 class SimpleCache {
     constructor(expirySeconds) {
         this.expirySeconds = expirySeconds;
@@ -1843,7 +2289,7 @@ class SimpleCache {
 }
 
 module.exports = { SimpleCache };
-},{}],15:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 class EventSubscription {
     /**
      * 
@@ -2051,7 +2497,7 @@ class EventStream {
 }
 
 module.exports = { EventStream, EventPublisher, EventSubscription };
-},{}],16:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 const { PathReference } = require('./path-reference');
 //const { DataReference } = require('./data-reference');
 const { cloneObject } = require('./utils');
@@ -2152,7 +2598,7 @@ module.exports = {
         };
     }        
 };
-},{"./ascii85":6,"./path-reference":13,"./utils":18}],17:[function(require,module,exports){
+},{"./ascii85":6,"./path-reference":14,"./utils":19}],18:[function(require,module,exports){
 const { cloneObject } = require('./utils');
 const { PathInfo } = require('./path-info');
 const { AceBaseBase } = require('./acebase-base');
@@ -2500,7 +2946,7 @@ module.exports = {
     TypeMappingOptions
 }
 
-},{"./acebase-base":4,"./data-reference":7,"./data-snapshot":8,"./path-info":12,"./utils":18}],18:[function(require,module,exports){
+},{"./acebase-base":4,"./data-reference":8,"./data-snapshot":9,"./path-info":13,"./utils":19}],19:[function(require,module,exports){
 (function (Buffer){
 const { PathReference } = require('./path-reference');
 
@@ -2831,7 +3277,7 @@ module.exports = {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./data-snapshot":8,"./path-reference":13,"buffer":41}],19:[function(require,module,exports){
+},{"./data-snapshot":9,"./path-reference":14,"buffer":42}],20:[function(require,module,exports){
 /*
 
 The MIT License (MIT)
@@ -3034,7 +3480,7 @@ for (var map in colors.maps) {
 
 defineProps(colors, init());
 
-},{"./custom/trap":20,"./custom/zalgo":21,"./maps/america":24,"./maps/rainbow":25,"./maps/random":26,"./maps/zebra":27,"./styles":28,"./system/supports-colors":30,"util":47}],20:[function(require,module,exports){
+},{"./custom/trap":21,"./custom/zalgo":22,"./maps/america":25,"./maps/rainbow":26,"./maps/random":27,"./maps/zebra":28,"./styles":29,"./system/supports-colors":31,"util":48}],21:[function(require,module,exports){
 module['exports'] = function runTheTrap(text, options) {
   var result = '';
   text = text || 'Run the trap, drop the bass';
@@ -3082,7 +3528,7 @@ module['exports'] = function runTheTrap(text, options) {
   return result;
 };
 
-},{}],21:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 // please no
 module['exports'] = function zalgo(text, options) {
   text = text || '   he is here   ';
@@ -3194,7 +3640,7 @@ module['exports'] = function zalgo(text, options) {
 };
 
 
-},{}],22:[function(require,module,exports){
+},{}],23:[function(require,module,exports){
 var colors = require('./colors');
 
 module['exports'] = function() {
@@ -3300,7 +3746,7 @@ module['exports'] = function() {
   };
 };
 
-},{"./colors":19}],23:[function(require,module,exports){
+},{"./colors":20}],24:[function(require,module,exports){
 var colors = require('./colors');
 module['exports'] = colors;
 
@@ -3315,7 +3761,7 @@ module['exports'] = colors;
 //
 require('./extendStringPrototype')();
 
-},{"./colors":19,"./extendStringPrototype":22}],24:[function(require,module,exports){
+},{"./colors":20,"./extendStringPrototype":23}],25:[function(require,module,exports){
 module['exports'] = function(colors) {
   return function(letter, i, exploded) {
     if (letter === ' ') return letter;
@@ -3327,7 +3773,7 @@ module['exports'] = function(colors) {
   };
 };
 
-},{}],25:[function(require,module,exports){
+},{}],26:[function(require,module,exports){
 module['exports'] = function(colors) {
   // RoY G BiV
   var rainbowColors = ['red', 'yellow', 'green', 'blue', 'magenta'];
@@ -3341,7 +3787,7 @@ module['exports'] = function(colors) {
 };
 
 
-},{}],26:[function(require,module,exports){
+},{}],27:[function(require,module,exports){
 module['exports'] = function(colors) {
   var available = ['underline', 'inverse', 'grey', 'yellow', 'red', 'green',
     'blue', 'white', 'cyan', 'magenta'];
@@ -3353,14 +3799,14 @@ module['exports'] = function(colors) {
   };
 };
 
-},{}],27:[function(require,module,exports){
+},{}],28:[function(require,module,exports){
 module['exports'] = function(colors) {
   return function(letter, i, exploded) {
     return i % 2 === 0 ? letter : colors.inverse(letter);
   };
 };
 
-},{}],28:[function(require,module,exports){
+},{}],29:[function(require,module,exports){
 /*
 The MIT License (MIT)
 
@@ -3439,7 +3885,7 @@ Object.keys(codes).forEach(function(key) {
   style.close = '\u001b[' + val[1] + 'm';
 });
 
-},{}],29:[function(require,module,exports){
+},{}],30:[function(require,module,exports){
 (function (process){
 /*
 MIT License
@@ -3478,7 +3924,7 @@ module.exports = function(flag, argv) {
 };
 
 }).call(this,require('_process'))
-},{"_process":45}],30:[function(require,module,exports){
+},{"_process":46}],31:[function(require,module,exports){
 (function (process){
 /*
 The MIT License (MIT)
@@ -3633,7 +4079,7 @@ module.exports = {
 };
 
 }).call(this,require('_process'))
-},{"./has-flag.js":29,"_process":45,"os":44}],31:[function(require,module,exports){
+},{"./has-flag.js":30,"_process":46,"os":45}],32:[function(require,module,exports){
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
@@ -3981,7 +4427,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { BrowserAceBase };
-},{"./acebase-local":32,"./storage-custom":39}],32:[function(require,module,exports){
+},{"./acebase-local":33,"./storage-custom":40}],33:[function(require,module,exports){
 /**
    ________________________________________________________________________________
    
@@ -4187,7 +4633,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":33,"./storage":40,"./storage-custom":39,"acebase-core":11}],33:[function(require,module,exports){
+},{"./api-local":34,"./storage":41,"./storage-custom":40,"acebase-core":12}],34:[function(require,module,exports){
 const { Api, Utils } = require('acebase-core');
 const { AceBase } = require('./acebase-local');
 const { StorageSettings } = require('./storage');
@@ -4246,20 +4692,20 @@ class LocalApi extends Api {
         this.storage.subscriptions.remove(path, event, callback);
     }
 
-    set(path, value, flags = undefined) {
-        return Node.update(this.storage, path, value, { merge: false });
+    set(path, value, options = { context: null }) {
+        return Node.update(this.storage, path, value, { merge: false, context: options.context });
     }
 
-    update(path, updates, flags = undefined) {
-        return Node.update(this.storage, path, updates, { merge: true });
+    update(path, updates, options = { context: null }) {
+        return Node.update(this.storage, path, updates, { merge: true, context: options.context });
     }
 
     get(path, options) {
         return Node.getValue(this.storage, path, options);
     }
 
-    transaction(path, callback) {
-        return Node.transaction(this.storage, path, callback);
+    transaction(path, callback, options = { context: null }) {
+        return Node.transaction(this.storage, path, callback, { context: options.context });
     }
 
     exists(path) {
@@ -5143,7 +5589,7 @@ class LocalApi extends Api {
 }
 
 module.exports = { LocalApi };
-},{"./acebase-local":32,"./data-index":41,"./node":38,"./storage":40,"./storage-acebase":41,"./storage-custom":39,"./storage-mssql":41,"./storage-sqlite":41,"acebase-core":11}],34:[function(require,module,exports){
+},{"./acebase-local":33,"./data-index":42,"./node":39,"./storage":41,"./storage-acebase":42,"./storage-custom":40,"./storage-mssql":42,"./storage-sqlite":42,"acebase-core":12}],35:[function(require,module,exports){
 /*
     * This file is used to create a browser bundle, 
     (re)generate it with: npm run browserify
@@ -5189,7 +5635,7 @@ window.acebase = acebase;
 window.AceBase = BrowserAceBase;
 // Expose classes for module imports:
 module.exports = acebase;
-},{"./acebase-browser":31,"./acebase-local":32,"./storage-custom":39,"acebase-core":11}],35:[function(require,module,exports){
+},{"./acebase-browser":32,"./acebase-local":33,"./storage-custom":40,"acebase-core":12}],36:[function(require,module,exports){
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
 
@@ -5251,7 +5697,7 @@ class NodeInfo {
 }
 
 module.exports = { NodeInfo };
-},{"./node-value-types":37,"acebase-core":11}],36:[function(require,module,exports){
+},{"./node-value-types":38,"acebase-core":12}],37:[function(require,module,exports){
 const { PathInfo } = require('acebase-core');
 const storage = require('./storage');
 
@@ -5559,7 +6005,7 @@ class NodeLock {
 }
 
 module.exports = { NodeLocker, NodeLock };
-},{"./storage":40,"acebase-core":11}],37:[function(require,module,exports){
+},{"./storage":41,"acebase-core":12}],38:[function(require,module,exports){
 const VALUE_TYPES = {
     // Native types:
     OBJECT: 1,
@@ -5589,7 +6035,7 @@ function getValueTypeName(valueType) {
 }
 
 module.exports = { VALUE_TYPES, getValueTypeName };
-},{}],38:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
@@ -5636,16 +6082,17 @@ class Node {
      * @param {any} value Any value will do. If the value is small enough to be stored in a parent record, it will take care of it
      * @param {object} [options]
      * @param {boolean} [options.merge=true] whether to merge or overwrite the current value if node exists
+     * @param {any} [options.context=null] Context to be passed along with data events
      */
-    static update(storage, path, value, options = { merge: true }) {
+    static update(storage, path, value, options = { merge: true, context: null }) {
 
         // debug.log(`Update request for node "/${path}"`);
 
         if (options.merge) {
-            return storage.updateNode(path, value);
+            return storage.updateNode(path, value, { context: options.context });
         }
         else {
-            return storage.setNode(path, value);
+            return storage.setNode(path, value, { context: options.context });
         }
     }
 
@@ -5715,23 +6162,25 @@ class Node {
         return storage.getChildren(path, { keyFilter });
     }
 
-    /**
-     * Removes a Node. Short for Node.update with value null
-     * @param {Storage} storage 
-     * @param {string} path 
-     */
-    static remove(storage, path) {
-        return storage.removeNode(path);
-    }
+    // /**
+    //  * Removes a Node. Short for Node.update with value null
+    //  * @param {Storage} storage 
+    //  * @param {string} path 
+    //  */
+    // static remove(storage, path) {
+    //     return storage.removeNode(path);
+    // }
 
     /**
      * Sets the value of a Node. Short for Node.update with option { merge: false }
      * @param {Storage} storage 
      * @param {string} path 
      * @param {any} value 
+     * @param {any} [options]
+     * @param {any} [options.context=null]
      */
-    static set(storage, path, value) {
-        return Node.update(storage, path, value, { merge: false });
+    static set(storage, path, value, options = { context: null }) {
+        return Node.update(storage, path, value, { merge: false, context: options.context });
     }
 
     /**
@@ -5739,9 +6188,11 @@ class Node {
      * @param {Storage} storage 
      * @param {string} path 
      * @param {(currentValue: any) => Promise<any>} callback callback is called with the current value. The returned value (or promise) will be used as the new value. When the callbacks returns undefined, the transaction will be canceled. When callback returns null, the node will be removed.
+     * @param {any} [options]
+     * @param {any} [options.context=null]
      */
-    static transaction(storage, path, callback) {
-        return storage.transactNode(path, callback);
+    static transaction(storage, path, callback, options = { context: null }) {
+        return storage.transactNode(path, callback, { context: options.context });
     }
 
     /**
@@ -5901,7 +6352,7 @@ module.exports = {
     Node,
     NodeInfo
 };
-},{"./node-info":35,"./node-value-types":37,"./storage":40,"colors":23}],39:[function(require,module,exports){
+},{"./node-info":36,"./node-value-types":38,"./storage":41,"colors":24}],40:[function(require,module,exports){
 const { debug, ID, PathReference, PathInfo, ascii85 } = require('acebase-core');
 const { NodeInfo } = require('./node-info');
 const { NodeLocker } = require('./node-lock');
@@ -7193,48 +7644,48 @@ class CustomStorage extends Storage {
         // });
     }
 
-    // TODO: Move to Storage base class?
-    /**
-     * 
-     * @param {string} path 
-     * @param {object} [options]
-     * @param {CustomStorageTransaction} [options.transaction]
-     * @returns {Promise<void>}
-     */
-    async removeNode(path, options) {
-        if (path === '') { 
-            return Promise.reject(new Error(`Cannot remove the root node`)); 
-        }
+    // // TODO: Move to Storage base class?
+    // /**
+    //  * 
+    //  * @param {string} path 
+    //  * @param {object} [options]
+    //  * @param {CustomStorageTransaction} [options.transaction]
+    //  * @returns {Promise<void>}
+    //  */
+    // async removeNode(path, options) {
+    //     if (path === '') { 
+    //         return Promise.reject(new Error(`Cannot remove the root node`)); 
+    //     }
         
-        options = options || {};
-        const pathInfo = PathInfo.get(path);
-        const transaction = options.transaction || this._customImplementation.getTransaction({ path, write: true });
-        // return this.nodeLocker.lock(pathInfo.parentPath, transaction.id, true, 'removeNode')
-        // .then(lock => {
-        try {
-            await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { transaction });
-            if (!options.transaction) {
-                // transaction was created by us, commit
-                await transaction.commit();
-            }            
-        }
-        catch (err) {
-            if (!options.transaction) {
-                // transaction was created by us, rollback
-                await transaction.rollback(err);
-            }
-            throw err;
-        }
-        //     .then(result => {
-        //         lock.release();
-        //         return result;
-        //     })
-        //     .catch(err => {
-        //         lock.release();
-        //         throw err;
-        //     });            
-        // });
-    }
+    //     options = options || {};
+    //     const pathInfo = PathInfo.get(path);
+    //     const transaction = options.transaction || this._customImplementation.getTransaction({ path, write: true });
+    //     // return this.nodeLocker.lock(pathInfo.parentPath, transaction.id, true, 'removeNode')
+    //     // .then(lock => {
+    //     try {
+    //         await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { transaction });
+    //         if (!options.transaction) {
+    //             // transaction was created by us, commit
+    //             await transaction.commit();
+    //         }            
+    //     }
+    //     catch (err) {
+    //         if (!options.transaction) {
+    //             // transaction was created by us, rollback
+    //             await transaction.rollback(err);
+    //         }
+    //         throw err;
+    //     }
+    //     //     .then(result => {
+    //     //         lock.release();
+    //     //         return result;
+    //     //     })
+    //     //     .catch(err => {
+    //     //         lock.release();
+    //     //         throw err;
+    //     //     });            
+    //     // });
+    // }
 
     // TODO: Move to Storage base class?
     /**
@@ -7244,13 +7695,13 @@ class CustomStorage extends Storage {
      * @param {object} [options]
      * @param {string} [options.assert_revision]
      * @param {CustomStorageTransaction} [options.transaction]
+     * @param {any} [options.context]
      * @returns {Promise<CustomStorageNodeInfo>}
      */
-    async setNode(path, value, options) {        
+    async setNode(path, value, options = { context: null }) {        
         const pathInfo = PathInfo.get(path);
 
         // let lock;
-        options = options || {};
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
         // return this.nodeLocker.lock(path, transaction.id, true, 'setNode')
         // .then(l => {
@@ -7261,7 +7712,7 @@ class CustomStorage extends Storage {
                 if (value === null || typeof value !== 'object' || value instanceof Array || value instanceof ArrayBuffer || ('buffer' in value && value.buffer instanceof ArrayBuffer)) {
                     throw new Error(`Invalid value for root node: ${value}`);
                 }
-                await this._writeNodeWithTracking('', value, { merge: false, transaction })
+                await this._writeNodeWithTracking('', value, { merge: false, transaction, context: options.context })
             }
             else if (typeof options.assert_revision !== 'undefined') {
                 const info = await this.getNodeInfo(path, { transaction })
@@ -7271,7 +7722,7 @@ class CustomStorage extends Storage {
                 }
                 if (info.address && info.address.path === path && value !== null && !this.valueFitsInline(value)) {
                     // Overwrite node
-                    await this._writeNodeWithTracking(path, value, { merge: false, transaction });
+                    await this._writeNodeWithTracking(path, value, { merge: false, transaction, context: options.context });
                 }
                 else {
                     // Update parent node
@@ -7280,7 +7731,7 @@ class CustomStorage extends Storage {
                     //     lock = parentLock;
                     const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                     console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
-                    await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, transaction });
+                    await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, transaction, context: options.context });
                     // });
                 }
                 // })
@@ -7292,7 +7743,7 @@ class CustomStorage extends Storage {
                 //     lock = parentLock;
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                 console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
-                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction });
+                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction, context: options.context });
                 // });
             }
             if (!options.transaction) {
@@ -7325,14 +7776,14 @@ class CustomStorage extends Storage {
      * @param {*} updates 
      * @param {object} [options] 
      * @param {CustomStorageTransaction} [options.transaction]
+     * @param {any} [options.context]
      */
-    async updateNode(path, updates, options) {
+    async updateNode(path, updates, options = { context: null }) {
 
         if (typeof updates !== 'object') { //  || Object.keys(updates).length === 0
             throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
         }
 
-        options = options || {};
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
         // const tid = (options && options.tid) || ID.generate();
         // let lock;
@@ -7351,7 +7802,7 @@ class CustomStorage extends Storage {
             if (nodeInfo.exists && nodeInfo.address && nodeInfo.address.path === path) {
                 // Node exists and is stored in its own record.
                 // Update it
-                await this._writeNodeWithTracking(path, updates, { transaction, merge: true });
+                await this._writeNodeWithTracking(path, updates, { transaction, merge: true, context: options.context });
             }
             else if (nodeInfo.exists) {
                 // Node exists, but is stored in its parent node.
@@ -7361,7 +7812,7 @@ class CustomStorage extends Storage {
                 //     lock = parentLock;
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                 console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
-                await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, merge: true });
+                await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, merge: true, context: options.context });
                 // });
             }
             else {
@@ -7371,7 +7822,7 @@ class CustomStorage extends Storage {
                 //     lock = parentLock;
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                 console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
-                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction });
+                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, context: options.context });
                 // });
             }
             if (!options.transaction) {
@@ -7410,7 +7861,7 @@ module.exports = {
     ICustomStorageNodeMetaData,
     ICustomStorageNode
 }
-},{"./node-info":35,"./node-lock":36,"./node-value-types":37,"./storage":40,"acebase-core":11}],40:[function(require,module,exports){
+},{"./node-info":36,"./node-lock":37,"./node-value-types":38,"./storage":41,"acebase-core":12}],41:[function(require,module,exports){
 (function (process){
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85 } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
@@ -7767,7 +8218,7 @@ class Storage extends EventEmitter {
 
         // Subscriptions
         const _subs = {};
-        const _supportedEvents = ["value","child_added","child_changed","child_removed"];
+        const _supportedEvents = ["value","child_added","child_changed","child_removed","mutated"];
         // Add 'notify_*' event types for each event to enable data-less notifications, so data retrieval becomes optional
         _supportedEvents.push(..._supportedEvents.map(event => `notify_${event}`)); 
         this.subscriptions = {
@@ -7831,18 +8282,26 @@ class Storage extends EventEmitter {
                 const valueSubscribers = [];
                 Object.keys(_subs).forEach(subscriptionPath => {
                     if (pathInfo.equals(subscriptionPath) || pathInfo.isDescendantOf(subscriptionPath)) {
+                        // path being updated === subscriptionPath, or a child/descendant path of it
+                        // eg path === "posts/123/title"
+                        // and subscriptionPath is "posts/123/title", "posts/$postId/title", "posts/123", "posts/*", "posts" etc
                         let pathSubs = _subs[subscriptionPath];
                         const eventPath = PathInfo.fillVariables(subscriptionPath, path);
-                        pathSubs.forEach(sub => {
+                        pathSubs
+                        .filter(sub => !sub.type.startsWith("notify_")) // notify events don't need additional value loading
+                        .forEach(sub => {
                             let dataPath = null;
-                            if (sub.type === "value" || sub.type === "notify_value") { 
+                            if (sub.type === "value") { // ["value", "notify_value"].includes(sub.type)
                                 dataPath = eventPath;
                             }
-                            else if ((sub.type === "child_changed" || sub.type === "notify_child_changed") && path !== eventPath) {
+                            else if (sub.type === 'mutated' && pathInfo.isDescendantOf(eventPath)) { //["mutated", "notify_mutated"].includes(sub.type)
+                                dataPath = path; // Only needed data is the properties being updated in the targeted path
+                            }
+                            else if (sub.type === "child_changed" && path !== eventPath) { // ["child_changed", "notify_child_changed"].includes(sub.type)
                                 let childKey = PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey);
-                             }
-                            else if (["child_added", "child_removed", "notify_child_added", "notify_child_removed"].includes(sub.type) && pathInfo.isChildOf(eventPath)) { 
+                            }
+                            else if (["child_added", "child_removed"].includes(sub.type) && pathInfo.isChildOf(eventPath)) { //["child_added", "child_removed", "notify_child_added", "notify_child_removed"]
                                 let childKey = PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey);
                             }
@@ -7864,10 +8323,11 @@ class Storage extends EventEmitter {
                 const pathInfo = PathInfo.get(path);
                 const subscribers = [];
                 Object.keys(_subs).forEach(subscriptionPath => {
-                    if (pathInfo.equals(subscriptionPath) //path === subscriptionPath 
-                        || pathInfo.isDescendantOf(subscriptionPath) 
-                        || pathInfo.isAncestorOf(subscriptionPath)
-                    ) {
+                    // if (pathInfo.equals(subscriptionPath) //path === subscriptionPath 
+                    //     || pathInfo.isDescendantOf(subscriptionPath) 
+                    //     || pathInfo.isAncestorOf(subscriptionPath)
+                    // ) {
+                    if (pathInfo.isOnTrailOf(subscriptionPath)) {
                         let pathSubs = _subs[subscriptionPath];
                         const eventPath = PathInfo.fillVariables(subscriptionPath, path);
 
@@ -7876,11 +8336,14 @@ class Storage extends EventEmitter {
                             if (sub.type === "value" || sub.type === "notify_value") { 
                                 dataPath = eventPath; 
                             }
-                            else if (sub.type === "child_changed" || sub.type === "notify_child_changed") { 
+                            else if (["child_changed", "notify_child_changed"].includes(sub.type)) { 
                                 let childKey = path === eventPath || pathInfo.isAncestorOf(eventPath) 
                                     ? "*" 
                                     : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey);
+                            }
+                            else if (["mutated", "notify_mutated"].includes(sub.type)) { 
+                                dataPath = path;
                             }
                             else if (
                                 ["child_added", "child_removed", "notify_child_added", "notify_child_removed"].includes(sub.type) 
@@ -7911,13 +8374,14 @@ class Storage extends EventEmitter {
              * @param {string} dataPath - path to the node the value is stored
              * @param {any} oldValue - old value
              * @param {any} newValue - new value
+             * @param {any} context - context used by the client that updated this data
              */
-            trigger(event, path, dataPath, oldValue, newValue) {
+            trigger(event, path, dataPath, oldValue, newValue, context) {
                 //console.warn(`Event "${event}" triggered on node "/${path}" with data of "/${dataPath}": `, newValue);
                 const pathSubscriptions = _subs[path] || [];
                 pathSubscriptions.filter(sub => sub.type === event)
                 .forEach(sub => {
-                    sub.callback(null, dataPath, newValue, oldValue);
+                    sub.callback(null, dataPath, newValue, oldValue, context);
                     // if (event.startsWith('notify_')) {
                     //     // Notify only event, run callback without data
                     //     sub.callback(null, dataPath);
@@ -8028,7 +8492,7 @@ class Storage extends EventEmitter {
      * @param {object} [options] 
      * @returns {Promise<void>}
      */
-    _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true }) {
+    _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true, context: null }) {
         options = options || {};
         if (!options.tid && !options.transaction) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid OR transaction!`); }
         options.merge = options.merge === true;
@@ -8056,7 +8520,7 @@ class Storage extends EventEmitter {
                 });
             let first = eventPaths[0];
             topEventPath = first.path;
-            if (valueSubscribers.filter(sub => sub.dataPath === topEventPath).every(sub => sub.type.startsWith('notify_'))) {
+            if (valueSubscribers.filter(sub => sub.dataPath === topEventPath).every(sub => sub.type === 'mutated' || sub.type.startsWith('notify_'))) {
                 // Prevent loading of all data on path, so it'll only load changing properties
                 hasValueSubscribers = false;
             }
@@ -8202,6 +8666,11 @@ class Storage extends EventEmitter {
                 newTopEventData = modifiedData = value;
             }
 
+            const dataChanges = compareValues(topEventData, newTopEventData);
+            if (dataChanges === 'identical') {
+                return result;
+            }
+
             // Find out if there are indexes that need to be updated
             // const updatedData = (() => {
             //     let topPathKeys = PathInfo.getPathKeys(topEventPath);
@@ -8306,7 +8775,10 @@ class Storage extends EventEmitter {
                 if (type.startsWith('notify_')) {
                     type = type.slice('notify_'.length);
                 }
-                if (type === "child_changed" && (oldValue === null || newValue === null)) {
+                if (type === "mutated") {
+                    return; // Ignore here, requires different logic
+                }
+                else if (type === "child_changed" && (oldValue === null || newValue === null)) {
                     trigger = false;
                 }
                 else if (type === "value" || type === "child_changed") {
@@ -8330,13 +8802,15 @@ class Storage extends EventEmitter {
                     const safeVarName = variable.name === '*' ? '\\*' : variable.name.replace('$', '\\$');
                     dataPath = dataPath.replace(new RegExp(`(^|/)${safeVarName}([/\[]|$)`), `$1${variable.value}$2`);
                 });
-                trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue);
+                trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
             };
 
             const triggerAllEvents = () => {
                 // Notify all event subscriptions, should be executed with a delay (process.nextTick)
                 // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
-                eventSubscriptions.map(sub => {
+                eventSubscriptions
+                .filter(sub => !['mutated', 'notify_mutated'].includes(sub.type))
+                .map(sub => {
                     const keys = PathInfo.getPathKeys(sub.dataPath);
                     return {
                         sub,
@@ -8385,7 +8859,82 @@ class Storage extends EventEmitter {
                         callSubscriberWithValues(sub, oldValue, newValue, variables);
                     };
 
-                    process(topEventPath, topEventData, newTopEventData);
+                    if (sub.type.startsWith('notify_') && PathInfo.get(sub.eventPath).isAncestorOf(topEventPath)) {
+                        // Notify event on a higher path than we have loaded data on
+                        // We can trigger the notify event on the subscribed path
+                        // Eg: 
+                        // path === 'users/ewout', updates === { name: 'Ewout Stortenbeker' }
+                        // sub.path === 'users' or '', sub.type === 'notify_child_changed'
+                        // => OK to trigger if dataChanges !== 'removed' and 'added'
+                        const isOnParentPath = PathInfo.get(sub.eventPath).isParentOf(topEventPath);
+                        const trigger = 
+                            (sub.type === 'notify_value')
+                            || (sub.type === 'notify_child_changed' && (!isOnParentPath || !['added','removed'].includes(dataChanges)))
+                            || (sub.type === 'notify_child_removed' && dataChanges === 'removed' && isOnParentPath)
+                            || (sub.type === 'notify_child_added' && dataChanges === 'added' && isOnParentPath)
+                        trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, sub.dataPath, null, null, options.context);
+                    }
+                    else {
+                        // Subscription is on current or deeper path
+                        process(topEventPath, topEventData, newTopEventData);
+                    }
+                });
+
+                // The only events we haven't processed now are 'mutated' events.
+                // They require different logic: we'll call them for all nested properties of the updated path, that 
+                // actually did change. They do not bubble up like 'child_changed' does.
+                const triggerMutationEvents = (sub, currentPath, oldValue, newValue, compareResult) => {
+                    const result = compareResult || compareValues(oldValue, newValue);
+                    if (result === 'identical') {
+                        return; // no changes on subscribed path
+                    }
+                    else if (typeof result === 'string') {
+                        // We are on a path that has an actual change
+                        this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
+                    }
+                    else if (oldValue instanceof Array || newValue instanceof Array) {
+                        // Trigger mutated event on the array itself instead of on individual indexes
+                        this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
+                    }
+                    else {
+                        // DISABLED array handling here, because if a client is using a cache db this will cause problems
+                        // because individual array entries should never be modified.
+                        // if (oldValue instanceof Array && newValue instanceof Array) {
+                        //     // Make sure any removed events on arrays will be triggered from last to first
+                        //     result.removed.sort((a,b) => a < b ? 1 : -1);
+                        // }
+                        result.changed.forEach(info => {
+                            const childPath = PathInfo.getChildPath(currentPath, info.key);
+                            let childValues = getChildValues(info.key, oldValue, newValue);
+                            triggerMutationEvents(sub, childPath, childValues.oldValue, childValues.newValue, info.change);
+                        });
+                        result.added.forEach(key => {
+                            const childPath = PathInfo.getChildPath(currentPath, key);
+                            this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, null, newValue[key], options.context);
+                        });
+                        result.removed.forEach(key => {
+                            const childPath = PathInfo.getChildPath(currentPath, key);
+                            this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, oldValue[key], null, options.context);
+                        });
+                    }
+                };
+
+                eventSubscriptions.filter(sub => ['mutated', 'notify_mutated'].includes(sub.type))
+                .forEach(sub => {
+                    // Get the target data this subscription is interested in
+                    let currentPath = path;
+                    let trailPath = sub.eventPath.slice(currentPath.length).replace(/^\//, '');
+                    let trailKeys = PathInfo.getPathKeys(trailPath);
+                    let oldValue = topEventData, newValue = newTopEventData;
+                    while (trailKeys.length > 0) {
+                        let subKey = trailKeys.shift();
+                        currentPath = PathInfo.getChildPath(currentPath, subKey);
+                        let childValues = getChildValues(subKey, oldValue, newValue);
+                        oldValue = childValues.oldValue;
+                        newValue = childValues.newValue;
+                    }
+
+                    triggerMutationEvents(sub, currentPath, oldValue, newValue);
                 });
             };
 
@@ -8457,17 +9006,18 @@ class Storage extends EventEmitter {
         throw new Error(`This method must be implemented by subclass`);
     }
 
-    /**
-     * Removes a node by delegating to updateNode on the parent with null value.
-     * Throws an Error if path is root ('')
-     * @param {string} path
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {Promise<void>}
-     */
-    removeNode(path, options = { tid: undefined }) {
-        throw new Error(`This method must be implemented by subclass`);
-    }
+    // /**
+    //  * Removes a node by delegating to updateNode on the parent with null value.
+    //  * Throws an Error if path is root ('')
+    //  * @param {string} path
+    //  * @param {object} [options] optional options used by implementation for recursive calls
+    //  * @param {string} [options.tid] optional transaction id for node locking purposes
+    //  * @param {string} [options.context] context info used by the client
+    //  * @returns {Promise<void>}
+    //  */
+    // removeNode(path, options = { tid: undefined, context: null }) {
+    //     throw new Error(`This method must be implemented by subclass`);
+    // }
 
     /**
      * Creates or overwrites a node. Delegates to updateNode on a parent if
@@ -8476,9 +9026,10 @@ class Storage extends EventEmitter {
      * @param {any} value
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    setNode(path, value, options = { tid: undefined }) {
+    setNode(path, value, options = { tid: undefined, context: null }) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -8489,9 +9040,10 @@ class Storage extends EventEmitter {
      * @param {object} updates object with key/value pairs
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    updateNode(path, updates, options = { tid: undefined }) {
+    updateNode(path, updates, options = { tid: undefined, context: null }) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -8503,9 +9055,10 @@ class Storage extends EventEmitter {
      * @param {(value: any) => any} callback function that transforms current value and returns the new value to be stored. Can return a Promise
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    transactNode(path, callback, options = { no_lock: false }) {
+    transactNode(path, callback, options = { no_lock: false, context: null }) {
         let checkRevision;
 
         const tid = this.nodeLocker.createTid(); // ID.generate();
@@ -8551,7 +9104,7 @@ class Storage extends EventEmitter {
                 if (changed) {
                     return Promise.reject(new NodeRevisionError(`Node changed`));
                 }
-                return this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid });
+                return this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid, context: options.context });
             })
             .then(result => {
                 lock.release();
@@ -8973,9 +9526,9 @@ module.exports = {
     NodeRevisionError
 };
 }).call(this,require('_process'))
-},{"./data-index":41,"./node-info":35,"./node-lock":36,"./node-value-types":37,"./promise-fs":41,"_process":45,"acebase-core":11,"colors":23,"events":42}],41:[function(require,module,exports){
+},{"./data-index":42,"./node-info":36,"./node-lock":37,"./node-value-types":38,"./promise-fs":42,"_process":46,"acebase-core":12,"colors":24,"events":43}],42:[function(require,module,exports){
 
-},{}],42:[function(require,module,exports){
+},{}],43:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -9500,7 +10053,7 @@ function functionBindPolyfill(context) {
   };
 }
 
-},{}],43:[function(require,module,exports){
+},{}],44:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -9525,7 +10078,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],44:[function(require,module,exports){
+},{}],45:[function(require,module,exports){
 exports.endianness = function () { return 'LE' };
 
 exports.hostname = function () {
@@ -9576,7 +10129,7 @@ exports.homedir = function () {
 	return '/'
 };
 
-},{}],45:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -9762,14 +10315,14 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],46:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],47:[function(require,module,exports){
+},{}],48:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -10359,5 +10912,5 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":46,"_process":45,"inherits":43}]},{},[34])(34)
+},{"./support/isBuffer":47,"_process":46,"inherits":44}]},{},[35])(35)
 });
