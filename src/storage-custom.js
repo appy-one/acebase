@@ -1030,10 +1030,10 @@ class CustomStorage extends Storage {
                     //     && (excludeCheck ? !excludeCheck.test(checkPath) : true);
                     const checkPathInfo = new PathInfo(checkPath);
                     let include = (options.include && options.include.length > 0 
-                        ? options.include.some(k => checkPathInfo.equals(k) || checkPathInfo.isAncestorOf(k))
+                        ? options.include.some(k => checkPathInfo.equals(k) || checkPathInfo.isDescendantOf(k))
                         : true) 
                         && (options.exclude && options.exclude.length > 0
-                        ? !options.exclude.some(k => checkPathInfo.equals(k) || checkPathInfo.isAncestorOf(k))
+                        ? !options.exclude.some(k => checkPathInfo.equals(k) || checkPathInfo.isDescendantOf(k))
                         : true);
 
                     // Apply child_objects filter
