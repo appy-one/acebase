@@ -289,6 +289,7 @@ You can subscribe to data events to get realtime notifications as the monitored 
 - ```'child_added'```: triggered when a child node is added, callback contains a snapshot of the added child node
 - ```'child_changed'```: triggered when a child node's value changed, callback contains a snapshot of the changed child node
 - ```'child_removed'```: triggered when a child node is removed, callback contains a snapshot of the removed child node
+- ```'mutated'```: (NEW v0.9.51) triggered when any nested property of a node changes, callback contains a snapshot and reference of the exact mutation.
 - ```'notify_*'```: notification only version of above events without data, see "Notify only events" below 
 
 ```javascript
@@ -418,6 +419,188 @@ subscription.activated((activated, cancelReason) => {
     }
 });
 ```
+
+### Get triggering context of events (NEW v0.9.51)
+
+In some cases it is benificial to know what (and/or who) triggered a data event to fire, so you can choose what you want to do with data updates. It is now possible to pass context information with all ```update```, ```set```, and ```remove``` operations, which will be passed along to any event triggered on affected paths (on any connected client!)
+
+Imagine the following situation: you have a document editor that allows multiple people to edit at the same time. When loading a document you update its ```last_accessed``` property:
+
+```javascript
+// Load document & subscribe to changes
+db.ref('users/ewout/documents/some_id').on('value', snap => {
+    // Document loaded, or changed. Display its contents
+    const document = snap.val();
+    displayDocument(document);
+});
+
+// Set last_accessed to current time
+db.ref('users/ewout/documents/some_id').update({ last_accessed: new Date() })
+```
+
+This will trigger the ``value`` event TWICE, and cause the document to render TWICE. Additionally, if any other user opens the same document, it will be triggered again even though a redraw is not needed!
+
+To prevent this, pass context info with the update:
+
+```javascript
+// Load document & subscribe to changes (context aware!)
+db.ref('users/ewout/documents/some_id').on('value', snap => {
+    // Document loaded, or changed.
+    const context = snap.ref.context();
+    if (context.redraw === false) {
+        // No need to redraw!
+        return;
+    }
+    // Display its contents
+    const document = snap.val();
+    displayDocument(document);
+});
+
+// Set last_accessed to current time, with context
+db.ref('users/ewout/documents/some_id')
+.context({ redraw: false })
+.update({ last_accessed: new Date() })
+```
+
+### Change tracking using "mutated" events (NEW v0.9.51)
+
+If we you want to monitor a specific node's value, but don't want to get its entire new value every time a small mutation is made to it, subscribe to the "mutated" event. This event is only fired with the target data actually being changed. This allows you to keep a cached copy of your data in memory (or cache db), and replicate all changes being made to it:
+
+```javascript
+const chatRef = db.ref('chats/chat_id');
+// Get current value
+const chat = (await chatRef.get()).val();
+
+// Subscribe to mutated event
+chatRef.on('mutated', snap => {
+    const mutatedPath = snap.ref.path; // 'chats/chat_id/messages/message_id'
+    const propertyTrail = 
+        // ['messages', 'message_id']
+        mutatedPath.slice(chatRef.path.length + 1).split('/');
+
+    // Navigate to the in-memory chat property target:
+    let targetObject = propertyTrail.slice(0,-1).reduce((target, prop) => target[prop], chat);
+    // targetObject === chat.messages
+    const targetProperty = propertyTrail.slice(-1)[0]; // The last item in array
+    // targetProperty === 'message_id'
+
+    // Update the value of our in-memory chat:
+    const newValue = snap.val(); // { sender: 'Ewout', text: '...' }
+    if (newValue === null) {
+        // Remove it
+        delete targetObject[targetProperty]; // delete chat.messages.message_id
+    }
+    else {
+        // Set or update it
+        targetObject[targetProperty] = newValue; // chat.messages.message_id = newValue
+    }
+});
+
+// Add a new message to trigger above event handler
+chatRef.child('messages').push({
+    sender: 'Ewout'
+    text: 'Sending you a message'
+})
+```
+
+NOTE: if you are connected to a remote AceBase server and the connection was lost, it is important that you always get the latest value upon reconnecting because you might have missed mutation events.
+
+### Observe realtime value changes (NEW v0.9.51)
+
+EXPERIMENTAL - You can now observe the realtime value of a path, and bind it to your UI. ```ref.observe()``` returns a RxJS Observable that can be used to observe updates to this node and its children. It does not return snapshots, so you can bind the observable straight to your UI. The value being observed is updated internally using the new "mutated" event. All mutations are applied to the original value, and kept in-memory.
+
+```html
+<!-- In your Angular view template: -->
+<ng-container *ngIf="liveChat | async as chat">
+   <h3>{{ chat.title }}</h3>
+   <p>Chat was started by {{ chat.startedBy }}</p>
+   <div class="messages">
+    <Message *ngFor="let msg of chat.messages | keyvalue" [message]="chat.messages[msg.key]"></Message>
+   </div>
+</ng-container>
+```
+
+```javascript
+// In your Angular component:
+ngOnInit() {
+   this.liveChat = this.db.ref('chats/chat_id').observe();
+}
+```
+
+Or, if you want to monitor updates yourself, handle the subscribe and unsubscribe:
+```javascript
+ngOnInit() {
+   this.observer = this.db.ref('chats/chat_id').observe().subscribe(chat => {
+      this.chat = chat;
+   });
+}
+ngOnDestroy() {
+   // DON'T forget to unsubscribe!
+   this.observer.unsubscribe();
+}
+```
+
+NOTE: objects returned in the observable are only updated downstream - any changes made locally won't be updated in the database. If that is what you would want to do... keep reading! (Spoiler alert - use ```proxy()```!)
+
+### 🔥 Realtime synchronization with a live data proxy (NEW v0.9.51)
+
+EXPERIMENTAL - You can now create a live data proxy for a given path. The data of the referenced path will be loaded, and kept in-sync with live data by listening for remote 'mutated' events, and immediately syncing back all changes you make to its value. This allows you to forget about data storage, and code as if you are only handling in-memory objects. Synchronization never was this easy!
+
+```javascript
+const ref = await db.ref('chats/chat1').proxy();
+const chat = proxy.value; // contains realtime chat value
+
+// Make changes in memory, AND database (yes!)
+chat.title = 'Changing the title in the database too!';
+chat.members = ['Ewout'];
+chat.members.push('John', 'Jack', 'Pete'); // Append to array
+chat.messages.push({ // Push child to a collection (generates an ID for it!)
+    from: 'Ewout', 
+    message: 'I am changing the database without programming against it!' 
+});
+chat.messages.push({
+    from: 'Pete', 
+    message: 'Impressive dude' 
+});
+if (chat.members.includes('John') && !chat.title.startsWith('Hallo')) {
+    chat.title = 'Hallo, is John May er?'; // Dutch joke
+}
+// Now that all synchronous updates above have taken place,
+// AceBase will update the database automatically
+```
+
+All changes made above will be persisted to the database, and any changes made remotely will be automatically become available in the proxy object. The above code will result in the execution of 1 update to the database, equivalent to below statement. **How awesome is that?!**
+
+```javascript
+// This is what is executed behind the scenes by above example:
+db.ref('chats/chat1').update({
+    title: 'Hallo, is John May er?', // Dutch joke
+    members: ['Ewout','John','Jack','Pete'],
+    messages: {
+        kh1x3ygb000120r7ipw6biln: {
+            from: 'Ewout',
+            message: 'I am changing the database without programming against it!'
+        },
+        kh1x3ygb000220r757ybpyec: {
+            from: 'Pete',
+            message: 'Impressive dude'
+        }
+    }
+})
+```
+
+To get a notification each time the value a mutation is made to the value, use ```proxy.onMutation(handler)```. To get notifications about any errors that might occur, use ```proxy.onError(handler)```:
+
+```javascript
+proxy.onError(err => {
+    console.error(`Proxy error: ${err.message}`, err.details);
+});
+proxy.onMutation((mutationSnapshot, isRemoteChange) => {
+    console.log(`Value of path "${mutationSnapshot.ref.path}" was mutated by ${isRemoteChange ? 'someody else' : 'us' }`);
+})
+```
+
+If you no longer need the proxy object, use ```proxy.destroy()``` to stop realtime updating. Don't forget this!
 
 ## Querying data
 
@@ -1051,7 +1234,9 @@ db.ready(ready => {
 
 ## Reflect API
 
-AceBase has a built-in reflection API that enables browsing the database content without retrieving nested data. This API is available for local databases, and remote databases when signed in as the ```admin``` user.
+AceBase has a built-in reflection API that enables browsing the database content without retrieving nested data. This API is available for local databases, and remote databases 
+~~when signed in as the ```admin``` user~~ (from server v0.9.29+) on paths the authenticated 
+user has access to.
 
 ```javascript
 // Get info about the root node:
@@ -1094,9 +1279,30 @@ db.root.reflect('info', { child_limit: 200 })
 });
 ```
 
+To get the number of children of a node (instead of enumerating them), pass ```{ child_count: true }``` with the ```info``` reflect request:
+
+```javascript
+db.ref('chats/some_chat_id/messages')
+.reflect('info', { child_count: true })
+.then(info => {
+
+    console.log(info); 
+    // info is an object like: 
+    // { 
+    //      key: "messages",
+    //      exists: true, 
+    //      type: "object",
+    //      children: { 
+    //          count: 879
+    //      } 
+    //  }
+);
+```
+
 ## Export API (NEW v0.9.1)
 
-To export data from any node to json, you can use the export API. Simply pass an object that has a ```write``` method to ```yourRef.export```, and the entire node's value (including nested data) will be streamed in ```json``` format. If your ```write``` function returns a ```Promise```, streaming will be paused until the promise resolves (local databases only). You can use this to back off writing if the target stream's buffer is full (eg while waiting for a file stream to "drain"). This API is available for local databases, and remote databases when signed in as the ```admin``` user.
+To export data from any node to json, you can use the export API. Simply pass an object that has a ```write``` method to ```yourRef.export```, and the entire node's value (including nested data) will be streamed in ```json``` format. If your ```write``` function returns a ```Promise```, streaming will be paused until the promise resolves (local databases only). You can use this to back off writing if the target stream's buffer is full (eg while waiting for a file stream to "drain"). This API is available for local databases, and remote databases 
+~~when signed in as the ```admin``` user~~ (from server v0.9.29+) on paths the authenticated user has access to.
 
 ```javascript
 let json = '';
