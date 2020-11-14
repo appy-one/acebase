@@ -983,7 +983,7 @@ class DataReference {
             get key() { return key; },
             get callbacks() { return callbacks; },
             vars: vars || {},
-            context: null
+            context: {}
         };
         this.db = db; //Object.defineProperty(this, "db", ...)
     }
