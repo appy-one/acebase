@@ -1,6 +1,3 @@
-/// <reference types="acebase-core" />
-
-// import { EventEmitter } from 'events';
 import * as acebasecore from 'acebase-core';
 
 export class AceBase extends acebasecore.AceBaseBase {
@@ -22,9 +19,10 @@ export class AceBase extends acebasecore.AceBaseBase {
      * Only available in browser context - Creates an AceBase database instance using IndexedDB as storage engine. Creates a dedicated IndexedDB instance.
      * @param dbname Name of the database
      * @param settings optional settings
-     * @param settings.logLevel what level to use for logging to the console
+     * @param settings.logLevel what level to use for logging to the console. Default is 'error'
+     * @param settings.removeVoidProperties Whether to remove undefined property values of objects being stored, instead of throwing an error.
      */
-    static WithIndexedDB(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error' }): AceBase;
+    static WithIndexedDB(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error', removeVoidProperties?: boolean }): AceBase;
 
     /**
      * Creates an AceBase database instance using LocalStorage or SessionStorage as storage engine. When running in non-browser environments, set
@@ -238,3 +236,11 @@ export import EventSubscription = acebasecore.EventSubscription;
 export import PathReference = acebasecore.PathReference;
 export import TypeMappings = acebasecore.TypeMappings;
 export import TypeMappingOptions = acebasecore.TypeMappingOptions;
+export import IReflectionNodeInfo = acebasecore.IReflectionNodeInfo;
+export import IReflectionChildrenInfo = acebasecore.IReflectionChildrenInfo;
+export import IStreamLike = acebasecore.IStreamLike;
+export import ILiveDataProxy = acebasecore.ILiveDataProxy;
+export import ILiveDataProxyValue = acebasecore.ILiveDataProxyValue;
+export import IObjectCollection = acebasecore.IObjectCollection;
+export import ID = acebasecore.ID;
+export import proxyAccess = acebasecore.proxyAccess;
