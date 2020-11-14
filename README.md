@@ -48,7 +48,7 @@ The API is similar to that of the Firebase realtime database, with additions.
 
 ### Creating a database
 
-Creating a new database is as simple as connecting to it. If the database file doesn't exists, it will be created automatically.
+Creating a new database is as simple as opening it. If the database file doesn't exists, it will be created automatically.
 
 ```javascript
 const { AceBase } = require('acebase');
