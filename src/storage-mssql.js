@@ -1277,7 +1277,7 @@ class MSSQLStorage extends Storage {
     //     });
     // }
 
-    setNode(path, value, options = { assert_revision: undefined, tid: undefined, context: null }) {        
+    setNode(path, value, options = { assert_revision: undefined, tid: undefined, suppress_events: false, context: null }) {        
         const pathInfo = PathInfo.get(path);
 
         let lock;
@@ -1291,7 +1291,7 @@ class MSSQLStorage extends Storage {
                     return Promise.reject(new Error(`Invalid value for root node: ${value}`));
                 }
 
-                return this._writeNodeWithTracking('', value, { merge: false, tid, context: options.context })
+                return this._writeNodeWithTracking('', value, { merge: false, tid, suppress_events: options.suppress_events, context: options.context })
             }
 
             if (options && typeof options.assert_revision !== 'undefined') {
@@ -1302,14 +1302,14 @@ class MSSQLStorage extends Storage {
                     }
                     if (info.address && info.address.path === path && !this.valueFitsInline(value)) {
                         // Overwrite node
-                        return this._writeNodeWithTracking(path, value, { merge: false, tid, context: options.context });
+                        return this._writeNodeWithTracking(path, value, { merge: false, tid, suppress_events: options.suppress_events, context: options.context });
                     }
                     else {
                         // Update parent node
                         return lock.moveToParent()
                         .then(parentLock => {
                             lock = parentLock;
-                            return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, context: options.context });
+                            return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
                         });
                     }
                 })
@@ -1319,7 +1319,7 @@ class MSSQLStorage extends Storage {
                 return lock.moveToParent()
                 .then(parentLock => {
                     lock = parentLock;                
-                    return this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { tid, context: options.context });
+                    return this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { tid, suppress_events: options.suppress_events, context: options.context });
                 });
             }
         })
@@ -1333,7 +1333,7 @@ class MSSQLStorage extends Storage {
         });        
     }
 
-    updateNode(path, updates, options = { tid: undefined, context: null }) {
+    updateNode(path, updates, options = { tid: undefined, suppress_events: false, context: null }) {
 
         if (typeof updates !== 'object') { //  || Object.keys(updates).length === 0
             return Promise.reject(new Error(`invalid updates argument`)); //. Must be a non-empty object or array
@@ -1352,7 +1352,7 @@ class MSSQLStorage extends Storage {
             if (nodeInfo.exists && nodeInfo.address && nodeInfo.address.path === path) {
                 // Node exists and is stored in its own record.
                 // Update it
-                return this._writeNodeWithTracking(path, updates, { merge: true, tid, context: options.context });
+                return this._writeNodeWithTracking(path, updates, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
             }
             else if (nodeInfo.exists) {
                 // Node exists, but is stored in its parent node.
@@ -1360,7 +1360,7 @@ class MSSQLStorage extends Storage {
                 return lock.moveToParent()
                 .then(parentLock => {
                     lock = parentLock;
-                    return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, context: options.context });
+                    return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
                 });
             }
             else {
@@ -1368,7 +1368,7 @@ class MSSQLStorage extends Storage {
                 return lock.moveToParent()
                 .then(parentLock => {
                     lock = parentLock;
-                    return this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { tid, context: options.context });
+                    return this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { tid, suppress_events: options.suppress_events, context: options.context });
                 });
             }
         })

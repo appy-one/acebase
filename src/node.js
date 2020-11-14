@@ -44,17 +44,18 @@ class Node {
      * @param {any} value Any value will do. If the value is small enough to be stored in a parent record, it will take care of it
      * @param {object} [options]
      * @param {boolean} [options.merge=true] whether to merge or overwrite the current value if node exists
+     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
      * @param {any} [options.context=null] Context to be passed along with data events
      */
-    static update(storage, path, value, options = { merge: true, context: null }) {
+    static update(storage, path, value, options = { merge: true, suppress_events: false, context: null }) {
 
         // debug.log(`Update request for node "/${path}"`);
 
         if (options.merge) {
-            return storage.updateNode(path, value, { context: options.context });
+            return storage.updateNode(path, value, { suppress_events: options.suppress_events, context: options.context });
         }
         else {
-            return storage.setNode(path, value, { context: options.context });
+            return storage.setNode(path, value, { suppress_events: options.suppress_events, context: options.context });
         }
     }
 
@@ -151,10 +152,11 @@ class Node {
      * @param {string} path 
      * @param {(currentValue: any) => Promise<any>} callback callback is called with the current value. The returned value (or promise) will be used as the new value. When the callbacks returns undefined, the transaction will be canceled. When callback returns null, the node will be removed.
      * @param {any} [options]
+     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
      * @param {any} [options.context=null]
      */
-    static transaction(storage, path, callback, options = { context: null }) {
-        return storage.transactNode(path, callback, { context: options.context });
+    static transaction(storage, path, callback, options = { suppress_events: false, context: null }) {
+        return storage.transactNode(path, callback, { suppress_events: options.suppress_events, context: options.context });
     }
 
     /**

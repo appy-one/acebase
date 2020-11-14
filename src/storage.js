@@ -627,7 +627,7 @@ class Storage extends EventEmitter {
      * @param {object} [options] 
      * @returns {Promise<void>}
      */
-    _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true, context: null }) {
+    _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true, suppress_events: false, context: null }) {
         options = options || {};
         if (!options.tid && !options.transaction) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid OR transaction!`); }
         options.merge = options.merge === true;
@@ -640,10 +640,10 @@ class Storage extends EventEmitter {
         let hasValueSubscribers = false;
         
         // Get all subscriptions that should execute on the data (includes events on child nodes as well)
-        let eventSubscriptions = this.subscriptions.getAllSubscribersForPath(path);
+        let eventSubscriptions = options.suppress_events ? [] : this.subscriptions.getAllSubscribersForPath(path);
 
         // Get all subscriptions for data on this or ancestor nodes, determines what data to load before processing
-        const valueSubscribers = this.subscriptions.getValueSubscribersForPath(path);
+        const valueSubscribers = options.suppress_events ? [] : this.subscriptions.getValueSubscribersForPath(path);
         if (valueSubscribers.length > 0) {
             hasValueSubscribers = true;
             let eventPaths = valueSubscribers
@@ -1190,10 +1190,11 @@ class Storage extends EventEmitter {
      * @param {(value: any) => any} callback function that transforms current value and returns the new value to be stored. Can return a Promise
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
      * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    transactNode(path, callback, options = { no_lock: false, context: null }) {
+    transactNode(path, callback, options = { no_lock: false, suppress_events: false, context: null }) {
         let checkRevision;
 
         const tid = this.nodeLocker.createTid(); // ID.generate();
@@ -1239,7 +1240,7 @@ class Storage extends EventEmitter {
                 if (changed) {
                     return Promise.reject(new NodeRevisionError(`Node changed`));
                 }
-                return this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid, context: options.context });
+                return this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid, suppress_events: options.suppress_events, context: options.context });
             })
             .then(result => {
                 lock.release();

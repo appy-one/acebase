@@ -1044,11 +1044,12 @@ class AceBaseStorage extends Storage {
      * @param {any} value
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
      * @param {any} [options.context=null]
      * @returns {Promise<void>}
      */
-    setNode(path, value, options = { tid: undefined, context: null }) {
-        return this._updateNode(path, value, { merge: false, tid: options.tid, context: options.context });
+    setNode(path, value, options = { tid: undefined, suppress_events: false, context: null }) {
+        return this._updateNode(path, value, { merge: false, tid: options.tid, suppress_events: options.suppress_events, context: options.context });
     }
 
     /**
@@ -1057,10 +1058,12 @@ class AceBaseStorage extends Storage {
      * @param {any} value
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
+     * @param {any} [options.context=null]
      * @returns {Promise<void>}
      */    
-    updateNode(path, updates, options = { tid: undefined, context: null }) {
-        return this._updateNode(path, updates, { merge: true, tid: options.tid, context: options.context });
+    updateNode(path, updates, options = { tid: undefined, suppress_events: false, context: null }) {
+        return this._updateNode(path, updates, { merge: true, tid: options.tid, suppress_events: options.suppress_events, context: options.context });
     }
 
     /**
@@ -1072,10 +1075,11 @@ class AceBaseStorage extends Storage {
      * @param {object} updates object with key/value pairs
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
      * @param {any} [options.context=null]
      * @returns {Promise<void>}
      */
-    _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false, context: null }) {
+    _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false, suppress_events: false, context: null }) {
         // this.debug.log(`Update request for node "/${path}"`);
 
         const tid = options.tid || this.nodeLocker.createTid(); // ID.generate();
@@ -1083,12 +1087,12 @@ class AceBaseStorage extends Storage {
 
         if (value === null) {
             // Deletion of node is requested. Update parent
-            return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { merge: true, tid, context: options.context });
+            return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
         }
 
         if (path !== "" && this.valueFitsInline(value)) {
             // Simple value, update parent instead
-            return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, context: options.context });
+            return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
         }
 
         let lock;
@@ -1116,6 +1120,7 @@ class AceBaseStorage extends Storage {
                 return this._writeNodeWithTracking(path, value, { 
                     tid,
                     merge,
+                    suppress_events: options.suppress_events,
                     context: options.context,
                     _customWriteFunction: write // Will use this function instead of this._writeNode
                 });
