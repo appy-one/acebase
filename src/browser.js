@@ -18,7 +18,7 @@
  */
 
 
-const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, TypeMappingOptions } = require('acebase-core');
+const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, ID, proxyAccess } = require('acebase-core');
 const { AceBaseLocalSettings } = require('./acebase-local');
 const { BrowserAceBase } = require('./acebase-browser');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('./storage-custom');
@@ -30,11 +30,12 @@ const acebase = {
     DataSnapshot, 
     EventSubscription, 
     PathReference, 
-    TypeMappings, 
-    TypeMappingOptions,
+    TypeMappings,
     CustomStorageSettings,
     CustomStorageTransaction,
-    CustomStorageHelpers
+    CustomStorageHelpers,
+    ID,
+    proxyAccess
 };
 
 // Expose classes to window.acebase:
