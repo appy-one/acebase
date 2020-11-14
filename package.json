@@ -1,6 +1,6 @@
 {
   "name": "acebase",
-  "version": "0.9.54",
+  "version": "0.9.55",
   "description": "AceBase realtime database engine",
   "main": "./src/index.js",
   "browser": "./dist/browser.js",
@@ -50,7 +50,7 @@
   "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
   "license": "MIT",
   "dependencies": {
-    "acebase-core": "0.9.23",
+    "acebase-core": "0.9.24",
     "colors": "^1.3.2",
     "unidecode": "^0.1.8"
   }
