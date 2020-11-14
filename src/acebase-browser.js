@@ -43,7 +43,8 @@ class BrowserAceBase extends AceBase {
      * Creates an AceBase database instance using IndexedDB as storage engine
      * @param {string} dbname Name of the database
      * @param {object} [settings] optional settings
-     * @param {string} [settings.logLevel] what level to use for logging to the console
+     * @param {string} [settings.logLevel='error'] what level to use for logging to the console
+     * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
      */
     static WithIndexedDB(dbname, settings) {
 
@@ -79,6 +80,7 @@ class BrowserAceBase extends AceBase {
         const storageSettings = new CustomStorageSettings({
             name: 'IndexedDB',
             locking: true, // IndexedDB transactions are short-lived, so we'll use AceBase's path based locking
+            removeVoidProperties: settings.removeVoidProperties,
             ready() {
                 return readyPromise;
             },
