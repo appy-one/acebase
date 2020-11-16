@@ -358,8 +358,10 @@ class LiveDataProxy {
      * with live data by listening for 'mutated' events. Any changes made to the value by the client will be synced back
      * to the database.
      * @param ref DataReference to create proxy for.
+     * @param defaultValue Default value to use for the proxy if the database path does not exist yet. This value will also
+     * be written to the database.
      */
-    static async create(ref) {
+    static async create(ref, defaultValue) {
         let cache, loaded = false;
         const proxyId = ref.push().key;
         let onMutationCallback;
@@ -448,19 +450,25 @@ class LiveDataProxy {
                     const targets = overwriteQueue.splice(0);
                     // Group targets into parent updates
                     const updates = targets.reduce((updates, target) => {
-                        const parentTarget = target.slice(0, -1);
-                        const key = target.slice(-1)[0];
-                        const parentRef = parentTarget.reduce((ref, key) => ref.child(key), ref);
-                        const parentUpdate = updates.find(update => update.ref.path === parentRef.path);
-                        let cacheValue = target.reduce((value, key) => value[key], cache);
-                        if (typeof cacheValue === 'undefined') {
-                            cacheValue = null; // Being deleted
-                        }
-                        if (parentUpdate) {
-                            parentUpdate.value[key] = cacheValue;
+                        if (target.length === 0) {
+                            // Overwrite this proxy's root value
+                            updates.push({ ref, value: cache, type: 'set' });
                         }
                         else {
-                            updates.push({ ref: parentRef, value: { [key]: cacheValue } });
+                            const parentTarget = target.slice(0, -1);
+                            const key = target.slice(-1)[0];
+                            const parentRef = parentTarget.reduce((ref, key) => ref.child(key), ref);
+                            const parentUpdate = updates.find(update => update.ref.path === parentRef.path);
+                            let cacheValue = target.reduce((value, key) => value[key], cache);
+                            if (typeof cacheValue === 'undefined') {
+                                cacheValue = null; // Being deleted
+                            }
+                            if (parentUpdate) {
+                                parentUpdate.value[key] = cacheValue;
+                            }
+                            else {
+                                updates.push({ ref: parentRef, value: { [key]: cacheValue }, type: 'update' });
+                            }
                         }
                         return updates;
                     }, []);
@@ -469,8 +477,7 @@ class LiveDataProxy {
                     processPromise = updates.reduce(async (promise, update) => {
                         await promise;
                         return update.ref
-                            .context({ proxy_id: proxyId, proxy_source: 'update' })
-                            .update(update.value)
+                            .context({ proxy_id: proxyId, proxy_source: 'update' })[update.type](update.value) // .set or .update
                             .catch(err => {
                             onErrorCallback({ source: 'update', message: `Error processing update of "/${ref.path}"`, details: err });
                         });
@@ -548,6 +555,10 @@ class LiveDataProxy {
         const snap = await ref.get();
         loaded = true;
         cache = snap.val();
+        if (cache === null && typeof defaultValue !== 'undefined') {
+            cache = defaultValue;
+            flagOverwritten([]);
+        }
         let proxy = createProxy({ root: { ref, cache }, target: [], id: proxyId, flag: handleFlag });
         const assertProxyAvailable = () => {
             if (proxy === null) {
@@ -887,6 +898,9 @@ function createProxy(context) {
     return new Proxy({}, handler);
 }
 function proxyAccess(proxiedValue) {
+    if (typeof proxiedValue !== 'object' || !proxiedValue[isProxy]) {
+        throw new Error(`Given value is not proxied. Make sure you are referencing the value through the live data proxy.`);
+    }
     return proxiedValue;
 }
 exports.proxyAccess = proxyAccess;
@@ -1580,8 +1594,8 @@ class DataReference {
         return this.db.api.export(this.path, stream, options);
     }
 
-    proxy() {
-        return LiveDataProxy.create(this, { arrayFunctionsReturn: 'native' })
+    proxy(defaultValue) {
+        return LiveDataProxy.create(this, defaultValue);
     }
 
     observe(options) {
