@@ -736,32 +736,47 @@ if (!proxy.hasValue) {
     proxy.value = {};
 }
 const chat = proxy.value;
+```
 
-// forEach: iterate object collection:
+```forEach```: iterate object collection
+```javascript
 chat.messages.forEach((message, key, index) => {
-    // Fired for all messages in collection
+    // Fired for all messages in collection, or until returning false
 });
+```
 
-// push: Add item to object collection with generated key
+```push```: Add item to object collection with generated key
+```javascript
 const key = chat.messages.push({ text: 'New message' });
+```
 
-// remove: delete a message
+```remove```: delete a message
+```javascript
 chat.messages[key].remove();
 chat.messages.someotherkey.remove();
+delete chat.messages.somemessage; // You can also do this
+chat.messages.somemessage = null; // And this
+```
 
-// toArray: access an object collection like an array:
+```toArray```: access an object collection like an array:
+```javascript
 const array = chat.messages.toArray();
+```
 
-// toArray (with sort): like above, sorting the results
+```toArray``` (with sort): like above, sorting the results:
+```javascript
 const sortedArray = chat.messages.toArray((a, b) => a.sent < b.sent ? -1 : 1);
+```
 
-// getTarget: gets underlaying value (unproxied, be careful!)
+```getTarget```: gets underlying value (unproxied, be careful!)
+```javascript
 const readOnlyMessage = chat.messages.message1.getTarget();
-readOnlyMessage.text = 'This does NOT update the database!';
-chat.messages.message1.text = 'This updates the database';
+readOnlyMessage.text = 'This does NOT update the database!'; // Because it is not the proxied value
+chat.messages.message1.text = 'This updates the database'; // Just so you know
+```
 
-// onChanged: registers a callback for the value that 
-// is called every time the underlaying value changes
+```onChanged```: registers a callback for the value that is called every time the underlying value changes:
+```javascript
 chat.messages.message1.onChanged((message, previous, isRemote, context) => {
     if (message.read) {
         // Show blue ticks
@@ -770,22 +785,26 @@ chat.messages.message1.onChanged((message, previous, isRemote, context) => {
         // Somebody changed the title 
         // (remote: not through this proxy instance)
     }
-})
+});
+```
 
-// getRef: returns a DataReference instance to current target
-// if you'd want or need to do stuff outside of the proxy's scope
+```getRef```: returns a DataReference instance to current target if you'd want or need to do stuff outside of the proxy's scope:
+```javascript
 const messageRef = chat.messages.message1.getRef();
 // Eg: add an "old fashioned" event handler
 messageRef.on('child_changed', snap => { /* .. */ });
+```
 
-// getObservable: returns a RxJS Observable that is 
-// updated each time the underlaying value changes
-const observable = chat.messages.message1.getObservable()
+```getObservable```: returns a RxJS Observable that is updated each time the underlying value changes:
+```javascript
+const observable = chat.messages.message1.getObservable();
 const subscription = observable.subscribe(message => {
     if (message.read) {
         // Show blue ticks
     }
 });
+// Later:
+subscription.unsubscribe();
 ```
 
 NOTE: In TypeScript there is some additional typecasting needed to access proxy methods shown above. You can use the ```proxyAccess``` function to get help with that. This function typecasts and also checks if your passed value is indeed a Proxy.
@@ -978,7 +997,7 @@ NOTE: Usage of ```take``` and ```skip``` are currently not taken into considerat
 <a name="indexing-data"></a>
 ## Indexing data
 
-Indexing data will dramatically improve the speed of queries on your data, especially as it increases in size. Any indexes you create will be updated automatically when underlaying data is changed, added or removed. Indexes are used to speed up filters and sorts, and to limit the amount of results. NOTE: If you are connected to an external AceBase server (using ```AceBaseClient```), indexes can only be created if you are signed in as the *admin* user.
+Indexing data will dramatically improve the speed of queries on your data, especially as it increases in size. Any indexes you create will be updated automatically when underlying data is changed, added or removed. Indexes are used to speed up filters and sorts, and to limit the amount of results. NOTE: If you are connected to an external AceBase server (using ```AceBaseClient```), indexes can only be created if you are signed in as the *admin* user.
 
 ```javascript
 Promise.all([
