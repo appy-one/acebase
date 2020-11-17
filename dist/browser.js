@@ -349,8 +349,6 @@ exports.proxyAccess = exports.LiveDataProxy = void 0;
 const utils_1 = require("./utils");
 const path_info_1 = require("./path-info");
 const path_reference_1 = require("./path-reference");
-// Import RxJS Observable without throwing errors when not available.
-const { Observable } = require('rxjs/internal/observable');
 const isProxy = Symbol('isProxy');
 class LiveDataProxy {
     /**
@@ -537,6 +535,8 @@ class LiveDataProxy {
                 return addOnChangeHandler(target, args.callback);
             }
             else if (flag === 'observe') {
+                // Import RxJS Observable without throwing errors when not available.
+                const { Observable } = require('rxjs'); //'rxjs/internal/observable'
                 if (!Observable) {
                     throw new Error(`Cannot observe proxy value because rxjs package could not be loaded. Add it to your project with: npm i rxjs`);
                 }
@@ -906,7 +906,7 @@ function proxyAccess(proxiedValue) {
 exports.proxyAccess = proxyAccess;
 
 }).call(this,require('_process'))
-},{"./path-info":13,"./path-reference":14,"./utils":19,"_process":46,"rxjs/internal/observable":42}],8:[function(require,module,exports){
+},{"./path-info":13,"./path-reference":14,"./utils":19,"_process":46,"rxjs":42}],8:[function(require,module,exports){
 const { DataSnapshot } = require('./data-snapshot');
 const { EventStream, EventPublisher } = require('./subscription');
 const { ID } = require('./id');
