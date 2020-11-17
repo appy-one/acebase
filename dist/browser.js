@@ -351,7 +351,7 @@ const path_info_1 = require("./path-info");
 const path_reference_1 = require("./path-reference");
 // Import RxJS Observable without throwing errors when not available.
 const { Observable } = require('rxjs/internal/observable');
-const isProxy = Symbol("isProxy");
+const isProxy = Symbol('isProxy');
 class LiveDataProxy {
     /**
      * Creates a live data proxy for the given reference. The data of the reference's path will be loaded, and kept in-sync
@@ -654,10 +654,10 @@ function createProxy(context) {
     const handler = {
         get(target, prop, receiver) {
             target = getTargetValue(context.root.cache, context.target);
-            if (prop === isProxy) {
-                return true;
-            }
-            else if (typeof prop === 'symbol') {
+            if (typeof prop === 'symbol') {
+                if (prop.toString() === isProxy.toString()) {
+                    return true;
+                }
                 return Reflect.get(target, prop, receiver);
             }
             if (typeof target === null || typeof target !== 'object') {
