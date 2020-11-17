@@ -838,10 +838,10 @@ With Angular, ```getObservable``` comes in handy for UI binding and updating:
     </ng-container>`
 })
 export class ChatComponent {
-    liveChat: { 
+    liveChat: Observable<{ 
         title: string, 
         messages: IObjectCollection<{ from: string, text: string }> 
-    }
+    }>;
 
     constructor(private dataProvider: MyDataProvider) {}
 
@@ -866,7 +866,7 @@ export class MyDataProvider {
 }
 ```
 
-I'll leave up to your imagination what the ```MessageComponent``` looks like.
+I'll leave up to your imagination what the ```MessageComponent``` would look like.
 
 <a name="querying-data"></a>
 ## Querying data
