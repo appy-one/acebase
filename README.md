@@ -811,19 +811,29 @@ NOTE: In TypeScript there is some additional typecasting needed to access proxy 
 ```typescript
 type IChatMessages = IObjectCollection<IChatMessage>;
 
-proxyAccess<IChatMessages>(chat.messages).forEach(message => {
-    // clean and type-safe
-});
+// Easy & safe typecasting:
+proxyAccess<IChatMessages>(chat.messages)
+    .getObservable()
+    .subscribe(messages => {
+        // messages: IChatMessages
+    });
 
 // Instead of:
-(chat.messages as any as ILiveDataProxyValue<IChatMessages>).forEach(message => {
-    // type-safe, but not very clean
-});
+(chat.messages as any as ILiveDataProxyValue<IChatMessages>)
+    .getObservable()
+    .subscribe(messages => {
+        // messages: IChatMessages
+    });
 
-// Or, with a "non-type-safe" route:
-(chat.messages as any).forEach((message: IChatMessage) => {
-    // not type-safe, compiler can't check
-});
+// With unsafe typecasting:
+(chat.messages as any)
+    .getObservable()
+    .subscribe((messages: IChatMessages) => {
+        // messages: IChatMessages, but only because we've prevented typescript
+        // from checking if the taken route to get here was ok.
+        // If getObservable or subscribe method signatures change in the 
+        // future, code will break without typescript knowing it!
+    });
 ```
 
 With Angular, ```getObservable``` comes in handy for UI binding and updating:
