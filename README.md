@@ -43,8 +43,8 @@ The above example uses a live data proxy on a local database. If you use this on
     * [Removing data](#removing-data)
     * [Generating unique keys](#unique-keys)
     * [Using arrays](#using-arrays)
+    * [Counting children](#counting-children)
     * [Limit nested data loading](#limit-nested-data-loading)
-    * [Counting children](#count-children)
 * Realtime monitoring
     * [Monitoring realtime data changes](#monitor-realtime-changes)
     * [Using variables and wildcards in subscription paths](#wildcard-paths)
@@ -94,7 +94,7 @@ AceBase is split up into multiple packages:
 * **acebase-client**: client to connect to an external AceBase server ([github](https://github.com/appy-one/acebase-client), [npm](https://www.npmjs.com/package/acebase-client))
 * **acebase-core**: shared functionality, dependency of above packages ([github](https://github.com/appy-one/acebase-core), [npm](https://www.npmjs.com/package/acebase-core))
 
-**IMPORTANT**: AceBase is in beta stage. If you run into errors, make sure you have the latest version of each package you are using. The database files created by older releases might be incompatible with newer versions, so you might have to start from scratch after updating. **Do not use in production yet**!
+**IMPORTANT**: AceBase is in beta stage. If you run into errors, make sure you have the latest version of each package you are using. ~~The database files created by older releases might be incompatible with newer versions, so you might have to start from scratch after updating.~~ The core functionality and file structures have been stable for quite some time, they are not expected to change in the near future. Additionally, from version 1.0.0 on (end of 2020), [semver](https://semver.org/) will be used to prevent breaking changes to impact older code. **Do not use in mission critical projects yet**!
 
 <a name="prerequisites"></a>
 ### Prerequisites
