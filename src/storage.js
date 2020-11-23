@@ -353,7 +353,7 @@ class Storage extends EventEmitter {
 
         // Subscriptions
         const _subs = {};
-        const _supportedEvents = ["value","child_added","child_changed","child_removed","mutated"];
+        const _supportedEvents = ['value','child_added','child_changed','child_removed','mutated','mutations'];
         // Add 'notify_*' event types for each event to enable data-less notifications, so data retrieval becomes optional
         _supportedEvents.push(..._supportedEvents.map(event => `notify_${event}`)); 
         this.subscriptions = {
@@ -429,7 +429,7 @@ class Storage extends EventEmitter {
                             if (sub.type === "value") { // ["value", "notify_value"].includes(sub.type)
                                 dataPath = eventPath;
                             }
-                            else if (sub.type === 'mutated' && pathInfo.isDescendantOf(eventPath)) { //["mutated", "notify_mutated"].includes(sub.type)
+                            else if (["mutated", "mutations"].includes(sub.type) && pathInfo.isDescendantOf(eventPath)) { //["mutated", "notify_mutated"].includes(sub.type)
                                 dataPath = path; // Only needed data is the properties being updated in the targeted path
                             }
                             else if (sub.type === "child_changed" && path !== eventPath) { // ["child_changed", "notify_child_changed"].includes(sub.type)
@@ -477,7 +477,7 @@ class Storage extends EventEmitter {
                                     : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey);
                             }
-                            else if (["mutated", "notify_mutated"].includes(sub.type)) { 
+                            else if (["mutated", "mutations", "notify_mutated", "notify_mutations"].includes(sub.type)) { 
                                 dataPath = path;
                             }
                             else if (
@@ -534,44 +534,6 @@ class Storage extends EventEmitter {
     get path() {
         return `${this.settings.path}/${this.name}.acebase`;
     }
-
-    // /** 
-    //  * Once storage is ready for use, the optional callback will fire
-    //  * and the returned promise will resolve.
-    //  * @param {() => void} [callback] Optional callback
-    //  * @returns {Promise<void>} return Promise that resolves when ready for use
-    //  */
-    // ready(callback) {
-    //     if (this._ready) {
-    //         callback && callback();
-    //         return Promise.resolve();
-    //     }
-    //     return new Promise((resolve, reject) => {
-    //         if (this._ready) { 
-    //             callback && callback();
-    //             return Promise.resolve();
-    //         }
-    //         this._readyCallbacks.push({ resolve, reject, callback });
-    //     });
-    // }
-
-    // _setReady(ready, err) {
-    //     if (ready) {
-    //         // Run ready success callbacks
-    //         this._ready = true;
-    //         this._readyCallbacks.splice(0).forEach(listener => {
-    //             listener.resolve();
-    //             listener.callback && listener.callback();
-    //         });
-    //     }
-    //     else {
-    //         // Run ready error callbacks
-    //         this._ready = false;
-    //         this._readyCallbacks.splice(0).forEach(listener => {
-    //             listener.reject(err);
-    //         });
-    //     }
-    // }
 
     /**
      * Checks if a value can be stored in a parent object, or if it should 
@@ -944,7 +906,7 @@ class Storage extends EventEmitter {
                 // Notify all event subscriptions, should be executed with a delay (process.nextTick)
                 // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
                 eventSubscriptions
-                .filter(sub => !['mutated', 'notify_mutated'].includes(sub.type))
+                .filter(sub => !['mutated','mutations','notify_mutated','notify_mutations'].includes(sub.type))
                 .map(sub => {
                     const keys = PathInfo.getPathKeys(sub.dataPath);
                     return {
@@ -1018,18 +980,21 @@ class Storage extends EventEmitter {
                 // The only events we haven't processed now are 'mutated' events.
                 // They require different logic: we'll call them for all nested properties of the updated path, that 
                 // actually did change. They do not bubble up like 'child_changed' does.
-                const triggerMutationEvents = (sub, currentPath, oldValue, newValue, compareResult) => {
+                const prepareMutationEvents = (sub, currentPath, oldValue, newValue, compareResult) => {
+                    const batch = [];
                     const result = compareResult || compareValues(oldValue, newValue);
                     if (result === 'identical') {
-                        return; // no changes on subscribed path
+                        return batch; // no changes on subscribed path
                     }
                     else if (typeof result === 'string') {
                         // We are on a path that has an actual change
-                        this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
+                        batch.push({ path: currentPath, oldValue, newValue });
+                        // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
                     }
                     else if (oldValue instanceof Array || newValue instanceof Array) {
                         // Trigger mutated event on the array itself instead of on individual indexes
-                        this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
+                        batch.push({ path: currentPath, oldValue, newValue });
+                        // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
                     }
                     else {
                         // DISABLED array handling here, because if a client is using a cache db this will cause problems
@@ -1041,20 +1006,24 @@ class Storage extends EventEmitter {
                         result.changed.forEach(info => {
                             const childPath = PathInfo.getChildPath(currentPath, info.key);
                             let childValues = getChildValues(info.key, oldValue, newValue);
-                            triggerMutationEvents(sub, childPath, childValues.oldValue, childValues.newValue, info.change);
+                            const childBatch = prepareMutationEvents(sub, childPath, childValues.oldValue, childValues.newValue, info.change);
+                            batch.push(...childBatch);
                         });
                         result.added.forEach(key => {
                             const childPath = PathInfo.getChildPath(currentPath, key);
-                            this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, null, newValue[key], options.context);
+                            batch.push({ path: childPath, oldValue: null, newValue: newValue[key] });
+                            // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, null, newValue[key], options.context);
                         });
                         result.removed.forEach(key => {
                             const childPath = PathInfo.getChildPath(currentPath, key);
-                            this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, oldValue[key], null, options.context);
+                            batch.push({ path: childPath, oldValue: oldValue[key], newValue: null });
+                            // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, oldValue[key], null, options.context);
                         });
                     }
+                    return batch;
                 };
 
-                eventSubscriptions.filter(sub => ['mutated', 'notify_mutated'].includes(sub.type))
+                eventSubscriptions.filter(sub => ['mutated', 'mutations', 'notify_mutated', 'notify_mutations'].includes(sub.type))
                 .forEach(sub => {
                     // Get the target data this subscription is interested in
                     let currentPath = path;
@@ -1069,7 +1038,28 @@ class Storage extends EventEmitter {
                         newValue = childValues.newValue;
                     }
 
-                    triggerMutationEvents(sub, currentPath, oldValue, newValue);
+                    const batch = prepareMutationEvents(sub, currentPath, oldValue, newValue);
+                    if (batch.length === 0) {
+                        return;
+                    }
+                    const isNotifyEvent = sub.type.startsWith('notify_');
+                    if (['mutated','notify_mutated'].includes(sub.type)) {
+                        // Send all mutations 1 by 1
+                        batch.forEach((mutation, index) => {
+                            const context = options.context; // const context = cloneObject(options.context);
+                            // context.acebase_mutated_event = { nr: index + 1, total: batch.length }; // Add context info about number of mutations
+                            const prevVal = isNotifyEvent ? null : mutation.oldValue;
+                            const newVal = isNotifyEvent ? null : mutation.newValue;
+                            this.subscriptions.trigger(sub.type, sub.subscriptionPath, mutation.path, prevVal, newVal, context);
+                        });
+                    }
+                    else if (['mutations','notify_mutations'].includes(sub.type)) {
+                        // Send 1 batch with all mutations
+                        // const oldValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.oldValue })); // batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.oldValue, obj), {});
+                        // const newValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.newValue })) //batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.newValue, obj), {});
+                        const values = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(m.path.slice(sub.subscriptionPath.length)), prev: m.oldValue, val: m.newValue }));
+                        this.subscriptions.trigger(sub.type, sub.subscriptionPath, sub.subscriptionPath, null, values, options.context);
+                    }
                 });
             };
 
