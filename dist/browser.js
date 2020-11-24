@@ -350,8 +350,7 @@ const utils_1 = require("./utils");
 const data_snapshot_1 = require("./data-snapshot");
 const path_reference_1 = require("./path-reference");
 const id_1 = require("./id");
-// Import RxJS Observable without throwing errors when not available.
-const { Observable } = require('rxjs'); //'rxjs/internal/observable'
+let Observable = null; // Observable is lazy loaded upon request
 const isProxy = Symbol('isProxy');
 class LiveDataProxy {
     /**
@@ -648,9 +647,16 @@ class LiveDataProxy {
                 return addOnChangeHandler(target, args.callback);
             }
             else if (flag === 'observe') {
-                if (!Observable) {
-                    throw new Error(`Cannot observe proxy value because rxjs package could not be loaded. Add it to your project with: npm i rxjs`);
-                }
+                // Try to load Observable
+                Observable = Observable || (() => {
+                    try {
+                        const { Observable } = require('rxjs'); //'rxjs/internal/observable'
+                        return Observable;
+                    }
+                    catch (err) {
+                        throw new Error(`Cannot observe proxy value because rxjs package could not be loaded. Add it to your project with: npm i rxjs`);
+                    }
+                })();
                 return new Observable(observer => {
                     const currentValue = getTargetValue(cache, target);
                     observer.next(currentValue);
