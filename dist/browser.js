@@ -470,9 +470,11 @@ class LiveDataProxy {
                 if (!applyChange(mutation.target, mutation.val)) {
                     return false;
                 }
-                const changeRef = mutation.target.reduce((ref, key) => ref.child(key), ref);
-                const changeSnap = new data_snapshot_1.DataSnapshot(changeRef, mutation.val, false, mutation.prev);
-                onMutationCallback && onMutationCallback(changeSnap, isRemote);
+                if (onMutationCallback) {
+                    const changeRef = mutation.target.reduce((ref, key) => ref.child(key), ref);
+                    const changeSnap = new data_snapshot_1.DataSnapshot(changeRef, mutation.val, false, mutation.prev);
+                    onMutationCallback(changeSnap, isRemote);
+                }
                 return true;
             });
             if (!proceed) {
@@ -532,12 +534,14 @@ class LiveDataProxy {
                     // for super responsiveness
                     process.nextTick(() => {
                         // Run onMutation callback for each changed node
-                        mutations.forEach(mutation => {
-                            mutation.value = utils_1.cloneObject(getTargetValue(cache, mutation.target));
-                            const mutationRef = mutation.target.reduce((ref, key) => ref.child(key), ref);
-                            const mutationSnap = new data_snapshot_1.DataSnapshot(mutationRef, mutation.value, false, mutation.previous);
-                            onMutationCallback(mutationSnap, false);
-                        });
+                        if (onMutationCallback) {
+                            mutations.forEach(mutation => {
+                                mutation.value = utils_1.cloneObject(getTargetValue(cache, mutation.target));
+                                const mutationRef = mutation.target.reduce((ref, key) => ref.child(key), ref);
+                                const mutationSnap = new data_snapshot_1.DataSnapshot(mutationRef, mutation.value, false, mutation.previous);
+                                onMutationCallback(mutationSnap, false);
+                            });
+                        }
                         mutations.splice(0);
                         // Run local change subscriptions now
                         clientSubscriptions
@@ -704,7 +708,7 @@ class LiveDataProxy {
             cache = newSnap.val();
             proxy = createProxy({ root: { ref, cache }, target: [], id: proxyId, flag: handleFlag });
             newSnap.ref.context({ acebase_proxy: { id: proxyId, source: 'reload' } });
-            onMutationCallback(newSnap, true);
+            onMutationCallback && onMutationCallback(newSnap, true);
             // TODO: run all other subscriptions
         };
         return {
