@@ -6,27 +6,43 @@ Inspired by (and largely compatible with) the Firebase realtime database, with a
 
 AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, the **browser**, wherever you want.
 
-🔥👇🏽Check out the new [live data proxy](#live-data-proxy) feature!
+👇🏽 Check out the new [live data proxy](#live-data-proxy) feature! 🔥
 ```javascript
-const { AceBase } = require('acebase');
-const db = new AceBase('chats');
+// Create a live data proxy for a chat
+const chatProxy = await db.ref('chats/chat1').proxy({});
+const liveChat = chatProxy.value;
 
-db.ready(async () => {
-    // Create a live data proxy for a chat
-    const chatProxy = await db.ref('chats/chat1').proxy({});
-    const liveChat = chatProxy.value;
-
-    // Simply setting liveChat's properties will update the database:
-    liveChat.title = 'Live Data Proxies Rock! 🚀';
-    liveChat.messages.push({ 
-        from: 'Ewout', 
-        text: 'Updating a database was never this easy' 
-    });
-    
-    // That easy!
+// Simply setting liveChat's properties will update the database:
+liveChat.title = 'Live Data Proxies Rock! 🚀';
+liveChat.members = ['ewout','john','pete','jack'];
+liveChat.messages.push({ 
+    from: 'ewout', 
+    text: 'Updating a database was never this easy' 
+});
+```
+👇🏽 Changes made remotely are automatically updated in our liveChat object:
+```javascript
+function sendMessage(text) {
+    if (!liveChat.members.includes('ewout')) {
+        throw new Error(`Can't send message, I'm not a member anymore!`);
+    }
+    liveChat.messages.push({ from: 'ewout', text });
 }
 ```
-The above example uses a live data proxy on a local database. If you use this on a remote database through an ```AceBaseClient```, it will synchronize with all other connected clients and update their ```liveChat``` object behind the scenes!
+👇🏽 Attach listeners to handle specific changes:
+```javascript
+liveChat.onChange(function (val, prev, remoteChange, context) {
+    if (val.title !== prev.title && remoteChange) {
+        console.log(`Title was changed by someone else`);
+    }
+    if (prev.members.includes('ewout') && !val.members.includes('ewout')) {
+        console.log(remoteChange ? `I was kicked out of this chat` : `I stepped out`);
+    }
+});
+```
+Using live data proxies, you won't have to worry about data storage and synchronization, just focus on your business logic. All changes are **automatically synchronized** with others, and it can even work while **offline**!
+
+Excited? Read more about live data proxies [here](#live-data-proxy) 🔥
 
 ## Table of contents
 
@@ -51,9 +67,10 @@ The above example uses a live data proxy on a local database. If you use this on
     * [Notify only events](#notify-only-events)
     * [Wait for events to activate](#wait-for-event-activation)
     * [Get triggering context of events](#event-context)
-    * [Change tracking using "mutated" events](#mutated-events)
+    * [Change tracking using "mutated" and "mutations" events](#mutated-events)
     * [Observe realtime value changes](#observe-realtime-value)
     * [🔥 Realtime synchronization with a live data proxy](#live-data-proxy)
+    * [Using proxy methods in Typescript](#typescript-proxy-methods)
 * Queries
     * [Querying data](#querying-data)
     * [Removing data with a query](#query-removing-data)
@@ -392,6 +409,7 @@ You can subscribe to data events to get realtime notifications as the monitored 
 - ```'child_changed'```: triggered when a child node's value changed, callback contains a snapshot of the changed child node
 - ```'child_removed'```: triggered when a child node is removed, callback contains a snapshot of the removed child node
 - ```'mutated'```: (NEW v0.9.51) triggered when any nested property of a node changes, callback contains a snapshot and reference of the exact mutation.
+- ```'mutations'```: (NEW v0.9.60) like ```'mutated'```, but fires with an array of all mutations caused by a single database update.
 - ```'notify_*'```: notification only version of above events without data, see "Notify only events" below 
 
 ```javascript
@@ -463,9 +481,9 @@ newPostStream.stop();
 ```
 
 <a name="wildcard-paths"></a>
-### Using variables and wildcards in subscription paths (NEW! v0.5.0+)
+### Using variables and wildcards in subscription paths
 
-It is now possible to subscribe to events using wildcards and variables in the path:
+It is also possible to subscribe to events using wildcards and variables in the path:
 ```javascript
 // Using wildcards:
 db.ref('users/*/posts')
@@ -505,7 +523,13 @@ db.ref('users/ewout/posts').push({ title: 'new post' });
 <a name="notify-only-events"></a>
 ### Notify only events
 
-In additional to the events mentioned above, you can also subscribe to their ```notify_``` counterparts which do the same, but with a reference to the changed data instead of a snapshot. This is quite useful if you want to monitor changes, but are not interested in the actual values. Doing this also saves serverside resources, and results in less data being transferred from the server. Eg: ```notify_child_changed``` will run your callback with a reference to the changed node.
+In additional to the events mentioned above, you can also subscribe to their ```notify_``` counterparts which do the same, but with a reference to the changed data instead of a snapshot. This is quite useful if you want to monitor changes, but are not interested in the actual values. Doing this also saves serverside resources, and results in less data being transferred from the server. Eg: ```notify_child_changed``` will run your callback with a reference to the changed node:
+
+```javascript
+ref.on('notify_child_changed', childRef => {
+    console.log(`child "${childRef.key}" changed`);
+})
+```
 
 <a name="wait-for-event-activation"></a>
 ### Wait for events to activate
@@ -583,7 +607,11 @@ db.ref('users/ewout/documents/some_id')
 ```
 
 <a name="mutated-events"></a>
-### Change tracking using "mutated" events (NEW v0.9.51)
+### Change tracking using "mutated" and "mutations" events (NEW v0.9.51)
+
+These events are mainly used by AceBase behind the scenes to automatically update in-memory values with remote mutations. See [Observe realtime value changes](#observe-realtime-value) and [Realtime synchronization with a live data proxy](#live-data-proxy). It is possible to use these events yourself, but they require some additional plumbing, and you're probably better off using the methods mentioned above.
+
+Having said that, here's how to use them: 
 
 If we you want to monitor a specific node's value, but don't want to get its entire new value every time a small mutation is made to it, subscribe to the "mutated" event. This event is only fired with the target data actually being changed. This allows you to keep a cached copy of your data in memory (or cache db), and replicate all changes being made to it:
 
@@ -625,6 +653,16 @@ chatRef.child('messages').push({
 ```
 
 NOTE: if you are connected to a remote AceBase server and the connection was lost, it is important that you always get the latest value upon reconnecting because you might have missed mutation events.
+
+The ```'mutations'``` event does the same as ```'mutated'```, but will be fired on the subscription path with an array of all mutations caused by a single database update. The best way to handle these mutations is by iterating them using ```snapshot.forEach```:
+
+```javascript
+chatRef.on('mutations', snap => {
+    snap.forEach(mutationSnap => {
+        handleMutation(mutationSnap);
+    });
+})
+```
 
 <a name="observe-realtime-value"></a>
 ### Observe realtime value changes (NEW v0.9.51)
@@ -714,7 +752,7 @@ db.ref('chats/chat1/messages').update({
 });
 ```
 
-To get a notification each time the value a mutation is made to the value, use ```proxy.onMutation(handler)```. To get notifications about any errors that might occur, use ```proxy.onError(handler)```:
+To get a notification each time a mutation is made to the value, use ```proxy.onMutation(handler)```. To get notifications about any errors that might occur, use ```proxy.onError(handler)```:
 
 ```javascript
 proxy.onError(err => {
@@ -750,12 +788,15 @@ chat.messages.forEach((message, key, index) => {
 const key = chat.messages.push({ text: 'New message' });
 ```
 
-```remove```: delete a message
+```remove```: delete a node
 ```javascript
 chat.messages[key].remove();
 chat.messages.someotherkey.remove();
-delete chat.messages.somemessage; // You can also do this
-chat.messages.somemessage = null; // And this
+
+// Note, you can also do this:
+delete chat.messages.somemessage;
+// Or this:
+chat.messages.somemessage = null;
 ```
 
 ```toArray```: access an object collection like an array:
@@ -807,7 +848,35 @@ const subscription = observable.subscribe(message => {
 subscription.unsubscribe();
 ```
 
-NOTE: In TypeScript there is some additional typecasting needed to access proxy methods shown above. You can use the ```proxyAccess``` function to get help with that. This function typecasts and also checks if your passed value is indeed a Proxy.
+```startTransaction```: (NEW v0.9.62) Enables you to make changes to the proxied value, but not writing them to the database until you want them to. This makes it possble to bind a proxy to an input form, and wait to save the changes until the user click 'Save', or rollback when canceling. Meanwhile, the value will still be updated with any remote changes.
+
+```javascript
+const proxy = await db.ref('contacts/ewout').proxy();
+const contact = proxy.value;
+const tx = await this.contact.startTransaction();
+
+// Make some changes:
+contact.name = 'Ewout Stortenbeker'; // Was 'Ewout'
+contact.email = 'ewout@appy.one'; // Was 'me@appy.one'
+
+async function save() {
+    await tx.commit();
+    console.log('Contact details updated');
+}
+
+function rollback() {
+    tx.rollback();
+    // contact.name === 'Ewout'
+    // contact.email === 'me@appy.one'
+    console.log('All changes made were rolled back');
+}
+```
+Once ```tx.commit()``` is called, all pending updates will be processed and saved to the database. When ```tx.rollback()``` is called, all changes made to the proxied object will be reverted and no further action is taken.
+
+<a name="typescript-proxy-methods"></a>
+### Using proxy methods in Typescript
+
+In TypeScript some additional typecasting is needed to access proxy methods shown above. You can use the ```proxyAccess``` function to get help with that. This function typecasts and also checks if your passed value is indeed a proxy.
 ```typescript
 type IChatMessages = IObjectCollection<IChatMessage>;
 
@@ -825,7 +894,7 @@ proxyAccess<IChatMessages>(chat.messages)
         // messages: IChatMessages
     });
 
-// With unsafe typecasting:
+// Or, with unsafe typecasting (discouraged!)
 (chat.messages as any)
     .getObservable()
     .subscribe((messages: IChatMessages) => {
