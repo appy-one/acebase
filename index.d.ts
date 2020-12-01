@@ -213,22 +213,6 @@ export class CustomStorageHelpers {
     static readonly PathInfo: typeof acebasecore.PathInfo
 }
 
-// export class BrowserAceBase extends AceBase {
-//     /**
-//      * DEPRECATED - switch to static WithIndexedDB or WithLocalStorage methods.
-//      * Convenience class for using AceBase in the browser without supplying additional settings.
-//      * Uses the browser's localStorage or sessionStorage.
-//      * @deprecated Using the AceBase constructor method in the browser is deprecated, use the static WithIndexedDB or WithLocalStorage methods instead
-//      * @param name database name
-//      * @param settings optional settings
-//      * @param settings.logLevel what level to use for logging to the console
-//      * @param settings.temp whether to use sessionStorage instead of localStorage
-//      */
-//     constructor(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean });
-
-//     /* static methods WithIndexedDB and WithLocalStorage are defined in class AceBase */
-// }
-
 export import DataSnapshot = acebasecore.DataSnapshot;
 export import DataReference = acebasecore.DataReference;
 export import EventStream = acebasecore.EventStream;
