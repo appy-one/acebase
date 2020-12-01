@@ -1,7 +1,6 @@
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
-const colors = require('colors');
 
 class Node {
     static get VALUE_TYPES() { return VALUE_TYPES; }
@@ -48,9 +47,6 @@ class Node {
      * @param {any} [options.context=null] Context to be passed along with data events
      */
     static update(storage, path, value, options = { merge: true, suppress_events: false, context: null }) {
-
-        // debug.log(`Update request for node "/${path}"`);
-
         if (options.merge) {
             return storage.updateNode(path, value, { suppress_events: options.suppress_events, context: options.context });
         }
@@ -170,7 +166,6 @@ class Node {
         return storage.matchNode(path, criteria, options);
     }
 }
-
 
 class NodeChange {
     static get CHANGE_TYPE() {

@@ -1,9 +1,8 @@
-const { debug, ID, PathReference, PathInfo, ascii85 } = require('acebase-core');
+const { debug, ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
 const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 // const promiseTimeout = require('./promise-timeout');
-const colors = require('colors');
 const pfs = require('./promise-fs');
 const ThreadSafe = require('./thread-safe');
 
@@ -136,23 +135,7 @@ class SQLiteStorage extends Storage {
      * @returns {Promise<{ rows: number, canceled: boolean }>} Resolves once all rows have been processed, or callback returned false
      */
     _each(sql, params = {}, callback) {
-        // TODO: refactor to use batches using LIMIT n, OFFSET m
-        // const stack = new Error('').stack;
         return new Promise((resolve, reject) => {
-            // let rows = 0;
-            // const cb = (err, row) => {
-            //     if (err) { err.stack = stack; err.statement = sql; err.params = params; return reject(err); }
-            //     rows++;
-            //     if (!callback) { return; }
-            //     let proceed = callback(row);
-            //     if (proceed === false) {
-            //         callback = null;
-            //         resolve({ rows, canceled: true })
-            //     }
-            // }
-            // this._db.each(sql, params, cb);
-            // resolve({ rows, canceled: false });
-
             const take = 100;
             let skip = 0;
             let totalRows = 0;
@@ -362,9 +345,9 @@ class SQLiteStorage extends Storage {
             });
         })
         .then(() => {
-            this.debug.log(`Database "${this.name}" details:`.intro);
-            this.debug.log(`- Type: SQLite`);
-            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.intro);
+            this.debug.log(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
+            this.debug.log(`- Type: SQLite`.colorize(ColorStyle.dim));
+            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(ColorStyle.dim));
 
             // Load indexes
             return this.indexes.load();
@@ -521,28 +504,10 @@ class SQLiteStorage extends Storage {
                 current: [],
                 new: []
             }
-            // const changes = {
-            //     insert: {},
-            //     update: {},
-            //     delete: {}
-            // };
             let currentObject = null;
             if (currentIsObjectOrArray) {
                 currentObject = this._deserializeJSON(currentRow.type, currentRow.json_value);
                 children.current = Object.keys(currentObject);
-                // if (!newIsObjectOrArray) {
-                //     changes.delete = children.current.map(key => currentObject[key]);
-                // }
-
-                // ALWAYS FALSE: arrays are stored as objects with numeric properties:
-                // if (currentObject instanceof Array) {
-                //     // Convert array to object with numeric properties
-                //     const obj = {};
-                //     for (let i = 0; i < value.length; i++) {
-                //         obj[i] = value[i];
-                //     }
-                //     currentObject = obj;
-                // }
                 if (newIsObjectOrArray) {
                     mainNode.value = currentObject;
                 }
@@ -556,19 +521,8 @@ class SQLiteStorage extends Storage {
                     delete mainNode.value[key]; // key is being overwritten, moved from inline to dedicated, or deleted.
                     if (val === null) { //  || typeof val === 'undefined'
                         // This key is being removed
-                        // children.new = children.new.filter(k => k !== key); 
-                        // if (children.current.includes(key)) {
-                        //     changes.delete[key] = currentObject[key];
-                        // }
                         return;
                     }
-                    // if (!children.current.includes(key)) {
-                    //     children.new.push(key);
-                    //     changes.insert[key] = val;
-                    // }
-                    // else if (currentObject && val !== currentObject[key]) {
-                    //     changes.update[key] = val;
-                    // }
 
                     // Where to store this value?
                     if (this.valueFitsInline(val)) {
@@ -585,7 +539,7 @@ class SQLiteStorage extends Storage {
             // Insert or update node
             if (currentRow) {
                 // update
-                this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.cyan);
+                this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(ColorStyle.cyan));
 
                 const updateMainNode = () => {
                     const sql = `UPDATE nodes SET type = $type, text_value = $text_value, binary_value = $binary_value, json_value = $json_value, modified = $modified, revision_nr = revision_nr + 1, revision = $revision
@@ -694,7 +648,7 @@ class SQLiteStorage extends Storage {
             else {
                 // Current node does not exist, create it and any child nodes
                 // write all child nodes that must be stored in their own record
-                this.debug.log(`Node "/${path}" is being created`.cyan);
+                this.debug.log(`Node "/${path}" is being created`.colorize(ColorStyle.cyan));
 
                 const childCreatePromises = Object.keys(childNodeValues).map(key => {
                     const childPath = PathInfo.getChildPath(path, key);
@@ -952,7 +906,7 @@ class SQLiteStorage extends Storage {
                     });
                 }
 
-                this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${rows.length} records`.magenta);
+                this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${rows.length} records`.colorize(ColorStyle.magenta));
 
                 const targetPathKeys = PathInfo.getPathKeys(path);
                 const targetRow = rows.find(row => row.path === path);

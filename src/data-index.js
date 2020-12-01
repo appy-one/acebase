@@ -3,7 +3,7 @@
 const { Storage } = require('./storage');
 const { Node } = require('./node');
 const { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryWriter, BinaryBPlusTreeLeafEntry, BinaryReader, BlacklistingSearchOperator } = require('./btree');
-const { PathInfo, Utils, ID, debug } = require('acebase-core');
+const { PathInfo, Utils, ID, debug, ColorStyle } = require('acebase-core');
 const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
 const Geohash = require('./geohash');
 // const { TextEncoder, TextDecoder } = require('text-encoding');
@@ -518,7 +518,7 @@ class DataIndex {
         let lock;
         return this._lock(true, `index._processTreeOperations "/${path}"`)
         .then(l => {
-            // this.storage.debug.log(`Got update lock on index ${this.description}`.blue, l);
+            // this.storage.debug.log(`Got update lock on index ${this.description}`.colorize(ColorStyle.blue), l);
             if (this._buildError) {
                 l.release();
                 throw new Error('Cannot update index because there was an error building it');
@@ -543,7 +543,7 @@ class DataIndex {
                 })
                 .catch(err => {
                     // Could not update index --> leaf full?
-                    this.storage.debug.log(`Could not update index ${this.description}: ${err.message}`.yellow);
+                    this.storage.debug.log(`Could not update index ${this.description}: ${err.message}`.colorize(ColorStyle.yellow));
     
                     console.assert(retry === 0, `unable to process operations because tree was rebuilt, and it didn't help?!`);
 
@@ -566,11 +566,11 @@ class DataIndex {
             return go();
         })
         .then(rebuilt => {
-            // this.storage.debug.log(`Released update lock on index ${this.description}`.blue);
+            // this.storage.debug.log(`Released update lock on index ${this.description}`.colorize(ColorStyle.blue));
             lock.release();
             const doneTime = Date.now();
             const duration = Math.round((doneTime - startTime) / 1000);
-            this.storage.debug.log(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration} seconds`.green);
+            this.storage.debug.log(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration} seconds`.colorize(ColorStyle.green));
 
             // Process any queued updates
             return this._processUpdateQueue();
@@ -752,7 +752,7 @@ class DataIndex {
         let lock;
         return this._lock(false, `index.count "${op}", ${val}`)
         .then(l => {
-            // this.storage.debug.log(`Got query lock on index ${this.description}`.blue, l);
+            // this.storage.debug.log(`Got query lock on index ${this.description}`.colorize(ColorStyle.blue), l);
             lock = l;
             return this._getTree();
         })
@@ -780,10 +780,10 @@ class DataIndex {
         const stats = new IndexQueryStats('take', { skip, take, ascending }, true);
 
         var lock;
-        // this.storage.debug.log(`Requesting query lock on index ${this.description}`.blue);
+        // this.storage.debug.log(`Requesting query lock on index ${this.description}`.colorize(ColorStyle.blue));
         return this._lock(false, `index.take ${take}, skip ${skip}, ${ascending ? 'ascending' : 'descending'}`)
         .then(l => {
-            // this.storage.debug.log(`Got query lock on index ${this.description}`.blue, l);
+            // this.storage.debug.log(`Got query lock on index ${this.description}`.colorize(ColorStyle.blue), l);
             lock = l;
             return this._getTree();
         })
@@ -1055,7 +1055,7 @@ class DataIndex {
         const allowedKeyValueTypes = options && options.valueTypes
             ? options.valueTypes
             : indexableTypes;
-        this.storage.debug.log(`Index build ${this.description} started`.blue);
+        this.storage.debug.log(`Index build ${this.description} started`.colorize(ColorStyle.blue));
         let indexedValues = 0;
         // let addPromise;
         // let flushed = false;
@@ -1329,7 +1329,7 @@ class DataIndex {
                                                 else {
                                                     addIndexValue(keyValue, recordPointer, metadata);
                                                 }
-                                                this.storage.debug.log(`Indexed "/${childPath}/${this.key}" value: '${keyValue}' (${typeof keyValue})`.cyan);
+                                                this.storage.debug.log(`Indexed "/${childPath}/${this.key}" value: '${keyValue}' (${typeof keyValue})`.colorize(ColorStyle.cyan));
                                             }
                                             // return addPromise; // Do we really have to wait for this?
                                         });
@@ -1938,7 +1938,7 @@ class DataIndex {
         .then(() => {
             const doneTime = Date.now();
             const duration = Math.round((doneTime - startTime) / 1000 / 60);
-            this.storage.debug.log(`Index ${this.description} was built successfully, took ${duration} minutes`.green);
+            this.storage.debug.log(`Index ${this.description} was built successfully, took ${duration} minutes`.colorize(ColorStyle.green));
             this.state = DataIndex.STATE.READY;
             lock.release(); // release index lock
             return this;

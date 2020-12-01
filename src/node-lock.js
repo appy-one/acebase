@@ -1,4 +1,4 @@
-const { PathInfo } = require('acebase-core');
+const { PathInfo, ColorStyle } = require('acebase-core');
 const storage = require('./storage');
 
 const SECOND = 1000;
@@ -117,7 +117,7 @@ class NodeLocker {
             //     .filter(c => c.count > 1)
             //     .map(c => c.key);
             // if (duplicateKeys.length > 0) {
-            //     console.log(`ALERT: Duplicate keys found in path "/${path}"`.dim.bgRed);
+            //     console.log(`ALERT: Duplicate keys found in path "/${path}"`.colorize([ColorStyle.dim, ColorStyle.bgRed]);
             // }
 
             lock = new NodeLock(this, path, tid, forWriting, options.withPriority === true);

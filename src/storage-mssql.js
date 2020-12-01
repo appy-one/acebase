@@ -1,9 +1,8 @@
-const { debug, ID, PathReference, PathInfo, ascii85 } = require('acebase-core');
+const { debug, ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
 const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 // const promiseTimeout = require('./promise-timeout');
-const colors = require('colors');
 const pfs = require('./promise-fs');
 const ThreadSafe = require('./thread-safe');
 
@@ -410,11 +409,11 @@ class MSSQLStorage extends Storage {
             });
         })
         .then(() => {
-            this.debug.log(`Database "${this.name}" details:`.intro);
-            this.debug.log(`- Type: MSSQL`);
-            this.debug.log(`- Server: ${this.settings.server}:${this.settings.port}`);
-            this.debug.log(`- Database: ${this.settings.database}`);
-            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.intro);
+            this.debug.log(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
+            this.debug.log(`- Type: MSSQL`.colorize(ColorStyle.dim));
+            this.debug.log(`- Server: ${this.settings.server}:${this.settings.port}`.colorize(ColorStyle.dim));
+            this.debug.log(`- Database: ${this.settings.database}`.colorize(ColorStyle.dim));
+            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(ColorStyle.dim));
 
             // Load indexes
             return this.indexes.load();
@@ -571,28 +570,10 @@ class MSSQLStorage extends Storage {
                 current: [],
                 new: []
             }
-            // const changes = {
-            //     insert: {},
-            //     update: {},
-            //     delete: {}
-            // };
             let currentObject = null;
             if (currentIsObjectOrArray) {
                 currentObject = this._deserializeJSON(currentRow.type, currentRow.json_value);
                 children.current = Object.keys(currentObject);
-                // if (!newIsObjectOrArray) {
-                //     changes.delete = children.current.map(key => currentObject[key]);
-                // }
-
-                // ALWAYS FALSE: arrays are stored as objects with numeric properties:
-                // if (currentObject instanceof Array) {
-                //     // Convert array to object with numeric properties
-                //     const obj = {};
-                //     for (let i = 0; i < value.length; i++) {
-                //         obj[i] = value[i];
-                //     }
-                //     currentObject = obj;
-                // }
                 if (newIsObjectOrArray) {
                     mainNode.value = currentObject;
                 }
@@ -606,20 +587,8 @@ class MSSQLStorage extends Storage {
                     delete mainNode.value[key]; // key is being overwritten, moved from inline to dedicated, or deleted.
                     if (val === null) { //  || typeof val === 'undefined'
                         // This key is being removed
-                        // children.new = children.new.filter(k => k !== key); 
-                        // if (children.current.includes(key)) {
-                        //     changes.delete[key] = currentObject[key];
-                        // }
                         return;
                     }
-                    // if (!children.current.includes(key)) {
-                    //     children.new.push(key);
-                    //     changes.insert[key] = val;
-                    // }
-                    // else if (currentObject && val !== currentObject[key]) {
-                    //     changes.update[key] = val;
-                    // }
-
                     // Where to store this value?
                     if (this.valueFitsInline(val)) {
                         // Store in main node
@@ -635,7 +604,7 @@ class MSSQLStorage extends Storage {
             // Insert or update node
             if (currentRow) {
                 // update
-                this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.cyan);
+                this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(ColorStyle.cyan));
 
                 const updateMainNode = () => {
                     const sql = `UPDATE nodes SET type = @type, text_value = @text_value, binary_value = @binary_value, json_value = @json_value, modified = @modified, revision_nr = revision_nr + 1, revision = @revision
@@ -661,19 +630,6 @@ class MSSQLStorage extends Storage {
                 // If existing is an array or object, we have to find out which children are affected
                 if (currentIsObjectOrArray || newIsObjectOrArray) {
 
-                    // Track changes in properties:
-                    // const oldObject = currentIsObjectOrArray 
-                    //     ? this._deserializeJSON(currentRow.type, currentRow.json_value)
-                    //     : null;
-                    // const children = {
-                    //     old: currentIsObjectOrArray
-                    //         ? Object.keys(oldObject)
-                    //         : [],
-                    //     new: newIsObjectOrArray 
-                    //         ? Object.keys(value).filter(key => value[key] !== null && typeof value[key] !== 'undefined')
-                    //         : []
-                    // };
-
                     // Get current child nodes in dedicated child records
                     let childrenPromise = Promise.resolve([]);
                     if (currentIsObjectOrArray) {
@@ -686,9 +642,6 @@ class MSSQLStorage extends Storage {
                     return childrenPromise
                     .then(childRows => {
                         const keys = childRows.map(row => PathInfo.get(row.path).key);
-                        // = childRows.map(row => PathInfo.get(row.path))
-                        //     .filter(info => info.parentPath === path)
-                        //     .map(info => info.key);
                         children.current = children.current.concat(keys);
                         if (newIsObjectOrArray) {
                             if (options && options.merge) {
@@ -725,14 +678,7 @@ class MSSQLStorage extends Storage {
                             this._deleteNode(childPath, { transaction }); // return this._deleteNode(childPath, { transaction });
                         });
 
-                        // const promises = updatePromises.concat(deletePromises);
-                        // promises.push(updateMainNode(transaction));
                         updateMainNode();
-
-                        // return Promise.all(promises)
-                        // .then(() => {                            
-                        //     return changes;
-                        // })
                         return Promise.all(childUpdatePromises);
                     });
                 }
@@ -744,7 +690,7 @@ class MSSQLStorage extends Storage {
             else {
                 // Current node does not exist, create it and any child nodes
                 // write all child nodes that must be stored in their own record
-                this.debug.log(`Node "/${path}" is being created`.cyan);
+                this.debug.log(`Node "/${path}" is being created`.colorize(ColorStyle.cyan));
 
                 const childCreatePromises = Object.keys(childNodeValues).map(key => {
                     const childPath = PathInfo.getChildPath(path, key);
@@ -769,14 +715,6 @@ class MSSQLStorage extends Storage {
                     };
                         
                     transaction.add(sql, params); // return this._exec(sql, params);
-                    // return transaction.run()
-                    // .then(results => {
-                    //     console.log(`Transaction successful!`, results);
-                    // })
-                    // .catch(err => {
-                    //     console.error(err);
-                    //     throw err;
-                    // })
                 });
             }
         })
@@ -1002,7 +940,7 @@ class MSSQLStorage extends Storage {
                     });
                 }
 
-                this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${rows.length} records`.magenta);
+                this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${rows.length} records`.colorize(ColorStyle.magenta));
 
                 const targetPathKeys = PathInfo.getPathKeys(path);
                 const targetRow = rows.find(row => row.path === path);

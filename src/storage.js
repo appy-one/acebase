@@ -1,10 +1,8 @@
-const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85 } = require('acebase-core');
+const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
-const { EventEmitter } = require('events');
 const { cloneObject, compareValues, getChildValues, encodeString } = Utils;
-const colors = require('colors');
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
@@ -28,7 +26,7 @@ class ClusterSettings {
     }
 }
 
-class ClusterManager extends EventEmitter {
+class ClusterManager extends SimpleEventEmitter {
     /**
      * @param {ClusterSettings} settings 
      */
@@ -139,7 +137,7 @@ class StorageSettings {
     }
 }
 
-class Storage extends EventEmitter {
+class Storage extends SimpleEventEmitter {
 
     /**
      * Base class for database storage, must be extended by back-end specific methods.
@@ -153,21 +151,20 @@ class Storage extends EventEmitter {
         this.settings = settings;
         this.debug = new DebugLogger(settings.logLevel, `[${name}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
-        colors.setTheme({
-            art: ['magenta', 'bold'],
-            intro: ['dim']
-        });
         // ASCI art: http://patorjk.com/software/taag/#p=display&f=Doom&t=AceBase
+        const logoStyle = [ColorStyle.magenta, ColorStyle.bold];
         const logo =
-            '     ___          ______                '.art + '\n' +
-            '    / _ \\         | ___ \\               '.art + '\n' +
-            '   / /_\\ \\ ___ ___| |_/ / __ _ ___  ___ '.art + '\n' +
-            '   |  _  |/ __/ _ \\ ___ \\/ _` / __|/ _ \\'.art + '\n' +
-            '   | | | | (_|  __/ |_/ / (_| \\__ \\  __/'.art + '\n' +
-            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|'.art + '\n' +
-            (settings.info ? ''.padStart(40 - settings.info.length, ' ') + settings.info.magenta + '\n' : '');
+            '     ___          ______                ' + '\n' +
+            '    / _ \\         | ___ \\               ' + '\n' +
+            '   / /_\\ \\ ___ ___| |_/ / __ _ ___  ___ ' + '\n' +
+            '   |  _  |/ __/ _ \\ ___ \\/ _` / __|/ _ \\' + '\n' +
+            '   | | | | (_|  __/ |_/ / (_| \\__ \\  __/' + '\n' +
+            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|';
+        
+        const info = (settings.info ? ''.padStart(40 - settings.info.length, ' ') + settings.info + '\n' : '');
 
-        this.debug.write(logo);
+        this.debug.write(logo.colorize(logoStyle));
+        info && this.debug.write(info.colorize(ColorStyle.magenta));
 
         // this._ready = false;
         // this._readyCallbacks = [];
@@ -227,7 +224,7 @@ class Storage extends EventEmitter {
                     && index.includeKeys.every((key, index) => includeKeys[index] === key)
                 );
                 if (existingIndex && rebuild !== true) {
-                    storage.debug.log(`Index on "/${path}/*/${key}" already exists`.inverse);
+                    storage.debug.log(`Index on "/${path}/*/${key}" already exists`.colorize(ColorStyle.inverse));
                     return Promise.resolve(existingIndex);
                 }
                 const index = existingIndex || (() => {
@@ -246,7 +243,7 @@ class Storage extends EventEmitter {
                     return index;
                 })
                 .catch(err => {
-                    storage.debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.red);
+                    storage.debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.colorize(ColorStyle.red));
                     if (!existingIndex) {
                         // Only remove index if we added it. Build may have failed because someone tried creating the index more than once, or rebuilding it while it was building...
                         _indexes.splice(_indexes.indexOf(index), 1);
