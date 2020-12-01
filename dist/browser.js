@@ -119,9 +119,10 @@ module.exports = function pad (num, size) {
    ________________________________________________________________________________
   
  */
-const { EventEmitter } = require('events');
+const { SimpleEventEmitter } = require('./simple-event-emitter');
 const { DataReference, DataReferenceQuery } = require('./data-reference');
 const { TypeMappings } = require('./type-mappings');
+const { setObservable } = require('./optional-observable');
 
 class AceBaseSettings {
     constructor(options) {
@@ -134,7 +135,7 @@ class AceBaseSettings {
     }
 }
 
-class AceBaseBase extends EventEmitter {
+class AceBaseBase extends SimpleEventEmitter {
 
     /**
      * 
@@ -146,7 +147,8 @@ class AceBaseBase extends EventEmitter {
 
         if (!options) { options = {}; }
 
-        this.setMaxListeners(50); // Prevent warning for >10 "ready" event listeners, increase to 50
+        // Not needed anymore now we're using SimpleEventEmitter:
+        // this.setMaxListeners(50); // Prevent warning for >10 "ready" event listeners, increase to 50
         this.once("ready", () => {
             // console.log(`database "${dbname}" (${this.constructor.name}) is ready to use`);
             this._ready = true;
@@ -185,6 +187,14 @@ class AceBaseBase extends EventEmitter {
 
     get isReady() {
         return this._ready === true;
+    }
+
+    /**
+     * Allow specific observable implementation to be used
+     * @param {Observable} Observable Implementation to use
+     */
+    setObservable(Observable) {
+        setObservable(Observable);
     }
 
     /**
@@ -244,7 +254,7 @@ class AceBaseBase extends EventEmitter {
 }
 
 module.exports = { AceBaseBase, AceBaseSettings };
-},{"./data-reference":8,"./type-mappings":18,"events":43}],5:[function(require,module,exports){
+},{"./data-reference":8,"./optional-observable":13,"./simple-event-emitter":18,"./type-mappings":21}],5:[function(require,module,exports){
 
 class Api {
     // interface for local and web api's
@@ -350,7 +360,7 @@ const utils_1 = require("./utils");
 const data_snapshot_1 = require("./data-snapshot");
 const path_reference_1 = require("./path-reference");
 const id_1 = require("./id");
-let Observable = null; // Observable is lazy loaded upon request
+const optional_observable_1 = require("./optional-observable");
 class RelativeNodeTarget extends Array {
     static areEqual(t1, t2) {
         return t1.length === t2.length && t1.every((key, i) => t2[i] === key);
@@ -632,15 +642,7 @@ class LiveDataProxy {
             }
             else if (flag === 'observe') {
                 // Try to load Observable
-                Observable = Observable || (() => {
-                    try {
-                        const { Observable } = require('rxjs'); //'rxjs/internal/observable'
-                        return Observable;
-                    }
-                    catch (err) {
-                        throw new Error(`Cannot observe proxy value because rxjs package could not be loaded. Add it to your project with: npm i rxjs`);
-                    }
-                })();
+                const Observable = optional_observable_1.getObservable();
                 return new Observable(observer => {
                     const currentValue = getTargetValue(cache, target);
                     observer.next(currentValue);
@@ -1130,7 +1132,7 @@ function proxyAccess(proxiedValue) {
 exports.proxyAccess = proxyAccess;
 
 }).call(this,require('_process'))
-},{"./data-snapshot":9,"./id":11,"./path-reference":14,"./utils":19,"_process":46,"rxjs":42}],8:[function(require,module,exports){
+},{"./data-snapshot":9,"./id":11,"./optional-observable":13,"./path-reference":15,"./utils":22,"_process":34}],8:[function(require,module,exports){
 const { DataSnapshot, MutationsDataSnapshot } = require('./data-snapshot');
 const { EventStream, EventPublisher } = require('./subscription');
 const { ID } = require('./id');
@@ -1138,6 +1140,7 @@ const debug = require('./debug');
 const { PathInfo } = require('./path-info');
 const { PathReference } = require('./path-reference');
 const { LiveDataProxy } = require('./data-proxy');
+const { getObservable } = require('./optional-observable');
 
 class DataRetrievalOptions {
     /**
@@ -1842,13 +1845,7 @@ class DataReference {
         else if (!this.db.isReady) {
             return this.db.ready().then(() => this.observe(options));
         }
-        let Observable;
-        try {
-            Observable = require('rxjs').Observable;
-        }
-        catch(err) {
-            return Promise.reject(`RxJS not installed. Add it to your project with: npm install rxjs --save`)
-        }
+        const Observable = getObservable();
         return new Observable(observer => {
             let cache, resolved = false;
             let promise = this.get(options).then(snap => {
@@ -2180,7 +2177,7 @@ module.exports = {
     DataRetrievalOptions,
     QueryDataRetrievalOptions
 };
-},{"./data-proxy":7,"./data-snapshot":9,"./debug":10,"./id":11,"./path-info":13,"./path-reference":14,"./subscription":16,"rxjs":42}],9:[function(require,module,exports){
+},{"./data-proxy":7,"./data-snapshot":9,"./debug":10,"./id":11,"./optional-observable":13,"./path-info":14,"./path-reference":15,"./subscription":19}],9:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MutationsDataSnapshot = exports.DataSnapshot = void 0;
@@ -2323,14 +2320,14 @@ class MutationsDataSnapshot extends DataSnapshot {
 }
 exports.MutationsDataSnapshot = MutationsDataSnapshot;
 
-},{"./path-info":13}],10:[function(require,module,exports){
+},{"./path-info":14}],10:[function(require,module,exports){
 class DebugLogger {
     constructor(level = "log", prefix = '') {
         this.prefix = prefix;
         this.setLevel(level);
     }
     setLevel(level) {
-        const prefix = this.prefix ? this.prefix : '';
+        const prefix = this.prefix ? this.prefix + ' %s' : '';
         this.level = level;
         this.verbose = ["verbose"].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : () => {};
         this.log = ["verbose", "log"].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : () => {};
@@ -2370,6 +2367,8 @@ const { PathInfo } = require('./path-info');
 const ascii85 = require('./ascii85');
 const { SimpleCache } = require('./simple-cache');
 const { proxyAccess } = require('./data-proxy');
+const { SimpleEventEmitter } = require('./simple-event-emitter');
+const { ColorStyle, Colorize } = require('./simple-colors');
 
 module.exports = {
     AceBaseBase, AceBaseSettings,
@@ -2386,9 +2385,43 @@ module.exports = {
     PathInfo,
     ascii85,
     SimpleCache,
-    proxyAccess
+    proxyAccess,
+    SimpleEventEmitter,
+    ColorStyle,
+    Colorize
 };
-},{"./acebase-base":4,"./api":5,"./ascii85":6,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./path-info":13,"./path-reference":14,"./simple-cache":15,"./subscription":16,"./transport":17,"./type-mappings":18,"./utils":19}],13:[function(require,module,exports){
+},{"./acebase-base":4,"./api":5,"./ascii85":6,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./path-info":14,"./path-reference":15,"./simple-cache":16,"./simple-colors":17,"./simple-event-emitter":18,"./subscription":19,"./transport":20,"./type-mappings":21,"./utils":22}],13:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.setObservable = exports.getObservable = void 0;
+let _observable;
+function getObservable() {
+    if (_observable) {
+        return _observable;
+    }
+    if (typeof window !== 'undefined' && window.Observable) {
+        _observable = window.Observable;
+        return _observable;
+    }
+    try {
+        const { Observable } = require('rxjs'); //'rxjs/internal/observable'
+        if (!Observable) {
+            throw new Error('not loaded');
+        }
+        _observable = Observable;
+        return Observable;
+    }
+    catch (err) {
+        throw new Error(`RxJS Observable could not be loaded. If you are using a browser build, add it to AceBase using db.setObservable. For node.js builds, add it to your project with: npm i rxjs`);
+    }
+}
+exports.getObservable = getObservable;
+function setObservable(Observable) {
+    _observable = Observable;
+}
+exports.setObservable = setObservable;
+
+},{"rxjs":33}],14:[function(require,module,exports){
 /**
  * 
  * @param {string} path 
@@ -2450,7 +2483,6 @@ function getChildPath(path, key) {
     }
     return `${path}/${key}`;
 }
-//const _pathVariableRegex =  /^\$(\{[a-z0-9]+\})$/i;
 
 class PathInfo {
     /** @returns {PathInfo} */
@@ -2497,45 +2529,6 @@ class PathInfo {
     get pathKeys() {
         return getPathKeys(this.path);
     }
-
-    // /**
-    //  * If varPath contains variables or wildcards, it will return them with the values found in fullPath
-    //  * @param {string} varPath 
-    //  * @param {string} fullPath 
-    //  * @returns {Array<{ name?: string, value: string|number }>}
-    //  * @example
-    //  * PathInfo.extractVariables('users/$uid/posts/$postid', 'users/ewout/posts/post1/title') === [
-    //  *  { name: '$uid', value: 'ewout' },
-    //  *  { name: '$postid', value: 'post1' }
-    //  * ];
-    //  * 
-    //  * PathInfo.extractVariables('users/*\/posts/*\/$property', 'users/ewout/posts/post1/title') === [
-    //  *  { value: 'ewout' },
-    //  *  { value: 'post1' },
-    //  *  { name: '$property', value: 'title' }
-    //  * ]
-    //  */
-    // static extractVariables(varPath, fullPath) {
-    //     if (varPath.indexOf('*') < 0 && varPath.indexOf('$') < 0) { 
-    //         return []; 
-    //     }
-    //     // if (!this.equals(fullPath)) {
-    //     //     throw new Error(`path does not match with the path of this PathInfo instance: info.equals(path) === false!`)
-    //     // }
-    //     const keys = getPathKeys(varPath);
-    //     const pathKeys = getPathKeys(fullPath);
-    //     const variables = [];
-    //     keys.forEach((key, index) => {
-    //         const pathKey = pathKeys[index];
-    //         if (key === '*') {
-    //             variables.push({ value: pathKey });
-    //         }
-    //         else if (typeof key === 'string' && key[0] === '$') {
-    //             variables.push({ name: key, value: pathKey });
-    //         }
-    //     });
-    //     return variables;
-    // }
 
     /**
      * If varPath contains variables or wildcards, it will return them with the values found in fullPath
@@ -2758,7 +2751,7 @@ class PathInfo {
 }
 
 module.exports = { getPathInfo, getChildPath, getPathKeys, PathInfo };
-},{}],14:[function(require,module,exports){
+},{}],15:[function(require,module,exports){
 class PathReference {
     /**
      * Creates a reference to a path that can be stored in the database. Use this to create cross-references to other data in your database
@@ -2769,7 +2762,7 @@ class PathReference {
     }
 }
 module.exports = { PathReference };
-},{}],15:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 class SimpleCache {
     constructor(expirySeconds) {
         this.expirySeconds = expirySeconds;
@@ -2796,7 +2789,244 @@ class SimpleCache {
 }
 
 module.exports = { SimpleCache };
-},{}],16:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
+(function (process){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Colorize = exports.SetColorsEnabled = exports.ColorsSupported = exports.ColorStyle = void 0;
+// See from https://en.wikipedia.org/wiki/ANSI_escape_code
+const FontCode = {
+    bold: 1,
+    dim: 2,
+    italic: 3,
+    underline: 4,
+    inverse: 7,
+    hidden: 8,
+    strikethrough: 94
+};
+const ColorCode = {
+    black: 30,
+    red: 31,
+    green: 32,
+    yellow: 33,
+    blue: 34,
+    magenta: 35,
+    cyan: 36,
+    white: 37,
+    grey: 90,
+    // Bright colors:
+    brightRed: 91,
+};
+const BgColorCode = {
+    bgBlack: 40,
+    bgRed: 41,
+    bgGreen: 42,
+    bgYellow: 43,
+    bgBlue: 44,
+    bgMagenta: 45,
+    bgCyan: 46,
+    bgWhite: 47,
+    bgGrey: 100,
+    bgBrightRed: 101,
+};
+const ResetCode = {
+    all: 0,
+    color: 39,
+    background: 49,
+    bold: 22,
+    dim: 22,
+    italic: 23,
+    underline: 24,
+    inverse: 27,
+    hidden: 28,
+    strikethrough: 29
+};
+var ColorStyle;
+(function (ColorStyle) {
+    ColorStyle["reset"] = "reset";
+    ColorStyle["bold"] = "bold";
+    ColorStyle["dim"] = "dim";
+    ColorStyle["italic"] = "italic";
+    ColorStyle["underline"] = "underline";
+    ColorStyle["inverse"] = "inverse";
+    ColorStyle["hidden"] = "hidden";
+    ColorStyle["strikethrough"] = "strikethrough";
+    ColorStyle["black"] = "black";
+    ColorStyle["red"] = "red";
+    ColorStyle["green"] = "green";
+    ColorStyle["yellow"] = "yellow";
+    ColorStyle["blue"] = "blue";
+    ColorStyle["magenta"] = "magenta";
+    ColorStyle["cyan"] = "cyan";
+    ColorStyle["grey"] = "grey";
+    ColorStyle["bgBlack"] = "bgBlack";
+    ColorStyle["bgRed"] = "bgRed";
+    ColorStyle["bgGreen"] = "bgGreen";
+    ColorStyle["bgYellow"] = "bgYellow";
+    ColorStyle["bgBlue"] = "bgBlue";
+    ColorStyle["bgMagenta"] = "bgMagenta";
+    ColorStyle["bgCyan"] = "bgCyan";
+    ColorStyle["bgWhite"] = "bgWhite";
+    ColorStyle["bgGrey"] = "bgGrey";
+})(ColorStyle = exports.ColorStyle || (exports.ColorStyle = {}));
+function ColorsSupported() {
+    // Checks for basic color support
+    if (typeof process === 'undefined' || !process.stdout || !process.env || !process.platform || process.platform === 'browser') {
+        return false;
+    }
+    if (process.platform === 'win32') {
+        return true;
+    }
+    const env = process.env;
+    if (env.COLORTERM) {
+        return true;
+    }
+    if (env.TERM === 'dumb') {
+        return false;
+    }
+    if (env.CI || env.TEAMCITY_VERSION) {
+        return !!env.TRAVIS;
+    }
+    if (['iTerm.app', 'HyperTerm', 'Hyper', 'MacTerm', 'Apple_Terminal', 'vscode'].includes(env.TERM_PROGRAM)) {
+        return true;
+    }
+    if (/^xterm-256|^screen|^xterm|^vt100|color|ansi|cygwin|linux/i.test(env.TERM)) {
+        return true;
+    }
+    return false;
+}
+exports.ColorsSupported = ColorsSupported;
+let _enabled = ColorsSupported();
+function SetColorsEnabled(enabled) {
+    _enabled = enabled;
+}
+exports.SetColorsEnabled = SetColorsEnabled;
+function Colorize(str, style) {
+    if (!_enabled) {
+        return str;
+    }
+    const openCodes = [], closeCodes = [];
+    const addStyle = style => {
+        if (style === ColorStyle.reset) {
+            openCodes.push(ResetCode.all);
+        }
+        else if (style in FontCode) {
+            openCodes.push(FontCode[style]);
+            closeCodes.push(ResetCode[style]);
+        }
+        else if (style in ColorCode) {
+            openCodes.push(ColorCode[style]);
+            closeCodes.push(ResetCode.color);
+        }
+        else if (style in BgColorCode) {
+            openCodes.push(BgColorCode[style]);
+            closeCodes.push(ResetCode.background);
+        }
+    };
+    if (style instanceof Array) {
+        style.forEach(addStyle);
+    }
+    else {
+        addStyle(style);
+    }
+    const open = '\u001b[' + openCodes.join(';') + 'm';
+    const close = '\u001b[' + closeCodes.join(';') + 'm';
+    // const open = openCodes.map(code => '\u001b[' + code + 'm').join('');
+    // const close = closeCodes.map(code => '\u001b[' + code + 'm').join('');
+    return open + str + close;
+}
+exports.Colorize = Colorize;
+String.prototype.colorize = function (style) {
+    return Colorize(this, style);
+};
+
+}).call(this,require('_process'))
+},{"_process":34}],18:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SimpleEventEmitter = void 0;
+function runCallback(callback, data) {
+    try {
+        callback(data);
+    }
+    catch (err) {
+        console.error(`Error in subscription callback`, err);
+    }
+}
+class SimpleEventEmitter {
+    constructor() {
+        this._subscriptions = [];
+        this._oneTimeEvents = new Map();
+    }
+    on(event, callback) {
+        if (this._oneTimeEvents.has(event)) {
+            return runCallback(callback, this._oneTimeEvents.get(event));
+        }
+        this._subscriptions.push({ event, callback, once: false });
+        return this;
+    }
+    off(event, callback) {
+        this._subscriptions = this._subscriptions.filter(s => s.event !== event || (callback && s.callback !== callback));
+        return this;
+    }
+    once(event, callback) {
+        let resolve;
+        let promise = new Promise(rs => {
+            if (!callback) {
+                // No callback used, promise only
+                resolve = rs;
+            }
+            else {
+                // Callback used, maybe also returned promise
+                resolve = (data) => {
+                    rs(data); // resolve promise
+                    callback(data); // trigger callback
+                };
+            }
+        });
+        if (this._oneTimeEvents.has(event)) {
+            runCallback(resolve, this._oneTimeEvents.get(event));
+        }
+        else {
+            this._subscriptions.push({ event, callback: resolve, once: true });
+        }
+        return promise;
+    }
+    emit(event, data) {
+        if (this._oneTimeEvents.has(event)) {
+            throw new Error(`Event "${event}" was supposed to be emitted only once`);
+        }
+        for (let i = 0; i < this._subscriptions.length; i++) {
+            const s = this._subscriptions[i];
+            if (s.event !== event) {
+                continue;
+            }
+            try {
+                s.callback(data);
+            }
+            catch (err) {
+                console.error(`Error in subscription callback`, err);
+            }
+            if (s.once) {
+                this._subscriptions.splice(i, 1);
+                i--;
+            }
+        }
+        return this;
+    }
+    emitOnce(event, data) {
+        if (this._oneTimeEvents.has(event)) {
+            throw new Error(`Event "${event}" was supposed to be emitted only once`);
+        }
+        this.emit(event, data);
+        this._oneTimeEvents.set(event, data); // Mark event as being emitted once for future subscribers
+        this.off(event); // Remove all listeners for this event, they won't fire again
+        return this;
+    }
+}
+exports.SimpleEventEmitter = SimpleEventEmitter;
+
+},{}],19:[function(require,module,exports){
 class EventSubscription {
     /**
      * 
@@ -3004,7 +3234,7 @@ class EventStream {
 }
 
 module.exports = { EventStream, EventPublisher, EventSubscription };
-},{}],17:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 const { PathReference } = require('./path-reference');
 //const { DataReference } = require('./data-reference');
 const { cloneObject } = require('./utils');
@@ -3105,7 +3335,7 @@ module.exports = {
         };
     }        
 };
-},{"./ascii85":6,"./path-reference":14,"./utils":19}],18:[function(require,module,exports){
+},{"./ascii85":6,"./path-reference":15,"./utils":22}],21:[function(require,module,exports){
 const { cloneObject } = require('./utils');
 const { PathInfo } = require('./path-info');
 const { AceBaseBase } = require('./acebase-base');
@@ -3453,7 +3683,7 @@ module.exports = {
     TypeMappingOptions
 }
 
-},{"./acebase-base":4,"./data-reference":8,"./data-snapshot":9,"./path-info":13,"./utils":19}],19:[function(require,module,exports){
+},{"./acebase-base":4,"./data-reference":8,"./data-snapshot":9,"./path-info":14,"./utils":22}],22:[function(require,module,exports){
 (function (Buffer){
 const { PathReference } = require('./path-reference');
 
@@ -3784,809 +4014,7 @@ module.exports = {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./data-snapshot":9,"./path-reference":14,"buffer":42}],20:[function(require,module,exports){
-/*
-
-The MIT License (MIT)
-
-Original Library
-  - Copyright (c) Marak Squires
-
-Additional functionality
- - Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-
-*/
-
-var colors = {};
-module['exports'] = colors;
-
-colors.themes = {};
-
-var util = require('util');
-var ansiStyles = colors.styles = require('./styles');
-var defineProps = Object.defineProperties;
-var newLineRegex = new RegExp(/[\r\n]+/g);
-
-colors.supportsColor = require('./system/supports-colors').supportsColor;
-
-if (typeof colors.enabled === 'undefined') {
-  colors.enabled = colors.supportsColor() !== false;
-}
-
-colors.enable = function() {
-  colors.enabled = true;
-};
-
-colors.disable = function() {
-  colors.enabled = false;
-};
-
-colors.stripColors = colors.strip = function(str) {
-  return ('' + str).replace(/\x1B\[\d+m/g, '');
-};
-
-// eslint-disable-next-line no-unused-vars
-var stylize = colors.stylize = function stylize(str, style) {
-  if (!colors.enabled) {
-    return str+'';
-  }
-
-  return ansiStyles[style].open + str + ansiStyles[style].close;
-};
-
-var matchOperatorsRe = /[|\\{}()[\]^$+*?.]/g;
-var escapeStringRegexp = function(str) {
-  if (typeof str !== 'string') {
-    throw new TypeError('Expected a string');
-  }
-  return str.replace(matchOperatorsRe, '\\$&');
-};
-
-function build(_styles) {
-  var builder = function builder() {
-    return applyStyle.apply(builder, arguments);
-  };
-  builder._styles = _styles;
-  // __proto__ is used because we must return a function, but there is
-  // no way to create a function with a different prototype.
-  builder.__proto__ = proto;
-  return builder;
-}
-
-var styles = (function() {
-  var ret = {};
-  ansiStyles.grey = ansiStyles.gray;
-  Object.keys(ansiStyles).forEach(function(key) {
-    ansiStyles[key].closeRe =
-      new RegExp(escapeStringRegexp(ansiStyles[key].close), 'g');
-    ret[key] = {
-      get: function() {
-        return build(this._styles.concat(key));
-      },
-    };
-  });
-  return ret;
-})();
-
-var proto = defineProps(function colors() {}, styles);
-
-function applyStyle() {
-  var args = Array.prototype.slice.call(arguments);
-
-  var str = args.map(function(arg) {
-    if (arg != undefined && arg.constructor === String) {
-      return arg;
-    } else {
-      return util.inspect(arg);
-    }
-  }).join(' ');
-
-  if (!colors.enabled || !str) {
-    return str;
-  }
-
-  var newLinesPresent = str.indexOf('\n') != -1;
-
-  var nestedStyles = this._styles;
-
-  var i = nestedStyles.length;
-  while (i--) {
-    var code = ansiStyles[nestedStyles[i]];
-    str = code.open + str.replace(code.closeRe, code.open) + code.close;
-    if (newLinesPresent) {
-      str = str.replace(newLineRegex, function(match) {
-        return code.close + match + code.open;
-      });
-    }
-  }
-
-  return str;
-}
-
-colors.setTheme = function(theme) {
-  if (typeof theme === 'string') {
-    console.log('colors.setTheme now only accepts an object, not a string.  ' +
-      'If you are trying to set a theme from a file, it is now your (the ' +
-      'caller\'s) responsibility to require the file.  The old syntax ' +
-      'looked like colors.setTheme(__dirname + ' +
-      '\'/../themes/generic-logging.js\'); The new syntax looks like '+
-      'colors.setTheme(require(__dirname + ' +
-      '\'/../themes/generic-logging.js\'));');
-    return;
-  }
-  for (var style in theme) {
-    (function(style) {
-      colors[style] = function(str) {
-        if (typeof theme[style] === 'object') {
-          var out = str;
-          for (var i in theme[style]) {
-            out = colors[theme[style][i]](out);
-          }
-          return out;
-        }
-        return colors[theme[style]](str);
-      };
-    })(style);
-  }
-};
-
-function init() {
-  var ret = {};
-  Object.keys(styles).forEach(function(name) {
-    ret[name] = {
-      get: function() {
-        return build([name]);
-      },
-    };
-  });
-  return ret;
-}
-
-var sequencer = function sequencer(map, str) {
-  var exploded = str.split('');
-  exploded = exploded.map(map);
-  return exploded.join('');
-};
-
-// custom formatter methods
-colors.trap = require('./custom/trap');
-colors.zalgo = require('./custom/zalgo');
-
-// maps
-colors.maps = {};
-colors.maps.america = require('./maps/america')(colors);
-colors.maps.zebra = require('./maps/zebra')(colors);
-colors.maps.rainbow = require('./maps/rainbow')(colors);
-colors.maps.random = require('./maps/random')(colors);
-
-for (var map in colors.maps) {
-  (function(map) {
-    colors[map] = function(str) {
-      return sequencer(colors.maps[map], str);
-    };
-  })(map);
-}
-
-defineProps(colors, init());
-
-},{"./custom/trap":21,"./custom/zalgo":22,"./maps/america":25,"./maps/rainbow":26,"./maps/random":27,"./maps/zebra":28,"./styles":29,"./system/supports-colors":31,"util":48}],21:[function(require,module,exports){
-module['exports'] = function runTheTrap(text, options) {
-  var result = '';
-  text = text || 'Run the trap, drop the bass';
-  text = text.split('');
-  var trap = {
-    a: ['\u0040', '\u0104', '\u023a', '\u0245', '\u0394', '\u039b', '\u0414'],
-    b: ['\u00df', '\u0181', '\u0243', '\u026e', '\u03b2', '\u0e3f'],
-    c: ['\u00a9', '\u023b', '\u03fe'],
-    d: ['\u00d0', '\u018a', '\u0500', '\u0501', '\u0502', '\u0503'],
-    e: ['\u00cb', '\u0115', '\u018e', '\u0258', '\u03a3', '\u03be', '\u04bc',
-         '\u0a6c'],
-    f: ['\u04fa'],
-    g: ['\u0262'],
-    h: ['\u0126', '\u0195', '\u04a2', '\u04ba', '\u04c7', '\u050a'],
-    i: ['\u0f0f'],
-    j: ['\u0134'],
-    k: ['\u0138', '\u04a0', '\u04c3', '\u051e'],
-    l: ['\u0139'],
-    m: ['\u028d', '\u04cd', '\u04ce', '\u0520', '\u0521', '\u0d69'],
-    n: ['\u00d1', '\u014b', '\u019d', '\u0376', '\u03a0', '\u048a'],
-    o: ['\u00d8', '\u00f5', '\u00f8', '\u01fe', '\u0298', '\u047a', '\u05dd',
-         '\u06dd', '\u0e4f'],
-    p: ['\u01f7', '\u048e'],
-    q: ['\u09cd'],
-    r: ['\u00ae', '\u01a6', '\u0210', '\u024c', '\u0280', '\u042f'],
-    s: ['\u00a7', '\u03de', '\u03df', '\u03e8'],
-    t: ['\u0141', '\u0166', '\u0373'],
-    u: ['\u01b1', '\u054d'],
-    v: ['\u05d8'],
-    w: ['\u0428', '\u0460', '\u047c', '\u0d70'],
-    x: ['\u04b2', '\u04fe', '\u04fc', '\u04fd'],
-    y: ['\u00a5', '\u04b0', '\u04cb'],
-    z: ['\u01b5', '\u0240'],
-  };
-  text.forEach(function(c) {
-    c = c.toLowerCase();
-    var chars = trap[c] || [' '];
-    var rand = Math.floor(Math.random() * chars.length);
-    if (typeof trap[c] !== 'undefined') {
-      result += trap[c][rand];
-    } else {
-      result += c;
-    }
-  });
-  return result;
-};
-
-},{}],22:[function(require,module,exports){
-// please no
-module['exports'] = function zalgo(text, options) {
-  text = text || '   he is here   ';
-  var soul = {
-    'up': [
-      '̍', '̎', '̄', '̅',
-      '̿', '̑', '̆', '̐',
-      '͒', '͗', '͑', '̇',
-      '̈', '̊', '͂', '̓',
-      '̈', '͊', '͋', '͌',
-      '̃', '̂', '̌', '͐',
-      '̀', '́', '̋', '̏',
-      '̒', '̓', '̔', '̽',
-      '̉', 'ͣ', 'ͤ', 'ͥ',
-      'ͦ', 'ͧ', 'ͨ', 'ͩ',
-      'ͪ', 'ͫ', 'ͬ', 'ͭ',
-      'ͮ', 'ͯ', '̾', '͛',
-      '͆', '̚',
-    ],
-    'down': [
-      '̖', '̗', '̘', '̙',
-      '̜', '̝', '̞', '̟',
-      '̠', '̤', '̥', '̦',
-      '̩', '̪', '̫', '̬',
-      '̭', '̮', '̯', '̰',
-      '̱', '̲', '̳', '̹',
-      '̺', '̻', '̼', 'ͅ',
-      '͇', '͈', '͉', '͍',
-      '͎', '͓', '͔', '͕',
-      '͖', '͙', '͚', '̣',
-    ],
-    'mid': [
-      '̕', '̛', '̀', '́',
-      '͘', '̡', '̢', '̧',
-      '̨', '̴', '̵', '̶',
-      '͜', '͝', '͞',
-      '͟', '͠', '͢', '̸',
-      '̷', '͡', ' ҉',
-    ],
-  };
-  var all = [].concat(soul.up, soul.down, soul.mid);
-
-  function randomNumber(range) {
-    var r = Math.floor(Math.random() * range);
-    return r;
-  }
-
-  function isChar(character) {
-    var bool = false;
-    all.filter(function(i) {
-      bool = (i === character);
-    });
-    return bool;
-  }
-
-
-  function heComes(text, options) {
-    var result = '';
-    var counts;
-    var l;
-    options = options || {};
-    options['up'] =
-      typeof options['up'] !== 'undefined' ? options['up'] : true;
-    options['mid'] =
-      typeof options['mid'] !== 'undefined' ? options['mid'] : true;
-    options['down'] =
-      typeof options['down'] !== 'undefined' ? options['down'] : true;
-    options['size'] =
-      typeof options['size'] !== 'undefined' ? options['size'] : 'maxi';
-    text = text.split('');
-    for (l in text) {
-      if (isChar(l)) {
-        continue;
-      }
-      result = result + text[l];
-      counts = {'up': 0, 'down': 0, 'mid': 0};
-      switch (options.size) {
-      case 'mini':
-        counts.up = randomNumber(8);
-        counts.mid = randomNumber(2);
-        counts.down = randomNumber(8);
-        break;
-      case 'maxi':
-        counts.up = randomNumber(16) + 3;
-        counts.mid = randomNumber(4) + 1;
-        counts.down = randomNumber(64) + 3;
-        break;
-      default:
-        counts.up = randomNumber(8) + 1;
-        counts.mid = randomNumber(6) / 2;
-        counts.down = randomNumber(8) + 1;
-        break;
-      }
-
-      var arr = ['up', 'mid', 'down'];
-      for (var d in arr) {
-        var index = arr[d];
-        for (var i = 0; i <= counts[index]; i++) {
-          if (options[index]) {
-            result = result + soul[index][randomNumber(soul[index].length)];
-          }
-        }
-      }
-    }
-    return result;
-  }
-  // don't summon him
-  return heComes(text, options);
-};
-
-
-},{}],23:[function(require,module,exports){
-var colors = require('./colors');
-
-module['exports'] = function() {
-  //
-  // Extends prototype of native string object to allow for "foo".red syntax
-  //
-  var addProperty = function(color, func) {
-    String.prototype.__defineGetter__(color, func);
-  };
-
-  addProperty('strip', function() {
-    return colors.strip(this);
-  });
-
-  addProperty('stripColors', function() {
-    return colors.strip(this);
-  });
-
-  addProperty('trap', function() {
-    return colors.trap(this);
-  });
-
-  addProperty('zalgo', function() {
-    return colors.zalgo(this);
-  });
-
-  addProperty('zebra', function() {
-    return colors.zebra(this);
-  });
-
-  addProperty('rainbow', function() {
-    return colors.rainbow(this);
-  });
-
-  addProperty('random', function() {
-    return colors.random(this);
-  });
-
-  addProperty('america', function() {
-    return colors.america(this);
-  });
-
-  //
-  // Iterate through all default styles and colors
-  //
-  var x = Object.keys(colors.styles);
-  x.forEach(function(style) {
-    addProperty(style, function() {
-      return colors.stylize(this, style);
-    });
-  });
-
-  function applyTheme(theme) {
-    //
-    // Remark: This is a list of methods that exist
-    // on String that you should not overwrite.
-    //
-    var stringPrototypeBlacklist = [
-      '__defineGetter__', '__defineSetter__', '__lookupGetter__',
-      '__lookupSetter__', 'charAt', 'constructor', 'hasOwnProperty',
-      'isPrototypeOf', 'propertyIsEnumerable', 'toLocaleString', 'toString',
-      'valueOf', 'charCodeAt', 'indexOf', 'lastIndexOf', 'length',
-      'localeCompare', 'match', 'repeat', 'replace', 'search', 'slice',
-      'split', 'substring', 'toLocaleLowerCase', 'toLocaleUpperCase',
-      'toLowerCase', 'toUpperCase', 'trim', 'trimLeft', 'trimRight',
-    ];
-
-    Object.keys(theme).forEach(function(prop) {
-      if (stringPrototypeBlacklist.indexOf(prop) !== -1) {
-        console.log('warn: '.red + ('String.prototype' + prop).magenta +
-          ' is probably something you don\'t want to override.  ' +
-          'Ignoring style name');
-      } else {
-        if (typeof(theme[prop]) === 'string') {
-          colors[prop] = colors[theme[prop]];
-        } else {
-          var tmp = colors[theme[prop][0]];
-          for (var t = 1; t < theme[prop].length; t++) {
-            tmp = tmp[theme[prop][t]];
-          }
-          colors[prop] = tmp;
-        }
-        addProperty(prop, function() {
-          return colors[prop](this);
-        });
-      }
-    });
-  }
-
-  colors.setTheme = function(theme) {
-    if (typeof theme === 'string') {
-      console.log('colors.setTheme now only accepts an object, not a string. ' +
-        'If you are trying to set a theme from a file, it is now your (the ' +
-        'caller\'s) responsibility to require the file.  The old syntax ' +
-        'looked like colors.setTheme(__dirname + ' +
-        '\'/../themes/generic-logging.js\'); The new syntax looks like '+
-        'colors.setTheme(require(__dirname + ' +
-        '\'/../themes/generic-logging.js\'));');
-       return;
-    } else {
-      applyTheme(theme);
-    }
-  };
-};
-
-},{"./colors":20}],24:[function(require,module,exports){
-var colors = require('./colors');
-module['exports'] = colors;
-
-// Remark: By default, colors will add style properties to String.prototype.
-//
-// If you don't wish to extend String.prototype, you can do this instead and
-// native String will not be touched:
-//
-//   var colors = require('colors/safe);
-//   colors.red("foo")
-//
-//
-require('./extendStringPrototype')();
-
-},{"./colors":20,"./extendStringPrototype":23}],25:[function(require,module,exports){
-module['exports'] = function(colors) {
-  return function(letter, i, exploded) {
-    if (letter === ' ') return letter;
-    switch (i%3) {
-      case 0: return colors.red(letter);
-      case 1: return colors.white(letter);
-      case 2: return colors.blue(letter);
-    }
-  };
-};
-
-},{}],26:[function(require,module,exports){
-module['exports'] = function(colors) {
-  // RoY G BiV
-  var rainbowColors = ['red', 'yellow', 'green', 'blue', 'magenta'];
-  return function(letter, i, exploded) {
-    if (letter === ' ') {
-      return letter;
-    } else {
-      return colors[rainbowColors[i++ % rainbowColors.length]](letter);
-    }
-  };
-};
-
-
-},{}],27:[function(require,module,exports){
-module['exports'] = function(colors) {
-  var available = ['underline', 'inverse', 'grey', 'yellow', 'red', 'green',
-    'blue', 'white', 'cyan', 'magenta'];
-  return function(letter, i, exploded) {
-    return letter === ' ' ? letter :
-      colors[
-        available[Math.round(Math.random() * (available.length - 2))]
-      ](letter);
-  };
-};
-
-},{}],28:[function(require,module,exports){
-module['exports'] = function(colors) {
-  return function(letter, i, exploded) {
-    return i % 2 === 0 ? letter : colors.inverse(letter);
-  };
-};
-
-},{}],29:[function(require,module,exports){
-/*
-The MIT License (MIT)
-
-Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-
-*/
-
-var styles = {};
-module['exports'] = styles;
-
-var codes = {
-  reset: [0, 0],
-
-  bold: [1, 22],
-  dim: [2, 22],
-  italic: [3, 23],
-  underline: [4, 24],
-  inverse: [7, 27],
-  hidden: [8, 28],
-  strikethrough: [9, 29],
-
-  black: [30, 39],
-  red: [31, 39],
-  green: [32, 39],
-  yellow: [33, 39],
-  blue: [34, 39],
-  magenta: [35, 39],
-  cyan: [36, 39],
-  white: [37, 39],
-  gray: [90, 39],
-  grey: [90, 39],
-
-  bgBlack: [40, 49],
-  bgRed: [41, 49],
-  bgGreen: [42, 49],
-  bgYellow: [43, 49],
-  bgBlue: [44, 49],
-  bgMagenta: [45, 49],
-  bgCyan: [46, 49],
-  bgWhite: [47, 49],
-
-  // legacy styles for colors pre v1.0.0
-  blackBG: [40, 49],
-  redBG: [41, 49],
-  greenBG: [42, 49],
-  yellowBG: [43, 49],
-  blueBG: [44, 49],
-  magentaBG: [45, 49],
-  cyanBG: [46, 49],
-  whiteBG: [47, 49],
-
-};
-
-Object.keys(codes).forEach(function(key) {
-  var val = codes[key];
-  var style = styles[key] = [];
-  style.open = '\u001b[' + val[0] + 'm';
-  style.close = '\u001b[' + val[1] + 'm';
-});
-
-},{}],30:[function(require,module,exports){
-(function (process){
-/*
-MIT License
-
-Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
-
-'use strict';
-
-module.exports = function(flag, argv) {
-  argv = argv || process.argv;
-
-  var terminatorPos = argv.indexOf('--');
-  var prefix = /^-{1,2}/.test(flag) ? '' : '--';
-  var pos = argv.indexOf(prefix + flag);
-
-  return pos !== -1 && (terminatorPos === -1 ? true : pos < terminatorPos);
-};
-
-}).call(this,require('_process'))
-},{"_process":46}],31:[function(require,module,exports){
-(function (process){
-/*
-The MIT License (MIT)
-
-Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-
-*/
-
-'use strict';
-
-var os = require('os');
-var hasFlag = require('./has-flag.js');
-
-var env = process.env;
-
-var forceColor = void 0;
-if (hasFlag('no-color') || hasFlag('no-colors') || hasFlag('color=false')) {
-  forceColor = false;
-} else if (hasFlag('color') || hasFlag('colors') || hasFlag('color=true')
-           || hasFlag('color=always')) {
-  forceColor = true;
-}
-if ('FORCE_COLOR' in env) {
-  forceColor = env.FORCE_COLOR.length === 0
-    || parseInt(env.FORCE_COLOR, 10) !== 0;
-}
-
-function translateLevel(level) {
-  if (level === 0) {
-    return false;
-  }
-
-  return {
-    level: level,
-    hasBasic: true,
-    has256: level >= 2,
-    has16m: level >= 3,
-  };
-}
-
-function supportsColor(stream) {
-  if (forceColor === false) {
-    return 0;
-  }
-
-  if (hasFlag('color=16m') || hasFlag('color=full')
-      || hasFlag('color=truecolor')) {
-    return 3;
-  }
-
-  if (hasFlag('color=256')) {
-    return 2;
-  }
-
-  if (stream && !stream.isTTY && forceColor !== true) {
-    return 0;
-  }
-
-  var min = forceColor ? 1 : 0;
-
-  if (process.platform === 'win32') {
-    // Node.js 7.5.0 is the first version of Node.js to include a patch to
-    // libuv that enables 256 color output on Windows. Anything earlier and it
-    // won't work. However, here we target Node.js 8 at minimum as it is an LTS
-    // release, and Node.js 7 is not. Windows 10 build 10586 is the first
-    // Windows release that supports 256 colors. Windows 10 build 14931 is the
-    // first release that supports 16m/TrueColor.
-    var osRelease = os.release().split('.');
-    if (Number(process.versions.node.split('.')[0]) >= 8
-        && Number(osRelease[0]) >= 10 && Number(osRelease[2]) >= 10586) {
-      return Number(osRelease[2]) >= 14931 ? 3 : 2;
-    }
-
-    return 1;
-  }
-
-  if ('CI' in env) {
-    if (['TRAVIS', 'CIRCLECI', 'APPVEYOR', 'GITLAB_CI'].some(function(sign) {
-      return sign in env;
-    }) || env.CI_NAME === 'codeship') {
-      return 1;
-    }
-
-    return min;
-  }
-
-  if ('TEAMCITY_VERSION' in env) {
-    return (/^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0
-    );
-  }
-
-  if ('TERM_PROGRAM' in env) {
-    var version = parseInt((env.TERM_PROGRAM_VERSION || '').split('.')[0], 10);
-
-    switch (env.TERM_PROGRAM) {
-      case 'iTerm.app':
-        return version >= 3 ? 3 : 2;
-      case 'Hyper':
-        return 3;
-      case 'Apple_Terminal':
-        return 2;
-      // No default
-    }
-  }
-
-  if (/-256(color)?$/i.test(env.TERM)) {
-    return 2;
-  }
-
-  if (/^screen|^xterm|^vt100|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
-    return 1;
-  }
-
-  if ('COLORTERM' in env) {
-    return 1;
-  }
-
-  if (env.TERM === 'dumb') {
-    return min;
-  }
-
-  return min;
-}
-
-function getSupportLevel(stream) {
-  var level = supportsColor(stream);
-  return translateLevel(level);
-}
-
-module.exports = {
-  supportsColor: getSupportLevel,
-  stdout: getSupportLevel(process.stdout),
-  stderr: getSupportLevel(process.stderr),
-};
-
-}).call(this,require('_process'))
-},{"./has-flag.js":30,"_process":46,"os":45}],32:[function(require,module,exports){
+},{"./data-snapshot":9,"./path-reference":15,"buffer":33}],23:[function(require,module,exports){
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
@@ -4936,7 +4364,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { BrowserAceBase };
-},{"./acebase-local":33,"./storage-custom":40}],33:[function(require,module,exports){
+},{"./acebase-local":24,"./storage-custom":31}],24:[function(require,module,exports){
 /**
    ________________________________________________________________________________
    
@@ -5142,7 +4570,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":34,"./storage":41,"./storage-custom":40,"acebase-core":12}],34:[function(require,module,exports){
+},{"./api-local":25,"./storage":32,"./storage-custom":31,"acebase-core":12}],25:[function(require,module,exports){
 const { Api, Utils } = require('acebase-core');
 const { AceBase } = require('./acebase-local');
 const { StorageSettings } = require('./storage');
@@ -6098,7 +5526,7 @@ class LocalApi extends Api {
 }
 
 module.exports = { LocalApi };
-},{"./acebase-local":33,"./data-index":42,"./node":39,"./storage":41,"./storage-acebase":42,"./storage-custom":40,"./storage-mssql":42,"./storage-sqlite":42,"acebase-core":12}],35:[function(require,module,exports){
+},{"./acebase-local":24,"./data-index":33,"./node":30,"./storage":32,"./storage-acebase":33,"./storage-custom":31,"./storage-mssql":33,"./storage-sqlite":33,"acebase-core":12}],26:[function(require,module,exports){
 /*
     * This file is used to create a browser bundle, 
     (re)generate it with: npm run browserify
@@ -6145,7 +5573,7 @@ window.acebase = acebase;
 window.AceBase = BrowserAceBase;
 // Expose classes for module imports:
 module.exports = acebase;
-},{"./acebase-browser":32,"./acebase-local":33,"./storage-custom":40,"acebase-core":12}],36:[function(require,module,exports){
+},{"./acebase-browser":23,"./acebase-local":24,"./storage-custom":31,"acebase-core":12}],27:[function(require,module,exports){
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
 
@@ -6207,8 +5635,8 @@ class NodeInfo {
 }
 
 module.exports = { NodeInfo };
-},{"./node-value-types":38,"acebase-core":12}],37:[function(require,module,exports){
-const { PathInfo } = require('acebase-core');
+},{"./node-value-types":29,"acebase-core":12}],28:[function(require,module,exports){
+const { PathInfo, ColorStyle } = require('acebase-core');
 const storage = require('./storage');
 
 const SECOND = 1000;
@@ -6327,7 +5755,7 @@ class NodeLocker {
             //     .filter(c => c.count > 1)
             //     .map(c => c.key);
             // if (duplicateKeys.length > 0) {
-            //     console.log(`ALERT: Duplicate keys found in path "/${path}"`.dim.bgRed);
+            //     console.log(`ALERT: Duplicate keys found in path "/${path}"`.colorize([ColorStyle.dim, ColorStyle.bgRed]);
             // }
 
             lock = new NodeLock(this, path, tid, forWriting, options.withPriority === true);
@@ -6515,7 +5943,7 @@ class NodeLock {
 }
 
 module.exports = { NodeLocker, NodeLock };
-},{"./storage":41,"acebase-core":12}],38:[function(require,module,exports){
+},{"./storage":32,"acebase-core":12}],29:[function(require,module,exports){
 const VALUE_TYPES = {
     // Native types:
     OBJECT: 1,
@@ -6545,11 +5973,10 @@ function getValueTypeName(valueType) {
 }
 
 module.exports = { VALUE_TYPES, getValueTypeName };
-},{}],39:[function(require,module,exports){
+},{}],30:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
-const colors = require('colors');
 
 class Node {
     static get VALUE_TYPES() { return VALUE_TYPES; }
@@ -6596,9 +6023,6 @@ class Node {
      * @param {any} [options.context=null] Context to be passed along with data events
      */
     static update(storage, path, value, options = { merge: true, suppress_events: false, context: null }) {
-
-        // debug.log(`Update request for node "/${path}"`);
-
         if (options.merge) {
             return storage.updateNode(path, value, { suppress_events: options.suppress_events, context: options.context });
         }
@@ -6718,7 +6142,6 @@ class Node {
         return storage.matchNode(path, criteria, options);
     }
 }
-
 
 class NodeChange {
     static get CHANGE_TYPE() {
@@ -6864,13 +6287,12 @@ module.exports = {
     Node,
     NodeInfo
 };
-},{"./node-info":36,"./node-value-types":38,"./storage":41,"colors":24}],40:[function(require,module,exports){
-const { debug, ID, PathReference, PathInfo, ascii85 } = require('acebase-core');
+},{"./node-info":27,"./node-value-types":29,"./storage":32}],31:[function(require,module,exports){
+const { debug, ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
 const { NodeInfo } = require('./node-info');
 const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES } = require('./node-value-types');
 const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
-
 
 /** Interface for metadata being stored for nodes */
 class ICustomStorageNodeMetaData {
@@ -7193,11 +6615,11 @@ class CustomStorage extends Storage {
     async _init() {
         /** @type {CustomStorageSettings} */
         this._customImplementation = this.settings;
-        this.debug.log(`Database "${this.name}" details:`.intro);
-        this.debug.log(`- Type: CustomStorage`);
-        this.debug.log(`- Path: ${this.settings.path}`);
-        this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.intro);
-        this.debug.log(`- Autoremove undefined props: ${this.settings.removeVoidProperties}`);
+        this.debug.log(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
+        this.debug.log(`- Type: CustomStorage`.colorize(ColorStyle.dim));
+        this.debug.log(`- Path: ${this.settings.path}`.colorize(ColorStyle.dim));
+        this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(ColorStyle.dim));
+        this.debug.log(`- Autoremove undefined props: ${this.settings.removeVoidProperties}`.colorize(ColorStyle.dim));
 
         // Create root node if it's not there yet
         await this._customImplementation.ready();
@@ -7519,7 +6941,7 @@ class CustomStorage extends Storage {
         const isArray = mainNode.type === VALUE_TYPES.ARRAY;
         if (currentRow) {
             // update
-            this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.cyan);
+            this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(ColorStyle.cyan));
 
             // If existing is an array or object, we have to find out which children are affected
             if (currentIsObjectOrArray || newIsObjectOrArray) {
@@ -7616,7 +7038,7 @@ class CustomStorage extends Storage {
         else {
             // Current node does not exist, create it and any child nodes
             // write all child nodes that must be stored in their own record
-            this.debug.log(`Node "/${path}" is being created`.cyan);
+            this.debug.log(`Node "/${path}" is being created`.colorize(ColorStyle.cyan));
 
             if (isArray) {
                 // Check if the array is "intact" (all entries have an index from 0 to the end with no gaps)
@@ -7658,7 +7080,7 @@ class CustomStorage extends Storage {
      */
     async _deleteNode(path, options) {
         const pathInfo = PathInfo.get(path);
-        this.debug.log(`Node "/${path}" is being deleted`.cyan);
+        this.debug.log(`Node "/${path}" is being deleted`.colorize(ColorStyle.cyan));
 
         const deletePaths = [path];
         let checkExecuted = false;
@@ -7680,7 +7102,7 @@ class CustomStorage extends Storage {
         const transaction = options.transaction;
         await transaction.descendantsOf(path, { metadata: false, value: false }, includeDescendantCheck, addDescendant);
 
-        this.debug.log(`Nodes ${deletePaths.map(p => `"/${p}"`).join(',')} are being deleted`.cyan);
+        this.debug.log(`Nodes ${deletePaths.map(p => `"/${p}"`).join(',')} are being deleted`.colorize(ColorStyle.cyan));
         return transaction.removeMultiple(deletePaths);
     }
 
@@ -7893,8 +7315,6 @@ class CustomStorage extends Storage {
                     // Apply include & exclude filters
                     let checkPath = descPath.slice(path.length);
                     if (checkPath[0] === '/') { checkPath = checkPath.slice(1); }
-                    // let include = (includeCheck ? includeCheck.test(checkPath) : true) 
-                    //     && (excludeCheck ? !excludeCheck.test(checkPath) : true);
                     const checkPathInfo = new PathInfo(checkPath);
                     let include = (options.include && options.include.length > 0 
                         ? options.include.some(k => checkPathInfo.equals(k) || checkPathInfo.isDescendantOf(k))
@@ -7937,7 +7357,7 @@ class CustomStorage extends Storage {
 
                 await transaction.descendantsOf(path, { metadata: true, value: true }, includeDescendantCheck, addDescendant);
 
-                this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}descendants from ${descRows.length + 1} records`.magenta);
+                this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}descendants from ${descRows.length + 1} records`.colorize(ColorStyle.magenta));
 
                 const result = targetNode;
 
@@ -8063,15 +7483,6 @@ class CustomStorage extends Storage {
             }
             throw err;
         }
-        // })
-        // .then(result => {
-        //     lock.release();
-        //     return result;
-        // })
-        // .catch(err => {
-        //     lock.release();
-        //     throw err;
-        // });
     }
 
     /**
@@ -8084,11 +7495,7 @@ class CustomStorage extends Storage {
     async getNodeInfo(path, options) {
         options = options || {};
         const pathInfo = PathInfo.get(path);
-        // let lock;
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
-        // return this.nodeLocker.lock(path, transaction.id, false, 'getNodeInfo')
-        // .then(async l => {
-        //     lock = l;
         try {
             const node = await this._readNode(path, { transaction });
             const info = new CustomStorageNodeInfo({ 
@@ -8106,10 +7513,6 @@ class CustomStorage extends Storage {
 
             if (!node && path !== '') {
                 // Try parent node
-
-                // return lock.moveToParent()
-                // .then(async parentLock => {
-                //     lock = parentLock;
 
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                 console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
@@ -8136,7 +7539,6 @@ class CustomStorage extends Storage {
                 await transaction.commit();
             }                
             return info;
-            // })     
         }
         catch (err) {
             if (!options.transaction) {
@@ -8145,59 +7547,7 @@ class CustomStorage extends Storage {
             }
             throw err;
         }        
-        // })
-        // .then(info => {
-        //     lock.release();
-        //     return info;
-        // })
-        // .catch(err => {
-        //     lock && lock.release();
-        //     throw err;
-        // });
     }
-
-    // // TODO: Move to Storage base class?
-    // /**
-    //  * 
-    //  * @param {string} path 
-    //  * @param {object} [options]
-    //  * @param {CustomStorageTransaction} [options.transaction]
-    //  * @returns {Promise<void>}
-    //  */
-    // async removeNode(path, options) {
-    //     if (path === '') { 
-    //         return Promise.reject(new Error(`Cannot remove the root node`)); 
-    //     }
-        
-    //     options = options || {};
-    //     const pathInfo = PathInfo.get(path);
-    //     const transaction = options.transaction || this._customImplementation.getTransaction({ path, write: true });
-    //     // return this.nodeLocker.lock(pathInfo.parentPath, transaction.id, true, 'removeNode')
-    //     // .then(lock => {
-    //     try {
-    //         await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { transaction });
-    //         if (!options.transaction) {
-    //             // transaction was created by us, commit
-    //             await transaction.commit();
-    //         }            
-    //     }
-    //     catch (err) {
-    //         if (!options.transaction) {
-    //             // transaction was created by us, rollback
-    //             await transaction.rollback(err);
-    //         }
-    //         throw err;
-    //     }
-    //     //     .then(result => {
-    //     //         lock.release();
-    //     //         return result;
-    //     //     })
-    //     //     .catch(err => {
-    //     //         lock.release();
-    //     //         throw err;
-    //     //     });            
-    //     // });
-    // }
 
     // TODO: Move to Storage base class?
     /**
@@ -8213,12 +7563,7 @@ class CustomStorage extends Storage {
      */
     async setNode(path, value, options = { suppress_events: false, context: null }) {        
         const pathInfo = PathInfo.get(path);
-
-        // let lock;
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
-        // return this.nodeLocker.lock(path, transaction.id, true, 'setNode')
-        // .then(l => {
-        //     lock = l;
         try {
 
             if (path === '') {
@@ -8229,7 +7574,6 @@ class CustomStorage extends Storage {
             }
             else if (typeof options.assert_revision !== 'undefined') {
                 const info = await this.getNodeInfo(path, { transaction })
-                // .then(info => {
                 if (info.revision !== options.assert_revision) {
                     throw new NodeRevisionError(`revision '${info.revision}' does not match requested revision '${options.assert_revision}'`);
                 }
@@ -8239,25 +7583,16 @@ class CustomStorage extends Storage {
                 }
                 else {
                     // Update parent node
-                    // return lock.moveToParent()
-                    // .then(parentLock => {
-                    //     lock = parentLock;
                     const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                     console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
                     await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, transaction, suppress_events: options.suppress_events, context: options.context });
-                    // });
                 }
-                // })
             }
             else {
                 // Delegate operation to update on parent node
-                // return lock.moveToParent()
-                // .then(parentLock => {
-                //     lock = parentLock;
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                 console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
                 await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction, suppress_events: options.suppress_events, context: options.context });
-                // });
             }
             if (!options.transaction) {
                 // transaction was created by us, commit
@@ -8271,15 +7606,6 @@ class CustomStorage extends Storage {
             }
             throw err;
         }            
-        // })
-        // .then(result => {
-        //     lock.release();
-        //     return result;
-        // })
-        // .catch(err => {
-        //     lock.release();
-        //     throw err;
-        // });        
     }
 
     // TODO: Move to Storage base class?
@@ -8299,19 +7625,10 @@ class CustomStorage extends Storage {
         }
 
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
-        // const tid = (options && options.tid) || ID.generate();
-        // let lock;
-        // return this.nodeLocker.lock(path, tid, true, 'updateNode')
-        // .then(l => {
-        //     lock = l;
 
         try {
             // Get info about current node
             const nodeInfo = await this.getNodeInfo(path, { transaction });    
-
-        // })
-        // .then(nodeInfo => {
-
             const pathInfo = PathInfo.get(path);
             if (nodeInfo.exists && nodeInfo.address && nodeInfo.address.path === path) {
                 // Node exists and is stored in its own record.
@@ -8321,23 +7638,15 @@ class CustomStorage extends Storage {
             else if (nodeInfo.exists) {
                 // Node exists, but is stored in its parent node.
                 const pathInfo = PathInfo.get(path);
-                // return lock.moveToParent()
-                // .then(parentLock => {
-                //     lock = parentLock;
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                 console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
                 await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, merge: true, suppress_events: options.suppress_events, context: options.context });
-                // });
             }
             else {
                 // The node does not exist, it's parent doesn't have it either. Update the parent instead
-                // return lock.moveToParent()
-                // .then(parentLock => {
-                //     lock = parentLock;
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
                 console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`)
                 await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, suppress_events: options.suppress_events, context: options.context });
-                // });
             }
             if (!options.transaction) {
                 // transaction was created by us, commit
@@ -8351,16 +7660,6 @@ class CustomStorage extends Storage {
             }
             throw err;
         }
-
-        // })
-        // .then(result => {
-        //     lock.release();
-        //     return result;
-        // })
-        // .catch(err => {
-        //     lock.release();
-        //     throw err;
-        // });        
     }
 
 }
@@ -8375,15 +7674,13 @@ module.exports = {
     ICustomStorageNodeMetaData,
     ICustomStorageNode
 }
-},{"./node-info":36,"./node-lock":37,"./node-value-types":38,"./storage":41,"acebase-core":12}],41:[function(require,module,exports){
+},{"./node-info":27,"./node-lock":28,"./node-value-types":29,"./storage":32,"acebase-core":12}],32:[function(require,module,exports){
 (function (process){
-const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85 } = require('acebase-core');
+const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
-const { EventEmitter } = require('events');
 const { cloneObject, compareValues, getChildValues, encodeString } = Utils;
-const colors = require('colors');
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
@@ -8407,7 +7704,7 @@ class ClusterSettings {
     }
 }
 
-class ClusterManager extends EventEmitter {
+class ClusterManager extends SimpleEventEmitter {
     /**
      * @param {ClusterSettings} settings 
      */
@@ -8518,7 +7815,7 @@ class StorageSettings {
     }
 }
 
-class Storage extends EventEmitter {
+class Storage extends SimpleEventEmitter {
 
     /**
      * Base class for database storage, must be extended by back-end specific methods.
@@ -8532,21 +7829,20 @@ class Storage extends EventEmitter {
         this.settings = settings;
         this.debug = new DebugLogger(settings.logLevel, `[${name}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
-        colors.setTheme({
-            art: ['magenta', 'bold'],
-            intro: ['dim']
-        });
         // ASCI art: http://patorjk.com/software/taag/#p=display&f=Doom&t=AceBase
+        const logoStyle = [ColorStyle.magenta, ColorStyle.bold];
         const logo =
-            '     ___          ______                '.art + '\n' +
-            '    / _ \\         | ___ \\               '.art + '\n' +
-            '   / /_\\ \\ ___ ___| |_/ / __ _ ___  ___ '.art + '\n' +
-            '   |  _  |/ __/ _ \\ ___ \\/ _` / __|/ _ \\'.art + '\n' +
-            '   | | | | (_|  __/ |_/ / (_| \\__ \\  __/'.art + '\n' +
-            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|'.art + '\n' +
-            (settings.info ? ''.padStart(40 - settings.info.length, ' ') + settings.info.magenta + '\n' : '');
+            '     ___          ______                ' + '\n' +
+            '    / _ \\         | ___ \\               ' + '\n' +
+            '   / /_\\ \\ ___ ___| |_/ / __ _ ___  ___ ' + '\n' +
+            '   |  _  |/ __/ _ \\ ___ \\/ _` / __|/ _ \\' + '\n' +
+            '   | | | | (_|  __/ |_/ / (_| \\__ \\  __/' + '\n' +
+            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|';
+        
+        const info = (settings.info ? ''.padStart(40 - settings.info.length, ' ') + settings.info + '\n' : '');
 
-        this.debug.write(logo);
+        this.debug.write(logo.colorize(logoStyle));
+        info && this.debug.write(info.colorize(ColorStyle.magenta));
 
         // this._ready = false;
         // this._readyCallbacks = [];
@@ -8606,7 +7902,7 @@ class Storage extends EventEmitter {
                     && index.includeKeys.every((key, index) => includeKeys[index] === key)
                 );
                 if (existingIndex && rebuild !== true) {
-                    storage.debug.log(`Index on "/${path}/*/${key}" already exists`.inverse);
+                    storage.debug.log(`Index on "/${path}/*/${key}" already exists`.colorize(ColorStyle.inverse));
                     return Promise.resolve(existingIndex);
                 }
                 const index = existingIndex || (() => {
@@ -8625,7 +7921,7 @@ class Storage extends EventEmitter {
                     return index;
                 })
                 .catch(err => {
-                    storage.debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.red);
+                    storage.debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.colorize(ColorStyle.red));
                     if (!existingIndex) {
                         // Only remove index if we added it. Build may have failed because someone tried creating the index more than once, or rebuilding it while it was building...
                         _indexes.splice(_indexes.indexOf(index), 1);
@@ -10031,610 +9327,9 @@ module.exports = {
     NodeRevisionError
 };
 }).call(this,require('_process'))
-},{"./data-index":42,"./node-info":36,"./node-lock":37,"./node-value-types":38,"./promise-fs":42,"_process":46,"acebase-core":12,"colors":24,"events":43}],42:[function(require,module,exports){
+},{"./data-index":33,"./node-info":27,"./node-lock":28,"./node-value-types":29,"./promise-fs":33,"_process":34,"acebase-core":12}],33:[function(require,module,exports){
 
-},{}],43:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var objectCreate = Object.create || objectCreatePolyfill
-var objectKeys = Object.keys || objectKeysPolyfill
-var bind = Function.prototype.bind || functionBindPolyfill
-
-function EventEmitter() {
-  if (!this._events || !Object.prototype.hasOwnProperty.call(this, '_events')) {
-    this._events = objectCreate(null);
-    this._eventsCount = 0;
-  }
-
-  this._maxListeners = this._maxListeners || undefined;
-}
-module.exports = EventEmitter;
-
-// Backwards-compat with node 0.10.x
-EventEmitter.EventEmitter = EventEmitter;
-
-EventEmitter.prototype._events = undefined;
-EventEmitter.prototype._maxListeners = undefined;
-
-// By default EventEmitters will print a warning if more than 10 listeners are
-// added to it. This is a useful default which helps finding memory leaks.
-var defaultMaxListeners = 10;
-
-var hasDefineProperty;
-try {
-  var o = {};
-  if (Object.defineProperty) Object.defineProperty(o, 'x', { value: 0 });
-  hasDefineProperty = o.x === 0;
-} catch (err) { hasDefineProperty = false }
-if (hasDefineProperty) {
-  Object.defineProperty(EventEmitter, 'defaultMaxListeners', {
-    enumerable: true,
-    get: function() {
-      return defaultMaxListeners;
-    },
-    set: function(arg) {
-      // check whether the input is a positive number (whose value is zero or
-      // greater and not a NaN).
-      if (typeof arg !== 'number' || arg < 0 || arg !== arg)
-        throw new TypeError('"defaultMaxListeners" must be a positive number');
-      defaultMaxListeners = arg;
-    }
-  });
-} else {
-  EventEmitter.defaultMaxListeners = defaultMaxListeners;
-}
-
-// Obviously not all Emitters should be limited to 10. This function allows
-// that to be increased. Set to zero for unlimited.
-EventEmitter.prototype.setMaxListeners = function setMaxListeners(n) {
-  if (typeof n !== 'number' || n < 0 || isNaN(n))
-    throw new TypeError('"n" argument must be a positive number');
-  this._maxListeners = n;
-  return this;
-};
-
-function $getMaxListeners(that) {
-  if (that._maxListeners === undefined)
-    return EventEmitter.defaultMaxListeners;
-  return that._maxListeners;
-}
-
-EventEmitter.prototype.getMaxListeners = function getMaxListeners() {
-  return $getMaxListeners(this);
-};
-
-// These standalone emit* functions are used to optimize calling of event
-// handlers for fast cases because emit() itself often has a variable number of
-// arguments and can be deoptimized because of that. These functions always have
-// the same number of arguments and thus do not get deoptimized, so the code
-// inside them can execute faster.
-function emitNone(handler, isFn, self) {
-  if (isFn)
-    handler.call(self);
-  else {
-    var len = handler.length;
-    var listeners = arrayClone(handler, len);
-    for (var i = 0; i < len; ++i)
-      listeners[i].call(self);
-  }
-}
-function emitOne(handler, isFn, self, arg1) {
-  if (isFn)
-    handler.call(self, arg1);
-  else {
-    var len = handler.length;
-    var listeners = arrayClone(handler, len);
-    for (var i = 0; i < len; ++i)
-      listeners[i].call(self, arg1);
-  }
-}
-function emitTwo(handler, isFn, self, arg1, arg2) {
-  if (isFn)
-    handler.call(self, arg1, arg2);
-  else {
-    var len = handler.length;
-    var listeners = arrayClone(handler, len);
-    for (var i = 0; i < len; ++i)
-      listeners[i].call(self, arg1, arg2);
-  }
-}
-function emitThree(handler, isFn, self, arg1, arg2, arg3) {
-  if (isFn)
-    handler.call(self, arg1, arg2, arg3);
-  else {
-    var len = handler.length;
-    var listeners = arrayClone(handler, len);
-    for (var i = 0; i < len; ++i)
-      listeners[i].call(self, arg1, arg2, arg3);
-  }
-}
-
-function emitMany(handler, isFn, self, args) {
-  if (isFn)
-    handler.apply(self, args);
-  else {
-    var len = handler.length;
-    var listeners = arrayClone(handler, len);
-    for (var i = 0; i < len; ++i)
-      listeners[i].apply(self, args);
-  }
-}
-
-EventEmitter.prototype.emit = function emit(type) {
-  var er, handler, len, args, i, events;
-  var doError = (type === 'error');
-
-  events = this._events;
-  if (events)
-    doError = (doError && events.error == null);
-  else if (!doError)
-    return false;
-
-  // If there is no 'error' event listener then throw.
-  if (doError) {
-    if (arguments.length > 1)
-      er = arguments[1];
-    if (er instanceof Error) {
-      throw er; // Unhandled 'error' event
-    } else {
-      // At least give some kind of context to the user
-      var err = new Error('Unhandled "error" event. (' + er + ')');
-      err.context = er;
-      throw err;
-    }
-    return false;
-  }
-
-  handler = events[type];
-
-  if (!handler)
-    return false;
-
-  var isFn = typeof handler === 'function';
-  len = arguments.length;
-  switch (len) {
-      // fast cases
-    case 1:
-      emitNone(handler, isFn, this);
-      break;
-    case 2:
-      emitOne(handler, isFn, this, arguments[1]);
-      break;
-    case 3:
-      emitTwo(handler, isFn, this, arguments[1], arguments[2]);
-      break;
-    case 4:
-      emitThree(handler, isFn, this, arguments[1], arguments[2], arguments[3]);
-      break;
-      // slower
-    default:
-      args = new Array(len - 1);
-      for (i = 1; i < len; i++)
-        args[i - 1] = arguments[i];
-      emitMany(handler, isFn, this, args);
-  }
-
-  return true;
-};
-
-function _addListener(target, type, listener, prepend) {
-  var m;
-  var events;
-  var existing;
-
-  if (typeof listener !== 'function')
-    throw new TypeError('"listener" argument must be a function');
-
-  events = target._events;
-  if (!events) {
-    events = target._events = objectCreate(null);
-    target._eventsCount = 0;
-  } else {
-    // To avoid recursion in the case that type === "newListener"! Before
-    // adding it to the listeners, first emit "newListener".
-    if (events.newListener) {
-      target.emit('newListener', type,
-          listener.listener ? listener.listener : listener);
-
-      // Re-assign `events` because a newListener handler could have caused the
-      // this._events to be assigned to a new object
-      events = target._events;
-    }
-    existing = events[type];
-  }
-
-  if (!existing) {
-    // Optimize the case of one listener. Don't need the extra array object.
-    existing = events[type] = listener;
-    ++target._eventsCount;
-  } else {
-    if (typeof existing === 'function') {
-      // Adding the second element, need to change to array.
-      existing = events[type] =
-          prepend ? [listener, existing] : [existing, listener];
-    } else {
-      // If we've already got an array, just append.
-      if (prepend) {
-        existing.unshift(listener);
-      } else {
-        existing.push(listener);
-      }
-    }
-
-    // Check for listener leak
-    if (!existing.warned) {
-      m = $getMaxListeners(target);
-      if (m && m > 0 && existing.length > m) {
-        existing.warned = true;
-        var w = new Error('Possible EventEmitter memory leak detected. ' +
-            existing.length + ' "' + String(type) + '" listeners ' +
-            'added. Use emitter.setMaxListeners() to ' +
-            'increase limit.');
-        w.name = 'MaxListenersExceededWarning';
-        w.emitter = target;
-        w.type = type;
-        w.count = existing.length;
-        if (typeof console === 'object' && console.warn) {
-          console.warn('%s: %s', w.name, w.message);
-        }
-      }
-    }
-  }
-
-  return target;
-}
-
-EventEmitter.prototype.addListener = function addListener(type, listener) {
-  return _addListener(this, type, listener, false);
-};
-
-EventEmitter.prototype.on = EventEmitter.prototype.addListener;
-
-EventEmitter.prototype.prependListener =
-    function prependListener(type, listener) {
-      return _addListener(this, type, listener, true);
-    };
-
-function onceWrapper() {
-  if (!this.fired) {
-    this.target.removeListener(this.type, this.wrapFn);
-    this.fired = true;
-    switch (arguments.length) {
-      case 0:
-        return this.listener.call(this.target);
-      case 1:
-        return this.listener.call(this.target, arguments[0]);
-      case 2:
-        return this.listener.call(this.target, arguments[0], arguments[1]);
-      case 3:
-        return this.listener.call(this.target, arguments[0], arguments[1],
-            arguments[2]);
-      default:
-        var args = new Array(arguments.length);
-        for (var i = 0; i < args.length; ++i)
-          args[i] = arguments[i];
-        this.listener.apply(this.target, args);
-    }
-  }
-}
-
-function _onceWrap(target, type, listener) {
-  var state = { fired: false, wrapFn: undefined, target: target, type: type, listener: listener };
-  var wrapped = bind.call(onceWrapper, state);
-  wrapped.listener = listener;
-  state.wrapFn = wrapped;
-  return wrapped;
-}
-
-EventEmitter.prototype.once = function once(type, listener) {
-  if (typeof listener !== 'function')
-    throw new TypeError('"listener" argument must be a function');
-  this.on(type, _onceWrap(this, type, listener));
-  return this;
-};
-
-EventEmitter.prototype.prependOnceListener =
-    function prependOnceListener(type, listener) {
-      if (typeof listener !== 'function')
-        throw new TypeError('"listener" argument must be a function');
-      this.prependListener(type, _onceWrap(this, type, listener));
-      return this;
-    };
-
-// Emits a 'removeListener' event if and only if the listener was removed.
-EventEmitter.prototype.removeListener =
-    function removeListener(type, listener) {
-      var list, events, position, i, originalListener;
-
-      if (typeof listener !== 'function')
-        throw new TypeError('"listener" argument must be a function');
-
-      events = this._events;
-      if (!events)
-        return this;
-
-      list = events[type];
-      if (!list)
-        return this;
-
-      if (list === listener || list.listener === listener) {
-        if (--this._eventsCount === 0)
-          this._events = objectCreate(null);
-        else {
-          delete events[type];
-          if (events.removeListener)
-            this.emit('removeListener', type, list.listener || listener);
-        }
-      } else if (typeof list !== 'function') {
-        position = -1;
-
-        for (i = list.length - 1; i >= 0; i--) {
-          if (list[i] === listener || list[i].listener === listener) {
-            originalListener = list[i].listener;
-            position = i;
-            break;
-          }
-        }
-
-        if (position < 0)
-          return this;
-
-        if (position === 0)
-          list.shift();
-        else
-          spliceOne(list, position);
-
-        if (list.length === 1)
-          events[type] = list[0];
-
-        if (events.removeListener)
-          this.emit('removeListener', type, originalListener || listener);
-      }
-
-      return this;
-    };
-
-EventEmitter.prototype.removeAllListeners =
-    function removeAllListeners(type) {
-      var listeners, events, i;
-
-      events = this._events;
-      if (!events)
-        return this;
-
-      // not listening for removeListener, no need to emit
-      if (!events.removeListener) {
-        if (arguments.length === 0) {
-          this._events = objectCreate(null);
-          this._eventsCount = 0;
-        } else if (events[type]) {
-          if (--this._eventsCount === 0)
-            this._events = objectCreate(null);
-          else
-            delete events[type];
-        }
-        return this;
-      }
-
-      // emit removeListener for all listeners on all events
-      if (arguments.length === 0) {
-        var keys = objectKeys(events);
-        var key;
-        for (i = 0; i < keys.length; ++i) {
-          key = keys[i];
-          if (key === 'removeListener') continue;
-          this.removeAllListeners(key);
-        }
-        this.removeAllListeners('removeListener');
-        this._events = objectCreate(null);
-        this._eventsCount = 0;
-        return this;
-      }
-
-      listeners = events[type];
-
-      if (typeof listeners === 'function') {
-        this.removeListener(type, listeners);
-      } else if (listeners) {
-        // LIFO order
-        for (i = listeners.length - 1; i >= 0; i--) {
-          this.removeListener(type, listeners[i]);
-        }
-      }
-
-      return this;
-    };
-
-function _listeners(target, type, unwrap) {
-  var events = target._events;
-
-  if (!events)
-    return [];
-
-  var evlistener = events[type];
-  if (!evlistener)
-    return [];
-
-  if (typeof evlistener === 'function')
-    return unwrap ? [evlistener.listener || evlistener] : [evlistener];
-
-  return unwrap ? unwrapListeners(evlistener) : arrayClone(evlistener, evlistener.length);
-}
-
-EventEmitter.prototype.listeners = function listeners(type) {
-  return _listeners(this, type, true);
-};
-
-EventEmitter.prototype.rawListeners = function rawListeners(type) {
-  return _listeners(this, type, false);
-};
-
-EventEmitter.listenerCount = function(emitter, type) {
-  if (typeof emitter.listenerCount === 'function') {
-    return emitter.listenerCount(type);
-  } else {
-    return listenerCount.call(emitter, type);
-  }
-};
-
-EventEmitter.prototype.listenerCount = listenerCount;
-function listenerCount(type) {
-  var events = this._events;
-
-  if (events) {
-    var evlistener = events[type];
-
-    if (typeof evlistener === 'function') {
-      return 1;
-    } else if (evlistener) {
-      return evlistener.length;
-    }
-  }
-
-  return 0;
-}
-
-EventEmitter.prototype.eventNames = function eventNames() {
-  return this._eventsCount > 0 ? Reflect.ownKeys(this._events) : [];
-};
-
-// About 1.5x faster than the two-arg version of Array#splice().
-function spliceOne(list, index) {
-  for (var i = index, k = i + 1, n = list.length; k < n; i += 1, k += 1)
-    list[i] = list[k];
-  list.pop();
-}
-
-function arrayClone(arr, n) {
-  var copy = new Array(n);
-  for (var i = 0; i < n; ++i)
-    copy[i] = arr[i];
-  return copy;
-}
-
-function unwrapListeners(arr) {
-  var ret = new Array(arr.length);
-  for (var i = 0; i < ret.length; ++i) {
-    ret[i] = arr[i].listener || arr[i];
-  }
-  return ret;
-}
-
-function objectCreatePolyfill(proto) {
-  var F = function() {};
-  F.prototype = proto;
-  return new F;
-}
-function objectKeysPolyfill(obj) {
-  var keys = [];
-  for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k)) {
-    keys.push(k);
-  }
-  return k;
-}
-function functionBindPolyfill(context) {
-  var fn = this;
-  return function () {
-    return fn.apply(context, arguments);
-  };
-}
-
-},{}],44:[function(require,module,exports){
-if (typeof Object.create === 'function') {
-  // implementation from standard node.js 'util' module
-  module.exports = function inherits(ctor, superCtor) {
-    ctor.super_ = superCtor
-    ctor.prototype = Object.create(superCtor.prototype, {
-      constructor: {
-        value: ctor,
-        enumerable: false,
-        writable: true,
-        configurable: true
-      }
-    });
-  };
-} else {
-  // old school shim for old browsers
-  module.exports = function inherits(ctor, superCtor) {
-    ctor.super_ = superCtor
-    var TempCtor = function () {}
-    TempCtor.prototype = superCtor.prototype
-    ctor.prototype = new TempCtor()
-    ctor.prototype.constructor = ctor
-  }
-}
-
-},{}],45:[function(require,module,exports){
-exports.endianness = function () { return 'LE' };
-
-exports.hostname = function () {
-    if (typeof location !== 'undefined') {
-        return location.hostname
-    }
-    else return '';
-};
-
-exports.loadavg = function () { return [] };
-
-exports.uptime = function () { return 0 };
-
-exports.freemem = function () {
-    return Number.MAX_VALUE;
-};
-
-exports.totalmem = function () {
-    return Number.MAX_VALUE;
-};
-
-exports.cpus = function () { return [] };
-
-exports.type = function () { return 'Browser' };
-
-exports.release = function () {
-    if (typeof navigator !== 'undefined') {
-        return navigator.appVersion;
-    }
-    return '';
-};
-
-exports.networkInterfaces
-= exports.getNetworkInterfaces
-= function () { return {} };
-
-exports.arch = function () { return 'javascript' };
-
-exports.platform = function () { return 'browser' };
-
-exports.tmpdir = exports.tmpDir = function () {
-    return '/tmp';
-};
-
-exports.EOL = '\n';
-
-exports.homedir = function () {
-	return '/'
-};
-
-},{}],46:[function(require,module,exports){
+},{}],34:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -10820,602 +9515,5 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],47:[function(require,module,exports){
-module.exports = function isBuffer(arg) {
-  return arg && typeof arg === 'object'
-    && typeof arg.copy === 'function'
-    && typeof arg.fill === 'function'
-    && typeof arg.readUInt8 === 'function';
-}
-},{}],48:[function(require,module,exports){
-(function (process,global){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var formatRegExp = /%[sdj%]/g;
-exports.format = function(f) {
-  if (!isString(f)) {
-    var objects = [];
-    for (var i = 0; i < arguments.length; i++) {
-      objects.push(inspect(arguments[i]));
-    }
-    return objects.join(' ');
-  }
-
-  var i = 1;
-  var args = arguments;
-  var len = args.length;
-  var str = String(f).replace(formatRegExp, function(x) {
-    if (x === '%%') return '%';
-    if (i >= len) return x;
-    switch (x) {
-      case '%s': return String(args[i++]);
-      case '%d': return Number(args[i++]);
-      case '%j':
-        try {
-          return JSON.stringify(args[i++]);
-        } catch (_) {
-          return '[Circular]';
-        }
-      default:
-        return x;
-    }
-  });
-  for (var x = args[i]; i < len; x = args[++i]) {
-    if (isNull(x) || !isObject(x)) {
-      str += ' ' + x;
-    } else {
-      str += ' ' + inspect(x);
-    }
-  }
-  return str;
-};
-
-
-// Mark that a method should not be used.
-// Returns a modified function which warns once by default.
-// If --no-deprecation is set, then it is a no-op.
-exports.deprecate = function(fn, msg) {
-  // Allow for deprecating things in the process of starting up.
-  if (isUndefined(global.process)) {
-    return function() {
-      return exports.deprecate(fn, msg).apply(this, arguments);
-    };
-  }
-
-  if (process.noDeprecation === true) {
-    return fn;
-  }
-
-  var warned = false;
-  function deprecated() {
-    if (!warned) {
-      if (process.throwDeprecation) {
-        throw new Error(msg);
-      } else if (process.traceDeprecation) {
-        console.trace(msg);
-      } else {
-        console.error(msg);
-      }
-      warned = true;
-    }
-    return fn.apply(this, arguments);
-  }
-
-  return deprecated;
-};
-
-
-var debugs = {};
-var debugEnviron;
-exports.debuglog = function(set) {
-  if (isUndefined(debugEnviron))
-    debugEnviron = process.env.NODE_DEBUG || '';
-  set = set.toUpperCase();
-  if (!debugs[set]) {
-    if (new RegExp('\\b' + set + '\\b', 'i').test(debugEnviron)) {
-      var pid = process.pid;
-      debugs[set] = function() {
-        var msg = exports.format.apply(exports, arguments);
-        console.error('%s %d: %s', set, pid, msg);
-      };
-    } else {
-      debugs[set] = function() {};
-    }
-  }
-  return debugs[set];
-};
-
-
-/**
- * Echos the value of a value. Trys to print the value out
- * in the best way possible given the different types.
- *
- * @param {Object} obj The object to print out.
- * @param {Object} opts Optional options object that alters the output.
- */
-/* legacy: obj, showHidden, depth, colors*/
-function inspect(obj, opts) {
-  // default options
-  var ctx = {
-    seen: [],
-    stylize: stylizeNoColor
-  };
-  // legacy...
-  if (arguments.length >= 3) ctx.depth = arguments[2];
-  if (arguments.length >= 4) ctx.colors = arguments[3];
-  if (isBoolean(opts)) {
-    // legacy...
-    ctx.showHidden = opts;
-  } else if (opts) {
-    // got an "options" object
-    exports._extend(ctx, opts);
-  }
-  // set default options
-  if (isUndefined(ctx.showHidden)) ctx.showHidden = false;
-  if (isUndefined(ctx.depth)) ctx.depth = 2;
-  if (isUndefined(ctx.colors)) ctx.colors = false;
-  if (isUndefined(ctx.customInspect)) ctx.customInspect = true;
-  if (ctx.colors) ctx.stylize = stylizeWithColor;
-  return formatValue(ctx, obj, ctx.depth);
-}
-exports.inspect = inspect;
-
-
-// http://en.wikipedia.org/wiki/ANSI_escape_code#graphics
-inspect.colors = {
-  'bold' : [1, 22],
-  'italic' : [3, 23],
-  'underline' : [4, 24],
-  'inverse' : [7, 27],
-  'white' : [37, 39],
-  'grey' : [90, 39],
-  'black' : [30, 39],
-  'blue' : [34, 39],
-  'cyan' : [36, 39],
-  'green' : [32, 39],
-  'magenta' : [35, 39],
-  'red' : [31, 39],
-  'yellow' : [33, 39]
-};
-
-// Don't use 'blue' not visible on cmd.exe
-inspect.styles = {
-  'special': 'cyan',
-  'number': 'yellow',
-  'boolean': 'yellow',
-  'undefined': 'grey',
-  'null': 'bold',
-  'string': 'green',
-  'date': 'magenta',
-  // "name": intentionally not styling
-  'regexp': 'red'
-};
-
-
-function stylizeWithColor(str, styleType) {
-  var style = inspect.styles[styleType];
-
-  if (style) {
-    return '\u001b[' + inspect.colors[style][0] + 'm' + str +
-           '\u001b[' + inspect.colors[style][1] + 'm';
-  } else {
-    return str;
-  }
-}
-
-
-function stylizeNoColor(str, styleType) {
-  return str;
-}
-
-
-function arrayToHash(array) {
-  var hash = {};
-
-  array.forEach(function(val, idx) {
-    hash[val] = true;
-  });
-
-  return hash;
-}
-
-
-function formatValue(ctx, value, recurseTimes) {
-  // Provide a hook for user-specified inspect functions.
-  // Check that value is an object with an inspect function on it
-  if (ctx.customInspect &&
-      value &&
-      isFunction(value.inspect) &&
-      // Filter out the util module, it's inspect function is special
-      value.inspect !== exports.inspect &&
-      // Also filter out any prototype objects using the circular check.
-      !(value.constructor && value.constructor.prototype === value)) {
-    var ret = value.inspect(recurseTimes, ctx);
-    if (!isString(ret)) {
-      ret = formatValue(ctx, ret, recurseTimes);
-    }
-    return ret;
-  }
-
-  // Primitive types cannot have properties
-  var primitive = formatPrimitive(ctx, value);
-  if (primitive) {
-    return primitive;
-  }
-
-  // Look up the keys of the object.
-  var keys = Object.keys(value);
-  var visibleKeys = arrayToHash(keys);
-
-  if (ctx.showHidden) {
-    keys = Object.getOwnPropertyNames(value);
-  }
-
-  // IE doesn't make error fields non-enumerable
-  // http://msdn.microsoft.com/en-us/library/ie/dww52sbt(v=vs.94).aspx
-  if (isError(value)
-      && (keys.indexOf('message') >= 0 || keys.indexOf('description') >= 0)) {
-    return formatError(value);
-  }
-
-  // Some type of object without properties can be shortcutted.
-  if (keys.length === 0) {
-    if (isFunction(value)) {
-      var name = value.name ? ': ' + value.name : '';
-      return ctx.stylize('[Function' + name + ']', 'special');
-    }
-    if (isRegExp(value)) {
-      return ctx.stylize(RegExp.prototype.toString.call(value), 'regexp');
-    }
-    if (isDate(value)) {
-      return ctx.stylize(Date.prototype.toString.call(value), 'date');
-    }
-    if (isError(value)) {
-      return formatError(value);
-    }
-  }
-
-  var base = '', array = false, braces = ['{', '}'];
-
-  // Make Array say that they are Array
-  if (isArray(value)) {
-    array = true;
-    braces = ['[', ']'];
-  }
-
-  // Make functions say that they are functions
-  if (isFunction(value)) {
-    var n = value.name ? ': ' + value.name : '';
-    base = ' [Function' + n + ']';
-  }
-
-  // Make RegExps say that they are RegExps
-  if (isRegExp(value)) {
-    base = ' ' + RegExp.prototype.toString.call(value);
-  }
-
-  // Make dates with properties first say the date
-  if (isDate(value)) {
-    base = ' ' + Date.prototype.toUTCString.call(value);
-  }
-
-  // Make error with message first say the error
-  if (isError(value)) {
-    base = ' ' + formatError(value);
-  }
-
-  if (keys.length === 0 && (!array || value.length == 0)) {
-    return braces[0] + base + braces[1];
-  }
-
-  if (recurseTimes < 0) {
-    if (isRegExp(value)) {
-      return ctx.stylize(RegExp.prototype.toString.call(value), 'regexp');
-    } else {
-      return ctx.stylize('[Object]', 'special');
-    }
-  }
-
-  ctx.seen.push(value);
-
-  var output;
-  if (array) {
-    output = formatArray(ctx, value, recurseTimes, visibleKeys, keys);
-  } else {
-    output = keys.map(function(key) {
-      return formatProperty(ctx, value, recurseTimes, visibleKeys, key, array);
-    });
-  }
-
-  ctx.seen.pop();
-
-  return reduceToSingleString(output, base, braces);
-}
-
-
-function formatPrimitive(ctx, value) {
-  if (isUndefined(value))
-    return ctx.stylize('undefined', 'undefined');
-  if (isString(value)) {
-    var simple = '\'' + JSON.stringify(value).replace(/^"|"$/g, '')
-                                             .replace(/'/g, "\\'")
-                                             .replace(/\\"/g, '"') + '\'';
-    return ctx.stylize(simple, 'string');
-  }
-  if (isNumber(value))
-    return ctx.stylize('' + value, 'number');
-  if (isBoolean(value))
-    return ctx.stylize('' + value, 'boolean');
-  // For some reason typeof null is "object", so special case here.
-  if (isNull(value))
-    return ctx.stylize('null', 'null');
-}
-
-
-function formatError(value) {
-  return '[' + Error.prototype.toString.call(value) + ']';
-}
-
-
-function formatArray(ctx, value, recurseTimes, visibleKeys, keys) {
-  var output = [];
-  for (var i = 0, l = value.length; i < l; ++i) {
-    if (hasOwnProperty(value, String(i))) {
-      output.push(formatProperty(ctx, value, recurseTimes, visibleKeys,
-          String(i), true));
-    } else {
-      output.push('');
-    }
-  }
-  keys.forEach(function(key) {
-    if (!key.match(/^\d+$/)) {
-      output.push(formatProperty(ctx, value, recurseTimes, visibleKeys,
-          key, true));
-    }
-  });
-  return output;
-}
-
-
-function formatProperty(ctx, value, recurseTimes, visibleKeys, key, array) {
-  var name, str, desc;
-  desc = Object.getOwnPropertyDescriptor(value, key) || { value: value[key] };
-  if (desc.get) {
-    if (desc.set) {
-      str = ctx.stylize('[Getter/Setter]', 'special');
-    } else {
-      str = ctx.stylize('[Getter]', 'special');
-    }
-  } else {
-    if (desc.set) {
-      str = ctx.stylize('[Setter]', 'special');
-    }
-  }
-  if (!hasOwnProperty(visibleKeys, key)) {
-    name = '[' + key + ']';
-  }
-  if (!str) {
-    if (ctx.seen.indexOf(desc.value) < 0) {
-      if (isNull(recurseTimes)) {
-        str = formatValue(ctx, desc.value, null);
-      } else {
-        str = formatValue(ctx, desc.value, recurseTimes - 1);
-      }
-      if (str.indexOf('\n') > -1) {
-        if (array) {
-          str = str.split('\n').map(function(line) {
-            return '  ' + line;
-          }).join('\n').substr(2);
-        } else {
-          str = '\n' + str.split('\n').map(function(line) {
-            return '   ' + line;
-          }).join('\n');
-        }
-      }
-    } else {
-      str = ctx.stylize('[Circular]', 'special');
-    }
-  }
-  if (isUndefined(name)) {
-    if (array && key.match(/^\d+$/)) {
-      return str;
-    }
-    name = JSON.stringify('' + key);
-    if (name.match(/^"([a-zA-Z_][a-zA-Z_0-9]*)"$/)) {
-      name = name.substr(1, name.length - 2);
-      name = ctx.stylize(name, 'name');
-    } else {
-      name = name.replace(/'/g, "\\'")
-                 .replace(/\\"/g, '"')
-                 .replace(/(^"|"$)/g, "'");
-      name = ctx.stylize(name, 'string');
-    }
-  }
-
-  return name + ': ' + str;
-}
-
-
-function reduceToSingleString(output, base, braces) {
-  var numLinesEst = 0;
-  var length = output.reduce(function(prev, cur) {
-    numLinesEst++;
-    if (cur.indexOf('\n') >= 0) numLinesEst++;
-    return prev + cur.replace(/\u001b\[\d\d?m/g, '').length + 1;
-  }, 0);
-
-  if (length > 60) {
-    return braces[0] +
-           (base === '' ? '' : base + '\n ') +
-           ' ' +
-           output.join(',\n  ') +
-           ' ' +
-           braces[1];
-  }
-
-  return braces[0] + base + ' ' + output.join(', ') + ' ' + braces[1];
-}
-
-
-// NOTE: These type checking functions intentionally don't use `instanceof`
-// because it is fragile and can be easily faked with `Object.create()`.
-function isArray(ar) {
-  return Array.isArray(ar);
-}
-exports.isArray = isArray;
-
-function isBoolean(arg) {
-  return typeof arg === 'boolean';
-}
-exports.isBoolean = isBoolean;
-
-function isNull(arg) {
-  return arg === null;
-}
-exports.isNull = isNull;
-
-function isNullOrUndefined(arg) {
-  return arg == null;
-}
-exports.isNullOrUndefined = isNullOrUndefined;
-
-function isNumber(arg) {
-  return typeof arg === 'number';
-}
-exports.isNumber = isNumber;
-
-function isString(arg) {
-  return typeof arg === 'string';
-}
-exports.isString = isString;
-
-function isSymbol(arg) {
-  return typeof arg === 'symbol';
-}
-exports.isSymbol = isSymbol;
-
-function isUndefined(arg) {
-  return arg === void 0;
-}
-exports.isUndefined = isUndefined;
-
-function isRegExp(re) {
-  return isObject(re) && objectToString(re) === '[object RegExp]';
-}
-exports.isRegExp = isRegExp;
-
-function isObject(arg) {
-  return typeof arg === 'object' && arg !== null;
-}
-exports.isObject = isObject;
-
-function isDate(d) {
-  return isObject(d) && objectToString(d) === '[object Date]';
-}
-exports.isDate = isDate;
-
-function isError(e) {
-  return isObject(e) &&
-      (objectToString(e) === '[object Error]' || e instanceof Error);
-}
-exports.isError = isError;
-
-function isFunction(arg) {
-  return typeof arg === 'function';
-}
-exports.isFunction = isFunction;
-
-function isPrimitive(arg) {
-  return arg === null ||
-         typeof arg === 'boolean' ||
-         typeof arg === 'number' ||
-         typeof arg === 'string' ||
-         typeof arg === 'symbol' ||  // ES6 symbol
-         typeof arg === 'undefined';
-}
-exports.isPrimitive = isPrimitive;
-
-exports.isBuffer = require('./support/isBuffer');
-
-function objectToString(o) {
-  return Object.prototype.toString.call(o);
-}
-
-
-function pad(n) {
-  return n < 10 ? '0' + n.toString(10) : n.toString(10);
-}
-
-
-var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep',
-              'Oct', 'Nov', 'Dec'];
-
-// 26 Feb 16:19:34
-function timestamp() {
-  var d = new Date();
-  var time = [pad(d.getHours()),
-              pad(d.getMinutes()),
-              pad(d.getSeconds())].join(':');
-  return [d.getDate(), months[d.getMonth()], time].join(' ');
-}
-
-
-// log is just a thin wrapper to console.log that prepends a timestamp
-exports.log = function() {
-  console.log('%s - %s', timestamp(), exports.format.apply(exports, arguments));
-};
-
-
-/**
- * Inherit the prototype methods from one constructor into another.
- *
- * The Function.prototype.inherits from lang.js rewritten as a standalone
- * function (not on Function.prototype). NOTE: If this file is to be loaded
- * during bootstrapping this function needs to be rewritten using some native
- * functions as prototype setup using normal JavaScript does not work as
- * expected during bootstrapping (see mirror.js in r114903).
- *
- * @param {function} ctor Constructor function which needs to inherit the
- *     prototype.
- * @param {function} superCtor Constructor function to inherit prototype from.
- */
-exports.inherits = require('inherits');
-
-exports._extend = function(origin, add) {
-  // Don't do anything if add isn't an object
-  if (!add || !isObject(add)) return origin;
-
-  var keys = Object.keys(add);
-  var i = keys.length;
-  while (i--) {
-    origin[keys[i]] = add[keys[i]];
-  }
-  return origin;
-};
-
-function hasOwnProperty(obj, prop) {
-  return Object.prototype.hasOwnProperty.call(obj, prop);
-}
-
-}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":47,"_process":46,"inherits":44}]},{},[35])(35)
+},{}]},{},[26])(26)
 });
