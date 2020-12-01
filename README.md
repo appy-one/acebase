@@ -1736,10 +1736,11 @@ What can you help me with?
 <a name="buy-me-coffee"></a>
 ## Buy me a coffee
 
-If you like AceBase, please consider supporting its development by buying me a coffee or sending a donation!
+If you use AceBase, let me know! Also, please consider supporting its development by buying me a coffee or sending a donation.
 
 * [Buy me a coffee](https://www.buymeacoffee.com/appyone)
 * [Donate with PayPal](https://paypal.me/theappyone)
 * BTC address: 3EgetGDnG9vvfJzjLYdKwWvZpHwePKNJYc
 
 You rock! 🎸
+Thanks, Ewout
