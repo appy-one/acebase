@@ -1543,7 +1543,7 @@ class DataReference {
             const allSubscriptionsStoppedCallback = () => {
                 let callbacks = this[_private].callbacks;
                 callbacks.splice(callbacks.indexOf(cb), 1);
-                this.db.api.unsubscribe(this.path, event, cb.ours);
+                return this.db.api.unsubscribe(this.path, event, cb.ours);
             };
             if (authorized instanceof Promise) {
                 // Web API now returns a promise that resolves if the request is allowed
@@ -2321,6 +2321,7 @@ class MutationsDataSnapshot extends DataSnapshot {
 exports.MutationsDataSnapshot = MutationsDataSnapshot;
 
 },{"./path-info":14}],10:[function(require,module,exports){
+(function (process){
 class DebugLogger {
     constructor(level = "log", prefix = '') {
         this.prefix = prefix;
@@ -2333,12 +2334,17 @@ class DebugLogger {
         this.log = ["verbose", "log"].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : () => {};
         this.warn = ["verbose", "log", "warn"].includes(level) ? prefix ? console.warn.bind(console, prefix) : console.warn.bind(console) : () => {};
         this.error = ["verbose", "log", "warn", "error"].includes(level) ? prefix ? console.error.bind(console, prefix) : console.error.bind(console) : () => {};
-        this.write = console.log.bind(console);
+        this.write = (text) => {
+            const isRunKit = typeof process !== 'undefined' && process.env && typeof process.env.RUNKIT_ENDPOINT_PATH === 'string';
+            if (isRunKit) { text = text.replace(/^/gm, '>'); } // Fixes runkit crash with many leading spaces
+            console.log(text);
+        };
     }
 }
 
 module.exports = DebugLogger;
-},{}],11:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"_process":34}],11:[function(require,module,exports){
 const cuid = require('cuid');
 // const uuid62 = require('uuid62');
 
@@ -3143,7 +3149,7 @@ class EventStream {
                 // },
                 subscription: new EventSubscription(function stop() {
                     subscribers.splice(subscribers.indexOf(this), 1);
-                    checkActiveSubscribers();
+                    return checkActiveSubscribers();
                 })
             };
             subscribers.push(sub);
@@ -3162,10 +3168,12 @@ class EventStream {
         };
 
         const checkActiveSubscribers = () => {
+            let ret;
             if (subscribers.length === 0) {
-                noMoreSubscribersCallback && noMoreSubscribersCallback();
+                ret = noMoreSubscribersCallback && noMoreSubscribersCallback();
                 activationState = _stoppedState;
             }
+            return Promise.resolve(ret);
         };
 
         /**
@@ -4980,7 +4988,7 @@ class LocalApi extends Api {
         };
 
         if (query.filters.length === 0 && query.take === 0) { 
-            this.storage.debug.error(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
+            this.storage.debug.warn(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
             query.take = 100;
         }
 
