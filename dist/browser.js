@@ -2336,8 +2336,13 @@ class DebugLogger {
         this.error = ["verbose", "log", "warn", "error"].includes(level) ? prefix ? console.error.bind(console, prefix) : console.error.bind(console) : () => {};
         this.write = (text) => {
             const isRunKit = typeof process !== 'undefined' && process.env && typeof process.env.RUNKIT_ENDPOINT_PATH === 'string';
-            if (isRunKit) { text = text.replace(/^/gm, '>'); } // Fixes runkit crash with many leading spaces
-            console.log(text);
+            if (text && isRunKit) { 
+                text = text.replace(/^/gm, '>'); // Fixes runkit crash with leading spaces
+                text.split('\n').forEach(line => console.log(line)); // Logs each line separately
+            }
+            else {
+                console.log(text);
+            }
         };
     }
 }
@@ -2935,11 +2940,12 @@ function Colorize(str, style) {
     else {
         addStyle(style);
     }
-    const open = '\u001b[' + openCodes.join(';') + 'm';
-    const close = '\u001b[' + closeCodes.join(';') + 'm';
-    // const open = openCodes.map(code => '\u001b[' + code + 'm').join('');
-    // const close = closeCodes.map(code => '\u001b[' + code + 'm').join('');
-    return open + str + close;
+    // const open = '\u001b[' + openCodes.join(';') + 'm';
+    // const close = '\u001b[' + closeCodes.join(';') + 'm';
+    const open = openCodes.map(code => '\u001b[' + code + 'm').join('');
+    const close = closeCodes.map(code => '\u001b[' + code + 'm').join('');
+    // return open + str + close;
+    return str.split('\n').map(line => open + line + close).join('\n');
 }
 exports.Colorize = Colorize;
 String.prototype.colorize = function (style) {
