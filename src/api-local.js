@@ -407,7 +407,7 @@ class LocalApi extends Api {
         };
 
         if (query.filters.length === 0 && query.take === 0) { 
-            this.storage.debug.error(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
+            this.storage.debug.warn(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
             query.take = 100;
         }
 
