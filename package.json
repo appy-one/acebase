@@ -1,6 +1,6 @@
 {
   "name": "acebase",
-  "version": "0.9.63",
+  "version": "0.9.64",
   "description": "AceBase realtime database. Open source firebase alternative for nodejs and browser, with additional features: indexes, geo, fulltext, queries, custom storage, offline usage, synchronization, live data proxies and more",
   "main": "./src/index.js",
   "browser": "./dist/browser.js",
@@ -26,7 +26,7 @@
   "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
   "license": "MIT",
   "dependencies": {
-    "acebase-core": "0.9.32",
+    "acebase-core": "0.9.33",
     "unidecode": "^0.1.8"
   }
 }
