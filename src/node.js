@@ -1,6 +1,6 @@
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
-const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
+const { VALUE_TYPES } = require('./node-value-types');
 
 class Node {
     static get VALUE_TYPES() { return VALUE_TYPES; }
