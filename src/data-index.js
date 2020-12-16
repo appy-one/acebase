@@ -1,14 +1,10 @@
 'use strict';
-
 const { Storage } = require('./storage');
 const { Node } = require('./node');
 const { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryWriter, BinaryBPlusTreeLeafEntry, BinaryReader, BlacklistingSearchOperator } = require('./btree');
 const { PathInfo, Utils, ID, debug, ColorStyle } = require('acebase-core');
 const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
 const Geohash = require('./geohash');
-// const { TextEncoder, TextDecoder } = require('text-encoding');
-// const textEncoder = new TextEncoder();
-// const textDecoder = new TextDecoder();
 const pfs = require('./promise-fs');
 const fs = require('fs');
 const ThreadSafe = require('./thread-safe');
