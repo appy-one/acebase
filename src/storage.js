@@ -1,8 +1,8 @@
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
-const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
+const { VALUE_TYPES } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
-const { cloneObject, compareValues, getChildValues, encodeString } = Utils;
+const { cloneObject, compareValues, getChildValues, encodeString, defer } = Utils;
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
@@ -141,7 +141,7 @@ class Storage extends SimpleEventEmitter {
 
     /**
      * Base class for database storage, must be extended by back-end specific methods.
-     * Currently implemented back-ends are AceBaseStorage and SQLiteStorage
+     * Currently implemented back-ends are AceBaseStorage, SQLiteStorage, MSSQLStorage, CustomStorage
      * @param {string} name name of the database
      * @param {StorageSettings} settings instance of AceBaseStorageSettings or SQLiteStorageSettings
      */
@@ -900,7 +900,7 @@ class Storage extends SimpleEventEmitter {
             };
 
             const triggerAllEvents = () => {
-                // Notify all event subscriptions, should be executed with a delay (process.nextTick)
+                // Notify all event subscriptions, should be executed with a delay
                 // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
                 eventSubscriptions
                 .filter(sub => !['mutated','mutations','notify_mutated','notify_mutations'].includes(sub.type))
@@ -1066,7 +1066,7 @@ class Storage extends SimpleEventEmitter {
             }
             return Promise.all(indexUpdates)
             .then(() => {
-                process.nextTick(triggerAllEvents); // Delayed execution
+                defer(triggerAllEvents); // Delayed execution
                 return result;
             })
         });
