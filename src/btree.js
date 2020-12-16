@@ -3763,7 +3763,7 @@ class BinaryBPlusTree {
 
             return tx.execute(true)
             .then(results => {
-                console.log('All rebuild writes were successful', results);
+                console.log('All rebuild writes were successful');
                 if (!oneLeafTree) {
                     return this._registerFreeSpace(leaf.index, freedBytes);
                 }
