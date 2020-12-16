@@ -1,9 +1,17 @@
 {
   "name": "acebase",
-  "version": "0.9.65",
+  "version": "0.9.66",
   "description": "AceBase realtime database. Open source firebase alternative for nodejs and browser, with additional features: indexes, geo, fulltext, queries, custom storage, offline usage, synchronization, live data proxies and more",
   "main": "./src/index.js",
-  "browser": "./dist/browser.js",
+  "browser": {
+    "./src/index.js": "./src/browser.js",
+    "./src/storage-acebase.js": "./src/not-supported.js",
+    "./src/storage-mssql.js": "./src/not-supported.js",
+    "./src/storage-sqlite.js": "./src/not-supported.js",
+    "./src/promise-fs.js": "./src/not-supported.js",
+    "./src/data-index.js": "./src/not-supported.js",
+    "./src/btree.js": "./src/not-supported.js"
+  },
   "types": "./index.d.ts",
   "private": false,
   "repository": "github:appy-one/acebase",
@@ -26,7 +34,7 @@
   "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
   "license": "MIT",
   "dependencies": {
-    "acebase-core": "0.9.34",
+    "acebase-core": "0.9.35",
     "unidecode": "^0.1.8"
   }
 }
