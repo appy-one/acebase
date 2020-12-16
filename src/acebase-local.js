@@ -1,32 +1,17 @@
-/**
-   ________________________________________________________________________________
-   
-      ___          ______                
-     / _ \         | ___ \               
-    / /_\ \ ___ ___| |_/ / __ _ ___  ___ 
-    |  _  |/ __/ _ \ ___ \/ _` / __|/ _ \
-    | | | | (_|  __/ |_/ / (_| \__ \  __/
-    \_| |_/\___\___\____/ \__,_|___/\___|
-                                     
-   Copyright 2018 by Ewout Stortenbeker (me@appy.one)   
-   Published under MIT license
-   ________________________________________________________________________________
-  
- */
-const { AceBaseBase, AceBaseSettings } = require('acebase-core');
+const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
 const { StorageSettings } = require('./storage');
 const { LocalApi } = require('./api-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
-class AceBaseLocalSettings {
+class AceBaseLocalSettings extends AceBaseBaseSettings {
     /**
      * 
      * @param {{ logLevel: 'verbose'|'log'|'warn'|'error', storage: StorageSettings }} options 
      */
     constructor(options) {
+        super(options);
         if (!options) { options = {}; }
-        this.logLevel = options.logLevel || 'log';
-        this.storage = options.storage; ////new StorageOptions(options.storage);
+        this.storage = options.storage;
     }
 }
 
@@ -34,8 +19,8 @@ class AceBase extends AceBaseBase {
 
     /**
      * 
-     * @param {string} dbname | Name of the database to open or create
-     * @param {AceBaseLocalSettings} options | 
+     * @param {string} dbname Name of the database to open or create
+     * @param {AceBaseLocalSettings} options
      */
     constructor(dbname, options) {
         options = new AceBaseLocalSettings(options);
