@@ -2,14 +2,13 @@ const fs = require('fs');
 const pfs = require('./promise-fs');
 const { ID, PathInfo, PathReference, Utils, ColorStyle } = require('acebase-core');
 const { concatTypedArrays, bytesToNumber, numberToBytes, encodeString, decodeString } = Utils;
-// const { TextEncoder, TextDecoder } = require('text-encoding');
 const { Node } = require('./node');
 const { NodeAddress } = require('./node-address');
 const { NodeCache } = require('./node-cache');
 const { NodeInfo } = require('./node-info');
 const { NodeLock } = require('./node-lock');
 const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
-const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
+const { VALUE_TYPES } = require('./node-value-types');
 const { BinaryBPlusTree, BPlusTreeBuilder, BinaryWriter } = require('./btree');
 
 class AceBaseStorageSettings extends StorageSettings {
