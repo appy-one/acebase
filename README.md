@@ -834,6 +834,8 @@ chat.messages.message1.onChanged((message, previous, isRemote, context) => {
 const messageRef = chat.messages.message1.getRef();
 // Eg: add an "old fashioned" event handler
 messageRef.on('child_changed', snap => { /* .. */ });
+// Or, if you need to know when an update is done
+await messageRef.update({ read: new Date() });
 ```
 
 ```getObservable```: returns a RxJS Observable that is updated each time the underlying value changes:
