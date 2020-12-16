@@ -28,7 +28,10 @@ const debug_1 = require("./debug");
 const simple_colors_1 = require("./simple-colors");
 class AceBaseBaseSettings {
     constructor(options) {
-        this.logLevel = options.logLevel || "log";
+        if (typeof options !== 'object') {
+            options = {};
+        }
+        this.logLevel = options.logLevel || 'log';
         this.logColors = typeof options.logColors === 'boolean' ? options.logColors : true;
     }
 }
