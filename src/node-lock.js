@@ -1,5 +1,4 @@
-const { PathInfo, ColorStyle } = require('acebase-core');
-const storage = require('./storage');
+const { PathInfo } = require('acebase-core');
 
 const SECOND = 1000;
 const MINUTE = 60000;
