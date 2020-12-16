@@ -1,10 +1,8 @@
-const { debug, ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
+const { ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
 const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
 const { NodeInfo } = require('./node-info');
-const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
-// const promiseTimeout = require('./promise-timeout');
+const { VALUE_TYPES } = require('./node-value-types');
 const pfs = require('./promise-fs');
-const ThreadSafe = require('./thread-safe');
 
 let mssql; // mssql dependency is lazy loaded in MSSQLStorage constructor
 

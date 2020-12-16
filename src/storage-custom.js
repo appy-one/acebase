@@ -1,4 +1,4 @@
-const { debug, ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
+const { ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
 const { NodeInfo } = require('./node-info');
 const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES } = require('./node-value-types');
