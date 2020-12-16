@@ -1,174 +1,64 @@
 (function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.acebase = f()}})(function(){var define,module,exports;return (function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
-/**
- * cuid.js
- * Collision-resistant UID generator for browsers and node.
- * Sequential for fast db lookups and recency sorting.
- * Safe for element IDs and server-side lookups.
- *
- * Extracted from CLCTR
- *
- * Copyright (c) Eric Elliott 2012
- * MIT License
- */
-
-var fingerprint = require('./lib/fingerprint.js');
-var pad = require('./lib/pad.js');
-
-var c = 0,
-  blockSize = 4,
-  base = 36,
-  discreteValues = Math.pow(base, blockSize);
-
-function randomBlock () {
-  return pad((Math.random() *
-    discreteValues << 0)
-    .toString(base), blockSize);
-}
-
-function safeCounter () {
-  c = c < discreteValues ? c : 0;
-  c++; // this is not subliminal
-  return c - 1;
-}
-
-function cuid () {
-  // Starting with a lowercase letter makes
-  // it HTML element ID friendly.
-  var letter = 'c', // hard-coded allows for sequential access
-
-    // timestamp
-    // warning: this exposes the exact date and time
-    // that the uid was created.
-    timestamp = (new Date().getTime()).toString(base),
-
-    // Prevent same-machine collisions.
-    counter = pad(safeCounter().toString(base), blockSize),
-
-    // A few chars to generate distinct ids for different
-    // clients (so different computers are far less
-    // likely to generate the same id)
-    print = fingerprint(),
-
-    // Grab some more chars from Math.random()
-    random = randomBlock() + randomBlock();
-
-  return letter + timestamp + counter + print + random;
-}
-
-cuid.slug = function slug () {
-  var date = new Date().getTime().toString(36),
-    counter = safeCounter().toString(36).slice(-4),
-    print = fingerprint().slice(0, 1) +
-      fingerprint().slice(-1),
-    random = randomBlock().slice(-2);
-
-  return date.slice(-2) +
-    counter + print + random;
-};
-
-cuid.isCuid = function isCuid (stringToCheck) {
-  if (typeof stringToCheck !== 'string') return false;
-  if (stringToCheck.startsWith('c')) return true;
-  return false;
-};
-
-cuid.isSlug = function isSlug (stringToCheck) {
-  if (typeof stringToCheck !== 'string') return false;
-  var stringLength = stringToCheck.length;
-  if (stringLength >= 7 && stringLength <= 10) return true;
-  return false;
-};
-
-cuid.fingerprint = fingerprint;
-
-module.exports = cuid;
-
-},{"./lib/fingerprint.js":2,"./lib/pad.js":3}],2:[function(require,module,exports){
-var pad = require('./pad.js');
-
-var env = typeof window === 'object' ? window : self;
-var globalCount = Object.keys(env).length;
-var mimeTypesLength = navigator.mimeTypes ? navigator.mimeTypes.length : 0;
-var clientId = pad((mimeTypesLength +
-  navigator.userAgent.length).toString(36) +
-  globalCount.toString(36), 4);
-
-module.exports = function fingerprint () {
-  return clientId;
-};
-
-},{"./pad.js":3}],3:[function(require,module,exports){
-module.exports = function pad (num, size) {
-  var s = '000000000' + num;
-  return s.substr(s.length - size);
-};
-
-},{}],4:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AceBaseBase = exports.AceBaseBaseSettings = void 0;
 /**
    ________________________________________________________________________________
    
-      ___          ______                
-     / _ \         | ___ \               
-    / /_\ \ ___ ___| |_/ / __ _ ___  ___ 
+      ___          ______
+     / _ \         | ___ \
+    / /_\ \ ___ ___| |_/ / __ _ ___  ___
     |  _  |/ __/ _ \ ___ \/ _` / __|/ _ \
     | | | | (_|  __/ |_/ / (_| \__ \  __/
     \_| |_/\___\___\____/ \__,_|___/\___|
+                        realtime database
                                      
-   Copyright 2018-2020 Ewout Stortenbeker (me@appy.one)   
+   Copyright 2018 by Ewout Stortenbeker (me@appy.one)
    Published under MIT license
+
+   See docs at https://www.npmjs.com/package/acebase
    ________________________________________________________________________________
   
- */
-const { SimpleEventEmitter } = require('./simple-event-emitter');
-const { DataReference, DataReferenceQuery } = require('./data-reference');
-const { TypeMappings } = require('./type-mappings');
-const { setObservable } = require('./optional-observable');
-
-class AceBaseSettings {
+*/
+const simple_event_emitter_1 = require("./simple-event-emitter");
+const data_reference_1 = require("./data-reference");
+const type_mappings_1 = require("./type-mappings");
+const optional_observable_1 = require("./optional-observable");
+const debug_1 = require("./debug");
+const simple_colors_1 = require("./simple-colors");
+class AceBaseBaseSettings {
     constructor(options) {
-        // if (typeof options.api !== 'object') {
-        //     throw new Error(`No api passed to AceBaseSettings constructor`);
-        // }
         this.logLevel = options.logLevel || "log";
-        this.logPrefixing = typeof options.logPrefixing === 'boolean' ? options.logPrefixing : true;
         this.logColors = typeof options.logColors === 'boolean' ? options.logColors : true;
     }
 }
-
-class AceBaseBase extends SimpleEventEmitter {
-
+exports.AceBaseBaseSettings = AceBaseBaseSettings;
+class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
     /**
-     * 
-     * @param {string} dbname | Name of the database to open or create
-     * @param {AceBaseSettings} options | 
+     * @param dbname Name of the database to open or create
      */
     constructor(dbname, options) {
         super();
-
-        if (!options) { options = {}; }
-
-        // Not needed anymore now we're using SimpleEventEmitter:
-        // this.setMaxListeners(50); // Prevent warning for >10 "ready" event listeners, increase to 50
+        options = new AceBaseBaseSettings(options || {});
+        this.name = dbname;
+        // Setup console logging
+        this.debug = new debug_1.DebugLogger(options.logLevel, `[${dbname}]`);
+        // Enable/disable logging with colors
+        simple_colors_1.SetColorsEnabled(options.logColors);
+        // Setup type mapping functionality
+        this.types = new type_mappings_1.TypeMappings(this);
         this.once("ready", () => {
             // console.log(`database "${dbname}" (${this.constructor.name}) is ready to use`);
             this._ready = true;
         });
-
-        // Specific api given such as web api, or browser api etc
-        // this.api = new options.api.class(dbname, options.api.settings, ready => {
-        //     this.emit("ready");
-        // });
-
-        this.types = new TypeMappings(this);
     }
-
     /**
-     * 
+     *
      * @param {()=>void} [callback] (optional) callback function that is called when ready. You can also use the returned promise
      * @returns {Promise<void>} returns a promise that resolves when ready
      */
     ready(callback = undefined) {
-        if (this._ready === true) { 
+        if (this._ready === true) {
             // ready event was emitted before
             callback && callback();
             return Promise.resolve();
@@ -179,33 +69,29 @@ class AceBaseBase extends SimpleEventEmitter {
             const promise = new Promise(res => resolve = res);
             this.on("ready", () => {
                 resolve();
-                callback && callback(); 
+                callback && callback();
             });
             return promise;
         }
     }
-
     get isReady() {
         return this._ready === true;
     }
-
     /**
      * Allow specific observable implementation to be used
      * @param {Observable} Observable Implementation to use
      */
     setObservable(Observable) {
-        setObservable(Observable);
+        optional_observable_1.setObservable(Observable);
     }
-
     /**
      * Creates a reference to a node
-     * @param {string} path 
+     * @param {string} path
      * @returns {DataReference} reference to the requested node
      */
     ref(path) {
-        return new DataReference(this, path);
+        return new data_reference_1.DataReference(this, path);
     }
-
     /**
      * Get a reference to the root database node
      * @returns {DataReference} reference to root node
@@ -213,17 +99,15 @@ class AceBaseBase extends SimpleEventEmitter {
     get root() {
         return this.ref("");
     }
-
     /**
      * Creates a query on the requested node
-     * @param {string} path 
+     * @param {string} path
      * @returns {DataReferenceQuery} query for the requested node
      */
     query(path) {
-        const ref = new DataReference(this, path);
-        return new DataReferenceQuery(ref);
+        const ref = new data_reference_1.DataReference(this, path);
+        return new data_reference_1.DataReferenceQuery(ref);
     }
-
     get indexes() {
         return {
             /**
@@ -234,7 +118,7 @@ class AceBaseBase extends SimpleEventEmitter {
             },
             /**
              * Creates an index on "key" for all child nodes at "path". If the index already exists, nothing happens.
-             * Example: creating an index on all "name" keys of child objects of path "system/users", 
+             * Example: creating an index on all "name" keys of child objects of path "system/users",
              * will index "system/users/user1/name", "system/users/user2/name" etc.
              * You can also use wildcard paths to enable indexing and quering of fragmented data.
              * Example: path "users/*\/posts", key "title": will index all "title" keys in all posts of all users.
@@ -243,97 +127,116 @@ class AceBaseBase extends SimpleEventEmitter {
              * @param {object} [options] any additional options
              * @param {string} [options.type] special index type, such as 'fulltext', or 'geo'
              * @param {string[]} [options.include] keys to include in the index. Speeds up sorting on these columns when the index is used (and dramatically increases query speed when .take(n) is used in addition)
-             * @param {object} [options.config] additional index-specific configuration settings 
+             * @param {object} [options.config] additional index-specific configuration settings
              */
             create: (path, key, options) => {
                 return this.api.createIndex(path, key, options);
             }
         };
     }
-
 }
+exports.AceBaseBase = AceBaseBase;
 
-module.exports = { AceBaseBase, AceBaseSettings };
-},{"./data-reference":8,"./optional-observable":13,"./simple-event-emitter":18,"./type-mappings":21}],5:[function(require,module,exports){
-
+},{"./data-reference":8,"./debug":10,"./optional-observable":13,"./simple-colors":18,"./simple-event-emitter":19,"./type-mappings":22}],2:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Api = void 0;
+class NotImplementedError extends Error {
+    constructor(name) { super(`${name} is not implemented`); }
+}
 class Api {
-    // interface for local and web api's
-    stats(options = undefined) {}
-
+    constructor(dbname, settings, readyCallback) { }
     /**
-     * 
-     * @param {string} path | reference
-     * @param {string} event | event to subscribe to ("value", "child_added" etc)
-     * @param {function} callback | callback function(err, path, value)
+     * Provides statistics
+     * @param options
      */
-    subscribe(path, event, callback) {}
-
-    // TODO: add jsdoc comments
-
-    unsubscribe(path, event, callback) {}
-    update(path, updates) {}
-    set(path, value) {}
-    get(path, options) {}
-    exists(path) {}
-    query(path, query, options) {}
-    createIndex(path, key) {}
-    getIndexes() {}
+    stats(options) { throw new NotImplementedError('stats'); }
+    /**
+     * @param path
+     * @param event event to subscribe to ("value", "child_added" etc)
+     * @param callback callback function
+     */
+    subscribe(path, event, callback) { throw new NotImplementedError('subscribe'); }
+    unsubscribe(path, event, callback) { throw new NotImplementedError('unsubscribe'); }
+    update(path, updates, options) { throw new NotImplementedError('update'); }
+    set(path, value, options) { throw new NotImplementedError('set'); }
+    get(path, options) { throw new NotImplementedError('get'); }
+    transaction(path, callback, options) { throw new NotImplementedError('transaction'); }
+    exists(path) { throw new NotImplementedError('exists'); }
+    query(path, query, options) { throw new NotImplementedError('query'); }
+    reflect(path, type, args) { throw new NotImplementedError('reflect'); }
+    export(path, stream, options) { throw new NotImplementedError('export'); }
+    /** Creates an index on key for all child nodes at path */
+    createIndex(path, key, options) { throw new NotImplementedError('createIndex'); }
+    getIndexes() { throw new NotImplementedError('getIndexes'); }
 }
+exports.Api = Api;
 
-module.exports = { Api };
-},{}],6:[function(require,module,exports){
-const c = function(input, length, result) {
+},{}],3:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ascii85 = void 0;
+const c = function (input, length, result) {
     var i, j, n, b = [0, 0, 0, 0, 0];
-    for(i = 0; i < length; i += 4){
-        n = ((input[i] * 256 + input[i+1]) * 256 + input[i+2]) * 256 + input[i+3];
-        if(!n){
+    for (i = 0; i < length; i += 4) {
+        n = ((input[i] * 256 + input[i + 1]) * 256 + input[i + 2]) * 256 + input[i + 3];
+        if (!n) {
             result.push("z");
-        }else{
-            for(j = 0; j < 5; b[j++] = n % 85 + 33, n = Math.floor(n / 85));
+        }
+        else {
+            for (j = 0; j < 5; b[j++] = n % 85 + 33, n = Math.floor(n / 85))
+                ;
         }
         result.push(String.fromCharCode(b[4], b[3], b[2], b[1], b[0]));
     }
+};
+function encode(arr) {
+    // summary: encodes input data in ascii85 string
+    // input: ArrayLike
+    var input = arr;
+    var result = [], remainder = input.length % 4, length = input.length - remainder;
+    c(input, length, result);
+    if (remainder) {
+        var t = new Uint8Array(4);
+        t.set(input.slice(length), 0);
+        c(t, 4, result);
+        var x = result.pop();
+        if (x == "z") {
+            x = "!!!!!";
+        }
+        result.push(x.substr(0, remainder + 1));
+    }
+    var ret = result.join(""); // String
+    ret = '<~' + ret + '~>';
+    return ret;
 }
-
-const ascii85 = {
-    encode: function(arr) {
-        // summary: encodes input data in ascii85 string
-        // input: ArrayLike
+exports.ascii85 = {
+    encode: function (arr) {
         if (arr instanceof ArrayBuffer) {
             arr = new Uint8Array(arr, 0, arr.byteLength);
         }
-        var input = arr;
-        var result = [], remainder = input.length % 4, length = input.length - remainder;
-        c(input, length, result);
-        if(remainder){
-            var t = new Uint8Array(4);
-            t.set(input.slice(length), 0);
-            c(t, 4, result);
-            var x = result.pop();
-            if(x == "z"){ x = "!!!!!"; }
-            result.push(x.substr(0, remainder + 1));
-        }
-        var ret = result.join("");	// String
-        ret = '<~' + ret + '~>';
-        return ret;
+        return encode(arr);
     },
-    decode: function(input) {
+    decode: function (input) {
         // summary: decodes the input string back to an ArrayBuffer
         // input: String: the input string to decode
         if (!input.startsWith('<~') || !input.endsWith('~>')) {
             throw new Error('Invalid input string');
         }
-        input = input.substr(2, input.length-4);
+        input = input.substr(2, input.length - 4);
         var n = input.length, r = [], b = [0, 0, 0, 0, 0], i, j, t, x, y, d;
-        for(i = 0; i < n; ++i) {
-            if(input.charAt(i) == "z"){
+        for (i = 0; i < n; ++i) {
+            if (input.charAt(i) == "z") {
                 r.push(0, 0, 0, 0);
                 continue;
             }
-            for(j = 0; j < 5; ++j){ b[j] = input.charCodeAt(i + j) - 33; }
+            for (j = 0; j < 5; ++j) {
+                b[j] = input.charCodeAt(i + j) - 33;
+            }
             d = n - i;
-            if(d < 5){
-                for(j = d; j < 4; b[++j] = 0);
+            if (d < 5) {
+                for (j = d; j < 4; b[++j] = 0)
+                    ;
                 b[d] = 85;
             }
             t = (((b[0] * 85 + b[1]) * 85 + b[2]) * 85 + b[3]) * 85 + b[4];
@@ -342,7 +245,8 @@ const ascii85 = {
             y = t & 255;
             t >>>= 8;
             r.push(t >>> 8, t & 255, y, x);
-            for(j = d; j < 5; ++j, r.pop());
+            for (j = d; j < 5; ++j, r.pop())
+                ;
             i += 4;
         }
         const data = new Uint8Array(r);
@@ -350,9 +254,82 @@ const ascii85 = {
     }
 };
 
-module.exports = ascii85;
+},{}],4:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const pad_1 = require("../pad");
+const env = typeof window === 'object' ? window : self, globalCount = Object.keys(env).length, mimeTypesLength = navigator.mimeTypes ? navigator.mimeTypes.length : 0, clientId = pad_1.default((mimeTypesLength +
+    navigator.userAgent.length).toString(36) +
+    globalCount.toString(36), 4);
+function fingerprint() {
+    return clientId;
+}
+exports.default = fingerprint;
+
+},{"../pad":6}],5:[function(require,module,exports){
+"use strict";
+/**
+ * cuid.js
+ * Collision-resistant UID generator for browsers and node.
+ * Sequential for fast db lookups and recency sorting.
+ * Safe for element IDs and server-side lookups.
+ *
+ * Extracted from CLCTR
+ *
+ * Copyright (c) Eric Elliott 2012
+ * MIT License
+ *
+ * time biasing added by Ewout Stortenbeker for AceBase
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+const fingerprint_1 = require("./fingerprint");
+const pad_1 = require("./pad");
+var c = 0, blockSize = 4, base = 36, discreteValues = Math.pow(base, blockSize);
+function randomBlock() {
+    return pad_1.default((Math.random() *
+        discreteValues << 0)
+        .toString(base), blockSize);
+}
+function safeCounter() {
+    c = c < discreteValues ? c : 0;
+    c++; // this is not subliminal
+    return c - 1;
+}
+function cuid(timebias = 0) {
+    // Starting with a lowercase letter makes
+    // it HTML element ID friendly.
+    var letter = 'c', // hard-coded allows for sequential access
+    // timestamp
+    // warning: this exposes the exact date and time
+    // that the uid was created.
+    // NOTES Ewout: 
+    // - added timebias
+    // - at '2059/05/25 19:38:27.456', timestamp will become 1 character larger!
+    timestamp = (new Date().getTime() + timebias).toString(base), 
+    // Prevent same-machine collisions.
+    counter = pad_1.default(safeCounter().toString(base), blockSize), 
+    // A few chars to generate distinct ids for different
+    // clients (so different computers are far less
+    // likely to generate the same id)
+    print = fingerprint_1.default(), 
+    // Grab some more chars from Math.random()
+    random = randomBlock() + randomBlock();
+    return letter + timestamp + counter + print + random;
+}
+exports.default = cuid;
+// Not using slugs, removed code
+
+},{"./fingerprint":4,"./pad":6}],6:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+function pad(num, size) {
+    var s = '000000000' + num;
+    return s.substr(s.length - size);
+}
+exports.default = pad;
+;
+
 },{}],7:[function(require,module,exports){
-(function (process){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.proxyAccess = exports.LiveDataProxy = void 0;
@@ -361,6 +338,7 @@ const data_snapshot_1 = require("./data-snapshot");
 const path_reference_1 = require("./path-reference");
 const id_1 = require("./id");
 const optional_observable_1 = require("./optional-observable");
+const process_1 = require("./process");
 class RelativeNodeTarget extends Array {
     static areEqual(t1, t2) {
         return t1.length === t2.length && t1.every((key, i) => t2[i] === key);
@@ -463,7 +441,7 @@ class LiveDataProxy {
                 return;
             }
             // Run local onMutation & onChange callbacks in the next tick
-            process.nextTick(() => {
+            process_1.default.nextTick(() => {
                 // Run onMutation callback for each changed node
                 if (onMutationCallback) {
                     mutations.forEach(mutation => {
@@ -618,7 +596,7 @@ class LiveDataProxy {
                     }
                     return true;
                 });
-                process.nextTick(() => {
+                process_1.default.nextTick(() => {
                     // Run callback with read-only (frozen) values in next tick
                     const keepSubscription = callback(Object.freeze(newValue), Object.freeze(previousValue), isRemote, context);
                     if (keepSubscription === false) {
@@ -1131,21 +1109,19 @@ function proxyAccess(proxiedValue) {
 }
 exports.proxyAccess = proxyAccess;
 
-}).call(this,require('_process'))
-},{"./data-snapshot":9,"./id":11,"./optional-observable":13,"./path-reference":15,"./utils":22,"_process":34}],8:[function(require,module,exports){
-const { DataSnapshot, MutationsDataSnapshot } = require('./data-snapshot');
-const { EventStream, EventPublisher } = require('./subscription');
-const { ID } = require('./id');
-const debug = require('./debug');
-const { PathInfo } = require('./path-info');
-const { PathReference } = require('./path-reference');
-const { LiveDataProxy } = require('./data-proxy');
-const { getObservable } = require('./optional-observable');
-
+},{"./data-snapshot":9,"./id":11,"./optional-observable":13,"./path-reference":15,"./process":16,"./utils":23}],8:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DataReferencesArray = exports.DataSnapshotsArray = exports.DataReferenceQuery = exports.DataReference = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = void 0;
+const data_snapshot_1 = require("./data-snapshot");
+const subscription_1 = require("./subscription");
+const id_1 = require("./id");
+const path_info_1 = require("./path-info");
+const data_proxy_1 = require("./data-proxy");
+const optional_observable_1 = require("./optional-observable");
 class DataRetrievalOptions {
     /**
      * Options for data retrieval, allows selective loading of object properties
-     * @param {{ include?: Array<string|number>, exclude?: Array<string|number>, child_objects?: boolean, allow_cache?: boolean }} options 
      */
     constructor(options) {
         if (!options) {
@@ -1163,54 +1139,37 @@ class DataRetrievalOptions {
         if (typeof options.allow_cache !== 'undefined' && typeof options.allow_cache !== 'boolean') {
             throw new TypeError(`options.allow_cache must be a boolean`);
         }
-
-        /**
-         * @property {string[]} include - child keys to include (will exclude other keys), can include wildcards (eg "messages/*\/title")
-         */
         this.include = options.include || undefined;
-        /**
-         * @property {string[]} exclude - child keys to exclude (will include other keys), can include wildcards (eg "messages/*\/replies")
-         */
         this.exclude = options.exclude || undefined;
-        /**
-         * @property {boolean} child_objects - whether or not to include any child objects, default is true
-         */
         this.child_objects = typeof options.child_objects === "boolean" ? options.child_objects : undefined;
-        /**
-         * @property {boolean} allow_cache - whether cached results are allowed to be used (supported by AceBaseClients using local cache), default is true
-         */
         this.allow_cache = typeof options.allow_cache === "boolean" ? options.allow_cache : undefined;
     }
 }
-
+exports.DataRetrievalOptions = DataRetrievalOptions;
 class QueryDataRetrievalOptions extends DataRetrievalOptions {
     /**
-     * Options for data retrieval, allows selective loading of object properties
-     * @param {QueryDataRetrievalOptions} [options]
+     * @param options Options for data retrieval, allows selective loading of object properties
      */
     constructor(options) {
         super(options);
         if (typeof options.snapshots !== 'undefined' && typeof options.snapshots !== 'boolean') {
             throw new TypeError(`options.snapshots must be an array`);
         }
-        /**
-         * @property {boolean} snapshots - whether to return snapshots of matched nodes (include data), or references only (no data). Default is true
-         */
         this.snapshots = typeof options.snapshots === 'boolean' ? options.snapshots : undefined;
     }
 }
-
+exports.QueryDataRetrievalOptions = QueryDataRetrievalOptions;
 const _private = Symbol("private");
 class DataReference {
     /**
      * Creates a reference to a node
-     * @param {AceBase} db
-     * @param {string} path 
      */
-    constructor (db, path, vars) {
-        if (!path) { path = ""; }
+    constructor(db, path, vars) {
+        if (!path) {
+            path = "";
+        }
         path = path.replace(/^\/|\/$/g, ""); // Trim slashes
-        const pathInfo = PathInfo.get(path);
+        const pathInfo = path_info_1.PathInfo.get(path);
         const key = pathInfo.key; //path.length === 0 ? "" : path.substr(path.lastIndexOf("/") + 1); //path.match(/(?:^|\/)([a-z0-9_$]+)$/i)[1];
         // const query = { 
         //     filters: [],
@@ -1224,19 +1183,19 @@ class DataReference {
             get key() { return key; },
             get callbacks() { return callbacks; },
             vars: vars || {},
-            context: {}
+            context: {},
+            pushed: false
         };
         this.db = db; //Object.defineProperty(this, "db", ...)
     }
-
     /**
-     * Adds contextual info for database updates through this reference. 
-     * This allows you to identify the event source (and/or reason) of 
-     * data change events being triggered. You can use this for example 
-     * to track if data updates were performed by the local client, a 
+     * Adds contextual info for database updates through this reference.
+     * This allows you to identify the event source (and/or reason) of
+     * data change events being triggered. You can use this for example
+     * to track if data updates were performed by the local client, a
      * remote client, or the server. And, why it was changed, and by whom.
-     * @param {any} [context] Context to set for this reference.
-     * @returns {DataReference|any} returns this instance, or the previously set context when calling context()
+     * @param context Context to set for this reference.
+     * @returns returns this instance, or the previously set context when calling context()
      * @example
      * // Somewhere in your frontend code:
      * db.ref('accounts/123/balance').on('value', snap => {
@@ -1249,7 +1208,7 @@ class DataReference {
      *          case 'withdraw': alert('You just withdrew money from your account'); break;
      *      }
      * });
-     * 
+     *
      * // Somewhere in your backend code:
      * db.ref('accounts/123/balance')
      *  .context({ action: 'withdraw', description: 'ATM withdrawal of €50' })
@@ -1262,7 +1221,7 @@ class DataReference {
         const currentContext = this[_private].context;
         if (typeof context === 'object') {
             const newContext = context ? merge ? currentContext || {} : context : {};
-            if (context) { 
+            if (context) {
                 // Merge new with current context
                 Object.keys(context).forEach(key => {
                     newContext[key] = context[key];
@@ -1278,63 +1237,58 @@ class DataReference {
             throw new Error('Invalid context argument');
         }
     }
-
     /**
     * The path this instance was created with
-    * @type {string}
     */
     get path() { return this[_private].path; }
-
     /**
      * The key or index of this node
-     * @type {string|number}
      */
     get key() { return this[_private].key; }
-    
     /**
      * Returns a new reference to this node's parent
-     * @type {DataReference}
      */
     get parent() {
-        let currentPath = PathInfo.fillVariables2(this.path, this.vars);
-        const info = PathInfo.get(currentPath);
+        let currentPath = path_info_1.PathInfo.fillVariables2(this.path, this.vars);
+        const info = path_info_1.PathInfo.get(currentPath);
         if (info.parentPath === null) {
             return null;
         }
         return new DataReference(this.db, info.parentPath).context(this[_private].context);
     }
-
     /**
-     * Contains values of the variables/wildcards used in a subscription path if this reference was 
+     * Contains values of the variables/wildcards used in a subscription path if this reference was
      * created by an event ("value", "child_added" etc)
-     * @type {{ [index: number]: string|number, [variable: string]: string|number }}
      */
     get vars() {
         return this[_private].vars;
     }
-
     /**
      * Returns a new reference to a child node
-     * @param {string|number} childPath Child key, index or path
-     * @returns {DataReference} reference to the child
+     * @param childPath Child key, index or path
+     * @returns reference to the child
      */
     child(childPath) {
         childPath = typeof childPath === 'number' ? childPath : childPath.replace(/^\/|\/$/g, "");
-        const currentPath = PathInfo.fillVariables2(this.path, this.vars);
-        const targetPath = PathInfo.getChildPath(currentPath, childPath);
+        const currentPath = path_info_1.PathInfo.fillVariables2(this.path, this.vars);
+        const targetPath = path_info_1.PathInfo.getChildPath(currentPath, childPath);
         return new DataReference(this.db, targetPath).context(this[_private].context); //  `${this.path}/${childPath}`
     }
-    
     /**
      * Sets or overwrites the stored value
-     * @param {any} value value to store in database
-     * @param {(err: Error, ref: DataReference) => void} [onComplete] completion callback to use instead of returning promise 
-     * @returns {Promise<DataReference>} promise that resolves with this reference when completed (when not using onComplete callback)
+     * @param value value to store in database
+     * @param onComplete completion callback to use instead of returning promise
+     * @returns promise that resolves with this reference when completed (when not using onComplete callback)
      */
-    set(value, onComplete = undefined) {
+    set(value, onComplete) {
         const handleError = err => {
             if (typeof onComplete === 'function') {
-                try { onComplete(err); } catch(err) { console.error(`Error in onComplete callback:`, err); }
+                try {
+                    onComplete(err, this);
+                }
+                catch (err) {
+                    console.error(`Error in onComplete callback:`, err);
+                }
             }
             else {
                 // throw again
@@ -1355,29 +1309,38 @@ class DataReference {
         }
         value = this.db.types.serialize(this.path, value);
         return this.db.api.set(this.path, value, { context: this[_private].context })
-        .then(res => {
+            .then(res => {
             if (typeof onComplete === 'function') {
-                try { onComplete(null, this);} catch(err) { console.error(`Error in onComplete callback:`, err); }
+                try {
+                    onComplete(null, this);
+                }
+                catch (err) {
+                    console.error(`Error in onComplete callback:`, err);
+                }
             }
         })
-        .catch(err => {
+            .catch(err => {
             return handleError(err);
         })
-        .then(() => {
+            .then(() => {
             return this;
         });
     }
-
     /**
      * Updates properties of the referenced node
-     * @param {object} updates object containing the properties to update
-     * @param {(err: Error, ref: DataReference) => void} [onComplete] completion callback to use instead of returning promise 
-     * @return {Promise<DataReference>} returns promise that resolves with this reference once completed (when not using onComplete callback)
+     * @param updates object containing the properties to update
+     * @param onComplete completion callback to use instead of returning promise
+     * @return returns promise that resolves with this reference once completed (when not using onComplete callback)
      */
-    update(updates, onComplete = undefined) {
+    update(updates, onComplete) {
         const handleError = err => {
             if (typeof onComplete === 'function') {
-                try { onComplete(err); } catch(err) { console.error(`Error in onComplete callback:`, err); }
+                try {
+                    onComplete(err, this);
+                }
+                catch (err) {
+                    console.error(`Error in onComplete callback:`, err);
+                }
             }
             else {
                 // throw again
@@ -1398,28 +1361,32 @@ class DataReference {
         else if (!this.db.isReady) {
             return this.db.ready().then(() => this.update(updates, onComplete));
         }
-        else {            
+        else {
             updates = this.db.types.serialize(this.path, updates);
             promise = this.db.api.update(this.path, updates, { context: this[_private].context });
         }
         return promise.then(() => {
             if (typeof onComplete === 'function') {
-                try { onComplete(null, this); } catch(err) { console.error(`Error in onComplete callback:`, err); }
+                try {
+                    onComplete(null, this);
+                }
+                catch (err) {
+                    console.error(`Error in onComplete callback:`, err);
+                }
             }
         })
-        .catch(err => {
+            .catch(err => {
             return handleError(err);
         })
-        .then(() => {
+            .then(() => {
             return this;
-        })
+        });
     }
-
     /**
      * Sets the value a node using a transaction: it runs your callback function with the current value, uses its return value as the new value to store.
      * The transaction is canceled if your callback returns undefined, or throws an error. If your callback returns null, the target node will be removed.
-     * @param {(currentValue: DataSnapshot) => any} callback - callback function that performs the transaction on the node's current value. It must return the new value to store (or promise with new value), undefined to cancel the transaction, or null to remove the node.
-     * @returns {Promise<DataReference>} returns a promise that resolves with the DataReference once the transaction has been processed
+     * @param callback - callback function that performs the transaction on the node's current value. It must return the new value to store (or promise with new value), undefined to cancel the transaction, or null to remove the node.
+     * @returns returns a promise that resolves with the DataReference once the transaction has been processed
      */
     transaction(callback) {
         if (this.isWildcardPath) {
@@ -1431,22 +1398,22 @@ class DataReference {
         let throwError;
         let cb = (currentValue) => {
             currentValue = this.db.types.deserialize(this.path, currentValue);
-            const snap = new DataSnapshot(this, currentValue);
+            const snap = new data_snapshot_1.DataSnapshot(this, currentValue);
             let newValue;
             try {
                 newValue = callback(snap);
             }
-            catch(err) {
+            catch (err) {
                 // callback code threw an error
                 throwError = err; // Remember error
                 return; // cancel transaction by returning undefined
             }
             if (newValue instanceof Promise) {
                 return newValue
-                .then((val) => {
+                    .then((val) => {
                     return this.db.types.serialize(this.path, val);
                 })
-                .catch(err => {
+                    .catch(err => {
                     throwError = err; // Remember error
                     return; // cancel transaction by returning undefined
                 });
@@ -1454,9 +1421,9 @@ class DataReference {
             else {
                 return this.db.types.serialize(this.path, newValue);
             }
-        }
+        };
         return this.db.api.transaction(this.path, cb, { context: this[_private].context })
-        .then(result => {
+            .then(result => {
             if (throwError) {
                 // Rethrow error from callback code
                 throw throwError;
@@ -1464,86 +1431,77 @@ class DataReference {
             return this;
         });
     }
-
     /**
-     * Subscribes to an event. Supported events are "value", "child_added", "child_changed", "child_removed", 
-     * which will run the callback with a snapshot of the data. If you only wish to receive notifications of the 
-     * event (without the data), use the "notify_value", "notify_child_added", "notify_child_changed", 
-     * "notify_child_removed" events instead, which will run the callback with a DataReference to the changed 
-     * data. This enables you to manually retreive data upon changes (eg if you want to exclude certain child 
+     * Subscribes to an event. Supported events are "value", "child_added", "child_changed", "child_removed",
+     * which will run the callback with a snapshot of the data. If you only wish to receive notifications of the
+     * event (without the data), use the "notify_value", "notify_child_added", "notify_child_changed",
+     * "notify_child_removed" events instead, which will run the callback with a DataReference to the changed
+     * data. This enables you to manually retreive data upon changes (eg if you want to exclude certain child
      * data from loading)
-     * @param {string} event - Name of the event to subscribe to
-     * @param {((snapshotOrReference:DataSnapshot|DataReference) => void)|boolean} callback - Callback function(snapshot) or whether or not to run callbacks on current values when using "value" or "child_added" events
-     * @returns {EventStream} returns an EventStream
+     * @param event Name of the event to subscribe to
+     * @param callback Callback function or whether or not to run callbacks on current values when using "value" or "child_added" events
+     * @param cancelCallback Function to call when the subscription is not allowed, or denied access later on
+     * @returns returns an EventStream
      */
-    on(event, callback, cancelCallbackOrContext, context) {
+    on(event, callback, cancelCallback) {
         if (this.path === '' && ['value', 'child_changed'].includes(event)) {
             // Removed 'notify_value' and 'notify_child_changed' events from the list, they do not require additional data loading anymore.
             console.warn(`WARNING: Listening for value and child_changed events on the root node is a bad practice. These events require loading of all data (value event), or potentially lots of data (child_changed event) each time they are fired`);
         }
-        const cancelCallback = typeof cancelCallbackOrContext === 'function' && cancelCallbackOrContext;
-        context = typeof cancelCallbackOrContext === 'object' ? cancelCallbackOrContext : context
-
-        const useCallback = typeof callback === 'function';
-        
-        /** @type {EventPublisher} */
         let eventPublisher = null;
-        const eventStream = new EventStream(publisher => { eventPublisher = publisher });
-
-        // Map OUR callback to original callback, so .off can remove the right callback
-        let cb = { 
-            subscr: eventStream,
-            original: callback, 
-            ours: (err, path, newValue, oldValue, eventContext) => {
+        const eventStream = new subscription_1.EventStream(publisher => { eventPublisher = publisher; });
+        // Map OUR callback to original callback, so .off can remove the right callback(s)
+        const cb = {
+            event,
+            stream: eventStream,
+            userCallback: typeof callback === 'function' && callback,
+            ourCallback: (err, path, newValue, oldValue, eventContext) => {
                 if (err) {
-                    debug.error(`Error getting data for event ${event} on path "${path}"`, err);
+                    this.db.debug.error(`Error getting data for event ${event} on path "${path}"`, err);
                     return;
                 }
                 let ref = this.db.ref(path).context(eventContext || {});
-                ref[_private].vars = PathInfo.extractVariables(this.path, path);
-                
+                ref[_private].vars = path_info_1.PathInfo.extractVariables(this.path, path);
                 let callbackObject;
                 if (event.startsWith('notify_')) {
                     // No data event, callback with reference
                     callbackObject = ref;
                 }
                 else {
-                    const values = { 
+                    const values = {
                         previous: this.db.types.deserialize(path, oldValue),
                         current: this.db.types.deserialize(path, newValue)
                     };
                     if (event === 'child_removed') {
-                        callbackObject = new DataSnapshot(ref, values.previous, true, values.previous);
+                        callbackObject = new data_snapshot_1.DataSnapshot(ref, values.previous, true, values.previous);
                     }
                     else if (event === 'mutations') {
-                        callbackObject = new MutationsDataSnapshot(ref, values.current);
+                        callbackObject = new data_snapshot_1.MutationsDataSnapshot(ref, values.current);
                     }
                     else {
                         const isRemoved = event === 'mutated' && values.current === null;
-                        callbackObject = new DataSnapshot(ref, values.current, isRemoved, values.previous);
+                        callbackObject = new data_snapshot_1.DataSnapshot(ref, values.current, isRemoved, values.previous);
                     }
                 }
-
-                try { useCallback && callback.call(context || null, callbackObject); }
-                catch (err) { console.error(`ERROR firing "${event}" callback for path "${path}":`, err); }
-                
-                let keep = eventPublisher.publish(callbackObject);
-                if (!keep && !useCallback) {
-                    // If no callback was used, unsubscribe
-                    let callbacks = this[_private].callbacks;
-                    callbacks.splice(callbacks.indexOf(cb), 1);
-                    this.db.api.unsubscribe(this.path, event, cb.ours);
-                }
+                eventPublisher.publish(callbackObject);
             }
         };
         this[_private].callbacks.push(cb);
-
         const subscribe = () => {
-            let authorized = this.db.api.subscribe(this.path, event, cb.ours);
+            // (NEW) Add callback to event stream 
+            // ref.on('value', callback) is now exactly the same as ref.on('value').subscribe(callback)
+            if (typeof callback === 'function') {
+                eventStream.subscribe(callback, (activated, cancelReason) => {
+                    if (!activated) {
+                        cancelCallback && cancelCallback(cancelReason);
+                    }
+                });
+            }
+            let authorized = this.db.api.subscribe(this.path, event, cb.ourCallback);
             const allSubscriptionsStoppedCallback = () => {
                 let callbacks = this[_private].callbacks;
                 callbacks.splice(callbacks.indexOf(cb), 1);
-                return this.db.api.unsubscribe(this.path, event, cb.ours);
+                return this.db.api.unsubscribe(this.path, event, cb.ourCallback);
             };
             if (authorized instanceof Promise) {
                 // Web API now returns a promise that resolves if the request is allowed
@@ -1552,23 +1510,22 @@ class DataReference {
                     // Access granted
                     eventPublisher.start(allSubscriptionsStoppedCallback);
                 })
-                .catch(err => {
+                    .catch(err => {
                     // Access denied?
                     // Cancel subscription
                     let callbacks = this[_private].callbacks;
                     callbacks.splice(callbacks.indexOf(cb), 1);
-                    this.db.api.unsubscribe(this.path, event, cb.ours);
-
+                    this.db.api.unsubscribe(this.path, event, cb.ourCallback);
                     // Call cancelCallbacks
                     eventPublisher.cancel(err.message);
-                    cancelCallback && cancelCallback(err.message);
+                    // No need to call cancelCallback, original callbacks are now added to event stream
+                    // cancelCallback && cancelCallback(err.message);
                 });
             }
             else {
                 // Local API, always authorized
                 eventPublisher.start(allSubscriptionsStoppedCallback);
             }
-
             if (callback && !this.isWildcardPath) {
                 // If callback param is supplied (either a callback function or true or something else truthy),
                 // it will fire events for current values right now.
@@ -1577,17 +1534,19 @@ class DataReference {
                 if (event === "value") {
                     this.get(snap => {
                         eventPublisher.publish(snap);
-                        useCallback && callback(snap);
+                        typeof callback === 'function' && callback(snap);
                     });
                 }
                 else if (event === "child_added") {
                     this.get(snap => {
                         const val = snap.val();
-                        if (val === null || typeof val !== "object") { return; }
+                        if (val === null || typeof val !== "object") {
+                            return;
+                        }
                         Object.keys(val).forEach(key => {
-                            let childSnap = new DataSnapshot(this.child(key), val[key]);
+                            let childSnap = new data_snapshot_1.DataSnapshot(this.child(key), val[key]);
                             eventPublisher.publish(childSnap);
-                            useCallback && callback(childSnap);
+                            typeof callback === 'function' && callback(childSnap);
                         });
                     });
                 }
@@ -1598,12 +1557,12 @@ class DataReference {
                     let limit = step, skip = 0;
                     const more = () => {
                         this.db.api.reflect(this.path, "children", { limit, skip })
-                        .then(children => {
+                            .then(children => {
                             children.list.forEach(child => {
                                 const childRef = this.child(child.key);
                                 eventPublisher.publish(childRef);
-                                useCallback && callback(childRef);
-                            })
+                                typeof callback === 'function' && callback(childRef);
+                            });
                             if (children.more) {
                                 skip += step;
                                 more();
@@ -1614,105 +1573,72 @@ class DataReference {
                 }
             }
         };
-
         if (this.db.isReady) {
             subscribe();
         }
         else {
             this.db.ready(subscribe);
         }
-
         return eventStream;
     }
-
     /**
      * Unsubscribes from a previously added event
-     * @param {string} event | Name of the event
-     * @param {Function} callback | callback function to remove
+     * @param event Name of the event
+     * @param callback callback function to remove
      */
-    off(event = undefined, callback = undefined) {
-        const callbacks = this[_private].callbacks;
-        if (callback) {
-            const cb = callbacks.find(cb => cb.original === callback);
-            if (!cb) {
-                debug.error(`Can't find specified callback to unsubscribe from (path: "${this.path}", event: ${event}, callback: ${callback})`);
-                return;
-            }
-            callbacks.splice(callbacks.indexOf(cb), 1);
-            callback = cb.ours;
-            cb.subscr.unsubscribe(callback);
+    off(event, callback) {
+        const subscriptions = this[_private].callbacks;
+        const stopSubs = subscriptions.filter(sub => (!event || sub.event === event) && (!callback || sub.userCallback === callback));
+        if (stopSubs.length === 0) {
+            this.db.debug.warn(`Can't find event subscriptions to stop (path: "${this.path}", event: ${event || '(any)'}, callback: ${callback})`);
         }
-        else {
-            callbacks.splice(0, callbacks.length).forEach(cb => {
-                cb.subscr.unsubscribe();
-            });
-        }
-        const unsubscribe = () => {
-            this.db.api.unsubscribe(this.path, event, callback);
-        };
-        if (this.db.isReady) {
-            unsubscribe();
-        }
-        else {
-            this.db.ready(unsubscribe);
-        }
+        stopSubs.forEach(sub => {
+            sub.stream.stop();
+        });
         return this;
     }
-
-    /**
-     * Gets a snapshot of the stored value. Shorthand method for .once("value")
-     * @param {DataRetrievalOptions|((snapshot:DataSnapshot) => void)} [optionsOrCallback] data retrieval options to include or exclude specific child keys, or callback
-     * @param {(snapshot:DataSnapshot) => void} [callback] callback function to run with a snapshot of the data instead of returning a promise
-     * @returns {Promise<DataSnapshot>|void} returns a promise that resolves with a snapshot of the data, or nothing if callback is used
-     */
-    get(optionsOrCallback = undefined, callback = undefined) {
+    get(optionsOrCallback, callback) {
         if (!this.db.isReady) {
             const promise = this.db.ready().then(() => this.get(optionsOrCallback, callback));
             return typeof optionsOrCallback !== 'function' && typeof callback !== 'function' ? promise : undefined; // only return promise if no callback is used
         }
-
-        callback = 
-            typeof optionsOrCallback === 'function' 
-            ? optionsOrCallback 
-            : typeof callback === 'function'
-                ? callback
-                : undefined;
-
+        callback =
+            typeof optionsOrCallback === 'function'
+                ? optionsOrCallback
+                : typeof callback === 'function'
+                    ? callback
+                    : undefined;
         if (this.isWildcardPath) {
             const error = new Error(`Cannot get value of wildcard path "/${this.path}". Use .query() instead`);
-            if (typeof callback === 'function') { throw err; }
+            if (typeof callback === 'function') {
+                throw error;
+            }
             return Promise.reject(error);
         }
-
-        const options = 
-            typeof optionsOrCallback === 'object' 
+        const options = typeof optionsOrCallback === 'object'
             ? optionsOrCallback
             : new DataRetrievalOptions({ allow_cache: true });
-
         if (typeof options.allow_cache === 'undefined') {
             options.allow_cache = true;
         }
-
         const promise = this.db.api.get(this.path, options).then(value => {
             value = this.db.types.deserialize(this.path, value);
-            const snapshot = new DataSnapshot(this, value);
+            const snapshot = new data_snapshot_1.DataSnapshot(this, value);
             return snapshot;
         });
-
-        if (callback) { 
+        if (callback) {
             promise.then(callback);
-            return; 
+            return;
         }
         else {
             return promise;
         }
     }
-
     /**
      * Waits for an event to occur
-     * @param {string} event - Name of the event, eg "value", "child_added", "child_changed", "child_removed"
-     * @param {DataRetrievalOptions} options - data retrieval options, to include or exclude specific child keys
-     * @returns {Promise<DataSnapshot>} - returns promise that resolves with a snapshot of the data
+     * @param event Name of the event, eg "value", "child_added", "child_changed", "child_removed"
+     * @param options data retrieval options, to include or exclude specific child keys
+     * @returns returns promise that resolves with a snapshot of the data
      */
     once(event, options) {
         if (event === "value" && !this.isWildcardPath) {
@@ -1721,47 +1647,28 @@ class DataReference {
         }
         return new Promise((resolve, reject) => {
             const callback = (snap) => {
-                this.off(event, snap); // unsubscribe directly
+                this.off(event, callback); // unsubscribe directly
                 resolve(snap);
-            }
+            };
             this.on(event, callback);
         });
     }
-
     /**
-     * Creates a new child with a unique key and returns the new reference. 
-     * If a value is passed as an argument, it will be stored to the database directly. 
-     * The returned reference can be used as a promise that resolves once the
-     * given value is stored in the database
-     * @param {any} value optional value to store into the database right away
-     * @param {function} onComplete optional callback function to run once value has been stored
-     * @returns {DataReference|Promise<DataReference>} returns a reference to the new child, or a promise that resolves with the reference after the passed value has been stored
-     * @example 
-     * // Create a new user in "game_users"
-     * db.ref("game_users")
-     * .push({ name: "Betty Boop", points: 0 })
-     * .then(ref => {
-     * //  ref is a new reference to the newly created object,
-     * //  eg to: "game_users/7dpJMeLbhY0tluMyuUBK27"
-     * });
-     * @example
-     * // Create a new child reference with a generated key, 
-     * // but don't store it yet
-     * let userRef = db.ref("users").push();
-     * // ... to store it later:
-     * userRef.set({ name: "Popeye the Sailor" })
+     * @param value optional value to store into the database right away
+     * @param onComplete optional callback function to run once value has been stored
+     * @returns returns promise that resolves with the reference after the passed value has been stored
      */
-    push(value = undefined, onComplete = undefined) {
+    push(value, onComplete) {
         if (this.isWildcardPath) {
             const error = new Error(`Cannot push to wildcard path "/${this.path}"`);
-            if (typeof value === 'undefined' || typeof onComplete === 'function') { throw error; }
+            if (typeof value === 'undefined' || typeof onComplete === 'function') {
+                throw error;
+            }
             return Promise.reject(error);
         }
-
-        const id = ID.generate(); //uuid62.v1({ node: [0x61, 0x63, 0x65, 0x62, 0x61, 0x73] });
+        const id = id_1.ID.generate(); //uuid62.v1({ node: [0x61, 0x63, 0x65, 0x62, 0x61, 0x73] });
         const ref = this.child(id);
-        ref.__pushed = true;
-
+        ref[_private].pushed = true;
         if (typeof value !== 'undefined') {
             return ref.set(value, onComplete).then(res => ref);
         }
@@ -1769,7 +1676,6 @@ class DataReference {
             return ref;
         }
     }
-
     /**
      * Removes this node and all children
      */
@@ -1782,7 +1688,6 @@ class DataReference {
         }
         return this.set(null);
     }
-
     /**
      * Quickly checks if this reference has a value in the database, without returning its data
      * @returns {Promise<boolean>} | returns a promise that resolves with a boolean value
@@ -1796,22 +1701,18 @@ class DataReference {
         }
         return this.db.api.exists(this.path);
     }
-
     get isWildcardPath() {
         return this.path.indexOf('*') >= 0 || this.path.indexOf('$') >= 0;
     }
-
     query() {
         return new DataReferenceQuery(this);
     }
-
     count() {
         return this.reflect("info", { child_count: true })
-        .then(info => {
+            .then(info => {
             return info.children.count;
-        })
+        });
     }
-
     reflect(type, args) {
         if (this.isWildcardPath) {
             return Promise.reject(new Error(`Cannot reflect on wildcard path "/${this.path}"`));
@@ -1821,7 +1722,6 @@ class DataReference {
         }
         return this.db.api.reflect(this.path, type, args);
     }
-
     export(stream, options = { format: 'json' }) {
         if (this.isWildcardPath) {
             return Promise.reject(new Error(`Cannot export wildcard path "/${this.path}"`));
@@ -1831,21 +1731,21 @@ class DataReference {
         }
         return this.db.api.export(this.path, stream, options);
     }
-
     proxy(defaultValue) {
-        return LiveDataProxy.create(this, defaultValue);
+        return data_proxy_1.LiveDataProxy.create(this, defaultValue);
     }
-
     observe(options) {
         // options should not be used yet - we can't prevent/filter mutation events on excluded paths atm 
-
+        if (options) {
+            throw new Error('observe does not support data retrieval options yet');
+        }
         if (this.isWildcardPath) {
             return Promise.reject(new Error(`Cannot observe wildcard path "/${this.path}"`));
         }
         else if (!this.db.isReady) {
             return this.db.ready().then(() => this.observe(options));
         }
-        const Observable = getObservable();
+        const Observable = optional_observable_1.getObservable();
         return new Observable(observer => {
             let cache, resolved = false;
             let promise = this.get(options).then(snap => {
@@ -1853,22 +1753,21 @@ class DataReference {
                 cache = snap.val();
                 observer.next(cache);
             });
-
             const updateCache = (snap) => {
-                if (!resolved) { 
+                if (!resolved) {
                     promise = promise.then(() => updateCache(snap));
-                    return; 
+                    return;
                 }
                 const mutatedPath = snap.ref.path;
                 const trailPath = mutatedPath.slice(this.path.length + 1);
-                const trailKeys = PathInfo.getPathKeys(trailPath);
+                const trailKeys = path_info_1.PathInfo.getPathKeys(trailPath);
                 let target = cache;
                 while (trailKeys.length > 1) {
                     const key = trailKeys.shift();
                     if (!(key in target)) {
                         // Happens if initial loaded data did not include / excluded this data, 
                         // or we missed out on an event
-                        target[key] = typeof trailKeys[0] === 'number' ? [] : {}
+                        target[key] = typeof trailKeys[0] === 'number' ? [] : {};
                     }
                     target = target[key];
                 }
@@ -1876,7 +1775,7 @@ class DataReference {
                 const newValue = snap.val();
                 if (newValue === null) {
                     // Remove it
-                    target instanceof Array ? target.splice(prop, 1) : delete target[prop];                    
+                    target instanceof Array && typeof prop === 'number' ? target.splice(prop, 1) : delete target[prop];
                 }
                 else {
                     // Set or update it
@@ -1884,22 +1783,18 @@ class DataReference {
                 }
                 observer.next(cache);
             };
-
             this.on('mutated', updateCache);
-
             // Return unsubscribe function
             return () => {
                 this.off('mutated', updateCache);
             };
         });
     }
-} 
-
+}
+exports.DataReference = DataReference;
 class DataReferenceQuery {
-    
     /**
      * Creates a query on a reference
-     * @param {DataReference} ref 
      */
     constructor(ref) {
         this.ref = ref;
@@ -1907,19 +1802,18 @@ class DataReferenceQuery {
             filters: [],
             skip: 0,
             take: 0,
-            order: []
+            order: [],
+            events: {}
         };
     }
-
     /**
-     * Applies a filter to the children of the refence being queried. 
-     * If there is an index on the property key being queried, it will be used 
+     * Applies a filter to the children of the refence being queried.
+     * If there is an index on the property key being queried, it will be used
      * to speed up the query
-     * @param {string|number} key | property to test value of
-     * @param {string} op | operator to use
-     * @param {any} compare | value to compare with
-     * @returns {DataReferenceQuery}
-     */                
+     * @param key property to test value of
+     * @param op operator to use
+     * @param compare value to compare with
+     */
     filter(key, op, compare) {
         if ((op === "in" || op === "!in") && (!(compare instanceof Array) || compare.length === 0)) {
             throw new Error(`${op} filter for ${key} must supply an Array compare argument containing at least 1 value`);
@@ -1940,39 +1834,28 @@ class DataReferenceQuery {
         this[_private].filters.push({ key, op, compare });
         return this;
     }
-
     /**
      * @deprecated use .filter instead
      */
     where(key, op, compare) {
-        return this.filter(key, op, compare)
+        return this.filter(key, op, compare);
     }
-
     /**
      * Limits the number of query results to n
-     * @param {number} n 
-     * @returns {DataReferenceQuery}
      */
     take(n) {
         this[_private].take = n;
         return this;
     }
-
     /**
      * Skips the first n query results
-     * @param {number} n 
-     * @returns {DataReferenceQuery}
      */
     skip(n) {
         this[_private].skip = n;
         return this;
     }
-
     /**
      * Sorts the query results
-     * @param {string} key 
-     * @param {boolean} [ascending=true]
-     * @returns {DataReferenceQuery}
      */
     sort(key, ascending = true) {
         if (typeof key !== "string") {
@@ -1981,37 +1864,26 @@ class DataReferenceQuery {
         this[_private].order.push({ key, ascending });
         return this;
     }
-
     /**
      * @deprecated use .sort instead
      */
     order(key, ascending = true) {
         return this.sort(key, ascending);
     }
-
-    /**
-     * Executes the query
-     * @param {((snapshotsOrReferences:DataSnapshotsArray|DataReferencesArray) => void)|QueryDataRetrievalOptions} [optionsOrCallback] data retrieval options (to include or exclude specific child data, and whether to return snapshots (default) or references only), or callback
-     * @param {(snapshotsOrReferences:DataSnapshotsArray|DataReferencesArray) => void} [callback] callback to use instead of returning a promise
-     * @returns {Promise<DataSnapshotsArray>|Promise<DataReferencesArray>|void} returns an Promise that resolves with an array of DataReferences or DataSnapshots, or void if a callback is used instead
-     */
-    get(optionsOrCallback = undefined, callback = undefined) {
+    get(optionsOrCallback, callback) {
         if (!this.ref.db.isReady) {
-            return this.ref.db.ready().then(() => this.get(optionsOrCallback, callback));
+            const promise = this.ref.db.ready().then(() => this.get(optionsOrCallback, callback));
+            return typeof optionsOrCallback !== 'function' && typeof callback !== 'function' ? promise : undefined; // only return promise if no callback is used
         }
-
-        callback = 
-            typeof optionsOrCallback === 'function' 
-            ? optionsOrCallback 
-            : typeof callback === 'function'
-                ? callback
-                : undefined;
-
-        const options = 
-            typeof optionsOrCallback === 'object' 
-            ? optionsOrCallback 
+        callback =
+            typeof optionsOrCallback === 'function'
+                ? optionsOrCallback
+                : typeof callback === 'function'
+                    ? callback
+                    : undefined;
+        const options = typeof optionsOrCallback === 'object'
+            ? optionsOrCallback
             : new QueryDataRetrievalOptions({ snapshots: true, allow_cache: true });
-
         if (typeof options.snapshots === 'undefined') {
             options.snapshots = true;
         }
@@ -2019,133 +1891,141 @@ class DataReferenceQuery {
             options.allow_cache = true;
         }
         options.eventHandler = ev => {
-            if (!this._events || !this._events[ev.name]) { return false; }
-            const listeners = this._events[ev.name];
-            if (typeof listeners !== 'object' || listeners.length === 0) { return false; }
-            if (['add','change','remove'].includes(ev.name)) {
+            if (!this[_private].events[ev.name]) {
+                return false;
+            }
+            const listeners = this[_private].events[ev.name];
+            if (typeof listeners !== 'object' || listeners.length === 0) {
+                return false;
+            }
+            if (['add', 'change', 'remove'].includes(ev.name)) {
                 const ref = new DataReference(this.ref.db, ev.path);
                 const eventData = { name: ev.name };
                 if (options.snapshots && ev.name !== 'remove') {
                     const val = db.types.deserialize(ev.path, ev.value);
-                    eventData.snapshot = new DataSnapshot(ref, val, false);
+                    eventData.snapshot = new data_snapshot_1.DataSnapshot(ref, val, false);
                 }
                 else {
                     eventData.ref = ref;
                 }
                 ev = eventData;
             }
-            listeners.forEach(callback => { try { callback(ev); } catch(e) {} });
+            listeners.forEach(callback => { try {
+                callback(ev);
+            }
+            catch (e) { } });
         };
         // Check if there are event listeners set for realtime changes
         options.monitor = { add: false, change: false, remove: false };
-        if (this._events) {
-            if (this._events['add'] && this._events['add'].length > 0) {
+        if (this[_private].events) {
+            if (this[_private].events['add'] && this[_private].events['add'].length > 0) {
                 options.monitor.add = true;
             }
-            if (this._events['change'] && this._events['change'].length > 0) {
+            if (this[_private].events['change'] && this[_private].events['change'].length > 0) {
                 options.monitor.change = true;
             }
-            if (this._events['remove'] && this._events['remove'].length > 0) {
+            if (this[_private].events['remove'] && this[_private].events['remove'].length > 0) {
                 options.monitor.remove = true;
             }
         }
         const db = this.ref.db;
         return db.api.query(this.ref.path, this[_private], options)
-        .catch(err => {
+            .catch(err => {
             throw new Error(err);
         })
-        .then(results => {
-            results.forEach((result, index) => {
-                if (options.snapshots) {
-                    const val = db.types.deserialize(result.path, result.val);
-                    results[index] = new DataSnapshot(db.ref(result.path), val);
-                }
-                else {
-                    results[index] = db.ref(result);
-                }
-            });
+            .then(results => {
             if (options.snapshots) {
-                return DataSnapshotsArray.from(results);
+                const snaps = results.map(result => {
+                    const val = db.types.deserialize(result.path, result.val);
+                    return new data_snapshot_1.DataSnapshot(db.ref(result.path), val);
+                });
+                return DataSnapshotsArray.from(snaps);
             }
             else {
-                return DataReferencesArray.from(results);
+                const refs = results.map(path => db.ref(path));
+                return DataReferencesArray.from(refs);
             }
         })
-        .then(results => {
+            .then(results => {
             callback && callback(results);
             return results;
         });
     }
-
     /**
      * Executes the query and returns references. Short for .get({ snapshots: false })
-     * @param {(references:DataReferencesArray) => void} [callback] callback to use instead of returning a promise
-     * @returns {Promise<DataReferencesArray>|void} returns an Promise that resolves with an array of DataReferences, or void when using a callback
+     * @param callback callback to use instead of returning a promise
+     * @returns returns an Promise that resolves with an array of DataReferences, or void when using a callback
      */
-    getRefs(callback = undefined) {
+    getRefs(callback) {
         return this.get({ snapshots: false }, callback);
     }
-
     /**
      * Executes the query, removes all matches from the database
-     * @returns {Promise<void>|void} | returns an Promise that resolves once all matches have been removed, or void if a callback is used
+     * @returns returns an Promise that resolves once all matches have been removed, or void if a callback is used
      */
     remove(callback) {
-        return this.get({ snapshots: false })
-        .then(refs => {
-            const promises = [];
-            return Promise.all(refs.map(ref => ref.remove()))
-            .then(() => {
-                callback && callback();
+        const promise = this.get({ snapshots: false })
+            .then((refs) => {
+            return Promise.all(refs.map(ref => ref.remove()
+                .then(() => {
+                return { success: true, ref };
+            })
+                .catch(err => {
+                return { success: false, error: err, ref };
+            })))
+                .then(results => {
+                callback && callback(results);
+                return results;
             });
         });
+        if (!callback) {
+            return promise;
+        }
     }
-
     /**
      * Subscribes to an event. Supported events are:
      *  "stats": receive information about query performance.
      *  "hints": receive query or index optimization hints
      *  "add", "change", "remove": receive real-time query result changes
-     * @param {string} event - Name of the event to subscribe to
-     * @param {(event: object) => void} callback - Callback function
-     * @returns {DataReferenceQuery} returns reference to this query
+     * @param event Name of the event to subscribe to
+     * @param callback Callback function
+     * @returns returns reference to this query
      */
     on(event, callback) {
-        if (!this._events) { this._events = {}; };
-        if (!this._events[event]) { this._events[event] = []; }
-        this._events[event].push(callback);
+        if (!this[_private].events[event]) {
+            this[_private].events[event] = [];
+        }
+        this[_private].events[event].push(callback);
         return this;
     }
-
     /**
      * Unsubscribes from a previously added event(s)
-     * @param {string} [event] Name of the event
-     * @param {Function} [callback] callback function to remove
-     * @returns {DataReferenceQuery} returns reference to this query
+     * @param event Name of the event
+     * @param callback callback function to remove
+     * @returns returns reference to this query
      */
     off(event, callback) {
-        if (!this._events) { return this; }
         if (typeof event === 'undefined') {
-            this._events = {};
+            this[_private].events = {};
             return this;
         }
-        if (!this._events[event]) { return this; }
+        if (!this[_private].events[event]) {
+            return this;
+        }
         if (typeof callback === 'undefined') {
-            delete this._events[event];
+            delete this[_private].events[event];
             return this;
         }
-        const index = !this._events[event].indexOf(callback);
-        if (!~index) { return this; }
-        this._events[event].splice(index, 1);
+        const index = this[_private].events[event].indexOf(callback);
+        if (!~index) {
+            return this;
+        }
+        this[_private].events[event].splice(index, 1);
         return this;
     }
 }
-
+exports.DataReferenceQuery = DataReferenceQuery;
 class DataSnapshotsArray extends Array {
-    /**
-     * 
-     * @param {DataSnapshot[]} snaps 
-     */
     static from(snaps) {
         const arr = new DataSnapshotsArray(snaps.length);
         snaps.forEach((snap, i) => arr[i] = snap);
@@ -2155,12 +2035,8 @@ class DataSnapshotsArray extends Array {
         return this.map(snap => snap.val());
     }
 }
-
-class DataReferencesArray extends Array { 
-    /**
-     * 
-     * @param {DataReference[]} refs 
-     */
+exports.DataSnapshotsArray = DataSnapshotsArray;
+class DataReferencesArray extends Array {
     static from(refs) {
         const arr = new DataReferencesArray(refs.length);
         refs.forEach((ref, i) => arr[i] = ref);
@@ -2170,14 +2046,9 @@ class DataReferencesArray extends Array {
         return this.map(ref => ref.path);
     }
 }
+exports.DataReferencesArray = DataReferencesArray;
 
-module.exports = { 
-    DataReference, 
-    DataReferenceQuery,
-    DataRetrievalOptions,
-    QueryDataRetrievalOptions
-};
-},{"./data-proxy":7,"./data-snapshot":9,"./debug":10,"./id":11,"./optional-observable":13,"./path-info":14,"./path-reference":15,"./subscription":19}],9:[function(require,module,exports){
+},{"./data-proxy":7,"./data-snapshot":9,"./id":11,"./optional-observable":13,"./path-info":14,"./subscription":20}],9:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MutationsDataSnapshot = exports.DataSnapshot = void 0;
@@ -2321,7 +2192,10 @@ class MutationsDataSnapshot extends DataSnapshot {
 exports.MutationsDataSnapshot = MutationsDataSnapshot;
 
 },{"./path-info":14}],10:[function(require,module,exports){
-(function (process){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DebugLogger = void 0;
+const process_1 = require("./process");
 class DebugLogger {
     constructor(level = "log", prefix = '') {
         this.prefix = prefix;
@@ -2330,14 +2204,13 @@ class DebugLogger {
     setLevel(level) {
         const prefix = this.prefix ? this.prefix + ' %s' : '';
         this.level = level;
-        this.verbose = ["verbose"].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : () => {};
-        this.log = ["verbose", "log"].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : () => {};
-        this.warn = ["verbose", "log", "warn"].includes(level) ? prefix ? console.warn.bind(console, prefix) : console.warn.bind(console) : () => {};
-        this.error = ["verbose", "log", "warn", "error"].includes(level) ? prefix ? console.error.bind(console, prefix) : console.error.bind(console) : () => {};
+        this.verbose = ["verbose"].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : () => { };
+        this.log = ["verbose", "log"].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : () => { };
+        this.warn = ["verbose", "log", "warn"].includes(level) ? prefix ? console.warn.bind(console, prefix) : console.warn.bind(console) : () => { };
+        this.error = ["verbose", "log", "warn", "error"].includes(level) ? prefix ? console.error.bind(console, prefix) : console.error.bind(console) : () => { };
         this.write = (text) => {
-            const isRunKit = typeof process !== 'undefined' && process.env && typeof process.env.RUNKIT_ENDPOINT_PATH === 'string';
-            if (text && isRunKit) { 
-                text = text.replace(/^/gm, '>'); // Fixes runkit crash with leading spaces
+            const isRunKit = typeof process_1.default !== 'undefined' && process_1.default.env && typeof process_1.default.env.RUNKIT_ENDPOINT_PATH === 'string';
+            if (text && isRunKit) {
                 text.split('\n').forEach(line => console.log(line)); // Logs each line separately
             }
             else {
@@ -2346,62 +2219,75 @@ class DebugLogger {
         };
     }
 }
+exports.DebugLogger = DebugLogger;
 
-module.exports = DebugLogger;
-}).call(this,require('_process'))
-},{"_process":34}],11:[function(require,module,exports){
-const cuid = require('cuid');
+},{"./process":16}],11:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ID = void 0;
+const cuid_1 = require("./cuid");
 // const uuid62 = require('uuid62');
-
+let timeBias = 0;
 class ID {
+    static set timeBias(bias) {
+        if (typeof bias !== 'number') {
+            return;
+        }
+        timeBias = bias;
+    }
     static generate() {
         // Could also use https://www.npmjs.com/package/pushid for Firebase style 20 char id's
-        return cuid().slice(1); // Cuts off the always leading 'c'
+        return cuid_1.default(timeBias).slice(1); // Cuts off the always leading 'c'
         // return uuid62.v1();
     }
 }
+exports.ID = ID;
 
-module.exports = { ID };
-},{"cuid":1}],12:[function(require,module,exports){
-const { AceBaseBase, AceBaseSettings } = require('./acebase-base');
-const { Api } = require('./api');
-const { DataReference, DataReferenceQuery, DataRetrievalOptions, QueryDataRetrievalOptions } = require('./data-reference');
-const { DataSnapshot } = require('./data-snapshot');
-const DebugLogger = require('./debug');
-const { ID } = require('./id');
-const { PathReference } = require('./path-reference');
-const { EventStream, EventPublisher, EventSubscription } = require('./subscription');
-const Transport = require('./transport');
-const { TypeMappings, TypeMappingOptions } = require('./type-mappings');
-const Utils = require('./utils');
-const { PathInfo } = require('./path-info');
-const ascii85 = require('./ascii85');
-const { SimpleCache } = require('./simple-cache');
-const { proxyAccess } = require('./data-proxy');
-const { SimpleEventEmitter } = require('./simple-event-emitter');
-const { ColorStyle, Colorize } = require('./simple-colors');
+},{"./cuid":5}],12:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var acebase_base_1 = require("./acebase-base");
+Object.defineProperty(exports, "AceBaseBase", { enumerable: true, get: function () { return acebase_base_1.AceBaseBase; } });
+Object.defineProperty(exports, "AceBaseBaseSettings", { enumerable: true, get: function () { return acebase_base_1.AceBaseBaseSettings; } });
+var api_1 = require("./api");
+Object.defineProperty(exports, "Api", { enumerable: true, get: function () { return api_1.Api; } });
+var data_reference_1 = require("./data-reference");
+Object.defineProperty(exports, "DataReference", { enumerable: true, get: function () { return data_reference_1.DataReference; } });
+Object.defineProperty(exports, "DataReferenceQuery", { enumerable: true, get: function () { return data_reference_1.DataReferenceQuery; } });
+Object.defineProperty(exports, "DataRetrievalOptions", { enumerable: true, get: function () { return data_reference_1.DataRetrievalOptions; } });
+Object.defineProperty(exports, "QueryDataRetrievalOptions", { enumerable: true, get: function () { return data_reference_1.QueryDataRetrievalOptions; } });
+var data_snapshot_1 = require("./data-snapshot");
+Object.defineProperty(exports, "DataSnapshot", { enumerable: true, get: function () { return data_snapshot_1.DataSnapshot; } });
+var debug_1 = require("./debug");
+Object.defineProperty(exports, "DebugLogger", { enumerable: true, get: function () { return debug_1.DebugLogger; } });
+var id_1 = require("./id");
+Object.defineProperty(exports, "ID", { enumerable: true, get: function () { return id_1.ID; } });
+var path_reference_1 = require("./path-reference");
+Object.defineProperty(exports, "PathReference", { enumerable: true, get: function () { return path_reference_1.PathReference; } });
+var subscription_1 = require("./subscription");
+Object.defineProperty(exports, "EventStream", { enumerable: true, get: function () { return subscription_1.EventStream; } });
+Object.defineProperty(exports, "EventPublisher", { enumerable: true, get: function () { return subscription_1.EventPublisher; } });
+Object.defineProperty(exports, "EventSubscription", { enumerable: true, get: function () { return subscription_1.EventSubscription; } });
+var transport_1 = require("./transport");
+Object.defineProperty(exports, "Transport", { enumerable: true, get: function () { return transport_1.Transport; } });
+var type_mappings_1 = require("./type-mappings");
+Object.defineProperty(exports, "TypeMappings", { enumerable: true, get: function () { return type_mappings_1.TypeMappings; } });
+exports.Utils = require("./utils");
+var path_info_1 = require("./path-info");
+Object.defineProperty(exports, "PathInfo", { enumerable: true, get: function () { return path_info_1.PathInfo; } });
+var ascii85_1 = require("./ascii85");
+Object.defineProperty(exports, "ascii85", { enumerable: true, get: function () { return ascii85_1.ascii85; } });
+var simple_cache_1 = require("./simple-cache");
+Object.defineProperty(exports, "SimpleCache", { enumerable: true, get: function () { return simple_cache_1.SimpleCache; } });
+var data_proxy_1 = require("./data-proxy");
+Object.defineProperty(exports, "proxyAccess", { enumerable: true, get: function () { return data_proxy_1.proxyAccess; } });
+var simple_event_emitter_1 = require("./simple-event-emitter");
+Object.defineProperty(exports, "SimpleEventEmitter", { enumerable: true, get: function () { return simple_event_emitter_1.SimpleEventEmitter; } });
+var simple_colors_1 = require("./simple-colors");
+Object.defineProperty(exports, "ColorStyle", { enumerable: true, get: function () { return simple_colors_1.ColorStyle; } });
+Object.defineProperty(exports, "Colorize", { enumerable: true, get: function () { return simple_colors_1.Colorize; } });
 
-module.exports = {
-    AceBaseBase, AceBaseSettings,
-    Api,
-    DataReference, DataReferenceQuery, DataRetrievalOptions, QueryDataRetrievalOptions,
-    DataSnapshot,
-    DebugLogger,
-    ID,
-    PathReference,
-    EventStream, EventPublisher, EventSubscription,
-    Transport,
-    TypeMappings, TypeMappingOptions,
-    Utils,
-    PathInfo,
-    ascii85,
-    SimpleCache,
-    proxyAccess,
-    SimpleEventEmitter,
-    ColorStyle,
-    Colorize
-};
-},{"./acebase-base":4,"./api":5,"./ascii85":6,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./path-info":14,"./path-reference":15,"./simple-cache":16,"./simple-colors":17,"./simple-event-emitter":18,"./subscription":19,"./transport":20,"./type-mappings":21,"./utils":22}],13:[function(require,module,exports){
+},{"./acebase-base":1,"./api":2,"./ascii85":3,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./path-info":14,"./path-reference":15,"./simple-cache":17,"./simple-colors":18,"./simple-event-emitter":19,"./subscription":20,"./transport":21,"./type-mappings":22,"./utils":23}],13:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.setObservable = exports.getObservable = void 0;
@@ -2432,58 +2318,48 @@ function setObservable(Observable) {
 }
 exports.setObservable = setObservable;
 
-},{"rxjs":33}],14:[function(require,module,exports){
-/**
- * 
- * @param {string} path 
- * @returns {Array<string|number>}
- */
+},{"rxjs":35}],14:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PathInfo = exports.getChildPath = exports.getPathInfo = exports.getPathKeys = void 0;
 function getPathKeys(path) {
-    path = path.replace(/^\//, ""); // Remove leading slash
-    if (path.length === 0) { return []; }
-    let keys = path.replace(/\[/g, "/[").split("/");
-    keys.forEach((key, index) => {
-        if (key.startsWith("[")) { 
-            keys[index] = parseInt(key.substr(1, key.length - 2)); 
-        }
-    });
-    return keys;
-}
-
-function getPathInfo(path) {
-    path = path.replace(/^\//, ""); // Remove leading slash
+    path = path.replace(/^\//, ''); // Remove leading slash
     if (path.length === 0) {
-        return { parent: null, key: "" };
+        return [];
     }
-    const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("["));
-    const parentPath = i < 0 ? "" : path.substr(0, i);
+    let keys = path.replace(/\[/g, '/[').split('/');
+    return keys.map(key => {
+        return key.startsWith('[') ? parseInt(key.substr(1, key.length - 2)) : key;
+    });
+}
+exports.getPathKeys = getPathKeys;
+function getPathInfo(path) {
+    path = path.replace(/^\//, ''); // Remove leading slash
+    if (path.length === 0) {
+        return { parent: null, key: '' };
+    }
+    const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('['));
+    let parentPath = i < 0 ? '' : path.substr(0, i);
     let key = i < 0 ? path : path.substr(i);
-    if (key.startsWith("[")) { 
-        key = parseInt(key.substr(1, key.length - 2)); 
+    if (key.startsWith('[')) {
+        key = parseInt(key.substr(1, key.length - 2));
     }
-    else if (key.startsWith("/")) {
+    else if (key.startsWith('/')) {
         key = key.substr(1); // Chop off leading slash
     }
     if (parentPath === path) {
         parentPath = null;
     }
-    return {
-        parent: parentPath,
-        key
-    };
+    return { parent: parentPath, key };
 }
-
-/**
- * 
- * @param {string} path 
- * @param {string|number} key 
- * @returns {string}
- */
+exports.getPathInfo = getPathInfo;
 function getChildPath(path, key) {
     path = path.replace(/^\//, ""); // Remove leading slash
     key = typeof key === "string" ? key.replace(/^\//, "") : key; // Remove leading slash
     if (path.length === 0) {
-        if (typeof key === "number") { throw new TypeError("Cannot add array index to root path!"); }
+        if (typeof key === "number") {
+            throw new TypeError("Cannot add array index to root path!");
+        }
         return key;
     }
     if (typeof key === "string" && key.length === 0) {
@@ -2494,53 +2370,32 @@ function getChildPath(path, key) {
     }
     return `${path}/${key}`;
 }
-
+exports.getChildPath = getChildPath;
 class PathInfo {
-    /** @returns {PathInfo} */
-    static get(path) {
-        return new PathInfo(path);
-    }
-
-    /** @returns {string} */
-    static getChildPath(path, childKey) {
-        return getChildPath(path, childKey);
-    }
-
-    /** @returns {Array<string|number>} */
-    static getPathKeys(path) {
-        return getPathKeys(path);
-    }
-
-    /**
-     * @param {string} path 
-     */
     constructor(path) {
         this.path = path;
     }
-
-    /** @type {string|number} */
+    static get(path) {
+        return new PathInfo(path);
+    }
+    static getChildPath(path, childKey) {
+        return getChildPath(path, childKey);
+    }
+    static getPathKeys(path) {
+        return getPathKeys(path);
+    }
     get key() {
         return getPathInfo(this.path).key;
     }
-
-    /** @type {string} */
     get parentPath() {
         return getPathInfo(this.path).parent;
     }
-
-    /** 
-     * @param {string|number} childKey
-     * @returns {string} 
-     * */
     childPath(childKey) {
         return getChildPath(`${this.path}`, childKey);
     }
-
-    /** @returns {Array<string|number>} */
     get pathKeys() {
         return getPathKeys(this.path);
     }
-
     /**
      * If varPath contains variables or wildcards, it will return them with the values found in fullPath
      * @param {string} varPath path containing variables such as * and $name
@@ -2553,14 +2408,14 @@ class PathInfo {
      *  uid: 'ewout', // or $uid
      *  postid: 'post1' // or $postid
      * };
-     * 
+     *
      * PathInfo.extractVariables('users/*\/posts/*\/$property', 'users/ewout/posts/post1/title') === {
      *  0: 'ewout',
      *  1: 'post1',
      *  2: 'title',
      *  property: 'title' // or $property
      * };
-     * 
+     *
      * PathInfo.extractVariables('users/$user/friends[*]/$friend', 'users/dora/friends[4]/diego') === {
      *  0: 'dora',
      *  1: 4,
@@ -2570,8 +2425,8 @@ class PathInfo {
      * };
     */
     static extractVariables(varPath, fullPath) {
-        if (!varPath.includes('*') && !varPath.includes('$')) { 
-            return []; 
+        if (!varPath.includes('*') && !varPath.includes('$')) {
+            return [];
         }
         // if (!this.equals(fullPath)) {
         //     throw new Error(`path does not match with the path of this PathInfo instance: info.equals(path) === false!`)
@@ -2600,18 +2455,14 @@ class PathInfo {
         });
         return variables;
     }
-
     /**
      * If varPath contains variables or wildcards, it will return a path with the variables replaced by the keys found in fullPath.
-     * @param {string} varPath 
-     * @param {string} fullPath 
-     * @returns {string}
      * @example
      * PathInfo.fillVariables('users/$uid/posts/$postid', 'users/ewout/posts/post1/title') === 'users/ewout/posts/post1'
      */
     static fillVariables(varPath, fullPath) {
-        if (varPath.indexOf('*') < 0 && varPath.indexOf('$') < 0) { 
-            return varPath; 
+        if (varPath.indexOf('*') < 0 && varPath.indexOf('$') < 0) {
+            return varPath;
         }
         const keys = getPathKeys(varPath);
         const pathKeys = getPathKeys(fullPath);
@@ -2623,26 +2474,27 @@ class PathInfo {
                 return pathKeys[index];
             }
             else {
-                throw new Error(`Path "${fullPath}" cannot be used to fill variables of path "${this.path}" because they do not match`);
+                throw new Error(`Path "${fullPath}" cannot be used to fill variables of path "${varPath}" because they do not match`);
             }
         });
         let mergedPath = '';
         merged.forEach(key => {
-            if (typeof key === 'number') { 
-                mergedPath += `[${key}]`; 
+            if (typeof key === 'number') {
+                mergedPath += `[${key}]`;
             }
-            else { 
-                if (mergedPath.length > 0) { mergedPath += '/'; }
+            else {
+                if (mergedPath.length > 0) {
+                    mergedPath += '/';
+                }
                 mergedPath += key;
             }
         });
         return mergedPath;
     }
-
     /**
      * Replaces all variables in a path with the values in the vars argument
-     * @param {string} varPath path containing variables
-     * @param {object} vars variables object such as one gotten from PathInfo.extractVariables
+     * @param varPath path containing variables
+     * @param vars variables object such as one gotten from PathInfo.extractVariables
      */
     static fillVariables2(varPath, vars) {
         if (typeof vars !== 'object' || Object.keys(vars).length === 0) {
@@ -2650,12 +2502,12 @@ class PathInfo {
         }
         let pathKeys = getPathKeys(varPath);
         let n = 0;
-        const targetPath = pathKeys.reduce((path, key) => { 
-            if (key === '*' || key.startsWith('$')) {
-                key = vars[n++];
-            }
+        const targetPath = pathKeys.reduce((path, key) => {
             if (typeof key === 'number') {
                 return `${path}[${key}]`;
+            }
+            else if (key === '*' || key.startsWith('$')) {
+                return `${path}/${vars[n++]}`;
             }
             else {
                 return `${path}/${key}`;
@@ -2663,117 +2515,142 @@ class PathInfo {
         }, '');
         return targetPath;
     }
-
     /**
      * Checks if a given path matches this path, eg "posts/*\/title" matches "posts/12344/title" and "users/123/name" matches "users/$uid/name"
-     * @param {string} otherPath 
-     * @returns {boolean}
      */
     equals(otherPath) {
-        if (this.path === otherPath) { return true; } // they are identical
+        if (this.path === otherPath) {
+            return true;
+        } // they are identical
         const keys = this.pathKeys;
         const otherKeys = getPathKeys(otherPath);
-        if (keys.length !== otherKeys.length) { return false; }
+        if (keys.length !== otherKeys.length) {
+            return false;
+        }
         return keys.every((key, index) => {
             const otherKey = otherKeys[index];
-            return otherKey === key 
+            return otherKey === key
                 || (typeof otherKey === 'string' && (otherKey === "*" || otherKey[0] === '$'))
-                || (typeof key === 'string' && (key === "*" ||  key[0] === '$'));
+                || (typeof key === 'string' && (key === "*" || key[0] === '$'));
         });
     }
-
     /**
      * Checks if a given path is an ancestor, eg "posts" is an ancestor of "posts/12344/title"
-     * @param {string} otherPath 
-     * @returns {boolean}
      */
     isAncestorOf(descendantPath) {
-        if (descendantPath === '' || this.path === descendantPath) { return false; }
-        if (this.path === '') { return true; }
+        if (descendantPath === '' || this.path === descendantPath) {
+            return false;
+        }
+        if (this.path === '') {
+            return true;
+        }
         const ancestorKeys = this.pathKeys;
         const descendantKeys = getPathKeys(descendantPath);
-        if (ancestorKeys.length >= descendantKeys.length) { return false; }
+        if (ancestorKeys.length >= descendantKeys.length) {
+            return false;
+        }
         return ancestorKeys.every((key, index) => {
             const otherKey = descendantKeys[index];
-            return otherKey === key 
+            return otherKey === key
                 || (typeof otherKey === 'string' && (otherKey === "*" || otherKey[0] === '$'))
-                || (typeof key === 'string' && (key === "*" ||  key[0] === '$'));
+                || (typeof key === 'string' && (key === "*" || key[0] === '$'));
         });
     }
-
     /**
      * Checks if a given path is a descendant, eg "posts/1234/title" is a descendant of "posts"
-     * @param {string} otherPath 
-     * @returns {boolean}
      */
     isDescendantOf(ancestorPath) {
-        if (this.path === '' || this.path === ancestorPath) { return false; }
-        if (ancestorPath === '') { return true; }
+        if (this.path === '' || this.path === ancestorPath) {
+            return false;
+        }
+        if (ancestorPath === '') {
+            return true;
+        }
         const ancestorKeys = getPathKeys(ancestorPath);
         const descendantKeys = this.pathKeys;
-        if (ancestorKeys.length >= descendantKeys.length) { return false; }
+        if (ancestorKeys.length >= descendantKeys.length) {
+            return false;
+        }
         return ancestorKeys.every((key, index) => {
             const otherKey = descendantKeys[index];
-            return otherKey === key 
+            return otherKey === key
                 || (typeof otherKey === 'string' && (otherKey === "*" || otherKey[0] === '$'))
-                || (typeof key === 'string' && (key === "*" ||  key[0] === '$'));
+                || (typeof key === 'string' && (key === "*" || key[0] === '$'));
         });
     }
-
     /**
      * Checks if the other path is on the same trail as this path. Paths on the same trail if they share a
      * common ancestor. Eg: "posts" is on the trail of "posts/1234/title" and vice versa.
-     * @param {string} otherPath 
      */
     isOnTrailOf(otherPath) {
-        if (this.path.length === 0 || otherPath.length === 0) { return true; }
-        if (this.path === otherPath) { return true; }
+        if (this.path.length === 0 || otherPath.length === 0) {
+            return true;
+        }
+        if (this.path === otherPath) {
+            return true;
+        }
         const otherKeys = getPathKeys(otherPath);
         return this.pathKeys.every((key, index) => {
-            if (index >= otherKeys.length) { return true; }
+            if (index >= otherKeys.length) {
+                return true;
+            }
             const otherKey = otherKeys[index];
-            return otherKey === key 
+            return otherKey === key
                 || (typeof otherKey === 'string' && (otherKey === "*" || otherKey[0] === '$'))
-                || (typeof key === 'string' && (key === "*" ||  key[0] === '$'));
+                || (typeof key === 'string' && (key === "*" || key[0] === '$'));
         });
     }
-
     /**
      * Checks if a given path is a direct child, eg "posts/1234/title" is a child of "posts/1234"
-     * @param {string} otherPath 
-     * @returns {boolean}
      */
     isChildOf(otherPath) {
-        if (this.path === '') { return false; } // If our path is the root, it's nobody's child...
+        if (this.path === '') {
+            return false;
+        } // If our path is the root, it's nobody's child...
         const parentInfo = PathInfo.get(this.parentPath);
         return parentInfo.equals(otherPath);
     }
-
     /**
      * Checks if a given path is its parent, eg "posts/1234" is the parent of "posts/1234/title"
-     * @param {string} otherPath 
-     * @returns {boolean}
      */
     isParentOf(otherPath) {
-        if (otherPath === '') { return false; } // If the other path is the root, this path cannot be its parent...
+        if (otherPath === '') {
+            return false;
+        } // If the other path is the root, this path cannot be its parent...
         const parentInfo = PathInfo.get(PathInfo.get(otherPath).parentPath);
         return parentInfo.equals(this.path);
     }
 }
+exports.PathInfo = PathInfo;
 
-module.exports = { getPathInfo, getChildPath, getPathKeys, PathInfo };
 },{}],15:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PathReference = void 0;
 class PathReference {
     /**
      * Creates a reference to a path that can be stored in the database. Use this to create cross-references to other data in your database
-     * @param {string} path
+     * @param path
      */
     constructor(path) {
         this.path = path;
     }
 }
-module.exports = { PathReference };
+exports.PathReference = PathReference;
+
 },{}],16:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = {
+    nextTick(fn) {
+        setTimeout(fn, 0);
+    }
+};
+
+},{}],17:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SimpleCache = void 0;
 class SimpleCache {
     constructor(expirySeconds) {
         this.expirySeconds = expirySeconds;
@@ -2781,11 +2658,13 @@ class SimpleCache {
         setInterval(() => { this.cleanUp(); }, 60 * 1000); // Cleanup every minute
     }
     set(key, value) {
-        this.cache.set(key, { value, expires: Date.now() + (this.expirySeconds * 1000) })
+        this.cache.set(key, { value, expires: Date.now() + (this.expirySeconds * 1000) });
     }
     get(key) {
         const entry = this.cache.get(key);
-        if (!entry || entry.expires <= Date.now()) { return null; }
+        if (!entry || entry.expires <= Date.now()) {
+            return null;
+        }
         return entry.value;
     }
     remove(key) {
@@ -2794,17 +2673,19 @@ class SimpleCache {
     cleanUp() {
         const now = Date.now();
         this.cache.forEach((entry, key) => {
-            if (entry.expires <= now) { this.cache.delete(key); }
+            if (entry.expires <= now) {
+                this.cache.delete(key);
+            }
         });
     }
 }
+exports.SimpleCache = SimpleCache;
 
-module.exports = { SimpleCache };
-},{}],17:[function(require,module,exports){
-(function (process){
+},{}],18:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Colorize = exports.SetColorsEnabled = exports.ColorsSupported = exports.ColorStyle = void 0;
+const process_1 = require("./process");
 // See from https://en.wikipedia.org/wiki/ANSI_escape_code
 const FontCode = {
     bold: 1,
@@ -2882,13 +2763,13 @@ var ColorStyle;
 })(ColorStyle = exports.ColorStyle || (exports.ColorStyle = {}));
 function ColorsSupported() {
     // Checks for basic color support
-    if (typeof process === 'undefined' || !process.stdout || !process.env || !process.platform || process.platform === 'browser') {
+    if (typeof process_1.default === 'undefined' || !process_1.default.stdout || !process_1.default.env || !process_1.default.platform || process_1.default.platform === 'browser') {
         return false;
     }
-    if (process.platform === 'win32') {
+    if (process_1.default.platform === 'win32') {
         return true;
     }
-    const env = process.env;
+    const env = process_1.default.env;
     if (env.COLORTERM) {
         return true;
     }
@@ -2909,7 +2790,7 @@ function ColorsSupported() {
 exports.ColorsSupported = ColorsSupported;
 let _enabled = ColorsSupported();
 function SetColorsEnabled(enabled) {
-    _enabled = enabled;
+    _enabled = ColorsSupported() && enabled;
 }
 exports.SetColorsEnabled = SetColorsEnabled;
 function Colorize(str, style) {
@@ -2952,8 +2833,7 @@ String.prototype.colorize = function (style) {
     return Colorize(this, style);
 };
 
-}).call(this,require('_process'))
-},{"_process":34}],18:[function(require,module,exports){
+},{"./process":16}],19:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleEventEmitter = void 0;
@@ -3038,29 +2918,29 @@ class SimpleEventEmitter {
 }
 exports.SimpleEventEmitter = SimpleEventEmitter;
 
-},{}],19:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.EventStream = exports.EventPublisher = exports.EventSubscription = void 0;
 class EventSubscription {
     /**
-     * 
-     * @param {() => void} stop function that stops the subscription from receiving future events
-     * @param {(callback?: () => void) => Promise<void>} activated function that runs optional callback when subscription is activated, and returns a promise that resolves once activated
+     *
+     * @param stop function that stops the subscription from receiving future events
+     * @param {} activated function that runs optional callback when subscription is activated, and returns a promise that resolves once activated
      */
     constructor(stop) {
         this.stop = stop;
-        this._internal = { 
+        this._internal = {
             state: 'init',
-            cancelReason: undefined,
-            /** @type {{ callback?: (activated: boolean, cancelReason?: string) => void, resolve?: () => void, reject?: (reason: any) => void}[]} */
             activatePromises: []
         };
     }
-
     /**
      * Notifies when subscription is activated or canceled
-     * @param {callback?: (activated: boolean, cancelReason?: string) => void} [callback] optional callback when subscription is activated or canceled
-     * @returns {Promise<void>} returns a promise that resolves once activated, or rejects when it is denied (and no callback was supplied)
+     * @param callback optional callback when subscription is activated or canceled
+     * @returns returns a promise that resolves once activated, or rejects when it is denied (and no callback was supplied)
      */
-    activated(callback = undefined) {
+    activated(callback) {
         if (callback) {
             this._internal.activatePromises.push({ callback });
             if (this._internal.state === 'active') {
@@ -3073,43 +2953,42 @@ class EventSubscription {
         // Changed behaviour: now also returns a Promise when the callback is used.
         // This allows for 1 activated call to both handle: first activation result, 
         // and any future events using the callback
-        return new Promise((resolve, reject) => { 
-            if (this._internal.state === 'active') { 
-                return resolve(); 
+        return new Promise((resolve, reject) => {
+            if (this._internal.state === 'active') {
+                return resolve();
             }
-            else if (this._internal.state === 'canceled' && !callback) { 
-                return reject(new Error(this._internal.cancelReason)); 
+            else if (this._internal.state === 'canceled' && !callback) {
+                return reject(new Error(this._internal.cancelReason));
             }
-            this._internal.activatePromises.push({ 
-                resolve, 
-                reject: callback ? () => {} : reject // Don't reject when callback is used: let callback handle this (prevents UnhandledPromiseRejection if only callback is used)
+            this._internal.activatePromises.push({
+                resolve,
+                reject: callback ? () => { } : reject // Don't reject when callback is used: let callback handle this (prevents UnhandledPromiseRejection if only callback is used)
             });
         });
     }
-
     _setActivationState(activated, cancelReason) {
         this._internal.cancelReason = cancelReason;
         this._internal.state = activated ? 'active' : 'canceled';
         while (this._internal.activatePromises.length > 0) {
             const p = this._internal.activatePromises.shift();
-            if (activated) { 
-                p.callback && p.callback(true); 
+            if (activated) {
+                p.callback && p.callback(true);
                 p.resolve && p.resolve();
             }
-            else { 
+            else {
                 p.callback && p.callback(false, cancelReason);
-                p.reject && p.reject(cancelReason); 
+                p.reject && p.reject(cancelReason);
             }
         }
     }
 }
-
+exports.EventSubscription = EventSubscription;
 class EventPublisher {
     /**
-     * 
-     * @param {(val: any) => boolean} publish function that publishes a new value to subscribers, return if there are any active subscribers
-     * @param {() => void} start function that notifies subscribers their subscription is activated
-     * @param {(reason: string) => void} cancel function that notifies subscribers their subscription has been canceled, removes all subscriptions
+     *
+     * @param publish function that publishes a new value to subscribers, return if there are any active subscribers
+     * @param start function that notifies subscribers their subscription is activated
+     * @param cancel function that notifies subscribers their subscription has been canceled, removes all subscriptions
      */
     constructor(publish, start, cancel) {
         this.publish = publish;
@@ -3117,25 +2996,17 @@ class EventPublisher {
         this.cancel = cancel;
     }
 }
-
+exports.EventPublisher = EventPublisher;
 class EventStream {
-
     /**
-     * 
-     * @param {(eventPublisher: EventPublisher) => void} eventPublisherCallback 
+     *
+     * @param eventPublisherCallback
      */
     constructor(eventPublisherCallback) {
         const subscribers = [];
         let noMoreSubscribersCallback;
         let activationState;
         const _stoppedState = 'stopped (no more subscribers)';
-
-        /**
-         * Subscribe to new value events in the stream
-         * @param {function} callback | function(val) to run once a new value is published
-         * @param {(activated: boolean, cancelReason?: string) => void} activationCallback callback that notifies activation or cancelation of the subscription by the publisher. 
-         * @returns {EventSubscription} returns a subscription to the requested event
-         */
         this.subscribe = (callback, activationCallback) => {
             if (typeof callback !== "function") {
                 throw new TypeError("callback must be a function");
@@ -3143,23 +3014,18 @@ class EventStream {
             else if (activationState === _stoppedState) {
                 throw new Error("stream can't be used anymore because all subscribers were stopped");
             }
-
             const sub = {
                 callback,
-                activationCallback: function(activated, cancelReason) {
+                activationCallback: function (activated, cancelReason) {
                     activationCallback && activationCallback(activated, cancelReason);
                     this.subscription._setActivationState(activated, cancelReason);
                 },
-                // stop() {
-                //     subscribers.splice(subscribers.indexOf(this), 1);
-                // },
                 subscription: new EventSubscription(function stop() {
                     subscribers.splice(subscribers.indexOf(this), 1);
                     return checkActiveSubscribers();
                 })
             };
             subscribers.push(sub);
-
             if (typeof activationState !== 'undefined') {
                 if (activationState === true) {
                     activationCallback && activationCallback(true);
@@ -3172,7 +3038,6 @@ class EventStream {
             }
             return sub.subscription;
         };
-
         const checkActiveSubscribers = () => {
             let ret;
             if (subscribers.length === 0) {
@@ -3181,13 +3046,8 @@ class EventStream {
             }
             return Promise.resolve(ret);
         };
-
-        /**
-         * Stops monitoring new value events
-         * @param {function} callback | (optional) specific callback to remove. Will remove all callbacks when omitted
-         */
-        this.unsubscribe = (callback = undefined) => {
-            const remove = callback 
+        this.unsubscribe = (callback) => {
+            const remove = callback
                 ? subscribers.filter(sub => sub.callback === callback)
                 : subscribers;
             remove.forEach(sub => {
@@ -3196,13 +3056,11 @@ class EventStream {
             });
             checkActiveSubscribers();
         };
-
         this.stop = () => {
             // Stop (remove) all subscriptions
             subscribers.splice(0);
             checkActiveSubscribers();
-        }
-
+        };
         /**
          * For publishing side: adds a value that will trigger callbacks to all subscribers
          * @param {any} val
@@ -3213,13 +3071,15 @@ class EventStream {
                 try {
                     sub.callback(val);
                 }
-                catch(err) {
+                catch (err) {
                     console.error(`Error running subscriber callback: ${err.message}`);
                 }
             });
+            if (subscribers.length === 0) {
+                checkActiveSubscribers();
+            }
             return subscribers.length > 0;
         };
-
         /**
          * For publishing side: let subscribers know their subscription is activated. Should be called only once
          */
@@ -3230,7 +3090,6 @@ class EventStream {
                 sub.activationCallback && sub.activationCallback(true);
             });
         };
-
         /**
          * For publishing side: let subscribers know their subscription has been canceled. Should be called only once
          */
@@ -3239,22 +3098,23 @@ class EventStream {
             subscribers.forEach(sub => {
                 sub.activationCallback && sub.activationCallback(false, reason || new Error('unknown reason'));
             });
-            subscribers.splice(); // Clear all
-        }
-
+            subscribers.splice(0); // Clear all
+        };
         const publisher = new EventPublisher(publish, start, cancel);
         eventPublisherCallback(publisher);
     }
 }
+exports.EventStream = EventStream;
 
-module.exports = { EventStream, EventPublisher, EventSubscription };
-},{}],20:[function(require,module,exports){
-const { PathReference } = require('./path-reference');
-//const { DataReference } = require('./data-reference');
-const { cloneObject } = require('./utils');
-const ascii85 = require('./ascii85');
-
-module.exports = {
+},{}],21:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Transport = void 0;
+const path_reference_1 = require("./path-reference");
+const utils_1 = require("./utils");
+const ascii85_1 = require("./ascii85");
+const path_info_1 = require("./path-info");
+exports.Transport = {
     deserialize(data) {
         if (data.map === null || typeof data.map === "undefined") {
             return data.val;
@@ -3266,15 +3126,15 @@ module.exports = {
             }
             else if (type === "binary") {
                 // ascii85 encoded binary data
-                return ascii85.decode(val);
+                return ascii85_1.ascii85.decode(val);
             }
             else if (type === "reference") {
-                return new PathReference(val);
+                return new path_reference_1.PathReference(val);
             }
             else if (type === "regexp") {
                 return new RegExp(val.pattern, val.flags);
             }
-            return val;          
+            return val;
         };
         if (typeof data.map === "string") {
             // Single value
@@ -3282,12 +3142,7 @@ module.exports = {
         }
         Object.keys(data.map).forEach(path => {
             const type = data.map[path];
-            const keys = path.replace(/\[/g, "/[").split("/");
-            keys.forEach((key, index) => {
-                if (key.startsWith("[")) { 
-                    keys[index] = parseInt(key.substr(1, key.length - 2)); 
-                }
-            });
+            const keys = path_info_1.PathInfo.getPathKeys(path);
             let parent = data;
             let key = "val";
             let val = data.val;
@@ -3298,13 +3153,11 @@ module.exports = {
             });
             parent[key] = deserializeValue(type, val);
         });
-
         return data.val;
     },
-
     serialize(obj) {
         // Recursively find dates and binary data
-        if (obj === null || typeof obj !== "object" || obj instanceof Date || obj instanceof ArrayBuffer || obj instanceof PathReference) {
+        if (obj === null || typeof obj !== "object" || obj instanceof Date || obj instanceof ArrayBuffer || obj instanceof path_reference_1.PathReference) {
             // Single value
             const ser = this.serialize({ value: obj });
             return {
@@ -3312,7 +3165,7 @@ module.exports = {
                 val: ser.val.value
             };
         }
-        obj = cloneObject(obj); // Make sure we don't alter the original object
+        obj = utils_1.cloneObject(obj); // Make sure we don't alter the original object
         const process = (obj, mappings, prefix) => {
             Object.keys(obj).forEach(key => {
                 const val = obj[key];
@@ -3324,10 +3177,10 @@ module.exports = {
                 }
                 else if (val instanceof ArrayBuffer) {
                     // Serialize binary data with ascii85
-                    obj[key] = ascii85.encode(val); //ascii85.encode(Buffer.from(val)).toString();
+                    obj[key] = ascii85_1.ascii85.encode(val); //ascii85.encode(Buffer.from(val)).toString();
                     mappings[path] = "binary";
                 }
-                else if (val instanceof PathReference) {
+                else if (val instanceof path_reference_1.PathReference) {
                     obj[key] = val.path;
                     mappings[path] = "reference";
                 }
@@ -3347,28 +3200,26 @@ module.exports = {
             map: mappings,
             val: obj
         };
-    }        
+    }
 };
-},{"./ascii85":6,"./path-reference":15,"./utils":22}],21:[function(require,module,exports){
-const { cloneObject } = require('./utils');
-const { PathInfo } = require('./path-info');
-const { AceBaseBase } = require('./acebase-base');
-const { DataReference } = require('./data-reference');
-const { DataSnapshot } = require('./data-snapshot');
 
+},{"./ascii85":3,"./path-info":14,"./path-reference":15,"./utils":23}],22:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TypeMappings = void 0;
+const utils_1 = require("./utils");
+const path_info_1 = require("./path-info");
+const data_reference_1 = require("./data-reference");
+const data_snapshot_1 = require("./data-snapshot");
 /**
  * (for internal use) - gets the mapping set for a specific path
- * @param {TypeMappings} mappings
- * @param {string} path 
  */
-const get = (mappings, path) => {
+function get(mappings, path) {
     // path points to the mapped (object container) location
     path = path.replace(/^\/|\/$/g, ''); // trim slashes
-    // const keys = path.length > 0 ? path.split("/") : [];
-    const keys = PathInfo.getPathKeys(path);
+    const keys = path_info_1.PathInfo.getPathKeys(path);
     const mappedPath = Object.keys(mappings).find(mpath => {
-        // const mkeys = mpath.length > 0 ? mpath.split("/") : [];
-        const mkeys = PathInfo.getPathKeys(mpath);
+        const mkeys = path_info_1.PathInfo.getPathKeys(mpath);
         if (mkeys.length !== keys.length) {
             return false; // Can't be a match
         }
@@ -3381,45 +3232,39 @@ const get = (mappings, path) => {
     });
     const mapping = mappings[mappedPath];
     return mapping;
-};
-
+}
+;
 /**
  * (for internal use) - gets the mapping set for a specific path's parent
- * @param {TypeMappings} mappings
- * @param {string} path 
  */
-const map = (mappings, path) => {
-   // path points to the object location, it's parent should have the mapping
-//    path = path.replace(/^\/|\/$/g, ""); // trim slashes
-//    const targetPath = path.substring(0, path.lastIndexOf("/"));
-    const targetPath = PathInfo.get(path).parentPath;
-    if (targetPath === null) { return; }
+function map(mappings, path) {
+    // path points to the object location, its parent should have the mapping
+    const targetPath = path_info_1.PathInfo.get(path).parentPath;
+    if (targetPath === null) {
+        return;
+    }
     return get(mappings, targetPath);
-};
-
+}
+;
 /**
  * (for internal use) - gets all mappings set for a specific path and all subnodes
- * @param {TypeMappings} mappings
- * @param {string} entryPath 
- * @returns {Array<object>} returns array of all matched mappings in path
+ * @returns returns array of all matched mappings in path
  */
-const mapDeep = (mappings, entryPath) => {
+function mapDeep(mappings, entryPath) {
     // returns mapping for this node, and all mappings for nested nodes
     // entryPath: "users/ewout"
     // mappingPath: "users"
     // mappingPath: "users/*/posts"
     entryPath = entryPath.replace(/^\/|\/$/g, ''); // trim slashes
-
     // Start with current path's parent node
-    const pathInfo = PathInfo.get(entryPath);
+    const pathInfo = path_info_1.PathInfo.get(entryPath);
     const startPath = pathInfo.parentPath;
-    const keys = startPath ? PathInfo.getPathKeys(startPath) : [];
-
+    const keys = startPath ? path_info_1.PathInfo.getPathKeys(startPath) : [];
     // Every path that starts with startPath, is a match
+    // TODO: refactor to return Object.keys(mappings),filter(...)
     const matches = Object.keys(mappings).reduce((m, mpath) => {
-
         //const mkeys = mpath.length > 0 ? mpath.split("/") : [];
-        const mkeys = PathInfo.getPathKeys(mpath);
+        const mkeys = path_info_1.PathInfo.getPathKeys(mpath);
         if (mkeys.length < keys.length) {
             return m; // Can't be a match
         }
@@ -3430,9 +3275,9 @@ const mapDeep = (mappings, entryPath) => {
         }
         else {
             mkeys.every((mkey, index) => {
-                if (index >= keys.length) { 
+                if (index >= keys.length) {
                     return false; // stop .every loop
-                } 
+                }
                 else if (mkey === '*' || mkey[0] === '$' || mkey === keys[index]) {
                     return true; // continue .every loop
                 }
@@ -3442,57 +3287,49 @@ const mapDeep = (mappings, entryPath) => {
                 }
             });
         }
-
-        if (isMatch) { 
+        if (isMatch) {
             const mapping = mappings[mpath];
-            m.push({ path: mpath, type: mapping }); 
+            m.push({ path: mpath, type: mapping });
         }
-
         return m;
     }, []);
     return matches;
-};
-
+}
+;
 /**
  * (for internal use) - serializes or deserializes an object using type mappings
- * @param {AceBaseBase} db
- * @param {TypeMappings} mappings
- * @param {string} path 
- * @param {any} obj
- * @param {string} action | "serialize" or "deserialize"
- * @returns {any} returns the (de)serialized value
+ * @returns returns the (de)serialized value
  */
-const process = (db, mappings, path, obj, action) => {
-    if (obj === null || typeof obj !== 'object') { 
-        return obj; 
+function process(db, mappings, path, obj, action) {
+    if (obj === null || typeof obj !== 'object') {
+        return obj;
     }
-    const keys = PathInfo.getPathKeys(path); // path.length > 0 ? path.split("/") : [];
+    const keys = path_info_1.PathInfo.getPathKeys(path); // path.length > 0 ? path.split("/") : [];
     const m = mapDeep(mappings, path);
     const changes = [];
-    m.sort((a,b) => PathInfo.getPathKeys(a.path).length > PathInfo.getPathKeys(b.path).length ? -1 : 1); // Deepest paths first
+    m.sort((a, b) => path_info_1.PathInfo.getPathKeys(a.path).length > path_info_1.PathInfo.getPathKeys(b.path).length ? -1 : 1); // Deepest paths first
     m.forEach(mapping => {
-        const mkeys = PathInfo.getPathKeys(mapping.path); //mapping.path.length > 0 ? mapping.path.split("/") : [];
+        const mkeys = path_info_1.PathInfo.getPathKeys(mapping.path); //mapping.path.length > 0 ? mapping.path.split("/") : [];
         mkeys.push('*');
         const mTrailKeys = mkeys.slice(keys.length);
         if (mTrailKeys.length === 0) {
-            const vars = PathInfo.extractVariables(mapping.path, path);
-            const ref = new DataReference(db, path, vars);
+            const vars = path_info_1.PathInfo.extractVariables(mapping.path, path);
+            const ref = new data_reference_1.DataReference(db, path, vars);
             if (action === 'serialize') {
                 // serialize this object
                 obj = mapping.type.serialize(obj, ref);
             }
             else if (action === 'deserialize') {
                 // deserialize this object
-                const snap = new DataSnapshot(ref, obj);
+                const snap = new data_snapshot_1.DataSnapshot(ref, obj);
                 obj = mapping.type.deserialize(snap);
             }
             return;
         }
-
         // Find all nested objects at this trail path
         const process = (parentPath, parent, keys) => {
-            if (obj === null || typeof obj !== 'object') { 
-                return obj; 
+            if (obj === null || typeof obj !== 'object') {
+                return obj;
             }
             const key = keys[0];
             let children = [];
@@ -3512,11 +3349,10 @@ const process = (db, mappings, path, obj, action) => {
                     children.push({ key, val: child });
                 }
             }
-            children.forEach(child => { 
-                const childPath = PathInfo.getChildPath(parentPath, child.key);
-                const vars = PathInfo.extractVariables(mapping.path, childPath);
-                const ref = new DataReference(db, childPath, vars);
-
+            children.forEach(child => {
+                const childPath = path_info_1.PathInfo.getChildPath(parentPath, child.key);
+                const vars = path_info_1.PathInfo.extractVariables(mapping.path, childPath);
+                const ref = new data_reference_1.DataReference(db, childPath, vars);
                 if (keys.length === 1) {
                     // TODO: this alters the existing object, we must build our own copy!
                     if (action === 'serialize') {
@@ -3526,13 +3362,13 @@ const process = (db, mappings, path, obj, action) => {
                     }
                     else if (action === 'deserialize') {
                         // deserialize this object
-                        const snap = new DataSnapshot(ref, child.val);
+                        const snap = new data_snapshot_1.DataSnapshot(ref, child.val);
                         parent[child.key] = mapping.type.deserialize(snap);
                     }
                 }
                 else {
                     // Dig deeper
-                    process(childPath, child.val, keys.slice(1)); 
+                    process(childPath, child.val, keys.slice(1));
                 }
             });
         };
@@ -3543,8 +3379,7 @@ const process = (db, mappings, path, obj, action) => {
         // will become plain objects without functions, and we can restore
         // the original object's values if any mappings were processed.
         // This will also prevent circular references
-        obj = cloneObject(obj);
-
+        obj = utils_1.cloneObject(obj);
         if (changes.length > 0) {
             // Restore the changes made to the original object
             changes.forEach(change => {
@@ -3553,47 +3388,32 @@ const process = (db, mappings, path, obj, action) => {
         }
     }
     return obj;
-};
-
-class TypeMappingOptions {
-    constructor(options) {
-        if (!options) { 
-            options = {}; 
-        }
-        /** @type {string | ((ref: DataReference, typedObj: any) => any)} */
-        this.serializer = options.serializer;
-        /** @type {string | ((snap: DataSnapshot) => any)} */
-        this.creator = options.creator;
-    }
 }
-
+;
 const _mappings = Symbol("mappings");
 class TypeMappings {
     /**
-     * 
-     * @param {AceBaseBase} db 
+     *
+     * @param {AceBaseBase} db
      */
     constructor(db) {
-        //this._mappings = {};
         this.db = db;
         this[_mappings] = {};
     }
-
     get mappings() { return this[_mappings]; }
     map(path) {
         return map(this[_mappings], path);
     }
-
     /**
-     * Maps objects that are stored in a specific path to a class, so they can automatically be 
+     * Maps objects that are stored in a specific path to a class, so they can automatically be
      * serialized when stored to, and deserialized (instantiated) when loaded from the database.
-     * @param {string} path path to an object container, eg "users" or "users/*\/posts"
-     * @param {(obj: any) => object} type class to bind all child objects of path to
-     * @param {TypeMappingOptions} [options] (optional) You can specify the functions to use to 
-     * serialize and/or instantiate your class. If you do not specificy a creator (constructor) method, 
+     * @param path path to an object container, eg "users" or "users/*\/posts"
+     * @param type class to bind all child objects of path to
+     * @param options (optional) You can specify the functions to use to
+     * serialize and/or instantiate your class. If you do not specificy a creator (constructor) method,
      * AceBase will call YourClass.create(obj, ref) method if it exists, or execute: new YourClass(obj, ref).
      * If you do not specifiy a serializer method, AceBase will call YourClass.prototype.serialize(ref) if it
-     * exists, or tries storing your object's fields unaltered. NOTE: 'this' in your creator function will point 
+     * exists, or tries storing your object's fields unaltered. NOTE: 'this' in your creator function will point
      * to YourClass, and 'this' in your serializer function will point to the instance of YourClass.
      */
     bind(path, type, options = {}) {
@@ -3605,13 +3425,11 @@ class TypeMappings {
         if (typeof type !== "function") {
             throw new TypeError("constructor must be a function");
         }
-
         if (typeof options.serializer === 'undefined') {
             // if (typeof type.prototype.serialize === 'function') {
             //     // Use .serialize instance method
             //     options.serializer = type.prototype.serialize;
             // }
-
             // Use object's serialize method upon serialization (if available)
         }
         else if (typeof options.serializer === 'string') {
@@ -3619,13 +3437,12 @@ class TypeMappings {
                 options.serializer = type.prototype[options.serializer];
             }
             else {
-                throw new TypeError(`${type.name}.prototype.${options.serializer} is not a function, cannot use it as serializer`)
+                throw new TypeError(`${type.name}.prototype.${options.serializer} is not a function, cannot use it as serializer`);
             }
         }
         else if (typeof options.serializer !== 'function') {
             throw new TypeError(`serializer for class ${type.name} must be a function, or the name of a prototype method`);
         }
-
         if (typeof options.creator === 'undefined') {
             if (typeof type.create === 'function') {
                 // Use static .create as creator method
@@ -3637,13 +3454,12 @@ class TypeMappings {
                 options.creator = type[options.creator];
             }
             else {
-                throw new TypeError(`${type.name}.${options.creator} is not a function, cannot use it as creator`)
+                throw new TypeError(`${type.name}.${options.creator} is not a function, cannot use it as creator`);
             }
         }
         else if (typeof options.creator !== 'function') {
             throw new TypeError(`creator for class ${type.name} must be a function, or the name of a static method`);
         }
-
         path = path.replace(/^\/|\/$/g, ""); // trim slashes
         this[_mappings][path] = {
             db: this.db,
@@ -3654,7 +3470,7 @@ class TypeMappings {
                 // run constructor method
                 let obj;
                 if (this.creator) {
-                    obj = this.creator.call(this.type, snap)
+                    obj = this.creator.call(this.type, snap);
                 }
                 else {
                     obj = new this.type(snap);
@@ -3672,7 +3488,6 @@ class TypeMappings {
             }
         };
     }
-
     /**
      * Serializes any child in given object that has a type mapping
      * @param {string} path | path to the object's location
@@ -3681,7 +3496,6 @@ class TypeMappings {
     serialize(path, obj) {
         return process(this.db, this[_mappings], path, obj, "serialize");
     }
-
     /**
      * Deserialzes any child in given object that has a type mapping
      * @param {string} path | path to the object's location
@@ -3691,23 +3505,22 @@ class TypeMappings {
         return process(this.db, this[_mappings], path, obj, "deserialize");
     }
 }
+exports.TypeMappings = TypeMappings;
 
-module.exports = {
-    TypeMappings,
-    TypeMappingOptions
-}
-
-},{"./acebase-base":4,"./data-reference":8,"./data-snapshot":9,"./path-info":14,"./utils":22}],22:[function(require,module,exports){
+},{"./data-reference":8,"./data-snapshot":9,"./path-info":14,"./utils":23}],23:[function(require,module,exports){
 (function (Buffer){
-const { PathReference } = require('./path-reference');
-
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.defer = exports.getChildValues = exports.compareValues = exports.cloneObject = exports.concatTypedArrays = exports.decodeString = exports.encodeString = exports.bytesToNumber = exports.numberToBytes = void 0;
+const path_reference_1 = require("./path-reference");
+const process_1 = require("./process");
 function numberToBytes(number) {
     const bytes = new Uint8Array(8);
     const view = new DataView(bytes.buffer);
     view.setFloat64(0, number);
     return new Array(...bytes);
 }
-
+exports.numberToBytes = numberToBytes;
 function bytesToNumber(bytes) {
     //if (bytes.length !== 8) { throw "passed value must contain 8 bytes"; }
     if (bytes.length < 8) {
@@ -3722,11 +3535,9 @@ function bytesToNumber(bytes) {
     const nr = view.getFloat64(0);
     return nr;
 }
-
+exports.bytesToNumber = bytesToNumber;
 /**
  * Converts a string to a utf-8 encoded Uint8Array
- * @param {string} str 
- * @returns {Uint8Array}
  */
 function encodeString(str) {
     if (typeof TextEncoder !== 'undefined') {
@@ -3748,7 +3559,7 @@ function encodeString(str) {
                 // Attempt simple UTF-8 conversion. See https://en.wikipedia.org/wiki/UTF-8
                 if ((code & 0xd800) === 0xd800) {
                     // code starts with 1101 10...: this is a 2-part utf-16 char code
-                    const nextCode = str.charCodeAt(i+1);
+                    const nextCode = str.charCodeAt(i + 1);
                     if ((nextCode & 0xdc00) !== 0xdc00) {
                         // next code must start with 1101 11...
                         throw new Error('follow-up utf-16 character does not start with 0xDC00');
@@ -3778,10 +3589,10 @@ function encodeString(str) {
                     const b2 = 0x80 | ((code >> 12) & 0x3f); // 0x80 = 10000000, 0x3f = 111111
                     const b3 = 0x80 | ((code >> 6) & 0x3f); // 0x80 = 10000000, 0x3f = 111111
                     const b4 = 0x80 | (code & 0x3f);
-                    arr.push(b1, b2, b3, b4);                    
+                    arr.push(b1, b2, b3, b4);
                 }
                 else {
-                    throw new Error(`Cannot convert character ${str.charAt(i)} (code ${code}) to utf-8`)
+                    throw new Error(`Cannot convert character ${str.charAt(i)} (code ${code}) to utf-8`);
                 }
             }
             else {
@@ -3791,11 +3602,9 @@ function encodeString(str) {
         return new Uint8Array(arr);
     }
 }
-
+exports.encodeString = encodeString;
 /**
  * Converts a utf-8 encoded buffer to string
- * @param {ArrayBuffer|Buffer|Uint8Array|number[]} buffer 
- * @returns {string}
  */
 function decodeString(buffer) {
     if (typeof TextDecoder !== 'undefined') {
@@ -3809,8 +3618,8 @@ function decodeString(buffer) {
     }
     else if (typeof Buffer === 'function') {
         // Node.js
-        if (buffer instanceof Buffer) { 
-            return buffer.toString('utf-8'); 
+        if (buffer instanceof Buffer) {
+            return buffer.toString('utf-8');
         }
         else if (buffer instanceof Array) {
             const typedArray = Uint8Array.from(buffer);
@@ -3839,19 +3648,19 @@ function decodeString(buffer) {
                     // Decode Unicode character
                     if ((code & 0xf0) === 0xf0) {
                         // 4 byte char
-                        const b1 = code, b2 = buffer[i+1], b3 = buffer[i+2], b4 = buffer[i+3];
+                        const b1 = code, b2 = buffer[i + 1], b3 = buffer[i + 2], b4 = buffer[i + 3];
                         code = ((b1 & 0x7) << 18) | ((b2 & 0x3f) << 12) | ((b3 & 0x3f) << 6) | (b4 & 0x3f);
                         i += 3;
                     }
                     else if ((code & 0xe0) === 0xe0) {
                         // 3 byte char
-                        const b1 = code, b2 = buffer[i+1], b3 = buffer[i+2];
+                        const b1 = code, b2 = buffer[i + 1], b3 = buffer[i + 2];
                         code = ((b1 & 0xf) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
                         i += 2;
                     }
                     else if ((code & 0xc0) === 0xc0) {
                         // 2 byte char
-                        const b1 = code, b2 = buffer[i+1];
+                        const b1 = code, b2 = buffer[i + 1];
                         code = ((b1 & 0x1f) << 6) | (b2 & 0x3f);
                         i++;
                     }
@@ -3878,25 +3687,23 @@ function decodeString(buffer) {
         }
     }
 }
-
+exports.decodeString = decodeString;
 function concatTypedArrays(a, b) {
     const c = new a.constructor(a.length + b.length);
     c.set(a);
     c.set(b, a.length);
     return c;
-};
-
+}
+exports.concatTypedArrays = concatTypedArrays;
 function cloneObject(original, stack) {
     const { DataSnapshot } = require('./data-snapshot'); // Don't move to top, because data-snapshot requires this script (utils)
     if (original instanceof DataSnapshot) {
         throw new TypeError(`Object to clone is a DataSnapshot (path "${original.ref.path}")`);
     }
-    
     const checkAndFixTypedArray = obj => {
-        if (obj !== null && typeof obj === 'object' 
-            && typeof obj.constructor === 'function' && typeof obj.constructor.name === 'string' 
-            && ['Buffer','Uint8Array','Int8Array','Uint16Array','Int16Array','Uint32Array','Int32Array','BigUint64Array','BigInt64Array'].includes(obj.constructor.name)) 
-        {
+        if (obj !== null && typeof obj === 'object'
+            && typeof obj.constructor === 'function' && typeof obj.constructor.name === 'string'
+            && ['Buffer', 'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array', 'BigUint64Array', 'BigInt64Array'].includes(obj.constructor.name)) {
             // FIX for typed array being converted to objects with numeric properties:
             // Convert Buffer or TypedArray to ArrayBuffer
             obj = obj.buffer.slice(obj.byteOffset, obj.byteOffset + obj.byteLength);
@@ -3904,17 +3711,15 @@ function cloneObject(original, stack) {
         return obj;
     };
     original = checkAndFixTypedArray(original);
-
-    if (typeof original !== "object" || original === null || original instanceof Date || original instanceof ArrayBuffer || original instanceof PathReference || original instanceof RegExp) {
+    if (typeof original !== "object" || original === null || original instanceof Date || original instanceof ArrayBuffer || original instanceof path_reference_1.PathReference || original instanceof RegExp) {
         return original;
     }
-
     const cloneValue = (val) => {
         if (stack.indexOf(val) >= 0) {
             throw new ReferenceError(`object contains a circular reference`);
         }
         val = checkAndFixTypedArray(val);
-        if (val === null || val instanceof Date || val instanceof ArrayBuffer || val instanceof PathReference || val instanceof RegExp) { // || val instanceof ID
+        if (val === null || val instanceof Date || val instanceof ArrayBuffer || val instanceof path_reference_1.PathReference || val instanceof RegExp) { // || val instanceof ID
             return val;
         }
         else if (val instanceof Array) {
@@ -3932,8 +3737,10 @@ function cloneObject(original, stack) {
         else {
             return val; // Anything other can just be copied
         }
+    };
+    if (typeof stack === "undefined") {
+        stack = [original];
     }
-    if (typeof stack === "undefined") { stack = [original]; }
     const clone = original instanceof Array ? [] : {};
     Object.keys(original).forEach(key => {
         let val = original[key];
@@ -3944,41 +3751,55 @@ function cloneObject(original, stack) {
     });
     return clone;
 }
-
-function compareValues (oldVal, newVal) {
+exports.cloneObject = cloneObject;
+function compareValues(oldVal, newVal) {
     const voids = [undefined, null];
-    const isTypedArray = val => typeof val === 'object' && ['ArrayBuffer','Buffer','Uint8Array','Uint16Array','Uint32Array','Int8Array','Int16Array','Int32Array'].includes(val.constructor.name);
-    if (oldVal === newVal) { return "identical"; }
-    else if (voids.indexOf(oldVal) >= 0 && voids.indexOf(newVal) < 0) { return "added"; }
-    else if (voids.indexOf(oldVal) < 0 && voids.indexOf(newVal) >= 0) { return "removed"; }
-    else if (typeof oldVal !== typeof newVal) { return "changed"; }
+    const isTypedArray = val => typeof val === 'object' && ['ArrayBuffer', 'Buffer', 'Uint8Array', 'Uint16Array', 'Uint32Array', 'Int8Array', 'Int16Array', 'Int32Array'].includes(val.constructor.name);
+    if (oldVal === newVal) {
+        return "identical";
+    }
+    else if (voids.indexOf(oldVal) >= 0 && voids.indexOf(newVal) < 0) {
+        return "added";
+    }
+    else if (voids.indexOf(oldVal) < 0 && voids.indexOf(newVal) >= 0) {
+        return "removed";
+    }
+    else if (typeof oldVal !== typeof newVal) {
+        return "changed";
+    }
     else if (isTypedArray(oldVal) || isTypedArray(newVal)) {
         // One or both values are typed arrays.
-        if (!isTypedArray(oldVal) || !isTypedArray(newVal)) { return "changed"; }
+        if (!isTypedArray(oldVal) || !isTypedArray(newVal)) {
+            return "changed";
+        }
         // Both are typed. Compare lengths and byte content of typed arrays
-        const typed1 = oldVal instanceof Uint8Array ? oldVal : oldVal instanceof ArrayBuffer ? Uint8Array.from(oldVal) : new Uint8Array(oldVal.buffer, oldVal.byteOffset, oldVal.byteLength);
-        const typed2 = newVal instanceof Uint8Array ? newVal : newVal instanceof ArrayBuffer ? Uint8Array.from(newVal) : new Uint8Array(newVal.buffer, newVal.byteOffset, newVal.byteLength);
-        if (typed1.byteLength !== typed2.byteLength) { return "changed"; }
+        const typed1 = oldVal instanceof Uint8Array ? oldVal : oldVal instanceof ArrayBuffer ? new Uint8Array(oldVal) : new Uint8Array(oldVal.buffer, oldVal.byteOffset, oldVal.byteLength);
+        const typed2 = newVal instanceof Uint8Array ? newVal : newVal instanceof ArrayBuffer ? new Uint8Array(newVal) : new Uint8Array(newVal.buffer, newVal.byteOffset, newVal.byteLength);
+        if (typed1.byteLength !== typed2.byteLength) {
+            return "changed";
+        }
         return typed1.some((val, i) => typed2[i] !== val) ? "changed" : "identical";
     }
-    else if (oldVal instanceof Date || newVal instanceof Date) { 
+    else if (oldVal instanceof Date || newVal instanceof Date) {
         // One or both values are dates
-        if (!(oldVal instanceof Date) || !(newVal instanceof Date)) { return "changed"; }
+        if (!(oldVal instanceof Date) || !(newVal instanceof Date)) {
+            return "changed";
+        }
         // Both are dates
-        return oldVal.getTime() !== newVal.getTime() ? "changed" : "identical"; 
+        return oldVal.getTime() !== newVal.getTime() ? "changed" : "identical";
     }
     else if (typeof oldVal === "object") {
         // Do key-by-key comparison of objects
         const isArray = oldVal instanceof Array;
-        const oldKeys = isArray 
+        const oldKeys = isArray
             ? Object.keys(oldVal).map(v => parseInt(v)) //new Array(oldVal.length).map((v,i) => i) 
             : Object.keys(oldVal);
-        const newKeys = isArray 
+        const newKeys = isArray
             ? Object.keys(newVal).map(v => parseInt(v)) //new Array(newVal.length).map((v,i) => i) 
             : Object.keys(newVal);
-        const removedKeys = oldKeys.filter(key => newKeys.indexOf(key) < 0);
-        const addedKeys = newKeys.filter(key => oldKeys.indexOf(key) < 0);
-        const changedKeys = newKeys.reduce((changed, key) => { 
+        const removedKeys = oldKeys.filter(key => !newKeys.includes(key));
+        const addedKeys = newKeys.filter(key => !oldKeys.includes(key));
+        const changedKeys = newKeys.reduce((changed, key) => {
             if (oldKeys.indexOf(key) >= 0) {
                 const val1 = oldVal[key];
                 const val2 = newVal[key];
@@ -3986,10 +3807,9 @@ function compareValues (oldVal, newVal) {
                 if (c !== "identical") {
                     changed.push({ key, change: c });
                 }
-            } 
+            }
             return changed;
         }, []);
-
         if (addedKeys.length === 0 && removedKeys.length === 0 && changedKeys.length === 0) {
             return "identical";
         }
@@ -3998,37 +3818,35 @@ function compareValues (oldVal, newVal) {
                 added: addedKeys,
                 removed: removedKeys,
                 changed: changedKeys
-            }; 
+            };
         }
     }
-    else if (oldVal !== newVal) { return "changed"; }
+    else if (oldVal !== newVal) {
+        return "changed";
+    }
     return "identical";
 }
-
-const getChildValues = (childKey, oldValue, newValue) => {
+exports.compareValues = compareValues;
+function getChildValues(childKey, oldValue, newValue) {
     oldValue = oldValue === null ? null : oldValue[childKey];
-    if (typeof oldValue === 'undefined') { oldValue = null; }
+    if (typeof oldValue === 'undefined') {
+        oldValue = null;
+    }
     newValue = newValue === null ? null : newValue[childKey];
-    if (typeof newValue === 'undefined') { newValue = null; }
+    if (typeof newValue === 'undefined') {
+        newValue = null;
+    }
     return { oldValue, newValue };
-};
-
-module.exports = {
-    numberToBytes,
-    bytesToNumber,
-    concatTypedArrays,
-    cloneObject,
-    // getPathKeys,
-    // getPathInfo,
-    // getChildPath,
-    compareValues,
-    getChildValues,
-    encodeString,
-    decodeString
-};
+}
+exports.getChildValues = getChildValues;
+;
+function defer(fn) {
+    process_1.default.nextTick(fn);
+}
+exports.defer = defer;
 
 }).call(this,require("buffer").Buffer)
-},{"./data-snapshot":9,"./path-reference":15,"buffer":33}],23:[function(require,module,exports){
+},{"./data-snapshot":9,"./path-reference":15,"./process":16,"buffer":35}],24:[function(require,module,exports){
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
@@ -4378,36 +4196,21 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { BrowserAceBase };
-},{"./acebase-local":24,"./storage-custom":31}],24:[function(require,module,exports){
-/**
-   ________________________________________________________________________________
-   
-      ___          ______                
-     / _ \         | ___ \               
-    / /_\ \ ___ ___| |_/ / __ _ ___  ___ 
-    |  _  |/ __/ _ \ ___ \/ _` / __|/ _ \
-    | | | | (_|  __/ |_/ / (_| \__ \  __/
-    \_| |_/\___\___\____/ \__,_|___/\___|
-                                     
-   Copyright 2018 by Ewout Stortenbeker (me@appy.one)   
-   Published under MIT license
-   ________________________________________________________________________________
-  
- */
-const { AceBaseBase, AceBaseSettings } = require('acebase-core');
+},{"./acebase-local":25,"./storage-custom":33}],25:[function(require,module,exports){
+const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
 const { StorageSettings } = require('./storage');
 const { LocalApi } = require('./api-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
-class AceBaseLocalSettings {
+class AceBaseLocalSettings extends AceBaseBaseSettings {
     /**
      * 
      * @param {{ logLevel: 'verbose'|'log'|'warn'|'error', storage: StorageSettings }} options 
      */
     constructor(options) {
+        super(options);
         if (!options) { options = {}; }
-        this.logLevel = options.logLevel || 'log';
-        this.storage = options.storage; ////new StorageOptions(options.storage);
+        this.storage = options.storage;
     }
 }
 
@@ -4415,8 +4218,8 @@ class AceBase extends AceBaseBase {
 
     /**
      * 
-     * @param {string} dbname | Name of the database to open or create
-     * @param {AceBaseLocalSettings} options | 
+     * @param {string} dbname Name of the database to open or create
+     * @param {AceBaseLocalSettings} options
      */
     constructor(dbname, options) {
         options = new AceBaseLocalSettings(options);
@@ -4584,9 +4387,8 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":25,"./storage":32,"./storage-custom":31,"acebase-core":12}],25:[function(require,module,exports){
-const { Api, Utils } = require('acebase-core');
-const { AceBase } = require('./acebase-local');
+},{"./api-local":26,"./storage":34,"./storage-custom":33,"acebase-core":12}],26:[function(require,module,exports){
+const { Api } = require('acebase-core');
 const { StorageSettings } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
@@ -5540,26 +5342,25 @@ class LocalApi extends Api {
 }
 
 module.exports = { LocalApi };
-},{"./acebase-local":24,"./data-index":33,"./node":30,"./storage":32,"./storage-acebase":33,"./storage-custom":31,"./storage-mssql":33,"./storage-sqlite":33,"acebase-core":12}],26:[function(require,module,exports){
-/*
-    * This file is used to create a browser bundle, 
-    (re)generate it with: npm run browserify
+},{"./data-index":32,"./node":31,"./storage":34,"./storage-acebase":32,"./storage-custom":33,"./storage-mssql":32,"./storage-sqlite":32,"acebase-core":12}],27:[function(require,module,exports){
+/**
+   ________________________________________________________________________________
+   
+      ___          ______                
+     / _ \         | ___ \               
+    / /_\ \ ___ ___| |_/ / __ _ ___  ___ 
+    |  _  |/ __/ _ \ ___ \/ _` / __|/ _ \
+    | | | | (_|  __/ |_/ / (_| \__ \  __/
+    \_| |_/\___\___\____/ \__,_|___/\___|
+                        realtime database
 
-    * To use AceBase in the browser with localStorage as the storage engine:
-    const settings = { logLevel: 'error', temp: false }; // optional
-    const db = new AceBase('dbname', settings); // (uses BrowserAceBase class behind the scenes)
+   Copyright 2018 by Ewout Stortenbeker (me@appy.one)   
+   Published under MIT license
 
-    * When using Typescript (Angular/Ionic), you will have to pass a LocalStorageSettings object:
-    import { AceBase, LocalStorageSettings } from 'acebase';
-    const settings = { logLevel: 'error', storage: new LocalStorageSettings({ session: false }) };
-    const db = new AceBase('dbname', settings);
+   See docs at https://www.npmjs.com/package/acebase
+   ________________________________________________________________________________
 
-    * In Typescript, its also possible to use the BrowserAceBase class
-    import { BrowserAceBase } from 'acebase';
-    const settings = { logLevel: 'error', temp: false }; // optional
-    const db = new BrowserAceBase('dbname', settings);
- */
-
+*/
 
 const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, ID, proxyAccess } = require('acebase-core');
 const { AceBaseLocalSettings } = require('./acebase-local');
@@ -5587,7 +5388,7 @@ window.acebase = acebase;
 window.AceBase = BrowserAceBase;
 // Expose classes for module imports:
 module.exports = acebase;
-},{"./acebase-browser":23,"./acebase-local":24,"./storage-custom":31,"acebase-core":12}],27:[function(require,module,exports){
+},{"./acebase-browser":24,"./acebase-local":25,"./storage-custom":33,"acebase-core":12}],28:[function(require,module,exports){
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
 
@@ -5649,9 +5450,8 @@ class NodeInfo {
 }
 
 module.exports = { NodeInfo };
-},{"./node-value-types":29,"acebase-core":12}],28:[function(require,module,exports){
-const { PathInfo, ColorStyle } = require('acebase-core');
-const storage = require('./storage');
+},{"./node-value-types":30,"acebase-core":12}],29:[function(require,module,exports){
+const { PathInfo } = require('acebase-core');
 
 const SECOND = 1000;
 const MINUTE = 60000;
@@ -5957,7 +5757,7 @@ class NodeLock {
 }
 
 module.exports = { NodeLocker, NodeLock };
-},{"./storage":32,"acebase-core":12}],29:[function(require,module,exports){
+},{"acebase-core":12}],30:[function(require,module,exports){
 const VALUE_TYPES = {
     // Native types:
     OBJECT: 1,
@@ -5987,10 +5787,10 @@ function getValueTypeName(valueType) {
 }
 
 module.exports = { VALUE_TYPES, getValueTypeName };
-},{}],30:[function(require,module,exports){
+},{}],31:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
-const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
+const { VALUE_TYPES } = require('./node-value-types');
 
 class Node {
     static get VALUE_TYPES() { return VALUE_TYPES; }
@@ -6301,8 +6101,10 @@ module.exports = {
     Node,
     NodeInfo
 };
-},{"./node-info":27,"./node-value-types":29,"./storage":32}],31:[function(require,module,exports){
-const { debug, ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
+},{"./node-info":28,"./node-value-types":30,"./storage":34}],32:[function(require,module,exports){
+// Not supported in current environment
+},{}],33:[function(require,module,exports){
+const { ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
 const { NodeInfo } = require('./node-info');
 const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES } = require('./node-value-types');
@@ -7688,13 +7490,12 @@ module.exports = {
     ICustomStorageNodeMetaData,
     ICustomStorageNode
 }
-},{"./node-info":27,"./node-lock":28,"./node-value-types":29,"./storage":32,"acebase-core":12}],32:[function(require,module,exports){
-(function (process){
+},{"./node-info":28,"./node-lock":29,"./node-value-types":30,"./storage":34,"acebase-core":12}],34:[function(require,module,exports){
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
-const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
+const { VALUE_TYPES } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
-const { cloneObject, compareValues, getChildValues, encodeString } = Utils;
+const { cloneObject, compareValues, getChildValues, encodeString, defer } = Utils;
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
@@ -7833,7 +7634,7 @@ class Storage extends SimpleEventEmitter {
 
     /**
      * Base class for database storage, must be extended by back-end specific methods.
-     * Currently implemented back-ends are AceBaseStorage and SQLiteStorage
+     * Currently implemented back-ends are AceBaseStorage, SQLiteStorage, MSSQLStorage, CustomStorage
      * @param {string} name name of the database
      * @param {StorageSettings} settings instance of AceBaseStorageSettings or SQLiteStorageSettings
      */
@@ -8592,7 +8393,7 @@ class Storage extends SimpleEventEmitter {
             };
 
             const triggerAllEvents = () => {
-                // Notify all event subscriptions, should be executed with a delay (process.nextTick)
+                // Notify all event subscriptions, should be executed with a delay
                 // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
                 eventSubscriptions
                 .filter(sub => !['mutated','mutations','notify_mutated','notify_mutations'].includes(sub.type))
@@ -8758,7 +8559,7 @@ class Storage extends SimpleEventEmitter {
             }
             return Promise.all(indexUpdates)
             .then(() => {
-                process.nextTick(triggerAllEvents); // Delayed execution
+                defer(triggerAllEvents); // Delayed execution
                 return result;
             })
         });
@@ -9340,194 +9141,7 @@ module.exports = {
     NodeNotFoundError,
     NodeRevisionError
 };
-}).call(this,require('_process'))
-},{"./data-index":33,"./node-info":27,"./node-lock":28,"./node-value-types":29,"./promise-fs":33,"_process":34,"acebase-core":12}],33:[function(require,module,exports){
+},{"./data-index":32,"./node-info":28,"./node-lock":29,"./node-value-types":30,"./promise-fs":32,"acebase-core":12}],35:[function(require,module,exports){
 
-},{}],34:[function(require,module,exports){
-// shim for using process in browser
-var process = module.exports = {};
-
-// cached from whatever global is present so that test runners that stub it
-// don't break things.  But we need to wrap it in a try catch in case it is
-// wrapped in strict mode code which doesn't define any globals.  It's inside a
-// function because try/catches deoptimize in certain engines.
-
-var cachedSetTimeout;
-var cachedClearTimeout;
-
-function defaultSetTimout() {
-    throw new Error('setTimeout has not been defined');
-}
-function defaultClearTimeout () {
-    throw new Error('clearTimeout has not been defined');
-}
-(function () {
-    try {
-        if (typeof setTimeout === 'function') {
-            cachedSetTimeout = setTimeout;
-        } else {
-            cachedSetTimeout = defaultSetTimout;
-        }
-    } catch (e) {
-        cachedSetTimeout = defaultSetTimout;
-    }
-    try {
-        if (typeof clearTimeout === 'function') {
-            cachedClearTimeout = clearTimeout;
-        } else {
-            cachedClearTimeout = defaultClearTimeout;
-        }
-    } catch (e) {
-        cachedClearTimeout = defaultClearTimeout;
-    }
-} ())
-function runTimeout(fun) {
-    if (cachedSetTimeout === setTimeout) {
-        //normal enviroments in sane situations
-        return setTimeout(fun, 0);
-    }
-    // if setTimeout wasn't available but was latter defined
-    if ((cachedSetTimeout === defaultSetTimout || !cachedSetTimeout) && setTimeout) {
-        cachedSetTimeout = setTimeout;
-        return setTimeout(fun, 0);
-    }
-    try {
-        // when when somebody has screwed with setTimeout but no I.E. maddness
-        return cachedSetTimeout(fun, 0);
-    } catch(e){
-        try {
-            // When we are in I.E. but the script has been evaled so I.E. doesn't trust the global object when called normally
-            return cachedSetTimeout.call(null, fun, 0);
-        } catch(e){
-            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error
-            return cachedSetTimeout.call(this, fun, 0);
-        }
-    }
-
-
-}
-function runClearTimeout(marker) {
-    if (cachedClearTimeout === clearTimeout) {
-        //normal enviroments in sane situations
-        return clearTimeout(marker);
-    }
-    // if clearTimeout wasn't available but was latter defined
-    if ((cachedClearTimeout === defaultClearTimeout || !cachedClearTimeout) && clearTimeout) {
-        cachedClearTimeout = clearTimeout;
-        return clearTimeout(marker);
-    }
-    try {
-        // when when somebody has screwed with setTimeout but no I.E. maddness
-        return cachedClearTimeout(marker);
-    } catch (e){
-        try {
-            // When we are in I.E. but the script has been evaled so I.E. doesn't  trust the global object when called normally
-            return cachedClearTimeout.call(null, marker);
-        } catch (e){
-            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error.
-            // Some versions of I.E. have different rules for clearTimeout vs setTimeout
-            return cachedClearTimeout.call(this, marker);
-        }
-    }
-
-
-
-}
-var queue = [];
-var draining = false;
-var currentQueue;
-var queueIndex = -1;
-
-function cleanUpNextTick() {
-    if (!draining || !currentQueue) {
-        return;
-    }
-    draining = false;
-    if (currentQueue.length) {
-        queue = currentQueue.concat(queue);
-    } else {
-        queueIndex = -1;
-    }
-    if (queue.length) {
-        drainQueue();
-    }
-}
-
-function drainQueue() {
-    if (draining) {
-        return;
-    }
-    var timeout = runTimeout(cleanUpNextTick);
-    draining = true;
-
-    var len = queue.length;
-    while(len) {
-        currentQueue = queue;
-        queue = [];
-        while (++queueIndex < len) {
-            if (currentQueue) {
-                currentQueue[queueIndex].run();
-            }
-        }
-        queueIndex = -1;
-        len = queue.length;
-    }
-    currentQueue = null;
-    draining = false;
-    runClearTimeout(timeout);
-}
-
-process.nextTick = function (fun) {
-    var args = new Array(arguments.length - 1);
-    if (arguments.length > 1) {
-        for (var i = 1; i < arguments.length; i++) {
-            args[i - 1] = arguments[i];
-        }
-    }
-    queue.push(new Item(fun, args));
-    if (queue.length === 1 && !draining) {
-        runTimeout(drainQueue);
-    }
-};
-
-// v8 likes predictible objects
-function Item(fun, array) {
-    this.fun = fun;
-    this.array = array;
-}
-Item.prototype.run = function () {
-    this.fun.apply(null, this.array);
-};
-process.title = 'browser';
-process.browser = true;
-process.env = {};
-process.argv = [];
-process.version = ''; // empty string to avoid regexp issues
-process.versions = {};
-
-function noop() {}
-
-process.on = noop;
-process.addListener = noop;
-process.once = noop;
-process.off = noop;
-process.removeListener = noop;
-process.removeAllListeners = noop;
-process.emit = noop;
-process.prependListener = noop;
-process.prependOnceListener = noop;
-
-process.listeners = function (name) { return [] }
-
-process.binding = function (name) {
-    throw new Error('process.binding is not supported');
-};
-
-process.cwd = function () { return '/' };
-process.chdir = function (dir) {
-    throw new Error('process.chdir is not supported');
-};
-process.umask = function() { return 0; };
-
-},{}]},{},[26])(26)
+},{}]},{},[27])(27)
 });
