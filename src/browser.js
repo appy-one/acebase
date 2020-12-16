@@ -1,22 +1,21 @@
-/*
-    * This file is used to create a browser bundle, 
-    (re)generate it with: npm run browserify
+/**
+   ________________________________________________________________________________
+   
+      ___          ______                
+     / _ \         | ___ \               
+    / /_\ \ ___ ___| |_/ / __ _ ___  ___ 
+    |  _  |/ __/ _ \ ___ \/ _` / __|/ _ \
+    | | | | (_|  __/ |_/ / (_| \__ \  __/
+    \_| |_/\___\___\____/ \__,_|___/\___|
+                        realtime database
 
-    * To use AceBase in the browser with localStorage as the storage engine:
-    const settings = { logLevel: 'error', temp: false }; // optional
-    const db = new AceBase('dbname', settings); // (uses BrowserAceBase class behind the scenes)
+   Copyright 2018 by Ewout Stortenbeker (me@appy.one)   
+   Published under MIT license
 
-    * When using Typescript (Angular/Ionic), you will have to pass a LocalStorageSettings object:
-    import { AceBase, LocalStorageSettings } from 'acebase';
-    const settings = { logLevel: 'error', storage: new LocalStorageSettings({ session: false }) };
-    const db = new AceBase('dbname', settings);
+   See docs at https://www.npmjs.com/package/acebase
+   ________________________________________________________________________________
 
-    * In Typescript, its also possible to use the BrowserAceBase class
-    import { BrowserAceBase } from 'acebase';
-    const settings = { logLevel: 'error', temp: false }; // optional
-    const db = new BrowserAceBase('dbname', settings);
- */
-
+*/
 
 const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, ID, proxyAccess } = require('acebase-core');
 const { AceBaseLocalSettings } = require('./acebase-local');
