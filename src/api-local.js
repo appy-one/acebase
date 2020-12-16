@@ -1,5 +1,4 @@
-const { Api, Utils } = require('acebase-core');
-const { AceBase } = require('./acebase-local');
+const { Api } = require('acebase-core');
 const { StorageSettings } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
