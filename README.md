@@ -124,10 +124,11 @@ AceBase is designed to run in a [Node.js](https://nodejs.org/) environment, as i
 
 All AceBase repositories are available through npm. You only have to install one of them, depending on your needs:
 
+### Create a local database
 If you want to use a **local AceBase database** in your project, install the [acebase](https://github.com/appy-one/acebase) package.
 
 ```sh
-npm i acebase
+npm install acebase
 ```
 Then, create (open) your database:
 ```js
@@ -139,10 +140,11 @@ db.ready(() => {
 });
 ```
 
+### Setup a database server
 If you want to setup an **AceBase server**, install [acebase-server](https://github.com/appy-one/acebase-server).
 
 ```sh
-npm i acebase-server
+npm install acebase-server
 ```
 Then, start your server (`server.js`):
 ```js
@@ -153,10 +155,11 @@ server.ready(() => {
 });
 ```
 
+### Connect to a remote database
 If you want to connect to a remote (or local) AceBase server, install [acebase-client](https://github.com/appy-one/acebase-client).
 
 ```sh
-npm i acebase-client
+npm install acebase-client
 ```
 Then, connect to your AceBase server:
 ```js
