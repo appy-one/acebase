@@ -1441,7 +1441,7 @@ You can also use a local database in the browser to sync with an AceBase server.
 </script>
 ```
 
-If you are using TypeScript (eg with Angular/Ionic), use:
+If you are using TypeScript (eg with Angular/Ionic), add `acebase` to your project (`npm install acebase`), and use:
 ```typescript
 import { AceBase } from 'acebase';
 const db = AceBase.WithIndexedDB('dbname'); 
