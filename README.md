@@ -4,34 +4,30 @@ A fast, low memory, transactional, index & query enabled NoSQL database engine a
 
 Inspired by (and largely compatible with) the Firebase realtime database, with additional functionality and less data sharding/duplication. Capable of storing up to 2^48 (281 trillion) object nodes in a binary database file that can theoretically grow to a max filesize of 8 petabytes.
 
-AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, the **browser**, wherever you want.
+AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, the [browser](#running-acebase-in-the-browser), wherever you want.
 
-👇🏽 Check out the new [live data proxy](#live-data-proxy) feature! 🔥
+🔥 Check out the new [live data proxy](#realtime-synchronization-with-a-live-data-proxy) feature, or skip to [table of contents](#table-of-contents)
 ```javascript
+// Connect to remote database (works on local AceBase instances too!)
+const { AceBaseClient } = require('acebase-client');
+const db = new AceBaseClient({ /* connection settings */ });
+
 // Create a live data proxy for a chat
 const chatProxy = await db.ref('chats/chat1').proxy({});
 const liveChat = chatProxy.value;
 
-// Simply setting liveChat's properties will update the database:
+// --- No more database coding from this point on! ---
+
+// Simply setting liveChat's properties updates the database:
 liveChat.title = 'Live Data Proxies Rock! 🚀';
 liveChat.members = ['ewout','john','pete','jack'];
 liveChat.messages.push({ 
     from: 'ewout', 
     text: 'Updating a database was never this easy' 
 });
-```
-👇🏽 Changes made remotely are automatically updated in our liveChat object:
-```javascript
-function sendMessage(text) {
-    if (!liveChat.members.includes('ewout')) {
-        throw new Error(`Can't send message, I'm not a member anymore!`);
-    }
-    liveChat.messages.push({ from: 'ewout', text });
-}
-```
-👇🏽 Attach listeners to handle specific changes:
-```javascript
+
 liveChat.onChange(function (val, prev, remoteChange, context) {
+    // Handle specific (local or remote) changes:
     if (val.title !== prev.title && remoteChange) {
         console.log(`Title was changed by someone else`);
     }
@@ -39,10 +35,18 @@ liveChat.onChange(function (val, prev, remoteChange, context) {
         console.log(remoteChange ? `I was kicked out of this chat` : `I stepped out`);
     }
 });
-```
-Using live data proxies, you won't have to worry about data storage and synchronization, just focus on your business logic. All changes are **automatically synchronized** with others, and it can even work while **offline**!
 
-Excited? Read more about live data proxies [here](#live-data-proxy) 🔥
+function sendMessage(text) {
+    // Changes made remotely are automatically updated in our liveChat object:
+    if (!liveChat.members.includes('ewout')) {
+        throw new Error(`Can't send message, I'm not a member anymore!`);
+    }
+    liveChat.messages.push({ from: 'ewout', text });
+}
+```
+Using live data proxies, you won't have to worry about data storage and synchronization, just focus on your business logic. All changes are **automatically synchronized** with others, and it can even work while **offline** (use an ```AceBaseClient``` with local cache database)!
+
+Excited? Read more about live data proxies [here](#realtime-synchronization-with-a-live-data-proxy) 🔥
 
 ## Table of contents
 
@@ -50,59 +54,58 @@ Excited? Read more about live data proxies [here](#live-data-proxy) 🔥
 * [Prerequisites](#prerequisites)
 * [Installing](#installing)
 * Loading and storing data
-    * [Introduction](#usage)
-    * [Creating a database](#create-database)
+    * [Introduction](#example-usage)
+    * [Creating a database](#creating-a-database)
     * [Loading data](#loading-data)
     * [Storing data](#storing-data)
     * [Updating data](#updating-data)
-    * [Transactional updating](#transactions)
+    * [Transactional updating](#transactional-updating)
     * [Removing data](#removing-data)
-    * [Generating unique keys](#unique-keys)
+    * [Generating unique keys](#generating-unique-keys)
     * [Using arrays](#using-arrays)
     * [Counting children](#counting-children)
     * [Limit nested data loading](#limit-nested-data-loading)
 * Realtime monitoring
-    * [Monitoring realtime data changes](#monitor-realtime-changes)
-    * [Using variables and wildcards in subscription paths](#wildcard-paths)
+    * [Monitoring realtime data changes](#monitoring-realtime-data-changes)
+    * [Using variables and wildcards in subscription paths](#using-variables-and-wildcards-in-subscription-paths)
     * [Notify only events](#notify-only-events)
-    * [Wait for events to activate](#wait-for-event-activation)
-    * [Get triggering context of events](#event-context)
-    * [Change tracking using "mutated" and "mutations" events](#mutated-events)
-    * [Observe realtime value changes](#observe-realtime-value)
-    * [🔥 Realtime synchronization with a live data proxy](#live-data-proxy)
-    * [Using proxy methods in Typescript](#typescript-proxy-methods)
+    * [Wait for events to activate](#wait-for-events-to-activate)
+    * [Get triggering context of events](#get-triggering-context-of-events)
+    * [Change tracking using "mutated" and "mutations" events](#change-tracking-using-mutated-and-mutations-events)
+    * [Observe realtime value changes](#observe-realtime-value-changes)
+    * [Realtime synchronization with a live data proxy](#realtime-synchronization-with-a-live-data-proxy)
+    * [Using proxy methods in Typescript](#using-proxy-methods-in-typescript)
 * Queries
     * [Querying data](#querying-data)
-    * [Removing data with a query](#query-removing-data)
+    * [Removing data with a query](#removing-data-with-a-query)
     * [Realtime queries](#realtime-queries)
 * Indexes
     * [Indexing data](#indexing-data)
-    * [Indexing scattered data with wildcards](#indexing-scattered-data)
-    * [Include additional data in indexes](#index-additional-data)
+    * [Indexing scattered data with wildcards](#indexing-scattered-data-with-wildcards)
+    * [Include additional data in indexes](#include-additional-data-in-indexes)
     * [Special indexes](#special-indexes)
     * [Array indexes](#array-indexes)
     * [Fulltext indexes](#fulltext-indexes)
     * [Geo indexes](#geo-indexes)
 * Class mappings (ORM)
-    * [Mapping data to custom classes](#class-mappings)
+    * [Mapping data to custom classes](#mapping-data-to-custom-classes)
 * Data storage options
     * [AceBase data storage engine](#storage)
-    * [Using SQLite or MSSQL storage](#sqllite-mssql-storage)
-    * [AceBase in the browser](#browser)
-    * [Using CustomStorage backend](#custom-storage)
+    * [Using SQLite or MSSQL storage](#using-a-sqllite-or-mssql-backend)
+    * [AceBase in the browser](#running-acebase-in-the-browser)
+    * [Using CustomStorage](#using-a-customstorage-backend)
 * Reflect API
     * [Introduction](#reflect-api)
-    * [Get information about a node](#reflect-info)
-    * [Get children of a node](#reflect-children)
+    * [Get information about a node](#get-information-about-a-node)
+    * [Get children of a node](#get-children-of-a-node)
 * Export API
     * [Usage](#export-api)
 * [Upgrade notices](#upgrade-notices)
 * [Known issues](#known-issues)
 * [Authors](#authors)
 * [Contributing](#contributing)
-* [Buy me a coffee](#buy-me-coffee)
+* [Buy me a coffee](#buy-me-a-coffee)
 
-<a name="getting-started"></a>
 ## Getting Started
 
 AceBase is split up into multiple packages:
@@ -113,10 +116,9 @@ AceBase is split up into multiple packages:
 
 **IMPORTANT**: AceBase is in beta stage. If you run into errors, make sure you have the latest version of each package you are using. ~~The database files created by older releases might be incompatible with newer versions, so you might have to start from scratch after updating.~~ The core functionality and file structures have been stable for quite some time, they are not expected to change in the near future. Additionally, from version 1.0.0 on (end of 2020), [semver](https://semver.org/) will be used to prevent breaking changes to impact older code. **Do not use in mission critical projects yet**!
 
-<a name="prerequisites"></a>
 ### Prerequisites
 
-AceBase is designed to run in a [Node.js](https://nodejs.org/) environment, as it (by default) requires the 'fs' filesystem to store its data and indexes. However, since v0.9.0 **it is now also possible to use AceBase databases in the browser**! To run AceBase in the browser, simply include 1 script file and you're good to go! See [AceBase in the browser](#browser) for more info and code samples!
+AceBase is designed to run in a [Node.js](https://nodejs.org/) environment, as it (by default) requires the 'fs' filesystem to store its data and indexes. However, since v0.9.0 **it is now also possible to use AceBase databases in the browser**! To run AceBase in the browser, simply include 1 script file and you're good to go! See [AceBase in the browser](#running-acebase-in-the-browser) for more info and code samples!
 
 ### Installing
 
@@ -124,28 +126,51 @@ All AceBase repositories are available through npm. You only have to install one
 
 If you want to use a **local AceBase database** in your project, install the [acebase](https://github.com/appy-one/acebase) package.
 
-```
+```sh
 npm i acebase
+```
+Then, create (open) your database:
+```js
+const { AceBase } = require('acebase');
+const db = new AceBase('my_db'); // nodejs
+// OR: const db = AceBase.WithIndexedDB('my_db'); // browser
+db.ready(() => {
+    // Do stuff
+});
 ```
 
 If you want to setup an **AceBase server**, install [acebase-server](https://github.com/appy-one/acebase-server).
 
-```
+```sh
 npm i acebase-server
+```
+Then, start your server (`server.js`):
+```js
+const { AceBaseServer } = require('acebase-server');
+const server = new AceBaseServer('my_server_db', { /* server config */ });
+server.ready(() => {
+    // Server running
+});
 ```
 
 If you want to connect to a remote (or local) AceBase server, install [acebase-client](https://github.com/appy-one/acebase-client).
 
-```
+```sh
 npm i acebase-client
 ```
+Then, connect to your AceBase server:
+```js
+const { AceBaseClient } = require('acebase-client');
+const db = new AceBaseClient({ /* connection config */ });
+db.ready(() => {
+    // Connected!
+});
+```
 
-<a name="usage"></a>
 ## Example usage
 
 The API is similar to that of the Firebase realtime database, with additions.
 
-<a name="create-database"></a>
 ### Creating a database
 
 Creating a new database is as simple as opening it. If the database file doesn't exists, it will be created automatically.
@@ -160,7 +185,6 @@ db.ready(() => {
 })
 ```
 
-<a name="loading-data"></a>
 ### Loading data
 
 Run ```.get``` on a reference to get the currently stored value. This is short for the Firebase syntax of ```.once("value")```
@@ -179,7 +203,6 @@ db.ref('game/config')
 
 Note: When loading data, the currently stored value will be wrapped and returned in a ```DataSnapshot``` object. Use ```snapshot.exists()``` to determine if the node exists, ```snapshot.val()``` to get the value. 
 
-<a name="storing-data"></a>
 ### Storing data
 
 Setting the value of a node, overwriting if it exists:
@@ -197,7 +220,6 @@ db.ref('game/config')
 
 Note: When storing data, it doesn't matter whether the target path, and/or parent paths exist already. If you store data in _'chats/somechatid/messages/msgid/receipts'_, it will create any nonexistent node in that path.
 
-<a name="updating-data"></a>
 ### Updating data
 
 Updating the value of a node merges the stored value with the new object. If the target node doesn't exist, it will be created with the passed value.
@@ -216,7 +238,6 @@ db.ref('game/config').update({
 });
 ```
 
-<a name="transactions"></a>
 ### Transactional updating
 
 If you want to update data based upon its current value, and you want to make sure the data is not changed in between your ```get``` and ```update```, use ```transaction```. A transaction gets the current value, runs your callback with a snapshot. The value you return from the callback will be used to overwrite the node with. Returning ```null``` will remove the entire node, returning ```undefined``` will cancel the transaction.
@@ -251,7 +272,6 @@ db.ref('accounts/some_account/balance')
 });
 ```
 
-<a name="removing-data"></a>
 ### Removing data
 
 You can remove data with the ```remove``` method
@@ -276,7 +296,6 @@ db.ref('animals')
 .then(ref => { /* dog property removed */ )};
 ```
 
-<a name="unique-keys"></a>
 ### Generating unique keys
 
 For all generic data you add, you need to create keys that are unique and won't clash with keys generated by other clients. To do this, you can have unique keys generated with ```push```. Under the hood, ```push``` uses [cuid](https://www.npmjs.com/package/cuid) to generated keys that a guaranteed to be unique.
@@ -323,7 +342,6 @@ db.ref('messages').update(newMessages)
 };
 ```
 
-<a name="using-arrays"></a>
 ### Using arrays
 
 AceBase supports storage of arrays, but there are some caveats when working with them. For instance, you cannot remove or insert items that are not at the end of the array. AceBase arrays work like a stack, you can add and remove from the top, not within. It is possible however to edit individual entries, or to overwrite the entire array. The safest way to edit arrays is with a ```transaction```, which requires all data to be loaded and stored again. In many cases, it is wiser to use object collections instead.
@@ -366,7 +384,6 @@ To summarize: the most important thing to note when working with arrays: ALWAYS 
 
 Also NOTE: you CANNOT use ```ref.push()``` to add entries to an array! It can only be used with with object collections.
 
-<a name="counting-children"></a>
 ## Counting children
 
 To quickly find out how many children a specific node has, use the ```count``` method on a ```DataReference```:
@@ -375,7 +392,6 @@ To quickly find out how many children a specific node has, use the ```count``` m
 const messageCount = await db.ref('chat/messages').count();
 ```
 
-<a name="limit-nested-data-loading"></a>
 ### Limit nested data loading  
 
 If your database structure is using nesting (eg storing posts in ```'users/someuser/posts'``` instead of in ```'posts'```), you might want to limit the amount of data you are retrieving in most cases. Eg: if you want to get the details of a user, but don't want to load all nested data, you can explicitly limit the nested data retrieval by passing ```exclude```, ```include```, and/or ```child_objects``` options to ```.get```:
@@ -400,7 +416,6 @@ db.ref('users/someuser/posts')
 
 **NOTE**: This enables you to do what Firebase can't: store your data in logical places, and only get the data you are interested in, fast! On top of that, you're even able to index your nested data and query it, even faster. See [Indexing data](#indexing-data) for more info about that..
 
-<a name="monitor-realtime-changes"></a>
 ## Monitoring realtime data changes
 
 You can subscribe to data events to get realtime notifications as the monitored node is being changed. When connected to a remote AceBase server, the events will be pushed to clients through a websocket connection. Supported events are:  
@@ -480,7 +495,6 @@ subscription1.stop();
 newPostStream.stop();
 ```
 
-<a name="wildcard-paths"></a>
 ### Using variables and wildcards in subscription paths
 
 It is also possible to subscribe to events using wildcards and variables in the path:
@@ -520,7 +534,6 @@ db.ref('users/*/posts/$postid/title')
 db.ref('users/ewout/posts').push({ title: 'new post' });
 ```
 
-<a name="notify-only-events"></a>
 ### Notify only events
 
 In additional to the events mentioned above, you can also subscribe to their ```notify_``` counterparts which do the same, but with a reference to the changed data instead of a snapshot. This is quite useful if you want to monitor changes, but are not interested in the actual values. Doing this also saves serverside resources, and results in less data being transferred from the server. Eg: ```notify_child_changed``` will run your callback with a reference to the changed node:
@@ -531,7 +544,6 @@ ref.on('notify_child_changed', childRef => {
 })
 ```
 
-<a name="wait-for-event-activation"></a>
 ### Wait for events to activate
 
 In some situations, it is useful to wait for event handlers to be active before modifying data. For instance, if you want an event to fire for changes you are about to make, you have to make sure the subscription is active before performing the updates.
@@ -563,8 +575,8 @@ subscription.activated((activated, cancelReason) => {
 });
 ```
 
-<a name="event-context"></a>
-### Get triggering context of events (NEW v0.9.51)
+### Get triggering context of events 
+(NEW v0.9.51)
 
 In some cases it is benificial to know what (and/or who) triggered a data event to fire, so you can choose what you want to do with data updates. It is now possible to pass context information with all ```update```, ```set```, and ```remove``` operations, which will be passed along to any event triggered on affected paths (on any connected client!)
 
@@ -606,10 +618,10 @@ db.ref('users/ewout/documents/some_id')
 .update({ last_accessed: new Date() })
 ```
 
-<a name="mutated-events"></a>
-### Change tracking using "mutated" and "mutations" events (NEW v0.9.51)
+### Change tracking using "mutated" and "mutations" events
+(NEW v0.9.51)
 
-These events are mainly used by AceBase behind the scenes to automatically update in-memory values with remote mutations. See [Observe realtime value changes](#observe-realtime-value) and [Realtime synchronization with a live data proxy](#live-data-proxy). It is possible to use these events yourself, but they require some additional plumbing, and you're probably better off using the methods mentioned above.
+These events are mainly used by AceBase behind the scenes to automatically update in-memory values with remote mutations. See [Observe realtime value changes](#observe-realtime-value-changes) and [Realtime synchronization with a live data proxy](#realtime-synchronization-with-a-live-data-proxy). It is possible to use these events yourself, but they require some additional plumbing, and you're probably better off using the methods mentioned above.
 
 Having said that, here's how to use them: 
 
@@ -664,10 +676,10 @@ chatRef.on('mutations', snap => {
 })
 ```
 
-<a name="observe-realtime-value"></a>
-### Observe realtime value changes (NEW v0.9.51)
+### Observe realtime value changes 
+(NEW v0.9.51)
 
-EXPERIMENTAL - You can now observe the realtime value of a path, and (for example) bind it to your UI. ```ref.observe()``` returns a RxJS Observable that can be used to observe updates to this node and its children. It does not return snapshots, so you can bind the observable straight to your UI. The value being observed is updated internally using the new "mutated" event. All mutations are applied to the original value, and kept in-memory.
+You can now observe the realtime value of a path, and (for example) bind it to your UI. ```ref.observe()``` returns a RxJS Observable that can be used to observe updates to this node and its children. It does not return snapshots, so you can bind the observable straight to your UI. The value being observed is updated internally using the new "mutated" event. All mutations are applied to the original value, and kept in-memory.
 
 ```html
 <!-- In your Angular view template: -->
@@ -702,10 +714,10 @@ ngOnDestroy() {
 
 NOTE: objects returned in the observable are only updated downstream - any changes made locally won't be updated in the database. If that is what you would want to do... keep reading! (Spoiler alert - use ```proxy()```!)
 
-<a name="live-data-proxy"></a>
-### 🔥 Realtime synchronization with a live data proxy (NEW v0.9.51)
+### Realtime synchronization with a live data proxy 
+(NEW v0.9.51)
 
-EXPERIMENTAL - You can now create a live data proxy for a given path. The data of the referenced path will be loaded, and kept in-sync with live data by listening for remote 'mutated' events, and immediately syncing back all changes you make to its value. This allows you to forget about data storage, and code as if you are only handling in-memory objects. Synchronization was never this easy!
+You can now create a live data proxy for a given path. The data of the referenced path will be loaded, and kept in-sync with live data by listening for remote 'mutated' events, and immediately syncing back all changes you make to its value. This allows you to forget about data storage, and code as if you are only handling in-memory objects. Synchronization was never this easy!
 
 Check out the following example:
 
@@ -875,7 +887,6 @@ function rollback() {
 ```
 Once ```tx.commit()``` is called, all pending updates will be processed and saved to the database. When ```tx.rollback()``` is called, all changes made to the proxied object will be reverted and no further action is taken.
 
-<a name="typescript-proxy-methods"></a>
 ### Using proxy methods in Typescript
 
 In TypeScript some additional typecasting is needed to access proxy methods shown above. You can use the ```proxyAccess``` function to get help with that. This function typecasts and also checks if your passed value is indeed a proxy.
@@ -949,7 +960,6 @@ export class MyDataProvider {
 
 I'll leave up to your imagination what the ```MessageComponent``` would look like.
 
-<a name="querying-data"></a>
 ## Querying data
 
 When running a query, all child nodes of the referenced path will be matched against your set criteria and returned in any requested ```sort``` order. Pagination of results is also supported, so you can ```skip``` and ```take``` any number of results. Queries do not require data to be indexed, although this is recommended if your data becomes larger.
@@ -1028,7 +1038,6 @@ const snapshots = await db.query('songs')
     .get();
 ```
 
-<a name="query-removing-data"></a>
 ### Removing data with a query
 
 To remove all nodes that match a query, simply call ```remove``` instead of ```get```:
@@ -1040,8 +1049,8 @@ db.query('songs')
 }); 
 ```
 
-<a name="realtime-queries"></a>
-### Realtime queries (NEW 0.9.9, alpha)
+### Realtime queries 
+(NEW 0.9.9, alpha)
 
 AceBase now supports realtime (live) queries and is able to send notifications when there are changes to the initial query results
 
@@ -1075,7 +1084,6 @@ db.query('books')
 
 NOTE: Usage of ```take``` and ```skip``` are currently not taken into consideration, events might fire for results that are not in the requested range.
 
-<a name="indexing-data"></a>
 ## Indexing data
 
 Indexing data will dramatically improve the speed of queries on your data, especially as it increases in size. Any indexes you create will be updated automatically when underlying data is changed, added or removed. Indexes are used to speed up filters and sorts, and to limit the amount of results. NOTE: If you are connected to an external AceBase server (using ```AceBaseClient```), indexes can only be created if you are signed in as the *admin* user.
@@ -1097,7 +1105,6 @@ Promise.all([
 });
 ```
 
-<a name="indexing-scattered-data"></a>
 ### Indexing scattered data with wildcards
 
 Because nesting data is recommended in AceBase (as opposed to Firebase that discourages this), you are able to index and query data that is scattered accross your database in a structered manner. For example, you might want to store ```posts``` for each ```user``` in their own user node, and index (and query) all posts by any user:
@@ -1118,7 +1125,7 @@ db.indexes.create('users/*/posts', 'date') // Index date of any post by any user
 
 **NOTE**: Wildcard queries always require an index - they will not execute if there is no corresponding index.
 
-<a name="index-additional-data"></a>
+<a name="include-additional-data-in-indexes"></a>
 ### Include additional data in indexes
 
 If your query uses filters on multiple keys you could create separate indexes on each key, but you can also include that data into a single index. This will speed up queries even more in most cases:
@@ -1152,12 +1159,10 @@ db.indexes.create('songs', 'title', { include: ['year', 'genre'] })
 });
 ```
 
-<a name="special-indexes"></a>
 ### Special indexes
 
 Normal indexes are able to index ```string```, ```number```, ```Date```, ```boolean``` and ```undefined``` (non-existent) values. To index other data, you have to create a special index. Currently supported special indexes are: **Array**, **FullText** and **Geo** indexes.
 
-<a name="array-indexes"></a>
 ### Array indexes
 
 Use Array indexes to dramatically improve the speed of ```"contains"``` filters on array values.
@@ -1203,7 +1208,6 @@ db.query('chats')
 })
 ```
 
-<a name="fulltext-indexes"></a>
 ### Fulltext indexes
 
 A fulltext index will index all individual words and their relative positions in string nodes. A normal index on text nodes is only capable of searching for exact matches quickly, or proximate like/regexp matches by scanning through the index. A fulltext index makes it possible to quickly find text nodes that contain multiple words, a selection of words or parts of them, in any order in the text.
@@ -1220,7 +1224,6 @@ db.indexes.create('chats/*/messages', 'text', { type: 'fulltext' });
 })
 ```
 
-<a name="geo-indexes"></a>
 ### Geo indexes
 
 A geo index is able to index latitude/longitude value combinations so you can create very fast location-based queries. 
@@ -1270,7 +1273,7 @@ db.indexes.create('landmarks', 'location', { type: 'geo' });
 
 Indexed locations are stored using 10 character geohashes, which have a precision of about half a square meter.
 
-<a name="class-mappings"></a>
+<a name="mapping-data-to-custom-classes"></a>
 ## Mapping data to custom classes
 
 Mapping data to your own classes allows you to store and load objects to/from the database without them losing their class type. Once you have mapped a database path to a class, you won't ever have to worry about serialization or deserialization of the objects => Store a ```User```, get a ```User```. Store a ```Chat``` that has a collection of ```Messages```, get a ```Chat``` with ```Messages``` back from the database. Any class specific methods can be executed directly on the objects you get back from the db, because they will be an ```instanceof``` your class.
@@ -1383,13 +1386,12 @@ db.types.bind(
 );
 ```
 
-<a name="storage"></a>
 ## Storage
 
 By default, AceBase uses its own binary database format in Node.js environments, and IndexedDB (or LocalStorage) in the browser to store its data. However, it is also possible to use AceBase's realtime capabilities, and have the actual data stored in other databases. Currently, AceBase has built-in adapters for MSSQL, SQLite in Node.js environments; and IndexedDB, LocalStorage, SessionStorage for the browser. It also possible to create your own custom storage adapters, so wherever you'd want to store your data - it's in your hands!
 
-<a name="sqllite-mssql-storage"></a>
-### Using a SQLite or MSSQL backend (NEW v0.8.0)
+### Using SQLite or MSSQL storage 
+(NEW v0.8.0)
 
 From v0.8.0+ it is now possible to have AceBase store all data in a SQLite or SQL Server database backend! They're not as fast as the default AceBase binary database (which is about 5x faster), but if you want more control over your data, storing it in a widely used DBMS might come in handy. I developed it to be able to make ports to the browser and/or Android/iOS HTML5 apps easier, so ```AceBaseClient```s will be able to store and query data locally also.
 
@@ -1405,8 +1407,8 @@ const db = new AceBase('mydb', new SQLiteStorageSettings({ path: '.' }));
 const db = new AceBase('mydb', new MSSQLStorageSettings({ server: 'localhost', port: 1433, database: 'MyDB', username: 'user', password: 'secret', (...) }));
 ```
 
-<a name="browser"></a>
-## Running AceBase in the browser (NEW v0.9.0)
+## Running AceBase in the browser
+(NEW v0.9.0)
 
 From v0.9.0+, AceBase is now able to run stand-alone in the browser! It uses IndexedDB (NEW v0.9.25) or localStorage to store the data, or sessionStorage if you want a temporary database.
 
@@ -1445,8 +1447,8 @@ import { AceBase } from 'acebase';
 const db = AceBase.WithIndexedDB('dbname'); 
 ```
 
-<a name="sqllite-mssql-storage"></a>
-## Using a CustomStorage backend (NEW v0.9.22)
+## Using a CustomStorage backend 
+(NEW v0.9.22)
 
 It is now possible to store data in your own custom storage backend. To do this, you only have to provide a couple of methods to get, set and remove data and you're done. 
 
@@ -1597,14 +1599,12 @@ db.ready(ready => {
 })
 ```
 
-<a name="reflect-api"></a>
 ## Reflect API
 
 AceBase has a built-in reflection API that enables browsing the database content without retrieving any (nested) data. This API is available for local databases, and remote databases ~~when signed in as the ```admin``` user~~ (from server v0.9.29+) on paths the authenticated user has access to.
 
 The reflect API is also used internally: AceBase server's webmanager uses it to allow database exploration, and the ```DataReference``` class uses it to deliver results for ```count()``` and initial ```notify_child_added``` event callbacks.
 
-<a name="reflect-info"></a>
 ### Get information about a node
 
 To get information about a node and its children, use an ```info``` query:
@@ -1651,7 +1651,6 @@ This will return an info object with the following structure:
 }
 ```
 
-<a name="reflect-children"></a>
 ### Get children of a node
 
 To get information about the children of a node, use the ```children``` reflection query:
@@ -1673,8 +1672,8 @@ The returned children object in above example will have to following structure:
 }
 ```
 
-<a name="export-api"></a>
-## Export API (NEW v0.9.1)
+## Export API 
+(NEW v0.9.1)
 
 To export data from any node to json, you can use the export API. Simply pass an object that has a ```write``` method to ```yourRef.export```, and the entire node's value (including nested data) will be streamed in ```json``` format. If your ```write``` function returns a ```Promise```, streaming will be paused until the promise resolves (local databases only). You can use this to back off writing if the target stream's buffer is full (eg while waiting for a file stream to "drain"). This API is available for local databases, and remote databases 
 ~~when signed in as the ```admin``` user~~ (from server v0.9.29+) on paths the authenticated user has access to.
@@ -1693,7 +1692,6 @@ db.ref('posts').export(stream)
 })
 ```
 
-<a name="upgrade-notices"></a>
 ## Upgrade notices
 
 * v0.7.0 - Changed DataReference.vars object for subscription events, it now contains all values for path wildcards and variables with their index, and (for named variables:) ```name``` and ($-)prefixed ```$name```. The ```wildcards``` array has been removed. See *Using variables and wildcards in subscription paths* in the documentation above.
@@ -1702,7 +1700,6 @@ db.ref('posts').export(stream)
 
 * v0.4.0 - introduced fulltext, geo and array indexes. This required making changes to the index file format, you will have to delete all index files and create them again using ```db.indexes.create```.
 
-<a name="known-issues"></a>
 ## Known issues
 
 * No currently known issues. Please submit any issues you might find in the respective GitHub repository! For this repository go to [AceBase issues](https://github.com/appy-one/acebase/issues)
@@ -1717,13 +1714,11 @@ db.ref('posts').export(stream)
 
 * FIXED: Before v0.7.0 index building was done in memory (heap), which could cause a "v8::internal::FatalProcessOutOfMemory" (JavaScript heap out of memory) crash on larger datasets. From v0.4.3 it used an output stream and allows for larger indexes to be created, but was still vulnerable to this issue. v0.7.0 now completely builds indexes using streams from/to disk, eliminating memory issues.
 
-<a name="authors"></a>
 ## Authors
 
 * **Ewout Stortenbeker** - *Initial work* - <me@appy.one>
 * **You?** Please contribute!
 
-<a name="contributing"></a>
 ## Contributing
 
 If you would like to contribute to help move the project forward, you are welcome to do so!
@@ -1735,7 +1730,6 @@ What can you help me with?
 * Ideas - I love new ideas, share them!
 * Money - I am an independant developer and many (MANY) months were put into developing this. I also have a family to feed so if you like AceBase, feel free to send me a donation 👌
 
-<a name="buy-me-coffee"></a>
 ## Buy me a coffee
 
 If you use AceBase, let me know! Also, please consider supporting its development by buying me a coffee or sending a donation.
