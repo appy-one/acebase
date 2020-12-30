@@ -903,11 +903,13 @@ class AceBaseStorage extends Storage {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @param {boolean} [options.no_cache=false] 
      * @param {boolean} [options.include_child_count=false] whether to include child count if node is an object or array
+     * @param {boolean} [options.allow_expand=true] whether to allow expansion of path references (follow "symbolic links")
      * @returns {Promise<NodeInfo>}
      */
-    getNodeInfo(path, options = { tid: undefined, no_cache: false, include_child_count: false }) {
+    getNodeInfo(path, options = { tid: undefined, no_cache: false, include_child_count: false, allow_expand: true }) {
         options = options || {};
         options.no_cache = options.no_cache === true;
+        options.allow_expand = false; // Don't use yet! // options.allow_expand !== false;
 
         if (path === "") {
             if (!this.rootRecord.exists) {
@@ -951,7 +953,31 @@ class AceBaseStorage extends Storage {
         })
         .then(parentInfo => {
 
-            if (!parentInfo.exists || ![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentInfo.valueType) || !parentInfo.address) {
+            if (parentInfo.exists && parentInfo.valueType === VALUE_TYPES.REFERENCE && options.allow_expand) {
+                // NEW: Expand path reference, get new parentInfo.
+                return new Promise((resolve, reject) => {
+                    const gotPathReference = pathReference => {
+                        // lock.release();
+                        // TODO: implement relative path references: '../users/ewout'
+                        const childPath = PathInfo.getChildPath(pathReference.path, pathInfo.key);
+                        return this.getNodeInfo(childPath)
+                            .then(resolve)
+                            .catch(reject);
+                    };
+                    if (parentInfo.address) {
+                        // Must read target address to get target path
+                        const reader = new NodeReader(this, parentInfo.address, lock, true);
+                        return reader.getValue()
+                            .then(gotPathReference)
+                            .catch(reject);
+                    }
+                    else {
+                        // We have the path already
+                        return gotPathReference(parentInfo.value);
+                    }
+                });
+            }
+            else if (!parentInfo.exists || ![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentInfo.valueType) || !parentInfo.address) {
                 // Parent does not exist, is not an object or array, or has no children (object not stored in own address)
                 // so child doesn't exist
                 const childInfo = new NodeInfo({ path, exists: false });
