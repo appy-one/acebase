@@ -404,7 +404,7 @@ class LiveDataProxy {
             if (!loaded) {
                 return;
             }
-            const context = snap.ref.context();
+            const context = snap.context();
             const isRemote = ((_a = context.acebase_proxy) === null || _a === void 0 ? void 0 : _a.id) !== proxyId;
             if (!isRemote) {
                 return; // Update was done by us, no need to update cache
@@ -562,7 +562,7 @@ class LiveDataProxy {
             const targetRef = getTargetRef(ref, target);
             const subscription = targetRef.on('mutations').subscribe(async (snap) => {
                 var _a;
-                const context = snap.ref.context();
+                const context = snap.context();
                 const isRemote = ((_a = context.acebase_proxy) === null || _a === void 0 ? void 0 : _a.id) !== proxyId;
                 if (!isRemote) {
                     // Any local changes already triggered subscription callbacks
@@ -1191,35 +1191,6 @@ class DataReference {
         };
         this.db = db; //Object.defineProperty(this, "db", ...)
     }
-    /**
-     * Adds contextual info for database updates through this reference.
-     * This allows you to identify the event source (and/or reason) of
-     * data change events being triggered. You can use this for example
-     * to track if data updates were performed by the local client, a
-     * remote client, or the server. And, why it was changed, and by whom.
-     * @param context Context to set for this reference.
-     * @returns returns this instance, or the previously set context when calling context()
-     * @example
-     * // Somewhere in your frontend code:
-     * db.ref('accounts/123/balance').on('value', snap => {
-     *      // Account balance changed
-     *      const newBalance = snap.val();
-     *      const updateContext = snap.ref.context();
-     *      switch (updateContext.action) {
-     *          case 'payment': alert('Your payment was processed!'); break;
-     *          case 'deposit': alert('Money was added to your account'); break;
-     *          case 'withdraw': alert('You just withdrew money from your account'); break;
-     *      }
-     * });
-     *
-     * // Somewhere in your backend code:
-     * db.ref('accounts/123/balance')
-     *  .context({ action: 'withdraw', description: 'ATM withdrawal of €50' })
-     *  .transaction(snap => {
-     *      let balance = snap.val();
-     *      return balance - 50;
-     *  })
-     */
     context(context = undefined, merge = false) {
         const currentContext = this[_private].context;
         if (typeof context === 'object') {
@@ -1234,6 +1205,7 @@ class DataReference {
             return this;
         }
         else if (typeof context === 'undefined') {
+            console.warn(`Use snap.context() instead of snap.ref.context() to get updating context in event callbacks`);
             return currentContext;
         }
         else {
@@ -1463,12 +1435,12 @@ class DataReference {
                     this.db.debug.error(`Error getting data for event ${event} on path "${path}"`, err);
                     return;
                 }
-                let ref = this.db.ref(path).context(eventContext || {});
+                let ref = this.db.ref(path);
                 ref[_private].vars = path_info_1.PathInfo.extractVariables(this.path, path);
                 let callbackObject;
                 if (event.startsWith('notify_')) {
                     // No data event, callback with reference
-                    callbackObject = ref;
+                    callbackObject = ref.context(eventContext || {});
                 }
                 else {
                     const values = {
@@ -1476,14 +1448,14 @@ class DataReference {
                         current: this.db.types.deserialize(path, newValue)
                     };
                     if (event === 'child_removed') {
-                        callbackObject = new data_snapshot_1.DataSnapshot(ref, values.previous, true, values.previous);
+                        callbackObject = new data_snapshot_1.DataSnapshot(ref, values.previous, true, values.previous, eventContext);
                     }
                     else if (event === 'mutations') {
-                        callbackObject = new data_snapshot_1.MutationsDataSnapshot(ref, values.current);
+                        callbackObject = new data_snapshot_1.MutationsDataSnapshot(ref, values.current, eventContext);
                     }
                     else {
                         const isRemoved = event === 'mutated' && values.current === null;
-                        callbackObject = new data_snapshot_1.DataSnapshot(ref, values.current, isRemoved, values.previous);
+                        callbackObject = new data_snapshot_1.DataSnapshot(ref, values.current, isRemoved, values.previous, eventContext);
                     }
                 }
                 eventPublisher.publish(callbackObject);
@@ -1894,6 +1866,7 @@ class DataReferenceQuery {
             options.allow_cache = true;
         }
         options.eventHandler = ev => {
+            // TODO: implement context for query events
             if (!this[_private].events[ev.name]) {
                 return false;
             }
@@ -2087,7 +2060,7 @@ class DataSnapshot {
     /**
      * Creates a new DataSnapshot instance
      */
-    constructor(ref, value, isRemoved = false, prevValue) {
+    constructor(ref, value, isRemoved = false, prevValue, context) {
         this.ref = ref;
         this.val = () => { return value; };
         this.previous = () => { return prevValue; };
@@ -2097,10 +2070,12 @@ class DataSnapshot {
             }
             return value !== null && typeof value !== 'undefined';
         };
+        this.context = () => { return context || {}; };
     }
     val() { }
     previous() { }
     exists() { return false; }
+    context() { }
     /**
      * Gets a new snapshot for a child node
      * @param path child key or path
@@ -2156,8 +2131,8 @@ exports.DataSnapshot = DataSnapshot;
 class MutationsDataSnapshot extends DataSnapshot {
     val(warn = true) { return []; }
     previous() { throw new Error('Iterate values to get previous values for each mutation'); }
-    constructor(ref, mutations) {
-        super(ref, mutations);
+    constructor(ref, mutations, context) {
+        super(ref, mutations, false, undefined, context);
         this.val = (warn = true) => {
             if (warn) {
                 console.warn(`Unless you know what you are doing, it is best not to use the value of a mutations snapshot directly. Use child methods and forEach to iterate the mutations instead`);
