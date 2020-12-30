@@ -581,9 +581,9 @@ subscription.activated((activated, cancelReason) => {
 ### Get triggering context of events 
 (NEW v0.9.51)
 
-In some cases it is benificial to know what (and/or who) triggered a data event to fire, so you can choose what you want to do with data updates. It is now possible to pass context information with all ```update```, ```set```, and ```remove``` operations, which will be passed along to any event triggered on affected paths (on any connected client!)
+In some cases it is benificial to know what (and/or who) triggered a data event to fire, so you can choose what you want to do with data updates. It is now possible to pass context information with all `update`, `set`, `remove` , and `transaction` operations, which will be passed along to any event triggered on affected paths (on any connected client!)
 
-Imagine the following situation: you have a document editor that allows multiple people to edit at the same time. When loading a document you update its ```last_accessed``` property:
+Imagine the following situation: you have a document editor that allows multiple people to edit at the same time. When loading a document you update its `last_accessed` property:
 
 ```javascript
 // Load document & subscribe to changes
@@ -597,28 +597,29 @@ db.ref('users/ewout/documents/some_id').on('value', snap => {
 db.ref('users/ewout/documents/some_id').update({ last_accessed: new Date() })
 ```
 
-This will trigger the ``value`` event TWICE, and cause the document to render TWICE. Additionally, if any other user opens the same document, it will be triggered again even though a redraw is not needed!
+This will trigger the `value` event TWICE, and cause the document to render TWICE. Additionally, if any other user opens the same document, it will be triggered again even though a redraw is not needed!
 
 To prevent this, pass context info with the update:
 
 ```javascript
 // Load document & subscribe to changes (context aware!)
-db.ref('users/ewout/documents/some_id').on('value', snap => {
-    // Document loaded, or changed.
-    const context = snap.ref.context();
-    if (context.redraw === false) {
-        // No need to redraw!
-        return;
-    }
-    // Display its contents
-    const document = snap.val();
-    displayDocument(document);
-});
+db.ref('users/ewout/documents/some_id')
+    .on('value', snap => {
+        // Document loaded, or changed.
+        const context = snap.context();
+        if (context.redraw === false) {
+            // No need to redraw!
+            return;
+        }
+        // Display its contents
+        const document = snap.val();
+        displayDocument(document);
+    });
 
 // Set last_accessed to current time, with context
 db.ref('users/ewout/documents/some_id')
-.context({ redraw: false })
-.update({ last_accessed: new Date() })
+    .context({ redraw: false }) // prevent redraws!
+    .update({ last_accessed: new Date() })
 ```
 
 ### Change tracking using "mutated" and "mutations" events
@@ -1696,6 +1697,8 @@ db.ref('posts').export(stream)
 ```
 
 ## Upgrade notices
+
+* v0.9.68 - To get the used updating context in data event handlers, read from `snap.context()` instead of `snap.ref.context()`. This is to prevent further updates on `snap.ref` to use the same context. If you need to reuse the event context for new updates, you will have to manually set it: `snap.ref.context(snap.context()).update(...)`
 
 * v0.7.0 - Changed DataReference.vars object for subscription events, it now contains all values for path wildcards and variables with their index, and (for named variables:) ```name``` and ($-)prefixed ```$name```. The ```wildcards``` array has been removed. See *Using variables and wildcards in subscription paths* in the documentation above.
 
