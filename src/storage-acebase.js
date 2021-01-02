@@ -1384,7 +1384,9 @@ class RecordInfo {
     }
 }
 
-class TruncatedDataError extends Error {}
+class AdditionalDataRequest extends Error {
+    constructor() { super('More data needs to be loaded from the source'); }
+}
 
 class NodeReader {
     /**
@@ -1970,7 +1972,7 @@ class NodeReader {
             const startIndex = index;
             const assert = (bytes) => {
                 if (index + bytes > binary.length) {
-                    throw new TruncatedDataError(`truncated data`); 
+                    throw new AdditionalDataRequest(); 
                 }
             };
             assert(2);
@@ -2076,7 +2078,7 @@ class NodeReader {
                 let index = 0;
                 const assert = (bytes) => {
                     if (index + bytes > binary.length) { // binary.byteOffset + ... >
-                        throw new TruncatedDataError(`truncated data`); 
+                        throw new AdditionalDataRequest(); 
                     }
                 };
 
@@ -2130,7 +2132,7 @@ class NodeReader {
                         childCount++;
                     }
                     catch(err) {
-                        if (err instanceof TruncatedDataError) { //if (err.message === "corrupt") { throw err; }
+                        if (err instanceof AdditionalDataRequest) {
                             incompleteData = binary.slice(startIndex);
                             break;
                         }
