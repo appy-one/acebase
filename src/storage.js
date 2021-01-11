@@ -151,34 +151,7 @@ class Storage extends SimpleEventEmitter {
         this.settings = settings;
         this.debug = new DebugLogger(settings.logLevel, `[${name}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
-        // ASCI art: http://patorjk.com/software/taag/#p=display&f=Doom&t=AceBase
-        const logoStyle = [ColorStyle.magenta, ColorStyle.bold];
-        const logo =
-            '     ___          ______                ' + '\n' +
-            '    / _ \\         | ___ \\               ' + '\n' +
-            '   / /_\\ \\ ___ ___| |_/ / __ _ ___  ___ ' + '\n' +
-            '   |  _  |/ __/ _ \\ ___ \\/ _` / __|/ _ \\' + '\n' +
-            '   | | | | (_|  __/ |_/ / (_| \\__ \\  __/' + '\n' +
-            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|';
-        
-        const info = (settings.info ? ''.padStart(40 - settings.info.length, ' ') + settings.info + '\n' : '');
-
-        this.debug.write(logo.colorize(logoStyle));
-        info && this.debug.write(info.colorize(ColorStyle.magenta));
-
-        // this._ready = false;
-        // this._readyCallbacks = [];
-
-        // TODO: Implement?
-        this.nodeCache = {
-            find(path) {
-                // TODO: implement
-                return null;
-            },
-            update(path, info) {
-                // TODO: implement
-            }
-        };
+        // Setup node locking
         this.nodeLocker = new NodeLocker();
 
         // Setup cluster functionality

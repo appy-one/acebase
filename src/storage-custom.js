@@ -174,7 +174,7 @@ class CustomStorageSettings extends StorageSettings {
             throw new Error(`getTransaction must be a function`);
         }
         this.name = settings.name;
-        this.info = `${this.name || 'CustomStorage'} realtime database`;
+        // this.info = `${this.name || 'CustomStorage'} realtime database`;
         this.locking = settings.locking !== false;
         this.ready = settings.ready;
 

@@ -1,7 +1,7 @@
 const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
 const { StorageSettings } = require('./storage');
 const { LocalApi } = require('./api-local');
-const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
+const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('./storage-custom');
 
 class AceBaseLocalSettings extends AceBaseBaseSettings {
     /**
@@ -24,6 +24,7 @@ class AceBase extends AceBaseBase {
      */
     constructor(dbname, options) {
         options = new AceBaseLocalSettings(options);
+        options.info = options.info || 'realtime database';
         super(dbname, options);
         const apiSettings = { 
             db: this,
