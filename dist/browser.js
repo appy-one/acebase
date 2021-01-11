@@ -33,6 +33,7 @@ class AceBaseBaseSettings {
         }
         this.logLevel = options.logLevel || 'log';
         this.logColors = typeof options.logColors === 'boolean' ? options.logColors : true;
+        this.info = typeof options.info === 'string' ? options.info : undefined;
     }
 }
 exports.AceBaseBaseSettings = AceBaseBaseSettings;
@@ -48,6 +49,17 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
         this.debug = new debug_1.DebugLogger(options.logLevel, `[${dbname}]`);
         // Enable/disable logging with colors
         simple_colors_1.SetColorsEnabled(options.logColors);
+        // ASCI art: http://patorjk.com/software/taag/#p=display&f=Doom&t=AceBase
+        const logoStyle = [simple_colors_1.ColorStyle.magenta, simple_colors_1.ColorStyle.bold];
+        const logo = '     ___          ______                ' + '\n' +
+            '    / _ \\         | ___ \\               ' + '\n' +
+            '   / /_\\ \\ ___ ___| |_/ / __ _ ___  ___ ' + '\n' +
+            '   |  _  |/ __/ _ \\ ___ \\/ _` / __|/ _ \\' + '\n' +
+            '   | | | | (_|  __/ |_/ / (_| \\__ \\  __/' + '\n' +
+            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|';
+        const info = (options.info ? ''.padStart(40 - options.info.length, ' ') + options.info + '\n' : '');
+        this.debug.write(logo.colorize(logoStyle));
+        info && this.debug.write(info.colorize(simple_colors_1.ColorStyle.magenta));
         // Setup type mapping functionality
         this.types = new type_mappings_1.TypeMappings(this);
         this.once("ready", () => {
@@ -894,7 +906,7 @@ function createProxy(context) {
                     // Gets the DataReference to this data target
                     return function getRef() {
                         const ref = getTargetRef(context.root.ref, context.target);
-                        ref.context({ acebase_proxy: { id: context.id, source: 'getRef' } });
+                        // ref.context(<IProxyContext>{ acebase_proxy: { id: context.id, source: 'getRef' } });
                         return ref;
                     };
                 }
@@ -4178,7 +4190,7 @@ module.exports = { BrowserAceBase };
 const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
 const { StorageSettings } = require('./storage');
 const { LocalApi } = require('./api-local');
-const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
+const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('./storage-custom');
 
 class AceBaseLocalSettings extends AceBaseBaseSettings {
     /**
@@ -4201,6 +4213,7 @@ class AceBase extends AceBaseBase {
      */
     constructor(dbname, options) {
         options = new AceBaseLocalSettings(options);
+        options.info = options.info || 'realtime database';
         super(dbname, options);
         const apiSettings = { 
             db: this,
@@ -6258,7 +6271,7 @@ class CustomStorageSettings extends StorageSettings {
             throw new Error(`getTransaction must be a function`);
         }
         this.name = settings.name;
-        this.info = `${this.name || 'CustomStorage'} realtime database`;
+        // this.info = `${this.name || 'CustomStorage'} realtime database`;
         this.locking = settings.locking !== false;
         this.ready = settings.ready;
 
@@ -7622,34 +7635,7 @@ class Storage extends SimpleEventEmitter {
         this.settings = settings;
         this.debug = new DebugLogger(settings.logLevel, `[${name}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
-        // ASCI art: http://patorjk.com/software/taag/#p=display&f=Doom&t=AceBase
-        const logoStyle = [ColorStyle.magenta, ColorStyle.bold];
-        const logo =
-            '     ___          ______                ' + '\n' +
-            '    / _ \\         | ___ \\               ' + '\n' +
-            '   / /_\\ \\ ___ ___| |_/ / __ _ ___  ___ ' + '\n' +
-            '   |  _  |/ __/ _ \\ ___ \\/ _` / __|/ _ \\' + '\n' +
-            '   | | | | (_|  __/ |_/ / (_| \\__ \\  __/' + '\n' +
-            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|';
-        
-        const info = (settings.info ? ''.padStart(40 - settings.info.length, ' ') + settings.info + '\n' : '');
-
-        this.debug.write(logo.colorize(logoStyle));
-        info && this.debug.write(info.colorize(ColorStyle.magenta));
-
-        // this._ready = false;
-        // this._readyCallbacks = [];
-
-        // TODO: Implement?
-        this.nodeCache = {
-            find(path) {
-                // TODO: implement
-                return null;
-            },
-            update(path, info) {
-                // TODO: implement
-            }
-        };
+        // Setup node locking
         this.nodeLocker = new NodeLocker();
 
         // Setup cluster functionality
