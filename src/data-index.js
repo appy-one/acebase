@@ -530,7 +530,7 @@ class DataIndex {
                 /**
                  * @type BinaryBPlusTree
                  */
-                const tree = idx.tree;                
+                const tree = idx.tree;
                 return tree.transaction(operations)
                 .then(() => {
                     // Index updated

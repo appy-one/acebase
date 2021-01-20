@@ -2118,18 +2118,18 @@ class NodeReader {
         
                         let res = getValueFromBinary(child, binary, index);
                         index = res.index;
+                        childCount++;
                         if (res.skip) {
                             continue;
                         }
-                        else if (!isArray && options.keyFilter && options.keyFilter.indexOf(child.key) < 0) {
+                        else if (!isArray && options.keyFilter && !options.keyFilter.includes(child.key)) {
                             continue;
                         }
-                        else if (isArray && options.keyFilter && options.keyFilter.indexOf(child.index) < 0) {
+                        else if (isArray && options.keyFilter && !options.keyFilter.includes(child.index)) {
                             continue;
                         }
 
                         children.push(child);
-                        childCount++;
                     }
                     catch(err) {
                         if (err instanceof AdditionalDataRequest) {
@@ -2670,20 +2670,10 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
                     };
                 });
             storage.nodeCache.invalidate(nodeInfo.path, false, 'mergeNode');
-            if (invalidatePaths.length > 0) {
-                storage.nodeCache.invalidate(nodeInfo.path, path => {
-                    // if (path === nodeInfo.path) { return true; }
-                    const i = invalidatePaths.findIndex(inv => inv.path === path || inv.pathInfo.isAncestorOf(path));
-                    if (i < 0) { return false; }
-                    else if (invalidatePaths[i].action === 'invalidate') { 
-                        return true; 
-                    }
-                    else {
-                        storage.nodeCache.delete(invalidatePaths[i].path);
-                    }
-                    return false;
-                }, 'mergeNode');
-            }
+            invalidatePaths.forEach(item => {
+                if (item.action === 'invalidate') { storage.nodeCache.invalidate(item.path, true, 'mergeNode'); }
+                else { storage.nodeCache.delete(item.path); }
+            });
         }
 
         // What we need to do now is make changes to the actual record data. 

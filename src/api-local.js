@@ -898,6 +898,9 @@ class LocalApi extends Api {
                     return false; // Stop iterating
                 }
             })
+            .catch(err => {
+                // Node doesn't exist? No children..
+            })
             .then(() => {
                 return {
                     more: limit !== 0 && n > stop,

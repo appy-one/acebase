@@ -116,7 +116,7 @@ class NodeCache {
     /**
      * Invalidates a node and (optionally) its children by removing them from cache
      * @param {string} path 
-     * @param {boolean|((path: string) => boolean)} recursive 
+     * @param {boolean} recursive
      * @param {string} reason 
      */
     invalidate(path, recursive, reason) {
@@ -127,18 +127,7 @@ class NodeCache {
             this._cache.delete(path);
         }
         
-        if (typeof recursive === 'function') {
-            this._cache.forEach((entry, cachedPath) => {
-                if (pathInfo.isAncestorOf(cachedPath)) {
-                    const invalidate = recursive(cachedPath);
-                    if (invalidate) {
-                        DEBUG_MODE && console.error(`CACHE INVALIDATE ${reason} => (child) ${entry.nodeInfo}`);
-                        this._cache.delete(cachedPath);
-                    }
-                }
-            });
-        }
-        else if (recursive) {
+        if (recursive) {
             this._cache.forEach((entry, cachedPath) => {
                 if (pathInfo.isAncestorOf(cachedPath)) {
                     DEBUG_MODE && console.error(`CACHE INVALIDATE ${reason} => (child) ${entry.nodeInfo}`);
@@ -153,11 +142,21 @@ class NodeCache {
      * @param {string} path 
      */
     delete(path) {
-        this.update(new NodeInfo({ path, exists: false }));
+        const entry = this._cache.get(path);
         const pathInfo = PathInfo.get(path);
+        DEBUG_MODE && console.error(`CACHE MARK_DELETED => ${entry.nodeInfo}`);
+        this.update(new NodeInfo({ path, exists: false }));
+        
         this._cache.forEach((entry, cachedPath) => {
             if (pathInfo.isAncestorOf(cachedPath)) {
-                this.update(new NodeInfo({ path: cachedPath, exists: false }));
+                DEBUG_MODE && console.error(`CACHE MARK_DELETED => (child) ${entry.nodeInfo}`);
+                entry.nodeInfo.exists = false;
+                entry.nodeInfo.value = null;
+                delete entry.nodeInfo.type;
+                delete entry.nodeInfo.valueType;
+                entry.updated = Date.now();
+                entry.keepAlive();
+                // this.update(new NodeInfo({ path: cachedPath, exists: false }));
             }
         });
     }

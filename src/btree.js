@@ -3546,8 +3546,9 @@ class BinaryBPlusTree {
      * @param {boolean} [options.growData=false]
      * @param {boolean} [options.growExtData=false]
      * @param {leaf=>any} [options.applyChanges] callback function to apply changes to leaf before writing
+     * @param {boolean} [options.rollbackOnFailure=true] Whether to rewrite the original leaf on failure (only done if this is a one leaf tree) - disable if this rebuild is called because of a failure to write an updated leaf (rollback will fail too!)
      */
-    _rebuildLeaf(leaf, options = { growData: false, growExtData: false, applyChanges: (leaf) => {}, prevLeaf: null, nextLeaf: null }) {
+    _rebuildLeaf(leaf, options = { growData: false, growExtData: false, rollbackOnFailure: true, applyChanges: (leaf) => {}, prevLeaf: null, nextLeaf: null }) {
         // rebuild the leaf
 
         const newLeafExtDataLength = options.growExtData ? Math.ceil(leaf.extData.length * 1.1) : leaf.extData.length;
@@ -3626,7 +3627,7 @@ class BinaryBPlusTree {
             newLeaf.prevLeafIndex = leaf.prevLeafIndex;
             newLeaf.nextLeafIndex = leaf.nextLeafIndex;
             newLeaf.entries = leaf.entries.map(entry => 
-                new BinaryBPlusTreeLeafEntry(entry.key, entry.values));
+                new BinaryBPlusTreeLeafEntry(entry.key, entry.values.slice()));
             if (leaf.hasExtData) {
                 newLeaf.extData = {
                     loaded: true,
@@ -3645,7 +3646,7 @@ class BinaryBPlusTree {
 
             const freedBytes = leaf.length + leaf.extData.length;
 
-            console.log(`Rebuilding leaf for entries "${leaf.entries[0].key}" to "${leaf.entries[leaf.entries.length-1].key}"`);
+            // console.log(`Rebuilding leaf for entries "${leaf.entries[0].key}" to "${leaf.entries[leaf.entries.length-1].key}"`);
             options.applyChanges && options.applyChanges(newLeaf);
 
             // Start transaction
@@ -3657,7 +3658,7 @@ class BinaryBPlusTree {
                 action: () => {
                     return this._writeLeaf(newLeaf)
                     .then(result => {
-                        console.log(`new leaf for entries "${newLeaf.entries[0].key}" to "${newLeaf.entries.slice(-1)[0].key}" was written successfully at index ${newLeaf.index} (used to be at ${leaf.index})`);
+                        // console.log(`new leaf for entries "${newLeaf.entries[0].key}" to "${newLeaf.entries.slice(-1)[0].key}" was written successfully at index ${newLeaf.index} (used to be at ${leaf.index})`);
                         return `${result.length} leaf writes`;
                     })
                     // .then(result => {
@@ -3683,8 +3684,10 @@ class BinaryBPlusTree {
                 },
                 rollback: () => {
                     // release allocated space again
-                    console.error(`failed to write new leaf: ${err.message}`);
                     if (oneLeafTree) {
+                        if (options.rollbackOnFailure === false) {
+                            return Promise.resolve();
+                        }
                         return this._writeLeaf(leaf);
                     }
                     else {
@@ -4265,7 +4268,8 @@ class BinaryBPlusTree {
                     const extDataError = err.message.match(/ext_data/) !== null;
                     return this._rebuildLeaf(leaf, {
                         growData: !extDataError, 
-                        growExtData: extDataError 
+                        growExtData: extDataError,
+                        rollbackOnFailure: false // Disable original leaf rewriting on failure
                     });
                 })
                 .catch(err => {
@@ -4288,10 +4292,11 @@ class BinaryBPlusTree {
             if (leaf.entries.length <= this.info.entriesPerNode) {
                 return this._writeLeaf(leaf)
                 .catch(err => {
-                    // Leaf had no space left, rebuild it
+                    // Leaf had no space left, try rebuilding it
                     return this._rebuildLeaf(leaf, { 
                         growData: true, 
-                        growExtData: true
+                        growExtData: true,
+                        rollbackOnFailure: false // Don't try rewriting updated leaf on failure
                     });
                     // .catch(err => {
                     //     throw new DetailedError('add-key-failed', `Can't add key '${key}': ${err.message}`, err);
@@ -6611,7 +6616,7 @@ class TX {
 
             // Rollback
             const transactionErrors = results.filter(step => step.state === 'failed').map(result => result.error);
-            console.warn(`Rolling back tx: `, transactionErrors);
+            // console.warn(`Rolling back tx: `, transactionErrors);
             let rollbackSteps = this._queue.filter(step => typeof step.rollback === 'function').map(step => executeStepAction(step, 'rollback')); // this._queue.map(step => step.state === 'failed' || typeof step.rollback !== 'function' ? null : step.rollback());
             return Promise.all(rollbackSteps)
             .then(results => {
@@ -6628,7 +6633,7 @@ class TX {
                 err.transactionErrors = transactionErrors;
                 err.rollbackErrors = results.filter(step => step.state === 'failed').map(result => result.error);
                 
-                console.error(`Critical: could not rollback changes. Errors:`, err.rollbackErrors)
+                console.error(`Critical: could not rollback transaction. Errors:`, err.rollbackErrors)
                 throw err;
             });
         });
