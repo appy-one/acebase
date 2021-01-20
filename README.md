@@ -114,7 +114,7 @@ AceBase is split up into multiple packages:
 * **acebase-client**: client to connect to an external AceBase server ([github](https://github.com/appy-one/acebase-client), [npm](https://www.npmjs.com/package/acebase-client))
 * **acebase-core**: shared functionality, dependency of above packages ([github](https://github.com/appy-one/acebase-core), [npm](https://www.npmjs.com/package/acebase-core))
 
-**IMPORTANT**: AceBase is now fresh out of the beta stage. PLEASE report any errors / unexpected behaviour you encounter by creating issues in Github! AceBase now uses [semver](https://semver.org/) versioning will be used to prevent breaking changes to impact older code.
+**IMPORTANT**: AceBase is now fresh out of the beta stage. PLEASE report any errors / unexpected behaviour you encounter by creating issues in Github! AceBase now uses [semver](https://semver.org/) versioning to prevent breaking changes to impact older code.
 
 ### Prerequisites
 
