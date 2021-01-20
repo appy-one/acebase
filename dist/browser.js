@@ -3498,7 +3498,7 @@ class TypeMappings {
 exports.TypeMappings = TypeMappings;
 
 },{"./data-reference":8,"./data-snapshot":9,"./path-info":14,"./utils":23}],23:[function(require,module,exports){
-(function (Buffer){
+(function (Buffer){(function (){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.defer = exports.getChildValues = exports.compareValues = exports.cloneObject = exports.concatTypedArrays = exports.decodeString = exports.encodeString = exports.bytesToNumber = exports.numberToBytes = void 0;
@@ -3835,7 +3835,7 @@ function defer(fn) {
 }
 exports.defer = defer;
 
-}).call(this,require("buffer").Buffer)
+}).call(this)}).call(this,require("buffer").Buffer)
 },{"./data-snapshot":9,"./path-reference":15,"./process":16,"buffer":35}],24:[function(require,module,exports){
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
@@ -5278,6 +5278,9 @@ class LocalApi extends Api {
                 if (limit > 0 && n > stop) {
                     return false; // Stop iterating
                 }
+            })
+            .catch(err => {
+                // Node doesn't exist? No children..
             })
             .then(() => {
                 return {
