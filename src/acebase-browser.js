@@ -118,6 +118,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
      */
     constructor(context, target) {
         super(target);
+        this.production = true; // Improves performance, only set when all works well
         this.context = context;
         this._pending = [];
     }
@@ -191,6 +192,14 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         return Promise.resolve();
     }
 
+    removeMultiple(paths) {
+        // Queues multiple items at once, dramatically improves performance for large datasets
+        paths.forEach(path => {
+            this._pending.push({ action: 'remove', path });
+        });
+        return Promise.resolve();
+    }
+
     _set(tx, path, node) {
         /** @type {ICustomStorageNode} */
         const copy = {};
@@ -216,72 +225,27 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
     }
 
     childrenOf(path, include, checkCallback, addCallback) {
-        // Use cursor to loop from path on
-        return new Promise((resolve, reject) => {
-            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-            const tx = this._createTransaction(false);
-            const store = tx.objectStore('nodes');
-            const query = IDBKeyRange.lowerBound(path, true);
-            /** @type {IDBRequest<IDBCursorWithValue>|IDBRequest<IDBCursor>} */
-            const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
-            cursor.onerror = e => {
-                tx.abort && tx.abort();
-                reject(e);
-            }
-            cursor.onsuccess = async e => {
-                /** type {string} */
-                const otherPath = cursor.result ? cursor.result.key : null;
-                let keepGoing = true;
-                if (otherPath === null) {
-                    // No more results
-                    keepGoing = false;
-                }
-                else if (!pathInfo.isAncestorOf(otherPath)) {
-                    // Paths are sorted, no more children to be expected!
-                    keepGoing = false;
-                }
-                else if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
-                    /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
-                    let node;
-                    if (include.metadata) {
-                        /** @type {IDBRequest<IDBCursorWithValue>} */
-                        const valueCursor = cursor;
-                        /** @type {IIndexedDBNodeData} */
-                        const data = valueCursor.result.value;
-                        node = data.metadata;
-                        if (include.value) {
-                            // Load value!
-                            const req = tx.objectStore('content').get(otherPath);
-                            node.value = await new Promise((resolve, reject) => {
-                                req.onerror = e => {
-                                    resolve(null); // Value missing?
-                                };
-                                req.onsuccess = e => {
-                                    resolve(req.result);
-                                };
-                            });
-                        }
-                    }
-                    keepGoing = addCallback(otherPath, node);
-                }
-                if (keepGoing) {
-                    try { cursor.result.continue(); }
-                    catch(err) {
-                        // We reached the end of the cursor?
-                        keepGoing = false;
-                    }
-                }
-                if (!keepGoing) {
-                    tx.commit && tx.commit();
-                    resolve();
-                }
-            };
-        });
+        include.descendants = false;
+        return this._getChildrenOf(path, include, checkCallback, addCallback);
     }
 
     descendantsOf(path, include, checkCallback, addCallback) {
+        include.descendants = true;
+        return this._getChildrenOf(path, include, checkCallback, addCallback);
+    }
+    
+    /**
+     * 
+     * @param {string} path 
+     * @param {object} include 
+     * @param {boolean} include.descendants
+     * @param {boolean} include.metadata
+     * @param {boolean} include.value
+     * @param {(path: string) => boolean} checkCallback 
+     * @param {(path: string, node: any) => boolean} addCallback 
+     */
+    _getChildrenOf(path, include, checkCallback, addCallback) {
         // Use cursor to loop from path on
-        // NOTE: Implementation is almost identical to childrenOf, consider merging them
         return new Promise((resolve, reject) => {
             const pathInfo = CustomStorageHelpers.PathInfo.get(path);
             const tx = this._createTransaction(false);
@@ -302,10 +266,10 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     keepGoing = false;
                 }
                 else if (!pathInfo.isAncestorOf(otherPath)) {
-                    // Paths are sorted, no more ancestors to be expected!
+                    // Paths are sorted, no more children or ancestors to be expected!
                     keepGoing = false;
                 }
-                else if (checkCallback(otherPath)) {
+                else if ((include.descendants || pathInfo.isParentOf(otherPath)) && checkCallback(otherPath)) {
                     /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
                     let node;
                     if (include.metadata) {
