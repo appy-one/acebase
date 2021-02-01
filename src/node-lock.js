@@ -37,7 +37,7 @@ class NodeLocker {
          * Process 2 requests READ lock on "", is DENIED (process 1 writing to a descendant)
          * Process 3 requests WRITE lock on "/posts/post1", is GRANTED
          * Process 1 requests READ lock on "/" because of bound events, is DENIED (3 is writing to a descendant)
-         * Process 3 requests READ lock on "/" because of bound events, is DENIED (1 is wriitng to a descendant)
+         * Process 3 requests READ lock on "/" because of bound events, is DENIED (1 is writing to a descendant)
          * 
          * --> DEADLOCK!
          * 
