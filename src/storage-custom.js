@@ -36,6 +36,7 @@ class CustomStorageTransaction {
      * @param {{ path: string, write: boolean }} target Which path the transaction is taking place on, and whether it is a read or read/write lock. If your storage backend does not support transactions, is synchronous, or if you are able to lock resources based on path: use storage.nodeLocker to ensure threadsafe transactions
      */
     constructor(target) {
+        this.production = false;  // dev mode by default
         this.target = {
             get originalPath() { return target.path; },
             path: target.path,
@@ -89,6 +90,7 @@ class CustomStorageTransaction {
     descendantsOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.descendantsOf must be overridden by subclass`); }
 
     /**
+     * NOT USED YET
      * Default implementation of getMultiple that executes .get for each given path. Override for custom logic
      * @param {string[]} paths
      * @returns {Promise<Map<string, ICustomStorageNode>>} Returns promise with a Map of paths to nodes
@@ -100,11 +102,12 @@ class CustomStorageTransaction {
     }
 
     /**
+     * NOT USED YET
      * Default implementation of setMultiple that executes .set for each given path. Override for custom logic
      * @param {Array<{ path: string, node: ICustomStorageNode }>} nodes 
      */
     async setMultiple(nodes) {
-        await Promise.all(paths.map(({ path, node }) => this.set(path, node)));
+        await Promise.all(nodes.map(({ path, node }) => this.set(path, node)));
     }
 
     /**
@@ -662,7 +665,7 @@ class CustomStorage extends Storage {
                 let checkExecuted = false;
                 const includeChildCheck = childPath => {
                     checkExecuted = true;
-                    if (!pathInfo.isParentOf(childPath)) {
+                    if (!transaction.production && !pathInfo.isParentOf(childPath)) {
                         // Double check failed
                         throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
                     }
@@ -796,7 +799,7 @@ class CustomStorage extends Storage {
         let checkExecuted = false;
         const includeDescendantCheck = (descPath) => {
             checkExecuted = true;
-            if (!pathInfo.isAncestorOf(descPath)) {
+            if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
                 // Double check failed
                 throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
             }
@@ -890,7 +893,7 @@ class CustomStorage extends Storage {
                     let checkExecuted = false;
                     const includeChildCheck = (childPath) => {
                         checkExecuted = true;
-                        if (!pathInfo.isParentOf(childPath)) {
+                        if (!transaction.production && !pathInfo.isParentOf(childPath)) {
                             // Double check failed
                             throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
                         }
@@ -1016,7 +1019,7 @@ class CustomStorage extends Storage {
                 let checkExecuted = false;
                 const includeDescendantCheck = (descPath) => {
                     checkExecuted = true;
-                    if (!pathInfo.isAncestorOf(descPath)) {
+                    if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
                         // Double check failed
                         throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
                     }
