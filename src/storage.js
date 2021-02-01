@@ -696,63 +696,85 @@ class Storage extends SimpleEventEmitter {
         .then(result => {
 
             // Build data for old/new comparison
-            let newTopEventData = cloneObject(topEventData);
-            if (newTopEventData === null) {
-                // the node didn't exist prior to the update
-                newTopEventData = path === topEventPath ? value : {};
+
+            let newTopEventData, modifiedData;
+            if (path === topEventPath) {
+                if (options.merge) {
+                    if (topEventData === null) {
+                        newTopEventData = value instanceof Array ? [] : {};
+                    }
+                    else {
+                        // Create shallow copy of previous object value
+                        newTopEventData = topEventData instanceof Array ? [] : {};
+                        Object.keys(topEventData).forEach(key => {
+                            newTopEventData[key] = topEventData[key];
+                        });
+                    }
+                }
+                else {
+                    newTopEventData = value;
+                }
+                modifiedData = newTopEventData;
             }
-            let modifiedData = newTopEventData;
-            if (path !== topEventPath) {
-                let trailPath = path.slice(topEventPath.length).replace(/^\//, '');
-                let trailKeys = PathInfo.getPathKeys(trailPath);
+            else {
+                // topEventPath is on a higher path, so we have to adjust the value deeper down
+                const trailPath = path.slice(topEventPath.length).replace(/^\//, '');
+                const trailKeys = PathInfo.getPathKeys(trailPath);
+                // Create shallow copy of the original object (let unchanged properties reference existing objects)
+                if (topEventData === null) {
+                    // the node didn't exist prior to the update (or was not loaded)
+                    newTopEventData = typeof trailKeys[0] === 'number' ? [] : {};
+                }
+                else {
+                    newTopEventData = topEventData instanceof Array ? [] : {};
+                    Object.keys(topEventData).forEach(key => {
+                        newTopEventData[key] = topEventData[key];
+                    });
+                }
+                modifiedData = newTopEventData;
                 while (trailKeys.length > 0) {
                     let childKey = trailKeys.shift();
+                    // Create shallow copy of object at target
                     if (!options.merge && trailKeys.length === 0) {
                         modifiedData[childKey] = value;
                     }
                     else {
-                        if (!(childKey in modifiedData)) {
-                            modifiedData[childKey] = {}; // Fixes an error if an object in current path did not exist
-                        }
-                        modifiedData = modifiedData[childKey];
+                        const original = modifiedData[childKey];
+                        const shallowCopy = typeof childKey === 'number' ? [] : {};
+                        Object.keys(original).forEach(key => {
+                            shallowCopy[key] = original[key];
+                        })
+                        modifiedData[childKey] = shallowCopy;
                     }
+                    modifiedData = modifiedData[childKey];
                 }
             }
+
             if (options.merge) {
+                // Update target value with updates
                 Object.keys(value).forEach(key => {
-                    let newValue = value[key];
-                    if (newValue !== null) {
-                        modifiedData[key] = newValue;
-                    }
-                    else {
-                        delete modifiedData[key];
-                    }
+                    modifiedData[key] = value[key];
                 });
             }
-            else if (path === topEventPath) {
-                newTopEventData = modifiedData = value;
-            }
+
+            // console.assert(topEventData !== newTopEventData, 'shallow copy must have been made!');
 
             const dataChanges = compareValues(topEventData, newTopEventData);
             if (dataChanges === 'identical') {
                 return result;
             }
 
-            // Find out if there are indexes that need to be updated
-            // const updatedData = (() => {
-            //     let topPathKeys = PathInfo.getPathKeys(topEventPath);
-            //     let trailKeys = PathInfo.getPathKeys(path).slice(topPathKeys.length);
-            //     let oldValue = topEventData;
-            //     let newValue = newTopEventData;
-            //     while (trailKeys.length > 0) {
-            //         let subKey = trailKeys.shift();
-            //         let childValues = getChildValues(subKey, oldValue, newValue);
-            //         oldValue = childValues.oldValue;
-            //         newValue = childValues.newValue;
-            //     }
-            //     return { oldValue, newValue };
-            // })();
-
+            // Fix: remove null property values (https://github.com/appy-one/acebase/issues/2)
+            function removeNulls(obj) {
+                if (obj === null || typeof obj !== 'object') { return obj; } // Nothing to do
+                Object.keys(obj).forEach(prop => {
+                    const val = obj[prop];
+                    if (val === null) { delete obj[prop]; }
+                    if (typeof val === 'object') { removeNulls(val); }
+                });
+            }
+            removeNulls(newTopEventData);
+            
             // Trigger all index updates
             const indexUpdates = [];
             indexes.map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
