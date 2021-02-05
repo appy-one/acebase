@@ -1005,8 +1005,8 @@ class AceBaseStorage extends Storage {
                 });
             }
             return childInfo;
-        }).
-        then(childInfo => {
+        })
+        .then(childInfo => {
             lock.release(`Node.getInfo: done with path "/${parentPath}"`);
             this.nodeCache.update(childInfo, true); // NodeCache.update(childInfo); // Don't have to, nodeReader will have done it already
             
