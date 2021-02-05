@@ -2601,7 +2601,7 @@ class BinaryBPlusTree {
                     return this._getLeaf(childInfo, freshReader, options);
                 })
                 .then(nextLeaf => {
-                    console.assert(_isMore(nextLeaf.entries[0].key, leaf.entries[leaf.entries.length-1].key), 'next leaf has lower keys than previous leaf?!');
+                    console.assert(nextLeaf.entries.length === 0 || _isMore(nextLeaf.entries[0].key, leaf.entries[leaf.entries.length-1].key), 'next leaf has lower keys than previous leaf?!');
                     return nextLeaf;
                 });
             };
@@ -3716,7 +3716,7 @@ class BinaryBPlusTree {
                 });
             }
 
-            // Adjust previous leaf's next_leaf_ptr:
+            // Adjust next leaf's prev_leaf_ptr:
             if (leaf.getNext) {
                 const nextLeaf = {
                     prevPointerIndex: leaf.nextLeafIndex + BinaryBPlusTreeLeaf.prevLeafPtrIndex,
@@ -3766,7 +3766,6 @@ class BinaryBPlusTree {
 
             return tx.execute(true)
             .then(results => {
-                console.log('All rebuild writes were successful');
                 if (!oneLeafTree) {
                     return this._registerFreeSpace(leaf.index, freedBytes);
                 }
@@ -4393,10 +4392,113 @@ class BinaryBPlusTree {
                 if (!~valueIndex) { return; }
                 leaf.entries[entryIndex].values.splice(valueIndex, 1);
             }
+            if (leaf.parentNode && leaf.entries.length === 0) {
+                // This is not a single leaf tree, and the leaf is now empty. Remove it
+
+                if (leaf.parentNode.entries.length === 1) {
+                    // Parent node has only 1 entry, removing it would also make parent node empty...
+                    throw new DetailedError('leaf-empty', 'leaf is now empty and parent node has only 1 entry, tree will have to be rebuilt');
+                }
+
+                return this._removeLeaf(leaf);
+            }
             return this._writeLeaf(leaf);
         })
         .catch(err => {
             throw new DetailedError('remove-key-failed', `Can't remove key '${key}': $${err.message}`, err);
+        });
+    }
+
+    /**
+     * Removes an empty leaf
+     * @param {BinaryBPlusTreeLeaf} leaf 
+     */
+    _removeLeaf(leaf) {
+        return Promise.try(() => {
+            console.assert(leaf.parentNode && leaf.parentNode.entries.length >= 2, `Leaf to remove must have a parent node with at least 2 entries`);
+            console.assert(leaf.entries.length === 0, `Leaf to remove must be empty`);
+
+            const freedBytes = leaf.length + leaf.extData.length;
+
+            // Start transaction
+            const tx = new TX();
+
+            // Adjust previous leaf's next_leaf_ptr: (point it to leaf's next leaf)
+            if (leaf.getPrevious) {
+                const prevLeaf = {
+                    nextPointerIndex: leaf.prevLeafIndex + BinaryBPlusTreeLeaf.nextLeafPtrIndex,
+                    oldOffset: BinaryBPlusTreeLeaf.getNextLeafOffset(leaf.prevLeafIndex, leaf.index),
+                    newOffset: BinaryBPlusTreeLeaf.getNextLeafOffset(leaf.prevLeafIndex, leaf.nextLeafIndex)
+                };
+                tx.queue({
+                    name: 'prev leaf next_leaf_ptr',
+                    action: () => {
+                        const bytes = _writeSignedOffset([], 0, prevLeaf.newOffset, true);
+                        return this._writeFn(bytes, prevLeaf.nextPointerIndex);
+                    },
+                    rollback: () => {
+                        const bytes = _writeSignedOffset([], 0, prevLeaf.oldOffset, true);
+                        return this._writeFn(bytes, prevLeaf.nextPointerIndex);
+                    }
+                });
+            }
+
+            // Adjust next leaf's prev_leaf_ptr: (point it to leaf's previous leaf)
+            if (leaf.getNext) {
+                const nextLeaf = {
+                    prevPointerIndex: leaf.nextLeafIndex + BinaryBPlusTreeLeaf.prevLeafPtrIndex,
+                    oldOffset: BinaryBPlusTreeLeaf.getPrevLeafOffset(leaf.nextLeafIndex, leaf.index),
+                    newOffset: BinaryBPlusTreeLeaf.getPrevLeafOffset(leaf.nextLeafIndex, leaf.prevLeafIndex)
+                };
+                tx.queue({
+                    name: 'next leaf prev_leaf_ptr',
+                    action: () => {
+                        const bytes = _writeSignedOffset([], 0, nextLeaf.newOffset, true);
+                        return this._writeFn(bytes, nextLeaf.prevPointerIndex);
+                    },
+                    rollback: () => {
+                        const bytes = _writeSignedOffset([], 0, nextLeaf.oldOffset, true);
+                        return this._writeFn(bytes, nextLeaf.prevPointerIndex);
+                    }
+                });
+            }
+
+            // Rewrite parent node
+            const parentNodeInfo = {
+                entries: leaf.parentNode.entries.slice(),
+                gtChildOffset: leaf.parentNode.gtChildOffset
+            };
+            // Remove parent node entry or change gtChildOffset
+            if (leaf.parentEntry) {
+                const removeEntryIndex = leaf.parentNode.entries.indexOf(leaf.parentEntry);
+                leaf.parentNode.entries.splice(removeEntryIndex, 1);
+            }
+            else {
+                // Change gtChildOffset to last entry's offset
+                const lastEntry = leaf.parentNode.entries.splice(-1)[0];
+                leaf.parentNode.gtChildOffset = lastEntry.ltChildOffset;
+            }
+
+            tx.queue({
+                name: 'parent node',
+                action: () => {
+                    return this._writeNode(leaf.parentNode);
+                },
+                rollback: () => {
+                    // Set the target leaf indexes back to the originals
+                    leaf.parentNode.entries = parentNodeInfo.entries;
+                    leaf.parentNode.gtChildOffset = parentNodeInfo.gtChildOffset;
+                    return this._writeNode(leaf.parentNode);
+                }
+            });
+
+            return tx.execute(true)
+            .then(results => {
+                return this._registerFreeSpace(leaf.index, freedBytes);
+            });
+        })
+        .catch(err => {
+            throw new DetailedError('remove-leaf-failed', `Failed to remove leaf: ${err.message}`, err);
         });
     }
 
