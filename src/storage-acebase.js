@@ -852,7 +852,9 @@ class AceBaseStorage extends Storage {
             })
             .catch(err => {
                 lock.release('Node.getChildren error');
-                this.debug.error(`Error getting children: ${err.message}`);
+                if (!(err instanceof NodeNotFoundError)) {
+                    this.debug.error(`Error getting children: ${err.stack}`);
+                }
                 throw err;
             });
         };

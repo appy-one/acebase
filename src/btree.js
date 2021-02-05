@@ -2601,7 +2601,7 @@ class BinaryBPlusTree {
                     return this._getLeaf(childInfo, freshReader, options);
                 })
                 .then(nextLeaf => {
-                    console.assert(nextLeaf.entries.length === 0 || _isMore(nextLeaf.entries[0].key, leaf.entries[leaf.entries.length-1].key), 'next leaf has lower keys than previous leaf?!');
+                    console.assert(nextLeaf.entries.length === 0 || leaf.entries.length === 0 || _isMore(nextLeaf.entries[0].key, leaf.entries[leaf.entries.length-1].key), 'next leaf has lower keys than previous leaf?!');
                     return nextLeaf;
                 });
             };
