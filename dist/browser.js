@@ -633,19 +633,23 @@ class LiveDataProxy {
             else if (flag === 'onChange') {
                 return addOnChangeHandler(target, args.callback);
             }
-            else if (flag === 'observe') {
-                // Try to load Observable
-                const Observable = optional_observable_1.getObservable();
-                return new Observable(observer => {
+            else if (flag === 'subscribe' || flag === 'observe') {
+                const subscribe = subscriber => {
                     const currentValue = getTargetValue(cache, target);
-                    observer.next(currentValue);
+                    subscriber.next(currentValue);
                     const subscription = addOnChangeHandler(target, (value, previous, isRemote, context) => {
-                        observer.next(value);
+                        subscriber.next(value);
                     });
                     return function unsubscribe() {
                         subscription.stop();
                     };
-                });
+                };
+                if (flag === 'subscribe') {
+                    return subscribe;
+                }
+                // Try to load Observable
+                const Observable = optional_observable_1.getObservable();
+                return new Observable(subscribe);
             }
             else if (flag === 'transaction') {
                 const hasConflictingTransaction = transactions.some(t => RelativeNodeTarget.areEqual(target, t.target) || RelativeNodeTarget.isAncestor(target, t.target) || RelativeNodeTarget.isDescendant(target, t.target));
@@ -860,8 +864,7 @@ function createProxy(context) {
             }
             const value = target[prop];
             if (value === null) {
-                // Removed property. Should never happen, but if it does...
-                debugger;
+                // Removed property. Should never happen, but if it does:
                 delete target[prop];
                 return; // undefined
             }
@@ -929,6 +932,12 @@ function createProxy(context) {
                     // Starts monitoring the value
                     return function onChanged(callback) {
                         return context.flag('onChange', context.target, { callback });
+                    };
+                }
+                if (prop === 'subscribe') {
+                    // Gets subscriber function to use with Observables, or custom handling
+                    return function subscribe() {
+                        return context.flag('subscribe', context.target);
                     };
                 }
                 if (prop === 'getObservable') {
@@ -2236,6 +2245,7 @@ exports.ID = ID;
 },{"./cuid":5}],12:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.proxyAccess = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.DataSnapshot = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
 var acebase_base_1 = require("./acebase-base");
 Object.defineProperty(exports, "AceBaseBase", { enumerable: true, get: function () { return acebase_base_1.AceBaseBase; } });
 Object.defineProperty(exports, "AceBaseBaseSettings", { enumerable: true, get: function () { return acebase_base_1.AceBaseBaseSettings; } });
@@ -3781,16 +3791,19 @@ function compareValues(oldVal, newVal) {
     else if (typeof oldVal === "object") {
         // Do key-by-key comparison of objects
         const isArray = oldVal instanceof Array;
-        const oldKeys = isArray
-            ? Object.keys(oldVal).map(v => parseInt(v)) //new Array(oldVal.length).map((v,i) => i) 
-            : Object.keys(oldVal);
-        const newKeys = isArray
-            ? Object.keys(newVal).map(v => parseInt(v)) //new Array(newVal.length).map((v,i) => i) 
-            : Object.keys(newVal);
+        const getKeys = obj => {
+            let keys = Object.keys(obj).filter(key => !voids.includes(obj[key]));
+            if (isArray) {
+                keys = keys.map((v) => parseInt(v));
+            }
+            return keys;
+        };
+        const oldKeys = getKeys(oldVal);
+        const newKeys = getKeys(newVal);
         const removedKeys = oldKeys.filter(key => !newKeys.includes(key));
         const addedKeys = newKeys.filter(key => !oldKeys.includes(key));
         const changedKeys = newKeys.reduce((changed, key) => {
-            if (oldKeys.indexOf(key) >= 0) {
+            if (oldKeys.includes(key)) {
                 const val1 = oldVal[key];
                 const val2 = newVal[key];
                 const c = compareValues(val1, val2);
@@ -3957,6 +3970,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
      */
     constructor(context, target) {
         super(target);
+        this.production = true; // Improves performance, only set when all works well
         this.context = context;
         this._pending = [];
     }
@@ -4030,6 +4044,14 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         return Promise.resolve();
     }
 
+    removeMultiple(paths) {
+        // Queues multiple items at once, dramatically improves performance for large datasets
+        paths.forEach(path => {
+            this._pending.push({ action: 'remove', path });
+        });
+        return Promise.resolve();
+    }
+
     _set(tx, path, node) {
         /** @type {ICustomStorageNode} */
         const copy = {};
@@ -4055,72 +4077,27 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
     }
 
     childrenOf(path, include, checkCallback, addCallback) {
-        // Use cursor to loop from path on
-        return new Promise((resolve, reject) => {
-            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-            const tx = this._createTransaction(false);
-            const store = tx.objectStore('nodes');
-            const query = IDBKeyRange.lowerBound(path, true);
-            /** @type {IDBRequest<IDBCursorWithValue>|IDBRequest<IDBCursor>} */
-            const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
-            cursor.onerror = e => {
-                tx.abort && tx.abort();
-                reject(e);
-            }
-            cursor.onsuccess = async e => {
-                /** type {string} */
-                const otherPath = cursor.result ? cursor.result.key : null;
-                let keepGoing = true;
-                if (otherPath === null) {
-                    // No more results
-                    keepGoing = false;
-                }
-                else if (!pathInfo.isAncestorOf(otherPath)) {
-                    // Paths are sorted, no more children to be expected!
-                    keepGoing = false;
-                }
-                else if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
-                    /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
-                    let node;
-                    if (include.metadata) {
-                        /** @type {IDBRequest<IDBCursorWithValue>} */
-                        const valueCursor = cursor;
-                        /** @type {IIndexedDBNodeData} */
-                        const data = valueCursor.result.value;
-                        node = data.metadata;
-                        if (include.value) {
-                            // Load value!
-                            const req = tx.objectStore('content').get(otherPath);
-                            node.value = await new Promise((resolve, reject) => {
-                                req.onerror = e => {
-                                    resolve(null); // Value missing?
-                                };
-                                req.onsuccess = e => {
-                                    resolve(req.result);
-                                };
-                            });
-                        }
-                    }
-                    keepGoing = addCallback(otherPath, node);
-                }
-                if (keepGoing) {
-                    try { cursor.result.continue(); }
-                    catch(err) {
-                        // We reached the end of the cursor?
-                        keepGoing = false;
-                    }
-                }
-                if (!keepGoing) {
-                    tx.commit && tx.commit();
-                    resolve();
-                }
-            };
-        });
+        include.descendants = false;
+        return this._getChildrenOf(path, include, checkCallback, addCallback);
     }
 
     descendantsOf(path, include, checkCallback, addCallback) {
+        include.descendants = true;
+        return this._getChildrenOf(path, include, checkCallback, addCallback);
+    }
+    
+    /**
+     * 
+     * @param {string} path 
+     * @param {object} include 
+     * @param {boolean} include.descendants
+     * @param {boolean} include.metadata
+     * @param {boolean} include.value
+     * @param {(path: string) => boolean} checkCallback 
+     * @param {(path: string, node: any) => boolean} addCallback 
+     */
+    _getChildrenOf(path, include, checkCallback, addCallback) {
         // Use cursor to loop from path on
-        // NOTE: Implementation is almost identical to childrenOf, consider merging them
         return new Promise((resolve, reject) => {
             const pathInfo = CustomStorageHelpers.PathInfo.get(path);
             const tx = this._createTransaction(false);
@@ -4141,10 +4118,10 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     keepGoing = false;
                 }
                 else if (!pathInfo.isAncestorOf(otherPath)) {
-                    // Paths are sorted, no more ancestors to be expected!
+                    // Paths are sorted, no more children or ancestors to be expected!
                     keepGoing = false;
                 }
-                else if (checkCallback(otherPath)) {
+                else if ((include.descendants || pathInfo.isParentOf(otherPath)) && checkCallback(otherPath)) {
                     /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
                     let node;
                     if (include.metadata) {
@@ -5484,7 +5461,7 @@ class NodeLocker {
          * Process 2 requests READ lock on "", is DENIED (process 1 writing to a descendant)
          * Process 3 requests WRITE lock on "/posts/post1", is GRANTED
          * Process 1 requests READ lock on "/" because of bound events, is DENIED (3 is writing to a descendant)
-         * Process 3 requests READ lock on "/" because of bound events, is DENIED (1 is wriitng to a descendant)
+         * Process 3 requests READ lock on "/" because of bound events, is DENIED (1 is writing to a descendant)
          * 
          * --> DEADLOCK!
          * 
@@ -6136,6 +6113,7 @@ class CustomStorageTransaction {
      * @param {{ path: string, write: boolean }} target Which path the transaction is taking place on, and whether it is a read or read/write lock. If your storage backend does not support transactions, is synchronous, or if you are able to lock resources based on path: use storage.nodeLocker to ensure threadsafe transactions
      */
     constructor(target) {
+        this.production = false;  // dev mode by default
         this.target = {
             get originalPath() { return target.path; },
             path: target.path,
@@ -6189,6 +6167,7 @@ class CustomStorageTransaction {
     descendantsOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.descendantsOf must be overridden by subclass`); }
 
     /**
+     * NOT USED YET
      * Default implementation of getMultiple that executes .get for each given path. Override for custom logic
      * @param {string[]} paths
      * @returns {Promise<Map<string, ICustomStorageNode>>} Returns promise with a Map of paths to nodes
@@ -6200,11 +6179,12 @@ class CustomStorageTransaction {
     }
 
     /**
+     * NOT USED YET
      * Default implementation of setMultiple that executes .set for each given path. Override for custom logic
      * @param {Array<{ path: string, node: ICustomStorageNode }>} nodes 
      */
     async setMultiple(nodes) {
-        await Promise.all(paths.map(({ path, node }) => this.set(path, node)));
+        await Promise.all(nodes.map(({ path, node }) => this.set(path, node)));
     }
 
     /**
@@ -6762,7 +6742,7 @@ class CustomStorage extends Storage {
                 let checkExecuted = false;
                 const includeChildCheck = childPath => {
                     checkExecuted = true;
-                    if (!pathInfo.isParentOf(childPath)) {
+                    if (!transaction.production && !pathInfo.isParentOf(childPath)) {
                         // Double check failed
                         throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
                     }
@@ -6896,7 +6876,7 @@ class CustomStorage extends Storage {
         let checkExecuted = false;
         const includeDescendantCheck = (descPath) => {
             checkExecuted = true;
-            if (!pathInfo.isAncestorOf(descPath)) {
+            if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
                 // Double check failed
                 throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
             }
@@ -6990,7 +6970,7 @@ class CustomStorage extends Storage {
                     let checkExecuted = false;
                     const includeChildCheck = (childPath) => {
                         checkExecuted = true;
-                        if (!pathInfo.isParentOf(childPath)) {
+                        if (!transaction.production && !pathInfo.isParentOf(childPath)) {
                             // Double check failed
                             throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
                         }
@@ -7116,7 +7096,7 @@ class CustomStorage extends Storage {
                 let checkExecuted = false;
                 const includeDescendantCheck = (descPath) => {
                     checkExecuted = true;
-                    if (!pathInfo.isAncestorOf(descPath)) {
+                    if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
                         // Double check failed
                         throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
                     }
@@ -8183,63 +8163,85 @@ class Storage extends SimpleEventEmitter {
         .then(result => {
 
             // Build data for old/new comparison
-            let newTopEventData = cloneObject(topEventData);
-            if (newTopEventData === null) {
-                // the node didn't exist prior to the update
-                newTopEventData = path === topEventPath ? value : {};
+
+            let newTopEventData, modifiedData;
+            if (path === topEventPath) {
+                if (options.merge) {
+                    if (topEventData === null) {
+                        newTopEventData = value instanceof Array ? [] : {};
+                    }
+                    else {
+                        // Create shallow copy of previous object value
+                        newTopEventData = topEventData instanceof Array ? [] : {};
+                        Object.keys(topEventData).forEach(key => {
+                            newTopEventData[key] = topEventData[key];
+                        });
+                    }
+                }
+                else {
+                    newTopEventData = value;
+                }
+                modifiedData = newTopEventData;
             }
-            let modifiedData = newTopEventData;
-            if (path !== topEventPath) {
-                let trailPath = path.slice(topEventPath.length).replace(/^\//, '');
-                let trailKeys = PathInfo.getPathKeys(trailPath);
+            else {
+                // topEventPath is on a higher path, so we have to adjust the value deeper down
+                const trailPath = path.slice(topEventPath.length).replace(/^\//, '');
+                const trailKeys = PathInfo.getPathKeys(trailPath);
+                // Create shallow copy of the original object (let unchanged properties reference existing objects)
+                if (topEventData === null) {
+                    // the node didn't exist prior to the update (or was not loaded)
+                    newTopEventData = typeof trailKeys[0] === 'number' ? [] : {};
+                }
+                else {
+                    newTopEventData = topEventData instanceof Array ? [] : {};
+                    Object.keys(topEventData).forEach(key => {
+                        newTopEventData[key] = topEventData[key];
+                    });
+                }
+                modifiedData = newTopEventData;
                 while (trailKeys.length > 0) {
                     let childKey = trailKeys.shift();
+                    // Create shallow copy of object at target
                     if (!options.merge && trailKeys.length === 0) {
                         modifiedData[childKey] = value;
                     }
                     else {
-                        if (!(childKey in modifiedData)) {
-                            modifiedData[childKey] = {}; // Fixes an error if an object in current path did not exist
-                        }
-                        modifiedData = modifiedData[childKey];
+                        const original = modifiedData[childKey];
+                        const shallowCopy = typeof childKey === 'number' ? [] : {};
+                        Object.keys(original).forEach(key => {
+                            shallowCopy[key] = original[key];
+                        })
+                        modifiedData[childKey] = shallowCopy;
                     }
+                    modifiedData = modifiedData[childKey];
                 }
             }
+
             if (options.merge) {
+                // Update target value with updates
                 Object.keys(value).forEach(key => {
-                    let newValue = value[key];
-                    if (newValue !== null) {
-                        modifiedData[key] = newValue;
-                    }
-                    else {
-                        delete modifiedData[key];
-                    }
+                    modifiedData[key] = value[key];
                 });
             }
-            else if (path === topEventPath) {
-                newTopEventData = modifiedData = value;
-            }
+
+            // console.assert(topEventData !== newTopEventData, 'shallow copy must have been made!');
 
             const dataChanges = compareValues(topEventData, newTopEventData);
             if (dataChanges === 'identical') {
                 return result;
             }
 
-            // Find out if there are indexes that need to be updated
-            // const updatedData = (() => {
-            //     let topPathKeys = PathInfo.getPathKeys(topEventPath);
-            //     let trailKeys = PathInfo.getPathKeys(path).slice(topPathKeys.length);
-            //     let oldValue = topEventData;
-            //     let newValue = newTopEventData;
-            //     while (trailKeys.length > 0) {
-            //         let subKey = trailKeys.shift();
-            //         let childValues = getChildValues(subKey, oldValue, newValue);
-            //         oldValue = childValues.oldValue;
-            //         newValue = childValues.newValue;
-            //     }
-            //     return { oldValue, newValue };
-            // })();
-
+            // Fix: remove null property values (https://github.com/appy-one/acebase/issues/2)
+            function removeNulls(obj) {
+                if (obj === null || typeof obj !== 'object') { return obj; } // Nothing to do
+                Object.keys(obj).forEach(prop => {
+                    const val = obj[prop];
+                    if (val === null) { delete obj[prop]; }
+                    if (typeof val === 'object') { removeNulls(val); }
+                });
+            }
+            removeNulls(newTopEventData);
+            
             // Trigger all index updates
             const indexUpdates = [];
             indexes.map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
