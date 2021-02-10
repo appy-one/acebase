@@ -21,12 +21,13 @@ const liveChat = chatProxy.value;
 // Simply setting liveChat's properties updates the database:
 liveChat.title = 'Live Data Proxies Rock! 🚀';
 liveChat.members = ['ewout','john','pete','jack'];
+liveChat.messages = {};
 liveChat.messages.push({ 
     from: 'ewout', 
     text: 'Updating a database was never this easy' 
 });
 
-liveChat.onChange(function (val, prev, remoteChange, context) {
+liveChat.onChanged(function (val, prev, remoteChange, context) {
     // Handle specific (local or remote) changes:
     if (val.title !== prev.title && remoteChange) {
         console.log(`Title was changed by someone else`);
