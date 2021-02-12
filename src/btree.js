@@ -3480,12 +3480,12 @@ class BinaryBPlusTree {
         if (!this._fst) { this._fst = []; }
         if (index + length === this.info.byteLength - this.info.freeSpace) {
             // Cancel free space allocated at the end of the file
-            console.log(`Freeing ${length} bytes from index ${index} (at end of file)`);
+            // console.log(`Freeing ${length} bytes from index ${index} (at end of file)`);
             this.info.freeSpace += length;
             return this._writeFn(_writeByteLength([], 0, this.info.freeSpace), this.info.freeSpaceIndex); // free_byte_length
         }
         else {
-            console.log(`Freeing ${length} bytes from index ${index} to ${index+length}`);
+            // console.log(`Freeing ${length} bytes from index ${index} to ${index+length}`);
             this._fst.push({ index, length });
         }
     }
