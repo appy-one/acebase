@@ -3771,6 +3771,10 @@ class BinaryBPlusTree {
                 }
             });          
         })
+        // .then(async results => {
+        //     await this._testTree();
+        //     return results;
+        // })
         .catch(err => {
             throw new DetailedError('rebuild-leaf-failed', `Failed to rebuild leaf: ${err.message}`, err);
         });
@@ -3935,6 +3939,10 @@ class BinaryBPlusTree {
                 .then(() => ({ node1: node, node2: newNode }));
             });
         })
+        // .then(async results => {
+        //     await this._testTree();
+        //     return results;
+        // })
         .catch(err => {
             throw new DetailedError('split-node-failed', `Unable to split node: ${err.message}`, err);
         });    
@@ -4155,10 +4163,31 @@ class BinaryBPlusTree {
                 return tx.execute(true); // run parallel
             });
         })
+        // .then(async results => {
+        //     await this._testTree();
+        //     return results;
+        // })
         .catch(err => {
             throw new DetailedError('split-leaf-failed', `Unable to split leaf: ${err.message}`, err);
         });
     }
+
+    // async _testTree() {
+    //     // Test tree by looking up all entries individually
+    //     let leaf = await this.getFirstLeaf();
+    //     const keys = leaf.entries.map(e => e.key);
+    //     while (leaf.getNext) {
+    //         leaf = await leaf.getNext();
+    //         keys.push(...leaf.entries.map(e => e.key));
+    //     }
+    //     console.warn(`TREE TEST: testing ${keys.length} keys`);
+    //     for (let i = 0; i < keys.length; i++) {
+    //         const key = keys[i];
+    //         leaf = await this.findLeaf(key);
+    //         console.assert(leaf && leaf.entries.find(e => e.key === key), `Key "${key}" must be in leaf`);
+    //     }
+    //     console.warn(`TREE TEST SUCCESSFUL`);
+    // }
 
     /**
      * @param {string|number|boolean|Date|undefined} key 
@@ -4466,7 +4495,7 @@ class BinaryBPlusTree {
             // Rewrite parent node
             const parentNodeInfo = {
                 entries: leaf.parentNode.entries.slice(),
-                gtChildOffset: leaf.parentNode.gtChildOffset
+                gtChildIndex: leaf.parentNode.gtChildIndex
             };
             // Remove parent node entry or change gtChildOffset
             if (leaf.parentEntry) {
@@ -4476,7 +4505,7 @@ class BinaryBPlusTree {
             else {
                 // Change gtChildOffset to last entry's offset
                 const lastEntry = leaf.parentNode.entries.splice(-1)[0];
-                leaf.parentNode.gtChildOffset = lastEntry.ltChildOffset;
+                leaf.parentNode.gtChildIndex = lastEntry.ltChildIndex;
             }
 
             tx.queue({
@@ -4487,7 +4516,7 @@ class BinaryBPlusTree {
                 rollback: () => {
                     // Set the target leaf indexes back to the originals
                     leaf.parentNode.entries = parentNodeInfo.entries;
-                    leaf.parentNode.gtChildOffset = parentNodeInfo.gtChildOffset;
+                    leaf.parentNode.gtChildIndex = parentNodeInfo.gtChildIndex;
                     return this._writeNode(leaf.parentNode);
                 }
             });
@@ -4497,6 +4526,10 @@ class BinaryBPlusTree {
                 return this._registerFreeSpace(leaf.index, freedBytes);
             });
         })
+        // .then(async results => {
+        //     await this._testTree();
+        //     return results;
+        // })
         .catch(err => {
             throw new DetailedError('remove-leaf-failed', `Failed to remove leaf: ${err.message}`, err);
         });
@@ -4712,6 +4745,16 @@ class BinaryBPlusTree {
                     leafsSeen++;
                     // console.log(`Processing leaf with ${leaf.entries.length} entries, total=${totalEntries}`);
                     // leafStats.debugEntries.push(...leaf.entries);
+
+                    if (leaf.entries.length === 0) {
+                        // For leafs that were previously left empty (are now removed, see issue #5)
+                        if (leaf.getNext) {
+                            return leaf.getNext()
+                            .then(processLeaf);
+                        }
+                        return;
+                    }
+
                     leafStats.totalEntries += leaf.entries.length;
                     leafStats.totalValues += leaf.entries.reduce((total, entry) => total + entry.totalValues, 0);
                     leafStats.totalEntryBytes += leaf.length;
@@ -4773,6 +4816,11 @@ class BinaryBPlusTree {
                     lastLeaf = leaf;
                     leafStats.readLeafs++;
                     leafStats.readEntries += leaf.entries.length;
+                    if (leaf.entries.length === 0 && leaf.getNext) {
+                        // For leafs that were previously left empty (are now removed, see issue #5)
+                        return leaf.getNext()
+                        .then(processLeaf);
+                    }
                     return leaf.entries;
                 }
                 if (!lastLeaf) {
@@ -4811,6 +4859,10 @@ class BinaryBPlusTree {
 
             this._chunkSize = originalChunkSize; // Reset chunk size to original
         });
+        // .then(async results => {
+        //     await this._testTree();
+        //     return results;
+        // });
     }
 
     /**
