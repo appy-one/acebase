@@ -128,25 +128,31 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         return tx;
     }
     
-    commit() {
+    async commit() {
         // console.log(`*** COMMIT ${this._pending.length} operations ****`);
         if (this._pending.length === 0) { return Promise.resolve(); }
         const ops = this._pending.splice(0);
         const tx = this._createTransaction(true);
-        const promises = ops.map(op => {
-            if (op.action === 'set') { return this._set(tx, op.path, op.node); }
-            else if (op.action === 'remove') { return this._remove(tx, op.path); }
-            else { throw new Error('Unknown pending operation'); }
-        });
-        return Promise.all(promises)
-        .then(() => {
+        try {
+            // Execute in batches to improve performance
+            const batchSize = 25; // Tried 1, 10, 25, 50, 100 - 25 seems to be the (slightly) fastest
+            while(ops.length > 0) {
+                const batch = ops.splice(0, batchSize);
+                const promises = batch.map(op => {
+                    if (op.action === 'set') { return this._set(tx, op.path, op.node); }
+                    else if (op.action === 'remove') { return this._remove(tx, op.path); }
+                    else { throw new Error('Unknown pending operation'); }
+                });
+                await Promise.all(promises);
+            }
+
             tx.commit && tx.commit();
-            // console.log(`*** COMMIT DONE! ***`);
-        })
-        .catch(err => {
+        }
+        catch(err) {
             console.error(err);
             tx.abort && tx.abort();
-        });
+            throw err;
+        }
     }
     
     rollback(err) {
