@@ -1,5 +1,5 @@
 const { Api } = require('acebase-core');
-const { StorageSettings } = require('./storage');
+const { StorageSettings, NodeNotFoundError } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
 const { MSSQLStorage, MSSQLStorageSettings } = require('./storage-mssql');
@@ -613,7 +613,9 @@ class LocalApi extends Api {
             })
             .catch(reason => {
                 // No record?
-                this.storage.debug.warn(`Error getting child stream: ${reason}`);
+                if (!(reason instanceof NodeNotFoundError)) {
+                    this.storage.debug.warn(`Error getting child stream: ${reason}`);
+                }
                 return [];
             })
             .then(() => {
