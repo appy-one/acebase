@@ -671,6 +671,12 @@ class LiveDataProxy {
                     tx.transaction = {
                         get status() { return tx.status; },
                         get completed() { return tx.status !== 'started'; },
+                        get mutations() {
+                            return mutationQueue.filter(m => RelativeNodeTarget.areEqual(tx.target, m.target) || RelativeNodeTarget.isAncestor(tx.target, m.target));
+                        },
+                        get hasMutations() {
+                            return this.mutations.length > 0;
+                        },
                         async commit() {
                             if (this.completed) {
                                 throw new Error(`Transaction has completed already (status '${tx.status}')`);
@@ -1008,6 +1014,15 @@ function createProxy(context) {
                     if (prop === 'reverse') {
                         return function reverse() {
                             return writeArray(() => target.reverse());
+                        };
+                    }
+                    if (prop === 'indexOf') {
+                        return function indexOf(value) {
+                            if (value[isProxy]) {
+                                // Use unproxied value, or array.indexOf will return -1 (fixes issue #1)
+                                value = value.getTarget(false);
+                            }
+                            return target.indexOf(value);
                         };
                     }
                 }
@@ -2097,6 +2112,12 @@ class DataSnapshot {
     previous() { }
     exists() { return false; }
     context() { }
+    /**
+     * Creates a DataSnapshot instance (for internal AceBase usage only)
+     */
+    static for(ref, value) {
+        return new DataSnapshot(ref, value);
+    }
     /**
      * Gets a new snapshot for a child node
      * @param path child key or path
