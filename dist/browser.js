@@ -4834,7 +4834,7 @@ class LocalApi extends Api {
                 indexedResults = shortestSet.reduce((results, match) => {
                     // Check if the key is present in the other result sets
                     const result = { key: match.key, path: match.path, val: { [shortestSet.filterKey]: match.value } };
-                    const matchedInAllSets = otherSets.every(set => set.findIndex(m => match.path === match.path) >= 0);
+                    const matchedInAllSets = otherSets.every(set => set.findIndex(m => m.path === match.path) >= 0);
                     if (matchedInAllSets) { 
                         match.metadata && Object.assign(result.val, match.metadata);
                         otherSets.forEach(set => {
