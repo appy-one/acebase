@@ -1,7 +1,8 @@
-const { ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
+const { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils } = require('acebase-core');
+const { compareValues } = Utils;
 const { NodeInfo } = require('./node-info');
 const { NodeLocker } = require('./node-lock');
-const { VALUE_TYPES } = require('./node-value-types');
+const { VALUE_TYPES, getNodeValueType } = require('./node-value-types');
 const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
 
 /** Interface for metadata being stored for nodes */
@@ -24,7 +25,7 @@ class ICustomStorageNodeMetaData {
 class ICustomStorageNode extends ICustomStorageNodeMetaData {
     constructor() {
         super();
-        /** @type {any} only Object, Array or string values. */
+        /** @type {any} only Object, Array, large string and binary values. */
         this.value = null;
     }
 }
@@ -478,13 +479,14 @@ class CustomStorage extends Storage {
      * @param {string} path 
      * @param {object} options 
      * @param {CustomStorageTransaction} options.transaction
+     * @returns {Promise<ICustomStorageNode>}
      */
     async _readNode(path, options) {
         // deserialize a stored value (always an object with "type", "value", "revision", "revision_nr", "created", "modified")
         let node = await options.transaction.get(path);
         if (node === null) { return null; }
         if (typeof node !== 'object') {
-            throw new Error(`CustomStorage get function must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
+            throw new Error(`CustomStorageTransaction.get must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
         }
 
         this._processReadNodeValue(node);
@@ -535,6 +537,7 @@ class CustomStorage extends Storage {
      * @param {CustomStorageTransaction} options.transaction
      * @param {boolean} [options.merge=false]
      * @param {string} [options.revision]
+     * @param {any} [options.currentValue]
      * @returns {Promise<void>}
      */
     async _writeNode(path, value, options) {
@@ -544,12 +547,23 @@ class CustomStorage extends Storage {
         else if (path === '' && (typeof value !== 'object' || value instanceof Array)) {
             throw new Error(`Invalid root node value. Must be an object`);
         }
+
+        // Check if the value for this node changed, to prevent recursive calls to 
+        // perform unnecessary writes that do not change any data
+        if (typeof options.currentValue !== 'undefined' && !options.merge) {
+            const diff = compareValues(options.currentValue, value);
+            if (diff === 'identical') {
+                return Promise.resolve(); // Done!
+            }
+        }
         
         const transaction = options.transaction;
 
         // Get info about current node at path
-        const currentRow = await this._readNode(path, { transaction });
-        
+        const currentRow = options.currentValue === null 
+            ? null // No need to load info if currentValue is null (we already know it doesn't exist)
+            : await this._readNode(path, { transaction });
+
         if (options.merge && currentRow) {
             if (currentRow.type === VALUE_TYPES.ARRAY && !(value instanceof Array) && typeof value === 'object' && Object.keys(value).some(key => isNaN(key))) {
                 throw new Error(`Cannot merge existing array of path "${path}" with an object`);
@@ -718,7 +732,13 @@ class CustomStorage extends Storage {
                     if (isArray) { key = parseInt(key); }
                     const childPath = pathInfo.childPath(key); // PathInfo.getChildPath(path, key);
                     const childValue = childNodeValues[key];
-                    return this._writeNode(childPath, childValue, { transaction, revision, merge: false });
+
+                    // Pass current child value to _writeNode
+                    const currentChildValue = typeof options.currentValue === 'object' && options.currentValue !== null && key in options.currentValue 
+                        ? options.currentValue[key] 
+                        : null;
+
+                    return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: currentChildValue });
                 });
 
                 // Delete all child nodes that were stored in their own record, but are being removed 
@@ -766,7 +786,7 @@ class CustomStorage extends Storage {
                 if (isArray) { key = parseInt(key); }
                 const childPath = PathInfo.getChildPath(path, key);
                 const childValue = childNodeValues[key];
-                return this._writeNode(childPath, childValue, { transaction, revision, merge: false });
+                return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: null });
             });
 
             // Create current node

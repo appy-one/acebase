@@ -1,6 +1,6 @@
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
-const { VALUE_TYPES } = require('./node-value-types');
+const { VALUE_TYPES, getNodeValueType } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
 const { cloneObject, compareValues, getChildValues, encodeString, defer } = Utils;
 
@@ -597,6 +597,19 @@ class Storage extends SimpleEventEmitter {
         const writeNode = () => {
             if (typeof options._customWriteFunction === 'function') {
                 return options._customWriteFunction();
+            }
+            if (topEventData) {
+                // Pass loaded data to _writeNode, speeds up recursive calls
+                // This prevents reloading and/or overwriting of unchanged child nodes                
+                const pathKeys = PathInfo.getPathKeys(path);
+                const eventPathKeys = PathInfo.getPathKeys(topEventPath);
+                const trailKeys = pathKeys.slice(eventPathKeys.length);
+                let currentValue = topEventData;
+                while (trailKeys.length > 0 && currentValue !== null) {
+                    const childKey = trailKeys.shift();
+                    currentValue = typeof currentValue === 'object' && childKey in currentValue ? currentValue[childKey] : null;
+                }
+                options.currentValue = currentValue;
             }
             return this._writeNode(path, value, options);            
         }
