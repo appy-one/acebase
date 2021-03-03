@@ -93,11 +93,10 @@ export interface ICustomStorageNodeMetaData {
     /** Type of the node's value. 1=object, 2=array, 3=number, 4=boolean, 5=string, 6=date, 7=reserved, 8=binary, 9=reference */
     type: number;
 }
-export interface ICustomStorageNodeValue {
-    /** only Object, Array or string values */
+export interface ICustomStorageNode extends ICustomStorageNodeMetaData {
+    /** only Object, Array, large string and binary values */
     value: any
 }
-export interface ICustomStorageNode extends ICustomStorageNodeMetaData, ICustomStorageNodeValue {}
 
 export abstract class CustomStorageTransaction {
     /**
