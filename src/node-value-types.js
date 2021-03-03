@@ -26,4 +26,13 @@ function getValueTypeName(valueType) {
     }
 }
 
-module.exports = { VALUE_TYPES, getValueTypeName };
+function getNodeValueType(value) {
+    if (value instanceof Array) { return VALUE_TYPES.ARRAY; }
+    else if (value instanceof PathReference) { return VALUE_TYPES.REFERENCE; }
+    else if (value instanceof ArrayBuffer) { return VALUE_TYPES.BINARY; }
+    else if (typeof value === 'string') { return VALUE_TYPES.STRING; }
+    else if (typeof value === 'object') { return VALUE_TYPES.OBJECT; }
+    throw new Error(`Invalid value for standalone node: ${value}`);
+};
+
+module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType };
