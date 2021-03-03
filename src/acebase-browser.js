@@ -128,27 +128,68 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         return tx;
     }
     
+    _splitMetadata(node) {
+        /** @type {ICustomStorageNode} */
+        const copy = {};
+        const value = node.value;
+        Object.assign(copy, node);
+        delete copy.value;
+        /** @type {ICustomStorageNodeMetaData} */
+        const metadata = copy;                
+        return { metadata, value };
+    }
+
     async commit() {
         // console.log(`*** COMMIT ${this._pending.length} operations ****`);
         if (this._pending.length === 0) { return Promise.resolve(); }
-        const ops = this._pending.splice(0);
+        const batch = this._pending.splice(0);
+
+        /** @type {IDBTransaction} */
         const tx = this._createTransaction(true);
         try {
-            // Execute in batches to improve performance
-            const batchSize = 25; // Tried 1, 10, 25, 50, 100 - 25 seems to be the (slightly) fastest
-            while(ops.length > 0) {
-                const batch = ops.splice(0, batchSize);
-                const promises = batch.map(op => {
-                    if (op.action === 'set') { return this._set(tx, op.path, op.node); }
-                    else if (op.action === 'remove') { return this._remove(tx, op.path); }
-                    else { throw new Error('Unknown pending operation'); }
+            await new Promise((resolve, reject) => {
+                let stop = false, processed = 0;
+                const handleError = err => {
+                    debugger;
+                    stop = true;
+                    reject(err);
+                };
+                const handleSuccess = () => {
+                    if (++processed === batch.length) {
+                        resolve();
+                    }
+                };
+                batch.forEach((op, i) => {
+                    if (stop) { return; }
+                    // const isLast = i + 1 === batch.length;
+                    let r1, r2;
+                    const path = op.path;
+                    if (op.action === 'set') { 
+                        // return this._set(tx, op.path, op.node); 
+                        const { metadata, value } = this._splitMetadata(op.node);
+                        /** @type {IIndexedDBNodeData} */
+                        const nodeInfo = { path, metadata }
+                        r1 = tx.objectStore('nodes').put(nodeInfo); // Insert into "nodes" object store
+                        r2 = tx.objectStore('content').put(value, path); // Add value to "content" object store
+                    }
+                    else if (op.action === 'remove') { 
+                        // return this._remove(tx, op.path); 
+                        r1 = tx.objectStore('content').delete(path); // Remove from "content" object store
+                        r2 = tx.objectStore('nodes').delete(path); // Remove from "nodes" data store
+                    }
+                    else { 
+                        handleError(new Error(`Unknown pending operation "${op.action}" on path "${path}" `)); 
+                    }
+                    let succeeded = 0;
+                    r1.onsuccess = r2.onsuccess = () => {
+                        if (++succeeded === 2) { handleSuccess(); }
+                    };
+                    r1.onerror = r2.onerror = handleError;
                 });
-                await Promise.all(promises);
-            }
-
+            });
             tx.commit && tx.commit();
         }
-        catch(err) {
+        catch (err) {
             console.error(err);
             tx.abort && tx.abort();
             throw err;
@@ -206,29 +247,30 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         return Promise.resolve();
     }
 
-    _set(tx, path, node) {
-        /** @type {ICustomStorageNode} */
-        const copy = {};
-        const value = node.value;
-        Object.assign(copy, node);
-        delete copy.value;
-        /** @type {ICustomStorageNodeMetaData} */
-        const metadata = copy;                
-        /** @type {IIndexedDBNodeData} */
-        const obj = {
-            path,
-            metadata
-        }
-        const r1 = _requestToPromise(tx.objectStore('nodes').put(obj)); // Insert into "nodes" object store
-        const r2 = _requestToPromise(tx.objectStore('content').put(value, path)); // Add value to "content" object store
-        return Promise.all([r1, r2]);
-    }
+    // _set(tx, path, node) {
+    //     /** @type {ICustomStorageNode} */
+    //     const copy = {};
+    //     const value = node.value;
+    //     Object.assign(copy, node);
+    //     delete copy.value;
+    //     /** @type {ICustomStorageNodeMetaData} */
+    //     const metadata = copy;
+    //     // const { metadata, value } = this._splitMetadata(node);
+    //     /** @type {IIndexedDBNodeData} */
+    //     const obj = {
+    //         path,
+    //         metadata
+    //     }
+    //     const r1 = _requestToPromise(tx.objectStore('nodes').put(obj)); // Insert into "nodes" object store
+    //     const r2 = _requestToPromise(tx.objectStore('content').put(value, path)); // Add value to "content" object store
+    //     return Promise.all([r1, r2]);
+    // }
 
-    _remove(tx, path) {
-        const r1 = _requestToPromise(tx.objectStore('content').delete(path)); // Remove from "content" object store
-        const r2 = _requestToPromise(tx.objectStore('nodes').delete(path)); // Remove from "nodes" data store
-        return Promise.all([r1, r2]);
-    }
+    // _remove(tx, path) {
+    //     const r1 = _requestToPromise(tx.objectStore('content').delete(path)); // Remove from "content" object store
+    //     const r2 = _requestToPromise(tx.objectStore('nodes').delete(path)); // Remove from "nodes" data store
+    //     return Promise.all([r1, r2]);
+    // }
 
     childrenOf(path, include, checkCallback, addCallback) {
         include.descendants = false;
