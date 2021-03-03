@@ -2524,7 +2524,7 @@ class IndexQueryResults extends Array {
                 return op === 'like' ? isLike : !isLike;
             }
             if (op === 'in' || op === '!in') {
-                const isIn = compare instanceof Array && compare.indexOf(value);
+                const isIn = compare instanceof Array && compare.includes(value);
                 return op === 'in' ? isIn : !isIn;
             }
             if (op == 'between' || op === '!between') {
