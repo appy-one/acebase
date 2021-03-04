@@ -879,6 +879,7 @@ class LocalApi extends Api {
     }
 
     reflect(path, type, args) {
+        args = args || {};
         const getChildren = (path, limit = 50, skip = 0) => {
             if (typeof limit === 'string') { limit = parseInt(limit); }
             if (typeof skip === 'string') { skip = parseInt(skip); }
@@ -932,15 +933,15 @@ class LocalApi extends Api {
                     info.exists = nodeInfo.exists;
                     info.type = nodeInfo.valueTypeName;
                     info.value = nodeInfo.value;
-                    let hasChildren = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
-                    if (hasChildren) {
-                        if (args.child_count === true) {
-                            // return child count instead of enumerating
-                            return { count: nodeInfo.childCount };
-                        }
-                        else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
-                            return getChildren(path, args.child_limit, args.child_skip);
-                        }
+                    let isObjectOrArray = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
+                    if (args.child_count === true) {
+                        // return child count instead of enumerating
+                        return { count: isObjectOrArray ? nodeInfo.childCount : 0 };
+                    }
+                    else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
+                        return isObjectOrArray 
+                            ? getChildren(path, args.child_limit, args.child_skip)
+                            : info.children; // Use empty stub if target is not an object or array
                     }
                 })
                 .then(children => {

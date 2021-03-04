@@ -992,6 +992,11 @@ class AceBaseStorage extends Storage {
         })
         .then(childInfo => {
             if (options.include_child_count && [VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(childInfo.valueType)) {
+                if (!childInfo.address) {
+                    // value is stored inline, empty object or array: value === {} or []
+                    childInfo.childCount = 0;
+                    return childInfo;
+                }
                 // Get number of children
                 let lock;
                 return this.nodeLocker.lock(path, tid, false, `Node.getInfo "/${path}"`)
