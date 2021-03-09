@@ -600,7 +600,7 @@ db.ref('users/ewout/documents/some_id').update({ last_accessed: new Date() })
 
 This will trigger the `value` event TWICE, and cause the document to render TWICE. Additionally, if any other user opens the same document, it will be triggered again even though a redraw is not needed!
 
-To prevent this, pass context info with the update:
+To prevent this, you can pass contextual info with the update:
 
 ```javascript
 // Load document & subscribe to changes (context aware!)
@@ -684,7 +684,7 @@ chatRef.on('mutations', snap => {
 ### Observe realtime value changes 
 (NEW v0.9.51)
 
-You can now observe the realtime value of a path, and (for example) bind it to your UI. ```ref.observe()``` returns a RxJS Observable that can be used to observe updates to this node and its children. It does not return snapshots, so you can bind the observable straight to your UI. The value being observed is updated internally using the new "mutated" event. All mutations are applied to the original value, and kept in-memory.
+You can now observe the realtime value of a path, and (for example) bind it to your UI. ```ref.observe()``` returns a RxJS Observable that can be used to observe updates to this node and its children. It does not return snapshots, so you can bind the observable straight to your UI. The value being observed is updated internally using the "mutations" database event. All database mutations are automatically applied to the in-memory value, and trigger the observable to emit the new value.
 
 ```html
 <!-- In your Angular view template: -->
@@ -692,10 +692,12 @@ You can now observe the realtime value of a path, and (for example) bind it to y
    <h3>{{ chat.title }}</h3>
    <p>Chat was started by {{ chat.startedBy }}</p>
    <div class="messages">
-    <Message *ngFor="let msg of chat.messages | keyvalue" [message]="chat.messages[msg.key]"></Message>
+    <Message *ngFor="let item of chat.messages | keyvalue" [message]="item.value"></Message>
    </div>
 </ng-container>
 ```
+
+_Note that to use Angular's ```*ngFor``` on an object collection, you have to use the ```keyvalue``` pipe._
 
 ```javascript
 // In your Angular component:
@@ -793,19 +795,33 @@ if (!proxy.hasValue) {
 const chat = proxy.value;
 ```
 
-```forEach```: iterate object collection
+**```forEach```**: iterate object collection
 ```javascript
 chat.messages.forEach((message, key, index) => {
     // Fired for all messages in collection, or until returning false
 });
 ```
 
-```push```: Add item to object collection with generated key
+**```for...of```**: iterate array or object collection's values, keys or entries (v1.2.0+)
+```js
+for (let message of chat.messages) {
+    // Iterates with default .values iterator, same as:
+    // for (let message of chat.messages.values())
+}
+for (let keys of chat.messages.keys()) {
+    // All keys in the messages object collection
+}
+for (let [key, message] of chat.messages.entries()) {
+    // Same as above
+}
+```
+
+**```push```**: Add item to object collection with generated key
 ```javascript
 const key = chat.messages.push({ text: 'New message' });
 ```
 
-```remove```: delete a node
+**```remove```**: delete a node
 ```javascript
 chat.messages[key].remove();
 chat.messages.someotherkey.remove();
@@ -816,24 +832,24 @@ delete chat.messages.somemessage;
 chat.messages.somemessage = null;
 ```
 
-```toArray```: access an object collection like an array:
+**```toArray```**: access an object collection like an array:
 ```javascript
 const array = chat.messages.toArray();
 ```
 
-```toArray``` (with sort): like above, sorting the results:
+**```toArray``` (with sort)**: like above, sorting the results:
 ```javascript
 const sortedArray = chat.messages.toArray((a, b) => a.sent < b.sent ? -1 : 1);
 ```
 
-```getTarget```: gets underlying value (unproxied, be careful!)
-```javascript
-const readOnlyMessage = chat.messages.message1.getTarget();
-readOnlyMessage.text = 'This does NOT update the database!'; // Because it is not the proxied value
-chat.messages.message1.text = 'This updates the database'; // Just so you know
+**```valueOf```** (or **```getTarget```**): gets the underlying value (unproxied, be careful!)
+```js
+const message = chat.messages.message1.valueOf();
+message.text = 'This does NOT update the database'; // Because it is not the proxied value
+chat.messages.message1.text = 'This does'; // Just so you know
 ```
 
-```onChanged```: registers a callback for the value that is called every time the underlying value changes:
+**```onChanged```**: registers a callback for the value that is called every time the underlying value changes:
 ```javascript
 chat.messages.message1.onChanged((message, previous, isRemote, context) => {
     if (message.read) {
@@ -846,7 +862,7 @@ chat.messages.message1.onChanged((message, previous, isRemote, context) => {
 });
 ```
 
-```getRef```: returns a DataReference instance to current target if you'd want or need to do stuff outside of the proxy's scope:
+**```getRef```**: returns a DataReference instance to current target if you'd want or need to do stuff outside of the proxy's scope:
 ```javascript
 const messageRef = chat.messages.message1.getRef();
 // Eg: add an "old fashioned" event handler
@@ -855,7 +871,7 @@ messageRef.on('child_changed', snap => { /* .. */ });
 await messageRef.update({ read: new Date() });
 ```
 
-```getObservable```: returns a RxJS Observable that is updated each time the underlying value changes:
+**```getObservable```**: returns a RxJS Observable that is updated each time the underlying value changes:
 ```javascript
 const observable = chat.messages.message1.getObservable();
 const subscription = observable.subscribe(message => {
@@ -867,7 +883,7 @@ const subscription = observable.subscribe(message => {
 subscription.unsubscribe();
 ```
 
-```startTransaction```: (NEW v0.9.62) Enables you to make changes to the proxied value, but not writing them to the database until you want them to. This makes it possble to bind a proxy to an input form, and wait to save the changes until the user click 'Save', or rollback when canceling. Meanwhile, the value will still be updated with any remote changes.
+**```startTransaction```**: (NEW v0.9.62) Enables you to make changes to the proxied value, but not writing them to the database until you want them to. This makes it possble to bind a proxy to an input form, and wait to save the changes until the user click 'Save', or rollback when canceling. Meanwhile, the value will still be updated with any remote changes.
 
 ```javascript
 const proxy = await db.ref('contacts/ewout').proxy();
@@ -930,8 +946,7 @@ With Angular, ```getObservable``` comes in handy for UI binding and updating:
   selector: 'chat-messages',
   template: `<ng-container *ngIf="liveChat | async as chat">
     <h1>{{ chat.title }}</h1>
-    <Message *ngFor="let item of chat.messages | keyvalue" [message]="item.value">
-    </Message>
+    <Message *ngFor="let item of chat.messages | keyvalue" [message]="item.value" />
     </ng-container>`
 })
 export class ChatComponent {
