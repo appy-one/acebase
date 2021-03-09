@@ -42,6 +42,7 @@ class NodeCache {
     constructor() {
         // Isolated cache, this enables using multiple databases each with their own cache
 
+        /** @type {NodeJS.Timeout} */
         this. _cleanupTimeout = null;
         /** @type {Map<string, NodeCacheEntry>} */
         this._cache = new Map(); //{ };
@@ -57,6 +58,11 @@ class NodeCache {
                     this._assertCleanupTimeout();
                 }
             }, CACHE_TIMEOUT);
+
+            // Make sure the cleanup timeout will not delay exiting the main process 
+            // when the event loop is empty. See discussion #13 at github.
+            // See https://nodejs.org/api/timers.html#timers_timeout_unref
+            this._cleanupTimeout.unref && this._cleanupTimeout.unref(); 
         }
     }
 
