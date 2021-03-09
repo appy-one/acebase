@@ -434,7 +434,7 @@ class LiveDataProxy {
                 return true;
             });
             if (!proceed) {
-                console.error(`Cached value appears outdated, will be reloaded`);
+                console.warn(`Cached value of live data proxy on "${ref.path}" appears outdated, will be reloaded`);
                 await reload();
             }
         });
@@ -761,11 +761,36 @@ class LiveDataProxy {
             onMutationCallback && onMutationCallback(newSnap, true);
             // TODO: run all other subscriptions
         };
+        let waitingForReconnectSync = false; // Prevent quick connect/disconnect pulses to stack sync_done event handlers
+        ref.db.on('disconnect', () => {
+            // Handle disconnect, can only happen when connected to a remote server with an AceBaseClient
+            // Wait for server to connect again
+            ref.db.once('connect', () => {
+                // We're connected again
+                // Now wait for sync_end event, so any proxy changes will have been pushed to the server
+                if (waitingForReconnectSync || proxy === null) {
+                    return;
+                }
+                waitingForReconnectSync = true;
+                ref.db.once('sync_done', () => {
+                    // Reload proxy value now
+                    waitingForReconnectSync = false;
+                    if (proxy === null) {
+                        return;
+                    }
+                    console.log(`Reloading proxy value after connect & sync`);
+                    reload();
+                });
+            });
+        });
         return {
             async destroy() {
                 await processPromise;
-                subscription.stop();
-                clientSubscriptions.forEach(cs => cs.subscription.stop());
+                const promises = [
+                    subscription.stop(),
+                    ...clientSubscriptions.map(cs => cs.subscription.stop())
+                ];
+                await Promise.all(promises);
                 cache = null; // Remove cache
                 proxy = null;
             },
@@ -856,12 +881,18 @@ function createProxy(context) {
         get(target, prop, receiver) {
             target = getTargetValue(context.root.cache, context.target);
             if (typeof prop === 'symbol') {
-                if (prop.toString() === isProxy.toString()) {
+                if (prop.toString() === Symbol.iterator.toString()) {
+                    // Use .values for @@iterator symbol
+                    prop = 'values';
+                }
+                else if (prop.toString() === isProxy.toString()) {
                     return true;
                 }
-                return Reflect.get(target, prop, receiver);
+                else {
+                    return Reflect.get(target, prop, receiver);
+                }
             }
-            if (typeof target === null || typeof target !== 'object') {
+            if (target === null || typeof target !== 'object') {
                 throw new Error(`Cannot read property "${prop}" of ${target}. Value of path "/${targetRef.path}" is not an object (anymore)`);
             }
             if (target instanceof Array && typeof prop === 'string' && /^[0-9]+$/.test(prop)) {
@@ -883,6 +914,28 @@ function createProxy(context) {
                 }
                 childProxies.splice(childProxies.indexOf(childProxy), 1);
             }
+            const proxifyChildValue = (prop) => {
+                const value = target[prop]; //
+                let childProxy = childProxies.find(child => child.prop === prop);
+                if (childProxy) {
+                    if (childProxy.typeof === typeof value) {
+                        return childProxy.value;
+                    }
+                    childProxies.splice(childProxies.indexOf(childProxy), 1);
+                }
+                if (typeof value !== 'object') {
+                    // Can't proxify non-object values
+                    return value;
+                }
+                const newChildProxy = createProxy({ root: context.root, target: context.target.concat(prop), id: context.id, flag: context.flag });
+                childProxies.push({ typeof: typeof value, prop, value: newChildProxy });
+                return newChildProxy;
+            };
+            const unproxyValue = (value) => {
+                return value !== null && typeof value === 'object' && value[isProxy]
+                    ? value.getTarget()
+                    : value;
+            };
             // If the property contains a simple value, return it. 
             if (['string', 'number', 'boolean'].includes(typeof value)
                 || value instanceof Date
@@ -893,7 +946,19 @@ function createProxy(context) {
                 return value;
             }
             const isArray = target instanceof Array;
-            // TODO: Implement updateWithContext and setWithContext
+            function valueOf(warn = true) {
+                warn && console.warn(`Use getTarget with caution - any changes will not be synchronized!`);
+                return target;
+            }
+            ;
+            if (prop === 'valueOf') {
+                return valueOf.bind(this, false);
+            }
+            else if (prop === 'toString') {
+                return function toString() {
+                    return `[LiveDataProxy for "${targetRef.path}"]`;
+                };
+            }
             if (typeof value === 'undefined') {
                 if (prop === 'push') {
                     // Push item to an object collection
@@ -906,28 +971,49 @@ function createProxy(context) {
                 }
                 if (prop === 'getTarget') {
                     // Get unproxied readonly (but still live) version of data.
-                    return function getTarget(warn = true) {
-                        warn && console.warn(`Use getTarget with caution - any changes will not be synchronized!`);
-                        return target;
-                    };
+                    return valueOf;
                 }
                 if (prop === 'getRef') {
                     // Gets the DataReference to this data target
                     return function getRef() {
                         const ref = getTargetRef(context.root.ref, context.target);
-                        // ref.context(<IProxyContext>{ acebase_proxy: { id: context.id, source: 'getRef' } });
                         return ref;
                     };
                 }
                 if (prop === 'forEach') {
                     return function forEach(callback) {
                         const keys = Object.keys(target);
-                        for (let i = 0; i < keys.length && callback(target[keys[i]], keys[i], i) !== false; i++) { }
+                        // Fix: callback with unproxied value
+                        let stop = false;
+                        for (let i = 0; !stop && i < keys.length; i++) {
+                            const key = keys[i];
+                            const value = proxifyChildValue(key); //, target[key]
+                            stop = callback(value, key, i) === false;
+                        }
+                    };
+                }
+                if (['values', 'entries', 'keys'].includes(prop)) {
+                    return function* generator() {
+                        const keys = Object.keys(target);
+                        for (let key of keys) {
+                            if (prop === 'keys') {
+                                yield key;
+                            }
+                            else {
+                                const value = proxifyChildValue(key); //, target[key]
+                                if (prop === 'entries') {
+                                    yield [key, value];
+                                }
+                                else {
+                                    yield value;
+                                }
+                            }
+                        }
                     };
                 }
                 if (prop === 'toArray') {
                     return function toArray(sortFn) {
-                        const arr = Object.keys(target).map(key => target[key]);
+                        const arr = Object.keys(target).map(key => proxifyChildValue(key)); //, target[key]
                         if (sortFn) {
                             arr.sort(sortFn);
                         }
@@ -973,14 +1059,20 @@ function createProxy(context) {
             }
             else if (typeof value === 'function') {
                 if (isArray) {
-                    // Handle array functions
+                    // Handle array methods
                     const writeArray = (action) => {
                         context.flag('write', context.target);
                         return action();
                     };
+                    const cleanArrayValues = values => values.map(value => {
+                        value = unproxyValue(value);
+                        removeVoidProperties(value);
+                        return value;
+                    });
+                    // Methods that directly change the array:
                     if (prop === 'push') {
                         return function push(...items) {
-                            items.forEach(item => removeVoidProperties(item));
+                            items = cleanArrayValues(items);
                             return writeArray(() => target.push(...items)); // push the items to the cache array
                         };
                     }
@@ -991,7 +1083,7 @@ function createProxy(context) {
                     }
                     if (prop === 'splice') {
                         return function splice(start, deleteCount, ...items) {
-                            items.forEach(item => removeVoidProperties(item));
+                            items = cleanArrayValues(items);
                             return writeArray(() => target.splice(start, deleteCount, ...items));
                         };
                     }
@@ -1002,7 +1094,7 @@ function createProxy(context) {
                     }
                     if (prop === 'unshift') {
                         return function unshift(...items) {
-                            items.forEach(item => removeVoidProperties(item));
+                            items = cleanArrayValues(items);
                             return writeArray(() => target.unshift(...items));
                         };
                     }
@@ -1016,25 +1108,70 @@ function createProxy(context) {
                             return writeArray(() => target.reverse());
                         };
                     }
-                    if (prop === 'indexOf') {
-                        return function indexOf(value) {
-                            if (value[isProxy]) {
+                    // Methods that do not change the array themselves, but
+                    // have callbacks that might, or return child values:
+                    if (['indexOf', 'lastIndexOf'].includes(prop)) {
+                        return function indexOf(item, start) {
+                            if (item !== null && typeof item === 'object' && item[isProxy]) {
                                 // Use unproxied value, or array.indexOf will return -1 (fixes issue #1)
-                                value = value.getTarget(false);
+                                item = item.getTarget(false);
                             }
-                            return target.indexOf(value);
+                            return target[prop](item, start);
+                        };
+                    }
+                    if (['forEach', 'every', 'some', 'filter', 'map'].includes(prop)) {
+                        return function iterate(callback) {
+                            return target[prop]((value, i) => {
+                                return callback(proxifyChildValue(i), i, proxy); //, value
+                            });
+                        };
+                    }
+                    if (['reduce', 'reduceRight'].includes(prop)) {
+                        return function reduce(callback) {
+                            return target[prop]((prev, value, i) => {
+                                return callback(prev, proxifyChildValue(i), i, proxy); //, value
+                            });
+                        };
+                    }
+                    if (['find', 'findIndex'].includes(prop)) {
+                        return function find(callback) {
+                            let value = target[prop]((value, i) => {
+                                return callback(proxifyChildValue(i), i, proxy); // , value
+                            });
+                            if (prop === 'find' && value) {
+                                let index = target.indexOf(value);
+                                value = proxifyChildValue(index); //, value
+                            }
+                            return value;
+                        };
+                    }
+                    if (['values', 'entries', 'keys'].includes(prop)) {
+                        return function* generator() {
+                            for (let i = 0; i < target.length; i++) {
+                                if (prop === 'keys') {
+                                    yield i;
+                                }
+                                else {
+                                    const value = proxifyChildValue(i); //, target[i]
+                                    if (prop === 'entries') {
+                                        yield [i, value];
+                                    }
+                                    else {
+                                        yield value;
+                                    }
+                                }
+                            }
                         };
                     }
                 }
-                // Other function, should not alter its value
-                return function fn(...args) {
-                    return target[prop](...args);
-                };
+                // Other function (or not an array), should not alter its value
+                // return function fn(...args) {
+                //     return target[prop](...args);
+                // }
+                return value;
             }
             // Proxify any other value
-            const proxy = createProxy({ root: context.root, target: context.target.concat(prop), id: context.id, flag: context.flag });
-            childProxies.push({ typeof: typeof value, prop, value: proxy });
-            return proxy;
+            return proxifyChildValue(prop); //, value
         },
         set(target, prop, value, receiver) {
             // Eg: chats.chat1.title = 'New chat title';
@@ -1052,17 +1189,19 @@ function createProxy(context) {
                 }
                 prop = parseInt(prop);
             }
-            if (typeof value === 'object' && value[isProxy]) {
-                // Assigning one proxied value to another
-                value = value.getTarget(false);
-            }
-            else if (typeof value === 'object' && Object.isFrozen(value)) {
-                // Create a copy to unfreeze it
-                value = utils_1.cloneObject(value);
-            }
-            if (typeof value !== 'object' && target[prop] === value) {
-                // not changing the actual value, ignore
-                return true;
+            if (value !== null) {
+                if (typeof value === 'object' && value[isProxy]) {
+                    // Assigning one proxied value to another
+                    value = value.getTarget(false);
+                }
+                else if (typeof value === 'object' && Object.isFrozen(value)) {
+                    // Create a copy to unfreeze it
+                    value = utils_1.cloneObject(value);
+                }
+                if (typeof value !== 'object' && target[prop] === value) {
+                    // not changing the actual value, ignore
+                    return true;
+                }
             }
             if (context.target.some(key => typeof key === 'number')) {
                 // Updating an object property inside an array. Flag the first array in target to be written.
@@ -1124,7 +1263,8 @@ function createProxy(context) {
             return Reflect.getPrototypeOf(target);
         }
     };
-    return new Proxy({}, handler);
+    const proxy = new Proxy({}, handler);
+    return proxy;
 }
 function removeVoidProperties(obj) {
     if (typeof obj !== 'object') {
@@ -4001,27 +4141,68 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         return tx;
     }
     
+    _splitMetadata(node) {
+        /** @type {ICustomStorageNode} */
+        const copy = {};
+        const value = node.value;
+        Object.assign(copy, node);
+        delete copy.value;
+        /** @type {ICustomStorageNodeMetaData} */
+        const metadata = copy;                
+        return { metadata, value };
+    }
+
     async commit() {
         // console.log(`*** COMMIT ${this._pending.length} operations ****`);
         if (this._pending.length === 0) { return Promise.resolve(); }
-        const ops = this._pending.splice(0);
+        const batch = this._pending.splice(0);
+
+        /** @type {IDBTransaction} */
         const tx = this._createTransaction(true);
         try {
-            // Execute in batches to improve performance
-            const batchSize = 25; // Tried 1, 10, 25, 50, 100 - 25 seems to be the (slightly) fastest
-            while(ops.length > 0) {
-                const batch = ops.splice(0, batchSize);
-                const promises = batch.map(op => {
-                    if (op.action === 'set') { return this._set(tx, op.path, op.node); }
-                    else if (op.action === 'remove') { return this._remove(tx, op.path); }
-                    else { throw new Error('Unknown pending operation'); }
+            await new Promise((resolve, reject) => {
+                let stop = false, processed = 0;
+                const handleError = err => {
+                    debugger;
+                    stop = true;
+                    reject(err);
+                };
+                const handleSuccess = () => {
+                    if (++processed === batch.length) {
+                        resolve();
+                    }
+                };
+                batch.forEach((op, i) => {
+                    if (stop) { return; }
+                    // const isLast = i + 1 === batch.length;
+                    let r1, r2;
+                    const path = op.path;
+                    if (op.action === 'set') { 
+                        // return this._set(tx, op.path, op.node); 
+                        const { metadata, value } = this._splitMetadata(op.node);
+                        /** @type {IIndexedDBNodeData} */
+                        const nodeInfo = { path, metadata }
+                        r1 = tx.objectStore('nodes').put(nodeInfo); // Insert into "nodes" object store
+                        r2 = tx.objectStore('content').put(value, path); // Add value to "content" object store
+                    }
+                    else if (op.action === 'remove') { 
+                        // return this._remove(tx, op.path); 
+                        r1 = tx.objectStore('content').delete(path); // Remove from "content" object store
+                        r2 = tx.objectStore('nodes').delete(path); // Remove from "nodes" data store
+                    }
+                    else { 
+                        handleError(new Error(`Unknown pending operation "${op.action}" on path "${path}" `)); 
+                    }
+                    let succeeded = 0;
+                    r1.onsuccess = r2.onsuccess = () => {
+                        if (++succeeded === 2) { handleSuccess(); }
+                    };
+                    r1.onerror = r2.onerror = handleError;
                 });
-                await Promise.all(promises);
-            }
-
+            });
             tx.commit && tx.commit();
         }
-        catch(err) {
+        catch (err) {
             console.error(err);
             tx.abort && tx.abort();
             throw err;
@@ -4079,29 +4260,30 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         return Promise.resolve();
     }
 
-    _set(tx, path, node) {
-        /** @type {ICustomStorageNode} */
-        const copy = {};
-        const value = node.value;
-        Object.assign(copy, node);
-        delete copy.value;
-        /** @type {ICustomStorageNodeMetaData} */
-        const metadata = copy;                
-        /** @type {IIndexedDBNodeData} */
-        const obj = {
-            path,
-            metadata
-        }
-        const r1 = _requestToPromise(tx.objectStore('nodes').put(obj)); // Insert into "nodes" object store
-        const r2 = _requestToPromise(tx.objectStore('content').put(value, path)); // Add value to "content" object store
-        return Promise.all([r1, r2]);
-    }
+    // _set(tx, path, node) {
+    //     /** @type {ICustomStorageNode} */
+    //     const copy = {};
+    //     const value = node.value;
+    //     Object.assign(copy, node);
+    //     delete copy.value;
+    //     /** @type {ICustomStorageNodeMetaData} */
+    //     const metadata = copy;
+    //     // const { metadata, value } = this._splitMetadata(node);
+    //     /** @type {IIndexedDBNodeData} */
+    //     const obj = {
+    //         path,
+    //         metadata
+    //     }
+    //     const r1 = _requestToPromise(tx.objectStore('nodes').put(obj)); // Insert into "nodes" object store
+    //     const r2 = _requestToPromise(tx.objectStore('content').put(value, path)); // Add value to "content" object store
+    //     return Promise.all([r1, r2]);
+    // }
 
-    _remove(tx, path) {
-        const r1 = _requestToPromise(tx.objectStore('content').delete(path)); // Remove from "content" object store
-        const r2 = _requestToPromise(tx.objectStore('nodes').delete(path)); // Remove from "nodes" data store
-        return Promise.all([r1, r2]);
-    }
+    // _remove(tx, path) {
+    //     const r1 = _requestToPromise(tx.objectStore('content').delete(path)); // Remove from "content" object store
+    //     const r2 = _requestToPromise(tx.objectStore('nodes').delete(path)); // Remove from "nodes" data store
+    //     return Promise.all([r1, r2]);
+    // }
 
     childrenOf(path, include, checkCallback, addCallback) {
         include.descendants = false;
@@ -5264,6 +5446,7 @@ class LocalApi extends Api {
     }
 
     reflect(path, type, args) {
+        args = args || {};
         const getChildren = (path, limit = 50, skip = 0) => {
             if (typeof limit === 'string') { limit = parseInt(limit); }
             if (typeof skip === 'string') { skip = parseInt(skip); }
@@ -5317,15 +5500,15 @@ class LocalApi extends Api {
                     info.exists = nodeInfo.exists;
                     info.type = nodeInfo.valueTypeName;
                     info.value = nodeInfo.value;
-                    let hasChildren = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
-                    if (hasChildren) {
-                        if (args.child_count === true) {
-                            // return child count instead of enumerating
-                            return { count: nodeInfo.childCount };
-                        }
-                        else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
-                            return getChildren(path, args.child_limit, args.child_skip);
-                        }
+                    let isObjectOrArray = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
+                    if (args.child_count === true) {
+                        // return child count instead of enumerating
+                        return { count: isObjectOrArray ? nodeInfo.childCount : 0 };
+                    }
+                    else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
+                        return isObjectOrArray 
+                            ? getChildren(path, args.child_limit, args.child_skip)
+                            : info.children; // Use empty stub if target is not an object or array
                     }
                 })
                 .then(children => {
@@ -5786,7 +5969,16 @@ function getValueTypeName(valueType) {
     }
 }
 
-module.exports = { VALUE_TYPES, getValueTypeName };
+function getNodeValueType(value) {
+    if (value instanceof Array) { return VALUE_TYPES.ARRAY; }
+    else if (value instanceof PathReference) { return VALUE_TYPES.REFERENCE; }
+    else if (value instanceof ArrayBuffer) { return VALUE_TYPES.BINARY; }
+    else if (typeof value === 'string') { return VALUE_TYPES.STRING; }
+    else if (typeof value === 'object') { return VALUE_TYPES.OBJECT; }
+    throw new Error(`Invalid value for standalone node: ${value}`);
+};
+
+module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType };
 },{}],31:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
@@ -6104,10 +6296,11 @@ module.exports = {
 },{"./node-info":28,"./node-value-types":30,"./storage":34}],32:[function(require,module,exports){
 // Not supported in current environment
 },{}],33:[function(require,module,exports){
-const { ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
+const { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils } = require('acebase-core');
+const { compareValues } = Utils;
 const { NodeInfo } = require('./node-info');
 const { NodeLocker } = require('./node-lock');
-const { VALUE_TYPES } = require('./node-value-types');
+const { VALUE_TYPES, getNodeValueType } = require('./node-value-types');
 const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
 
 /** Interface for metadata being stored for nodes */
@@ -6130,7 +6323,7 @@ class ICustomStorageNodeMetaData {
 class ICustomStorageNode extends ICustomStorageNodeMetaData {
     constructor() {
         super();
-        /** @type {any} only Object, Array or string values. */
+        /** @type {any} only Object, Array, large string and binary values. */
         this.value = null;
     }
 }
@@ -6584,13 +6777,14 @@ class CustomStorage extends Storage {
      * @param {string} path 
      * @param {object} options 
      * @param {CustomStorageTransaction} options.transaction
+     * @returns {Promise<ICustomStorageNode>}
      */
     async _readNode(path, options) {
         // deserialize a stored value (always an object with "type", "value", "revision", "revision_nr", "created", "modified")
         let node = await options.transaction.get(path);
         if (node === null) { return null; }
         if (typeof node !== 'object') {
-            throw new Error(`CustomStorage get function must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
+            throw new Error(`CustomStorageTransaction.get must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
         }
 
         this._processReadNodeValue(node);
@@ -6641,6 +6835,7 @@ class CustomStorage extends Storage {
      * @param {CustomStorageTransaction} options.transaction
      * @param {boolean} [options.merge=false]
      * @param {string} [options.revision]
+     * @param {any} [options.currentValue]
      * @returns {Promise<void>}
      */
     async _writeNode(path, value, options) {
@@ -6650,12 +6845,23 @@ class CustomStorage extends Storage {
         else if (path === '' && (typeof value !== 'object' || value instanceof Array)) {
             throw new Error(`Invalid root node value. Must be an object`);
         }
+
+        // Check if the value for this node changed, to prevent recursive calls to 
+        // perform unnecessary writes that do not change any data
+        if (typeof options.currentValue !== 'undefined' && !options.merge) {
+            const diff = compareValues(options.currentValue, value);
+            if (diff === 'identical') {
+                return Promise.resolve(); // Done!
+            }
+        }
         
         const transaction = options.transaction;
 
         // Get info about current node at path
-        const currentRow = await this._readNode(path, { transaction });
-        
+        const currentRow = options.currentValue === null 
+            ? null // No need to load info if currentValue is null (we already know it doesn't exist)
+            : await this._readNode(path, { transaction });
+
         if (options.merge && currentRow) {
             if (currentRow.type === VALUE_TYPES.ARRAY && !(value instanceof Array) && typeof value === 'object' && Object.keys(value).some(key => isNaN(key))) {
                 throw new Error(`Cannot merge existing array of path "${path}" with an object`);
@@ -6824,7 +7030,13 @@ class CustomStorage extends Storage {
                     if (isArray) { key = parseInt(key); }
                     const childPath = pathInfo.childPath(key); // PathInfo.getChildPath(path, key);
                     const childValue = childNodeValues[key];
-                    return this._writeNode(childPath, childValue, { transaction, revision, merge: false });
+
+                    // Pass current child value to _writeNode
+                    const currentChildValue = typeof options.currentValue === 'object' && options.currentValue !== null && key in options.currentValue 
+                        ? options.currentValue[key] 
+                        : null;
+
+                    return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: currentChildValue });
                 });
 
                 // Delete all child nodes that were stored in their own record, but are being removed 
@@ -6872,7 +7084,7 @@ class CustomStorage extends Storage {
                 if (isArray) { key = parseInt(key); }
                 const childPath = PathInfo.getChildPath(path, key);
                 const childValue = childNodeValues[key];
-                return this._writeNode(childPath, childValue, { transaction, revision, merge: false });
+                return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: null });
             });
 
             // Create current node
@@ -7496,7 +7708,7 @@ module.exports = {
 },{"./node-info":28,"./node-lock":29,"./node-value-types":30,"./storage":34,"acebase-core":12}],34:[function(require,module,exports){
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
-const { VALUE_TYPES } = require('./node-value-types');
+const { VALUE_TYPES, getNodeValueType } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
 const { cloneObject, compareValues, getChildValues, encodeString, defer } = Utils;
 
@@ -8093,6 +8305,19 @@ class Storage extends SimpleEventEmitter {
         const writeNode = () => {
             if (typeof options._customWriteFunction === 'function') {
                 return options._customWriteFunction();
+            }
+            if (topEventData) {
+                // Pass loaded data to _writeNode, speeds up recursive calls
+                // This prevents reloading and/or overwriting of unchanged child nodes                
+                const pathKeys = PathInfo.getPathKeys(path);
+                const eventPathKeys = PathInfo.getPathKeys(topEventPath);
+                const trailKeys = pathKeys.slice(eventPathKeys.length);
+                let currentValue = topEventData;
+                while (trailKeys.length > 0 && currentValue !== null) {
+                    const childKey = trailKeys.shift();
+                    currentValue = typeof currentValue === 'object' && childKey in currentValue ? currentValue[childKey] : null;
+                }
+                options.currentValue = currentValue;
             }
             return this._writeNode(path, value, options);            
         }
