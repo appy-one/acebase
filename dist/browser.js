@@ -472,7 +472,7 @@ class LiveDataProxy {
                     .forEach(s => {
                     const currentValue = utils_1.cloneObject(getTargetValue(cache, s.target));
                     let previousValue = utils_1.cloneObject(currentValue);
-                    // replay mutations on previousValue in reverse order
+                    // replay mutations in reverse order to reconstruct previousValue 
                     mutations
                         .filter(m => RelativeNodeTarget.areEqual(s.target, m.target) || RelativeNodeTarget.isAncestor(s.target, m.target))
                         .reverse()
@@ -482,7 +482,12 @@ class LiveDataProxy {
                             previousValue = m.previous;
                         }
                         else {
-                            setTargetValue(previousValue, relTarget, m.previous);
+                            try {
+                                setTargetValue(previousValue, relTarget, m.previous);
+                            }
+                            catch (err) {
+                                onErrorCallback({ source: 'local_update', message: `Failed to reconstruct previous value`, details: err });
+                            }
                         }
                     });
                     // Run subscriber callback
@@ -754,6 +759,7 @@ class LiveDataProxy {
             // and the connection to the server was lost for a while. In all other cases, 
             // there should be no need to call this method.
             assertProxyAvailable();
+            mutationQueue.splice(0); // Remove pending mutations. Will be empty in production, but might not be while debugging, leading to weird behaviour.
             const newSnap = await ref.get();
             cache = newSnap.val();
             proxy = createProxy({ root: { ref, cache }, target: [], id: proxyId, flag: handleFlag });
