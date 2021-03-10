@@ -893,17 +893,15 @@ class Storage extends SimpleEventEmitter {
                 else if (type === "child_removed") {
                     trigger = oldValue !== null && newValue === null;
                 }
-                // let dataPath = sub.dataPath;
-                // if (dataPath.endsWith('/*')) {
-                //     dataPath = dataPath.substr(0, dataPath.length-1);
-                //     dataPath += wildcardKey;
-                // }
-                let dataPath = sub.dataPath;
+
+                const pathKeys = PathInfo.getPathKeys(sub.dataPath);
                 variables.forEach((variable, i) => {
                     // only replaces first occurrence (so multiple *'s will be processed 1 by 1)
-                    const safeVarName = variable.name === '*' ? '\\*' : variable.name.replace('$', '\\$');
-                    dataPath = dataPath.replace(new RegExp(`(^|/)${safeVarName}([/\[]|$)`), `$1${variable.value}$2`);
+                    const index = pathKeys.indexOf(variable.name);
+                    console.assert(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
+                    pathKeys[index] = variable.value;
                 });
+                const dataPath = pathKeys.reduce((path, key) => PathInfo.getChildPath(path, key), '');
                 trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
             };
 
@@ -933,8 +931,13 @@ class Storage extends SimpleEventEmitter {
                             let subKey = trailKeys.shift();
                             if (typeof subKey === 'string' && (subKey === '*' || subKey[0] === '$')) {
                                 // Fire on all relevant child keys
-                                let allKeys = oldValue === null ? [] : Object.keys(oldValue);
+                                let allKeys = oldValue === null ? [] : Object.keys(oldValue).map(key =>
+                                    oldValue instanceof Array ? parseInt(key) : key
+                                );
                                 newValue !== null && Object.keys(newValue).forEach(key => {
+                                    if (newValue instanceof Array) {
+                                        key = parseInt(key);
+                                    }
                                     if (allKeys.indexOf(key) < 0) {
                                         allKeys.push(key);
                                     }
@@ -946,7 +949,7 @@ class Storage extends SimpleEventEmitter {
                                         callSubscriberWithValues(sub, childValues.oldValue, childValues.newValue, vars);
                                     }
                                     else {
-                                        process(`${currentPath}/${subKey}`, childValues.oldValue, childValues.newValue, vars);
+                                        process(PathInfo.getChildPath(currentPath, subKey), childValues.oldValue, childValues.newValue, vars);
                                     }
                                 });
                                 return; // We can stop processing
