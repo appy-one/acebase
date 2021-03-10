@@ -929,7 +929,7 @@ class LocalApi extends Api {
                 };
                 return Node.getInfo(this.storage, path, { include_child_count: args.child_count === true })
                 .then(nodeInfo => {
-                    info.key = nodeInfo.key;
+                    info.key = typeof nodeInfo.key !== 'undefined' ? nodeInfo.key : nodeInfo.index;
                     info.exists = nodeInfo.exists;
                     info.type = nodeInfo.valueTypeName;
                     info.value = nodeInfo.value;
