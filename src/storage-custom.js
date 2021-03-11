@@ -734,9 +734,11 @@ class CustomStorage extends Storage {
                     const childValue = childNodeValues[key];
 
                     // Pass current child value to _writeNode
-                    const currentChildValue = typeof options.currentValue === 'object' && options.currentValue !== null && key in options.currentValue 
-                        ? options.currentValue[key] 
-                        : null;
+                    const currentChildValue = typeof options.currentValue === 'undefined'  // Fixing issue #20
+                        ? undefined
+                        : options.currentValue !== null && typeof options.currentValue === 'object' && key in options.currentValue 
+                            ? options.currentValue[key] 
+                            : null;
 
                     return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: currentChildValue });
                 });
@@ -1139,11 +1141,17 @@ class CustomStorage extends Storage {
                             }
                             if (key in parent) {
                                 // Merge with parent
-                                console.assert(typeof parent[key] === typeof nodeValue && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeType), 'Merging child values can only be done if existing and current values are both an array or object');
-                                Object.keys(nodeValue).forEach(childKey => {
-                                    console.assert(!(childKey in parent[key]), 'child key is in parent value already?! HOW?!');
-                                    parent[key][childKey] = nodeValue[childKey];
-                                });
+                                const mergePossible = typeof parent[key] === typeof nodeValue && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeType);
+                                if (!mergePossible) {
+                                    // Ignore the value in the child record, see issue #20: "Assertion failed: Merging child values can only be done if existing and current values are both an array or object"
+                                    this.debug.error(`The value stored in node "${otherNode.path}" cannot be merged with the parent node, value will be ignored. This error should disappear once the target node value is updated. See issue #20 for more information`);
+                                }
+                                else {
+                                    Object.keys(nodeValue).forEach(childKey => {
+                                        console.assert(!(childKey in parent[key]), 'child key is in parent value already?! HOW?!');
+                                        parent[key][childKey] = nodeValue[childKey];
+                                    });
+                                }
                             }
                             else {
                                 parent[key] = nodeValue;
