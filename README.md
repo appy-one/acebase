@@ -887,8 +887,8 @@ subscription.unsubscribe();
 
 ```javascript
 const proxy = await db.ref('contacts/ewout').proxy();
-const contact = proxy.value;
-const tx = await this.contact.startTransaction();
+const contact = proxy.value; // NOTE: === null if node doesn't exist
+const tx = await contact.startTransaction();
 
 // Make some changes:
 contact.name = 'Ewout Stortenbeker'; // Was 'Ewout'
