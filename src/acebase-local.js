@@ -44,6 +44,8 @@ class AceBase extends AceBaseBase {
      * @param {string} [settings.logLevel] what level to use for logging to the console
      * @param {boolean} [settings.temp] whether to use sessionStorage instead of localStorage
      * @param {any} [settings.provider] Alternate localStorage provider for running in non-browser environments. Eg using 'node-localstorage'
+     * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
+     * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
      */
     static WithLocalStorage(dbname, settings) {
 
@@ -57,6 +59,8 @@ class AceBase extends AceBaseBase {
         const storageSettings = new CustomStorageSettings({
             name: 'LocalStorage',
             locking: true,
+            removeVoidProperties: settings.removeVoidProperties,
+            maxInlineValueSize: settings.maxInlineValueSize, 
             ready() {
                 // LocalStorage is always ready
                 return Promise.resolve();

@@ -21,8 +21,9 @@ export class AceBase extends acebasecore.AceBaseBase {
      * @param settings optional settings
      * @param settings.logLevel what level to use for logging to the console. Default is 'error'
      * @param settings.removeVoidProperties Whether to remove undefined property values of objects being stored, instead of throwing an error.
+     * @param settings.maxInlineValueSize Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Default is 50.
      */
-    static WithIndexedDB(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error', removeVoidProperties?: boolean }): AceBase;
+    static WithIndexedDB(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error', removeVoidProperties?: boolean, maxInlineValueSize?: number }): AceBase;
 
     /**
      * Creates an AceBase database instance using LocalStorage or SessionStorage as storage engine. When running in non-browser environments, set
@@ -32,8 +33,10 @@ export class AceBase extends acebasecore.AceBaseBase {
      * @param settings.logLevel what level to use for logging to the console
      * @param settings.temp whether to use sessionStorage instead of localStorage
      * @param settings.provider Alternate localStorage provider for running in non-browser environments. Eg using 'node-localstorage'
+     * @param settings.removeVoidProperties Whether to remove undefined property values of objects being stored, instead of throwing an error.
+     * @param settings.maxInlineValueSize Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Default is 50.
      */    
-    static WithLocalStorage(dbname: string, settings: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean, provider?: any }): AceBase
+    static WithLocalStorage(dbname: string, settings: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean, provider?: any, removeVoidProperties?: boolean, maxInlineValueSize?: number }): AceBase
 }
 
 export interface AceBaseLocalSettings {

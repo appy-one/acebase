@@ -45,6 +45,7 @@ class BrowserAceBase extends AceBase {
      * @param {object} [settings] optional settings
      * @param {string} [settings.logLevel='error'] what level to use for logging to the console
      * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
+     * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
      */
     static WithIndexedDB(dbname, settings) {
 
@@ -81,6 +82,7 @@ class BrowserAceBase extends AceBase {
             name: 'IndexedDB',
             locking: true, // IndexedDB transactions are short-lived, so we'll use AceBase's path based locking
             removeVoidProperties: settings.removeVoidProperties,
+            maxInlineValueSize: settings.maxInlineValueSize, 
             ready() {
                 return readyPromise;
             },
