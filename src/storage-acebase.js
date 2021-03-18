@@ -1074,7 +1074,7 @@ class AceBaseStorage extends Storage {
      * @param {any} [options.context=null]
      * @returns {Promise<void>}
      */
-    _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false, suppress_events: false, context: null }) {
+     _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false, suppress_events: false, context: null }) {
         // this.debug.log(`Update request for node "/${path}"`);
 
         const tid = options.tid || this.nodeLocker.createTid(); // ID.generate();
@@ -2573,7 +2573,7 @@ class NodeChangeTracker {
  * @param {NodeInfo} nodeInfo 
  * @param {object} newValue 
  * @param {NodeLock} lock
- * @returns {RecordInfo}
+ * @returns {Promise<RecordInfo>}
  */
 function _mergeNode(storage, nodeInfo, updates, lock) {
     if (typeof updates !== "object") {
@@ -2878,7 +2878,7 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
  * @param {NodeInfo} nodeInfo 
  * @param {object} newValue 
  * @param {NodeLock} lock
- * @returns {RecordInfo}
+ * @returns {Promise<RecordInfo>}
  */
 function _createNode(storage, nodeInfo, newValue, lock, invalidateCache = true) {
     storage.debug.log(`Node "/${nodeInfo.path}" is being ${nodeInfo.exists ? 'overwritten' : 'created'}`.colorize(ColorStyle.cyan));

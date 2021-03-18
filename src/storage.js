@@ -1506,7 +1506,6 @@ class Storage extends SimpleEventEmitter {
 
     /**
      * Export a specific path's data to a stream
-     * @param {Storage} storage
      * @param {string} path
      * @param {{ write(str: string) => void|Promise<void>}} stream stream object that has a write method that (optionally) returns a promise the export needs to wait for before continuing
      * @returns {Promise<void>} returns a promise that resolves once all data is exported
