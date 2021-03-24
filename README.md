@@ -88,6 +88,10 @@ Excited? Read more about live data proxies [here](#realtime-synchronization-with
     * [Array indexes](#array-indexes)
     * [Fulltext indexes](#fulltext-indexes)
     * [Geo indexes](#geo-indexes)
+* Schemas (NEW v1.3.0)
+    * [Validating data with schemas](#schemas)
+    * [Adding schemas to enforce data rules](#adding-schemas-to-enforce-data-rules)
+    * [Schema Examples](#schema-examples)
 * Class mappings (ORM)
     * [Mapping data to custom classes](#mapping-data-to-custom-classes)
 * Data storage options
@@ -1293,7 +1297,74 @@ db.indexes.create('landmarks', 'location', { type: 'geo' });
 
 Indexed locations are stored using 10 character geohashes, which have a precision of about half a square meter.
 
-<a name="mapping-data-to-custom-classes"></a>
+## Schemas
+(NEW since v1.3.0)
+
+In many cases it is desirable to define what data is allowed to be stored in your database, to prevent unexpected errors in your application. It can also prevent a programming error from damaging your database structure or data. By defining schemas to your database, you can prevent data that does not adhere to the schema from being written. All updates and inserts will check the passed data with your defined schemas before writing, and raise an error if validation fails. Any existing data will not be checked.
+
+Note: Schema checking was already available in [acebase-server](https://github.com/appy-one/acebase-server), but its implementation was limited. For this reason, it was moved closer to the storage code and improved. Additional benefit: schema checks are now available for any AceBase instance (Hello, standalone browser/node.js databases!).
+
+### Adding schemas to enforce data rules
+
+To define a schema, use `db.schema.set(path, schema)`. This will add a schema definition to the specified path to enforce for updates and inserts. Schema definitions use typescript formatting. For optional properties, append a question mark to the property name, eg: "birthdate?". You can specify one wildcard child property ("*" or "$varname") to check unspecified properties with.
+
+The following types are supported: 
+* Types returned by `typeof`: `string`, `number`, `boolean`, `object`\*, and `undefined`\*\*
+* Classnames: `Object`* and `Date`
+* Interface definitions: `{ "prop1": "string", "prop2": "Date" }`
+* Arrays: `string[]`, `number[]`, ``Date[]``, `{ "prop": "string" }[]` etc
+* Arrays (generic): `Array<Date>`, `Array<string | number>`, `Array<{ "prop1": "string" }>` etc
+* Binary: `Binary`, `binary`
+* Any type: `any` or `*`
+* Combinations: `string | number | Date[]`
+* Specific values: `1 | 2 | 3`, or `"car" | "boat" | "airplane"` etc
+
+\* Types `object` and `Object` are treated the same way: they allow a given value to be *any* object, *except* `Array`, `Date` and binary values. This means that if you are using custom class mappings, you will be able to store a `Pet` object, but not an `Array`.
+
+\*\* When using type `undefined`, the property will not be allowed to be inserted or updated. This can be useful if your data structure changed and want to prevent updates to use the old structure. For example, if your contacts previously had an "age" property that you are replacing with "birthday". Setting the type of "age" to `undefined` will prevent the property to be set or overwritten. Note that an existing "age" property will not be removed, unless its value is set to `null` by the update.
+
+### Schema Examples
+
+```js
+// Set schema for users:
+db.schema.set("users/$uid", {
+    "name": "string",
+    "email": "string",
+    "birthdate?": "Date" // optional birthdate
+    "address?": { // optional address
+        "street": "string",
+        "nr": "number | string",
+        "building?": "string",
+        "city": "number",
+        "postal_code": "string",
+        "country": "string"
+    },
+    "posts?": "object", // Optional posts
+});
+
+// Set schema for user posts, using string definitions:
+db.schema.set(
+    "users/$uid/posts/$postid", 
+    "{ title: string, text: string, posted: Date, edited?: Date, tags: string[] }"
+);
+
+// Set schema for user AND posts in 1 schema definition:
+db.schema.set("users/$uid", {
+    "name": "string", 
+    // ...
+    "posts?": {
+        // use wildcard "*", or "$postid" for each child:
+        "*": { 
+            "title": "string",
+            "text": "string",
+            "posted": "Date",
+            "edited?": "Date",
+            "tags": "string[]",
+        }
+    }
+});
+```
+
 ## Mapping data to custom classes
 
 Mapping data to your own classes allows you to store and load objects to/from the database without them losing their class type. Once you have mapped a database path to a class, you won't ever have to worry about serialization or deserialization of the objects => Store a ```User```, get a ```User```. Store a ```Chat``` that has a collection of ```Messages```, get a ```Chat``` with ```Messages``` back from the database. Any class specific methods can be executed directly on the objects you get back from the db, because they will be an ```instanceof``` your class.

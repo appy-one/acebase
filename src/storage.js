@@ -3,6 +3,7 @@ const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES, getNodeValueType } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
 const { cloneObject, compareValues, getChildValues, encodeString, defer } = Utils;
+const { SchemaDefinition } = require('./schema');
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
@@ -159,6 +160,11 @@ class Storage extends SimpleEventEmitter {
 
         // Setup indexing functionality
         const { DataIndex, ArrayIndex, FullTextIndex, GeoIndex } = require('./data-index'); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
+
+        /** @type {Map<string, { validate?: (previous: any, value: any) => boolean, schema?: SchemaDefinition }>} */
+        // this._validation = new Map();
+        /** @type {Array<{ path: string, schema: SchemaDefinition }>} */
+        this._schemas = [];
 
         /** @type {DataIndex[]} */ 
         const _indexes = [];
@@ -553,7 +559,7 @@ class Storage extends SimpleEventEmitter {
     }
 
     /**
-     * Wrapper for _writeNode, handles triggering change events, index updating. MUST be called for
+     * Wrapper for _writeNode, handles triggering change events, index updating.
      * @param {string} path 
      * @param {any} value 
      * @param {object} [options] 
@@ -563,6 +569,13 @@ class Storage extends SimpleEventEmitter {
         options = options || {};
         if (!options.tid && !options.transaction) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid OR transaction!`); }
         options.merge = options.merge === true;
+
+        // Does the value meet schema requirements?
+        const validation = this.validateSchema(path, value, { updates: options.merge });
+        if (!validation.ok) {
+            return Promise.reject(new Error(`Schema validation failed: ${validation.reason}`));
+        }
+
         const tid = options.tid;
         const transaction = options.transaction;
 
@@ -1650,6 +1663,144 @@ class Storage extends SimpleEventEmitter {
         });
     }
 
+    /**
+     * Adds, updates or removes a schema definition to validate node values before they are stored at the specified path
+     * @param {string} path target path to enforce the schema on, can include wildcards. Eg: 'users/*\/posts/*' or 'users/$uid/posts/$postid'
+     * @param {string|Object} schema schema type definitions. When null value is passed, a previously set schema is removed.
+     */
+    setSchema(path, schema) {
+        if (typeof schema === 'undefined') {
+            throw new TypeError(`schema argument must be given`);
+        }
+        if (schema === null) {
+            // Remove previously set schema
+            const i = this._schemas.findIndex(s => s.path === path);
+            i >= 0 && this._schemas.splice(i, 1);
+            return;
+        }
+        // Parse schema, add or update it
+        const checker = new SchemaDefinition(schema);
+        let item = this._schemas.find(s => s.path === path);
+        if (item) {
+            item.schema = checker;
+        }
+        else {
+            this._schemas.push({ path, schema: checker });
+            this._schemas.sort((a, b) => {
+                const ka = PathInfo.getPathKeys(a.path), kb = PathInfo.getPathKeys(b.path);
+                if (ka.length === kb.length) { return 0; }
+                return ka.length < kb.length ? -1 : 1;
+            });
+        }
+    }
+
+    /**
+     * Gets currently active schema definition for the specified path
+     * @param {string} path
+     * @returns { schema: string|Object, text: string }
+     */
+    getSchema(path) {
+        const item = this._schemas.find(item => item.path === path);
+        return item ? { schema: item.schema.source, text: item.schema.text } : null;
+    }
+
+    /**
+     * Gets all currently active schema definitions
+     * @returns {Array<{ path: string, schema: string|Object, text: string }>}
+     */
+    getSchemas() {
+        return this._schemas.map(item => ({ path: item.path, schema: item.schema.source, text: item.schema.text }) );
+    }
+
+    /**
+     * Validates the schemas of the node being updated and its children
+     * @param {string} path path being written to
+     * @param {any} value the new value, or updates to current value
+     * @param {any} [options] 
+     * @param {boolean} [options.updates] If an existing node is being updated (merged), this will only enforce schema rules set on properties being updated.
+     * @returns {{ ok: boolean, reason?: string }}
+     * @example
+     * // define schema for each tag of each user post:
+     * db.schema.set(
+     *  'users/$uid/posts/$postId/tags/$tagId', 
+     *  { name: 'string', 'link_id?': 'number' }
+     * );
+     * 
+     * // Insert that will fail:
+     * db.ref('users/352352/posts/572245').set({ 
+     *  text: 'this is my post', 
+     *  tags: { sometag: 'deny this' } // <-- sometag must be typeof object
+     * });
+     * 
+     * // Insert that will fail:
+     * db.ref('users/352352/posts/572245').set({ 
+     *  text: 'this is my post', 
+     *  tags: { 
+     *      tag1: { name: 'firstpost', link_id: 234 },
+     *      tag2: { name: 'newbie' },
+     *      tag3: { title: 'Not allowed' } // <-- title property not allowed
+     *  }
+     * });
+     * 
+     * // Update that fails if post does not exist:
+     * db.ref('users/352352/posts/572245/tags/tag1').update({ 
+     *  name: 'firstpost'
+     * }); // <-- post is missing property text
+     */
+     validateSchema(path, value, options = { updates: false }) {
+        let result = { ok: true };
+        const pathInfo = PathInfo.get(path);
+        
+        this._schemas.filter(s => 
+            pathInfo.equals(s.path) || pathInfo.isAncestorOf(s.path)
+        )
+        .every(s => {
+            const trailKeys = PathInfo.getPathKeys(s.path).slice(pathInfo.pathKeys.length);
+            const partial = options.updates === true && trailKeys.length === 0;
+            /**
+             * @param {string} path
+             * @param {any} value 
+             * @param {Array<string|numer>} trailKeys 
+             * @returns {{ ok: boolean, reason?: string }}
+             */
+            const check = (path, value, trailKeys) => {
+                if (trailKeys.length === 0) {
+                    // Check this node
+                    return s.schema.check(path, value, partial);
+                }
+                else if (value === null) {
+                    return { ok: true }; // Not at the end of trail, but nothing more to check
+                }
+                const key = trailKeys[0];
+                if (typeof key === 'string' && (key === '*' || key[0] === '$')) {
+                    // Wildcard. Check each key in value recursively                        
+                    if (value === null || typeof value !== 'object') {
+                        // Can't check children, because there are none. This is
+                        // possible if another rule permits the value at current path
+                        // to be something else than an object.
+                        return { ok: true };
+                    }
+                    let result;
+                    Object.keys(value).every(childKey => {
+                        const childPath = PathInfo.getChildPath(path, childKey);
+                        const childValue = value[childKey];
+                        result = check(childPath, childValue, trailKeys.slice(1));
+                        return result.ok;
+                    });
+                    return result;
+                }
+                else {
+                    const childPath = PathInfo.getChildPath(path, key);
+                    const childValue = value[key];
+                    return check(childPath, childValue, trailKeys.slice(1));
+                }
+            }
+            result = check(path, value, trailKeys);
+            return result.ok;
+        });
+        
+        return result;
+    }    
 }
 
 module.exports = {

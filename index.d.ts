@@ -37,6 +37,77 @@ export class AceBase extends acebasecore.AceBaseBase {
      * @param settings.maxInlineValueSize Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Default is 50.
      */    
     static WithLocalStorage(dbname: string, settings: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean, provider?: any, removeVoidProperties?: boolean, maxInlineValueSize?: number }): AceBase
+
+    schema: {
+        /**
+         * Gets a previously added schema definition for the target path
+         * @param path string
+         */
+        get(path: string): { schema: string|Object, text: string }
+        
+        /**
+         * Gets all previously added schema definitions
+         */
+        all(): Array<{ path: string, schema: string|Object, text: string }>
+
+        /**
+         * Add a schema definition to the specified path to enforce for updates and inserts. Schema definitions use typescript formatting. For optional properties, append a question mark to the property name, eg: "birthdate?". You can specify one wildcard child property ("*" or "$varname") to check unspecified properties with.
+         * The following types are supported: 
+         * - Types returned by typeof: `string`, `number`, `boolean`, `object`, `undefined`
+         * - Classnames: `Object`, `Date`
+         * - Interface definitions: `{ "prop1": "string", "prop2": "Date" }`
+         * - Arrays: `string[]`, `number[]`, `Date[]`, `{ "prop1": "string" }[]` etc
+         * - Arrays (generic): `Array\<Date>`, `Array<string|number>`, `Array<{ "prop1": "string" }>` etc
+         * - Binary: `Binary` or `binary`
+         * - Any type: `any`, or `*`
+         * - Combinations: `string | number | Date[]`
+         * - Specific values: `1 | 2 | 3`, or `"car" | "boat" | "airplane"` etc
+         * 
+         * NOTE 1: Types `object` and `Object` are treated the same way: they allow a given value to be *any* object, *except* `Array`, `Date` and binary values. This means that if you are using custom class mappings, you will be able to store a `Pet` object, but not an `Array`.
+         * 
+         * NOTE 2: When using type `undefined`, the property will not be allowed to be inserted or updated. This can be useful if your data structure changed and want to prevent updates to use the old structure. For example, if your contacts previously had an "age" property that you are replacing with "birthday". Setting the type of "age" to `undefined` will prevent the property to be set or overwritten. Note that an existing "age" property will not be removed, unless its value is set to `null` by the update.
+         * 
+         * @param path target path to enforce the schema on, can include '*' and '$id' wildcards
+         * @param schema schema definition in string or object format. 
+         * @example
+         * // Set schema for users:
+         * db.schema.set("users/$uid", {
+         *  "name": "string",
+         *  "email": "string",
+         *  "born?": "Date" // optional birthday
+         *  "address?": { // optional address
+         *      "street": "string",
+         *      "nr": "number",
+         *      "city": "number",
+         *      "country": "string"
+         *  },
+         *  "posts?": "Object", // Optional posts
+         *  "something_more": "any", // anything will do
+         *  "something_else": "string | number | boolean | Date | object"
+         * });
+         * 
+         * // Set schema for user posts, using string definitions:
+         * db.schema.set(
+         *  "users/$uid/posts/$postid", 
+         *  "{ title: string, text: string, added: Date, edited?: Date }"
+         * );
+         * 
+         * // Set schema for user AND posts in 1 definition:
+         * db.schema.set("users/$uid", {
+         *  "name": "string", 
+         *  // ...
+         *  "posts": {
+         *      // use wildcard "*", or "$postid" for each child:
+         *      "*": { 
+         *          "title": "string",
+         *          "tags": "string[]" // Array of strings
+         *          // ...
+         *      }
+         *  }
+         * });
+         */
+        set(path: string, schema: string|Object): void;
+    }
 }
 
 export interface AceBaseLocalSettings {

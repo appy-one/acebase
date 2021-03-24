@@ -78,6 +78,19 @@ class AceBase extends AceBaseBase {
         });
         return new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
     }
+
+    get schema() {
+        const set = (path, schema) => {
+            this.api.storage.setSchema(path, schema);
+        };
+        const get = (path) => {
+            return this.api.storage.getSchema(path);
+        };
+        const all = () => {
+            return this.api.storage.getSchemas();
+        }
+        return { get, set, all };
+    }
 }
 
 // Setup CustomStorageTransaction for browser's LocalStorage

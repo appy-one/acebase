@@ -1074,7 +1074,7 @@ class AceBaseStorage extends Storage {
      * @param {any} [options.context=null]
      * @returns {Promise<void>}
      */
-     _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false, suppress_events: false, context: null }) {
+    async _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false, suppress_events: false, context: null }) {
         // this.debug.log(`Update request for node "/${path}"`);
 
         const tid = options.tid || this.nodeLocker.createTid(); // ID.generate();
@@ -1090,13 +1090,20 @@ class AceBaseStorage extends Storage {
             return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
         }
 
+        let recursive = false;
         let lock;
-        return this.nodeLocker.lock(path, tid, true, '_updateNode')
-        .then(l => {
-            lock = l;
-            return this.getNodeInfo(path, { tid })
-        })
-        .then(nodeInfo => {
+        try {
+            lock = await this.nodeLocker.lock(path, tid, true, '_updateNode');
+            const nodeInfo = await this.getNodeInfo(path, { tid });
+            if (!nodeInfo.exists && path !== "") {
+                // Node doesn't exist, update parent instead
+                lock = await lock.moveToParent();
+                recursive = true;
+                await this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
+                return lock.release();
+            }
+
+            // Exists, or root record
             const merge = nodeInfo.exists && nodeInfo.address && options.merge;
             const write = () => {
                 if (merge) {
@@ -1108,11 +1115,13 @@ class AceBaseStorage extends Storage {
                     return _createNode(this, nodeInfo, value, lock, !options._internal);
                 }
             };
+
+            let result;
             if (options._internal) {
-                return write();
+                result = await write();
             }
             else {
-                return this._writeNodeWithTracking(path, value, { 
+                result = await this._writeNodeWithTracking(path, value, { 
                     tid,
                     merge,
                     suppress_events: options.suppress_events,
@@ -1120,62 +1129,55 @@ class AceBaseStorage extends Storage {
                     _customWriteFunction: write // Will use this function instead of this._writeNode
                 });
             }
-        })
-        .then(result => {
+
             const { recordMoved, recordInfo, deallocate } = result;
 
             // Update parent if the record moved
-            let parentUpdatePromise = Promise.resolve(false);
+            let parentUpdated = false;
             if (recordMoved && pathInfo.parentPath !== null) {
 
                 // TODO: Orchestrate parent update requests, so they can be processed in 1 go
                 // EG: Node.orchestrateUpdate(storage, path, update, currentLock)
                 // The above could then check if there are other pending locks for the parent, 
                 // then combine all requested updates and process with 1 call.
-                parentUpdatePromise = lock.moveToParent()
-                .then(parentLock => {
-                    // console.error(`Got parent ${parentLock.forWriting ? 'WRITE' : 'read'} lock on "${pathInfo.parentPath}", tid ${lock.tid}`)
-                    lock = parentLock;
-                    return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: new InternalNodeReference(recordInfo.valueType, recordInfo.address) }, { merge: true, tid, _internal: true, context: options.context })
-                    .then(() => true); // return true for parentUpdated
-                });
+                lock = await lock.moveToParent();
+                // console.error(`Got parent ${parentLock.forWriting ? 'WRITE' : 'read'} lock on "${pathInfo.parentPath}", tid ${lock.tid}`)
+                await this._updateNode(pathInfo.parentPath, { [pathInfo.key]: new InternalNodeReference(recordInfo.valueType, recordInfo.address) }, { merge: true, tid, _internal: true, context: options.context })
+                parentUpdated = true;
             }
 
-            return parentUpdatePromise
-            .then(parentUpdated => {
-                if (parentUpdated && pathInfo.parentPath !== '') {
-                    console.assert(this.nodeCache._cache.has(pathInfo.parentPath), 'Not cached?!!');
-                }
+            if (parentUpdated && pathInfo.parentPath !== '') {
+                console.assert(this.nodeCache._cache.has(pathInfo.parentPath), 'Not cached?!!');
+            }
 
-                // release lock on current target (path or parent)
-                lock && lock.release();
+            // release lock on current target (path or parent)
+            lock.release();
 
-                if (deallocate && deallocate.totalAddresses > 0) {
-                    // Release record allocation marked for deallocation
-                    deallocate.normalize();
-                    this.debug.verbose(`Releasing ${deallocate.totalAddresses} addresses (${deallocate.ranges.length} ranges) previously used by node "/${path}" and/or descendants: ${deallocate}`.colorize(ColorStyle.grey));
-                    
-                    // // TEMP check, remove loop when all is good:
-                    // storage.nodeCache._cache.forEach((entry, path) => {
-                    //     let cachedAddress = entry.nodeInfo.address;
-                    //     if (!cachedAddress) { return; }
-                    //     const i = deallocate.addresses.findIndex(a => a.pageNr === cachedAddress.pageNr && a.recordNr === cachedAddress.recordNr);
-                    //     if (i >= 0) {
-                    //         throw new Error(`This is bad`);
-                    //     }
-                    // });
+            if (deallocate && deallocate.totalAddresses > 0) {
+                // Release record allocation marked for deallocation
+                deallocate.normalize();
+                this.debug.verbose(`Releasing ${deallocate.totalAddresses} addresses (${deallocate.ranges.length} ranges) previously used by node "/${path}" and/or descendants: ${deallocate}`.colorize(ColorStyle.grey));
+                
+                // // TEMP check, remove loop when all is good:
+                // storage.nodeCache._cache.forEach((entry, path) => {
+                //     let cachedAddress = entry.nodeInfo.address;
+                //     if (!cachedAddress) { return; }
+                //     const i = deallocate.addresses.findIndex(a => a.pageNr === cachedAddress.pageNr && a.recordNr === cachedAddress.recordNr);
+                //     if (i >= 0) {
+                //         throw new Error(`This is bad`);
+                //     }
+                // });
 
-                    this.FST.release(deallocate.ranges);
-                }
+                this.FST.release(deallocate.ranges);
+            }
 
-                return true;
-            });
-        })
-        .catch(err => {
-            this.debug.error(`Node.update ERROR: `, err);
+            // return true;
+        }
+        catch(err) {
+            !recursive && this.debug.error(`Node.update ERROR: `, err);
             lock && lock.release(`Node.update: error`);
             throw err; //return false;
-        });
+        }
     }
 }
 
