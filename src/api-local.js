@@ -955,6 +955,18 @@ class LocalApi extends Api {
     export(path, stream, options = { format: 'json' }) {
         return this.storage.exportNode(path, stream, options);
     }
+
+    async setSchema(path, schema) { 
+        return this.storage.setSchema(path, schema);
+    }
+
+    async getSchema(path) { 
+        return this.storage.getSchema(path);
+    }
+
+    async getSchemas() { 
+        return this.storage.getSchemas();
+    }
 }
 
 module.exports = { LocalApi };

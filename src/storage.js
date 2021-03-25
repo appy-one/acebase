@@ -1697,11 +1697,11 @@ class Storage extends SimpleEventEmitter {
     /**
      * Gets currently active schema definition for the specified path
      * @param {string} path
-     * @returns { schema: string|Object, text: string }
+     * @returns { path: string, schema: string|Object, text: string }
      */
     getSchema(path) {
         const item = this._schemas.find(item => item.path === path);
-        return item ? { schema: item.schema.source, text: item.schema.text } : null;
+        return item ? { path, schema: item.schema.source, text: item.schema.text } : null;
     }
 
     /**

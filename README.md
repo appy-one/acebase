@@ -1327,7 +1327,7 @@ The following types are supported:
 
 ```js
 // Set schema for users:
-db.schema.set("users/$uid", {
+await db.schema.set("users/$uid", {
     "name": "string",
     "email": "string",
     "birthdate?": "Date" // optional birthdate
@@ -1343,13 +1343,13 @@ db.schema.set("users/$uid", {
 });
 
 // Set schema for user posts, using string definitions:
-db.schema.set(
+await db.schema.set(
     "users/$uid/posts/$postid", 
     "{ title: string, text: string, posted: Date, edited?: Date, tags: string[] }"
 );
 
 // Set schema for user AND posts in 1 schema definition:
-db.schema.set("users/$uid", {
+await db.schema.set("users/$uid", {
     "name": "string", 
     // ...
     "posts?": {
@@ -1363,6 +1363,12 @@ db.schema.set("users/$uid", {
         }
     }
 });
+
+// Get schema defined for a specific path:
+const schemaInfo = await db.schema.get('users/$uid');
+
+// Get all defined schemas
+const schemas = await db.schema.all();
 ```
 
 ## Mapping data to custom classes
