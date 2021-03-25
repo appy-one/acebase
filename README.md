@@ -1505,51 +1505,71 @@ const db = new AceBase('mydb', new MSSQLStorageSettings({ server: 'localhost', p
 ```
 
 ## Running AceBase in the browser
-(NEW v0.9.0)
 
-From v0.9.0+, AceBase is now able to run stand-alone in the browser! It uses IndexedDB (NEW v0.9.25) or localStorage to store the data, or sessionStorage if you want a temporary database.
+AceBase is now able to run stand-alone in the browser. It uses IndexedDB or localStorage to store the data, or sessionStorage if you want a temporary database.
 
 NOTE: If you want to connect to a remote AceBase [acebase-server](https://www.npmjs.com/package/acebase-server) from the browser instead of running one locally, use [acebase-client](https://www.npmjs.com/package/acebase-client) instead.
 
 You can also use a local database in the browser to sync with an AceBase server. To do this, create your database in the browser and pass it as ```cache``` db in ```AceBaseClient```'s storage settings.
 
-```html
-<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/acebase@latest/dist/browser.min.js"></script>
-<script type="text/javascript">
-    // Create an AceBase db using IndexedDB
-    const db = AceBase.WithIndexedDB('mydb');
-    db.ready(() => {
-        console.log('Database ready to use');
-        return db.ref('browser').set({
-            test: 'AceBase runs in the browser!'
-        })
-        .then(ref => {
-            console.log(`"${ref.path}" was saved!`);
-            return ref.get();
-        })
-        .then(snap => {
-            console.log(`Got "${snap.ref.path}" value:`);
-            console.log(snap.val());
-        });
-    });
-
-    // Or, Create an AceBase db using localStorage:
-    const db2 = AceBase.WithLocalStorage('mydb', { temp: false }); // temp:true to use sessionStorage instead
-</script>
-```
-
-If you are using TypeScript (eg with Angular/Ionic), add `acebase` to your project (`npm install acebase`), and use:
+If you are using TypeScript (eg with Angular/Ionic), or webpack, add `acebase` to your project (`npm i acebase`), and use:
 ```typescript
 import { AceBase } from 'acebase';
-const db = AceBase.WithIndexedDB('dbname'); 
 ```
 
-## Using a CustomStorage backend 
-(NEW v0.9.22)
+Or, include AceBase script in your html page:
+```html
+<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/acebase@latest/dist/browser.min.js"></script>
+```
 
-It is now possible to store data in your own custom storage backend. To do this, you only have to provide a couple of methods to get, set and remove data and you're done. 
+Then, create your database and start using it!
+```js
+// Create an AceBase db using IndexedDB
+const db = AceBase.WithIndexedDB('mydb');
 
-The example below shows how to implement a ```CustomStorage``` class that uses the browser's localStorage (NOTE: you can also use ```AceBase.WithLocalStorage``` described above to do the same):
+await db.ready();
+console.log('Database ready to use');
+
+const ref = await db.ref('browser').set({
+    test: 'AceBase runs in the browser!'
+});
+console.log(`"${ref.path}" was saved!`);
+
+const snapshot = await ref.get();
+console.log(`Got "${snapshot.ref.path}" value:`, snap.val());
+```
+
+Or, if you prefer using `Promises` instead of `async` / `await`:
+```js
+db.ready(() => {
+    console.log('Database ready to use');
+    return db.ref('browser').set({
+        test: 'AceBase runs in the browser!'
+    })
+    .then(ref => {
+        console.log(`"${ref.path}" was saved!`);
+        return ref.get();
+    })
+    .then(snap => {
+        console.log(`Got "${snap.ref.path}" value:`, snap.val());
+    });
+});
+```
+
+If you want AceBase to use localStorage instead, use `AceBase.WithLocalStorage`:
+```js
+// Create an AceBase db using LocalStorage
+const db = AceBase.WithLocalStorage('mydb', { temp: false }); // temp:true to use sessionStorage instead
+```
+
+
+## Using a CustomStorage backend
+
+In additional to the already available binary, SQL Server, SQLite, IndexedDB and LocalStorage backends, it's also possible to roll your own custom storage backend, such as MongoDB, MySQL, WebSQL etc. To do this, all you have to do is write a couple of methods to get, set, remove and query data within a transactional context. The only prerequisite is that your used database provider is able to execute queries, or provides some other way to iterate through record entries without having to load them all into memory at once. (Firebase won't do because it can't do that)
+
+The example below shows how to implement a ```CustomStorage``` class that uses the browser's LocalStorage, but you can use anything you'd want. For example, it's easy to change the code below to use [Ionic's Storage API](https://github.com/ionic-team/ionic-storage) instead.
+
+NOTE: The code below is similar to the implementation of `AceBase.WithLocalStorage`
 
 ```javascript
 const { AceBase, CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('acebase');
@@ -1591,12 +1611,13 @@ class LocalStorageTransaction extends CustomStorageTransaction {
     }
 
     commit() {
-        // All changes have already been committed
-        return Promise.resolve();
+        // To implement REAL commit and rollback capabilities, we'd have to add pending mutations to a batch,
+        // and store upon commit, or toss upon rollback. This is what AceBase.WithIndexedDB does, is also way faster.
+        return Promise.resolve(); // All changes have already been committed
     }
     
     rollback(err) {
-        // Not able to rollback changes, because we did not keep track
+        // Not able to rollback changes, was already comitted.
         return Promise.resolve();
     }
 
