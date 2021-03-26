@@ -582,7 +582,7 @@ class Storage extends SimpleEventEmitter {
         // Does the value meet schema requirements?
         const validation = this.validateSchema(path, value, { updates: options.merge });
         if (!validation.ok) {
-            return Promise.reject(new SchemaValidationError(validation.reason));
+            throw new SchemaValidationError(validation.reason);
         }
 
         const tid = options.tid;
