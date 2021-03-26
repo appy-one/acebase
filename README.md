@@ -27,23 +27,7 @@ liveChat.messages.push({
     text: 'Updating a database was never this easy' 
 });
 
-liveChat.onChanged(function (val, prev, remoteChange, context) {
-    // Handle specific (local or remote) changes:
-    if (val.title !== prev.title && remoteChange) {
-        console.log(`Title was changed by someone else`);
-    }
-    if (prev.members.includes('ewout') && !val.members.includes('ewout')) {
-        console.log(remoteChange ? `I was kicked out of this chat` : `I stepped out`);
-    }
-});
-
-function sendMessage(text) {
-    // Changes made remotely are automatically updated in our liveChat object:
-    if (!liveChat.members.includes('ewout')) {
-        throw new Error(`Can't send message, I'm not a member anymore!`);
-    }
-    liveChat.messages.push({ from: 'ewout', text });
-}
+// db updates done remotely will also change liveChat's properties
 ```
 Using live data proxies, you won't have to worry about data storage and synchronization, just focus on your business logic. All changes are **automatically synchronized** with others, and it can even work while **offline** (use an ```AceBaseClient``` with local cache database)!
 
