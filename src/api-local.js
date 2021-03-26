@@ -138,6 +138,8 @@ class LocalApi extends Api {
                     if (typeof left === 'undefined' && typeof right !== 'undefined') { return o.ascending ? -1 : 1; }
                     if (typeof left !== 'undefined' && typeof right === 'undefined') { return o.ascending ? 1 : -1; }
                     if (typeof left === 'undefined' && typeof right === 'undefined') { return 0; }
+                    // TODO: add collation options using Intl.Collator. Note this also has to be implemented in the matching engines (inclusing indexes)
+                    // See discussion https://github.com/appy-one/acebase/discussions/27
                     if (left == right) {
                         if (i < query.order.length - 1) { return compare(i+1); }
                         else { return a.path < b.path ? -1 : 1; } // Sort by path if property values are equal
@@ -880,15 +882,22 @@ class LocalApi extends Api {
 
     reflect(path, type, args) {
         args = args || {};
-        const getChildren = (path, limit = 50, skip = 0) => {
+        const getChildren = (path, limit = 50, skip = 0, from = null) => {
             if (typeof limit === 'string') { limit = parseInt(limit); }
             if (typeof skip === 'string') { skip = parseInt(skip); }
+            if (['null','undefined'].includes(from)) { from = null; }
             const children = [];
-            let n = 0, stop = skip + limit;
+            let n = 0, stop = false, more = false; //stop = skip + limit, 
             return Node.getChildren(this.storage, path)
             .next(childInfo => {
+                if (stop) {
+                    // Stop 1 child too late on purpose to make sure there's more
+                    more = true;
+                    return false; // Stop iterating
+                }
                 n++;
-                if (limit === 0 || (n <= stop && n > skip)) {
+                const include = from !== null ? childInfo.key > from : skip === 0 || n > skip;
+                if (include) {
                     children.push({
                         key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index,
                         type: childInfo.valueTypeName,
@@ -897,23 +906,21 @@ class LocalApi extends Api {
                         address: typeof childInfo.address === 'object' && 'pageNr' in childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined
                     });
                 }
-                if (limit > 0 && n > stop) {
-                    return false; // Stop iterating
-                }
+                stop = limit > 0 && children.length === limit; // flag, but don't stop now. Otherwise we won't know if there's more
             })
             .catch(err => {
                 // Node doesn't exist? No children..
             })
             .then(() => {
                 return {
-                    more: limit !== 0 && n > stop,
+                    more,
                     list: children
                 };
             });
         }
         switch(type) {
             case "children": {
-                return getChildren(path, args.limit, args.skip);
+                return getChildren(path, args.limit, args.skip, args.from);
             }
             case "info": {
                 const info = {
@@ -940,7 +947,7 @@ class LocalApi extends Api {
                     }
                     else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
                         return isObjectOrArray 
-                            ? getChildren(path, args.child_limit, args.child_skip)
+                            ? getChildren(path, args.child_limit, args.child_skip, args.child_from)
                             : info.children; // Use empty stub if target is not an object or array
                     }
                 })
@@ -966,6 +973,10 @@ class LocalApi extends Api {
 
     async getSchemas() { 
         return this.storage.getSchemas();
+    }
+
+    async validateSchema(path, value, isUpdate) {
+        return this.storage.validateSchema(path, value, { updates: isUpdate });
     }
 }
 

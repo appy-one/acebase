@@ -159,6 +159,9 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
             },
             all: () => {
                 return this.api.getSchemas();
+            },
+            check: (path, value, isUpdate) => {
+                return this.api.validateSchema(path, value, isUpdate);
             }
         };
     }
@@ -200,6 +203,7 @@ class Api {
     setSchema(path, schema) { throw new NotImplementedError('setSchema'); }
     getSchema(path) { throw new NotImplementedError('getSchema'); }
     getSchemas() { throw new NotImplementedError('getSchemas'); }
+    validateSchema(path, value, isUpdate) { throw new NotImplementedError('validateSchema'); }
 }
 exports.Api = Api;
 
@@ -1964,6 +1968,43 @@ class DataReference {
             };
         });
     }
+    async forEach(callbackOrOptions, callback) {
+        let options;
+        if (typeof callbackOrOptions === 'function') {
+            callback = callbackOrOptions;
+        }
+        else {
+            options = callbackOrOptions;
+        }
+        if (typeof callback !== 'function') {
+            throw new TypeError(`No callback function given`);
+        }
+        // Get all children through reflection. This could be tweaked further using paging
+        const info = await this.reflect('children', { limit: 0, skip: 0 }); // Gets ALL child keys
+        const summary = {
+            canceled: false,
+            total: info.list.length,
+            processed: 0
+        };
+        // Iterate through all children until callback returns false
+        for (let i = 0; i < info.list.length; i++) {
+            const key = info.list[i].key;
+            // Get child data
+            const snapshot = await this.child(key).get(options);
+            summary.processed++;
+            if (!snapshot.exists()) {
+                // Was removed in the meantime, skip
+                continue;
+            }
+            // Run callback
+            const result = await callback(snapshot);
+            if (result === false) {
+                summary.canceled = true;
+                break; // Stop looping
+            }
+        }
+        return summary;
+    }
 }
 exports.DataReference = DataReference;
 class DataReferenceQuery {
@@ -2032,8 +2073,8 @@ class DataReferenceQuery {
      * Sorts the query results
      */
     sort(key, ascending = true) {
-        if (typeof key !== "string") {
-            throw `key must be a string`;
+        if (!['string', 'number'].includes(typeof key)) {
+            throw `key must be a string or number`;
         }
         this[_private].order.push({ key, ascending });
         return this;
@@ -2197,6 +2238,43 @@ class DataReferenceQuery {
         }
         this[_private].events[event].splice(index, 1);
         return this;
+    }
+    async forEach(callbackOrOptions, callback) {
+        let options;
+        if (typeof callbackOrOptions === 'function') {
+            callback = callbackOrOptions;
+        }
+        else {
+            options = callbackOrOptions;
+        }
+        if (typeof callback !== 'function') {
+            throw new TypeError(`No callback function given`);
+        }
+        // Get all query results. This could be tweaked further using paging
+        const refs = await this.getRefs();
+        const summary = {
+            canceled: false,
+            total: refs.length,
+            processed: 0
+        };
+        // Iterate through all children until callback returns false
+        for (let i = 0; i < refs.length; i++) {
+            const ref = refs[i];
+            // Get child data
+            const snapshot = await ref.get(options);
+            summary.processed++;
+            if (!snapshot.exists()) {
+                // Was removed in the meantime, skip
+                continue;
+            }
+            // Run callback
+            const result = await callback(snapshot);
+            if (result === false) {
+                summary.canceled = true;
+                break; // Stop looping
+            }
+        }
+        return summary;
     }
 }
 exports.DataReferenceQuery = DataReferenceQuery;
@@ -4476,18 +4554,6 @@ class AceBase extends AceBaseBase {
         return new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
     }
 
-    get schema() {
-        const set = (path, schema) => {
-            this.api.storage.setSchema(path, schema);
-        };
-        const get = (path) => {
-            return this.api.storage.getSchema(path);
-        };
-        const all = () => {
-            return this.api.storage.getSchemas();
-        }
-        return { get, set, all };
-    }
 }
 
 // Setup CustomStorageTransaction for browser's LocalStorage
@@ -4744,6 +4810,8 @@ class LocalApi extends Api {
                     if (typeof left === 'undefined' && typeof right !== 'undefined') { return o.ascending ? -1 : 1; }
                     if (typeof left !== 'undefined' && typeof right === 'undefined') { return o.ascending ? 1 : -1; }
                     if (typeof left === 'undefined' && typeof right === 'undefined') { return 0; }
+                    // TODO: add collation options using Intl.Collator. Note this also has to be implemented in the matching engines (inclusing indexes)
+                    // See discussion https://github.com/appy-one/acebase/discussions/27
                     if (left == right) {
                         if (i < query.order.length - 1) { return compare(i+1); }
                         else { return a.path < b.path ? -1 : 1; } // Sort by path if property values are equal
@@ -5486,15 +5554,22 @@ class LocalApi extends Api {
 
     reflect(path, type, args) {
         args = args || {};
-        const getChildren = (path, limit = 50, skip = 0) => {
+        const getChildren = (path, limit = 50, skip = 0, from = null) => {
             if (typeof limit === 'string') { limit = parseInt(limit); }
             if (typeof skip === 'string') { skip = parseInt(skip); }
+            if (['null','undefined'].includes(from)) { from = null; }
             const children = [];
-            let n = 0, stop = skip + limit;
+            let n = 0, stop = false, more = false; //stop = skip + limit, 
             return Node.getChildren(this.storage, path)
             .next(childInfo => {
+                if (stop) {
+                    // Stop 1 child too late on purpose to make sure there's more
+                    more = true;
+                    return false; // Stop iterating
+                }
                 n++;
-                if (limit === 0 || (n <= stop && n > skip)) {
+                const include = from !== null ? childInfo.key > from : skip === 0 || n > skip;
+                if (include) {
                     children.push({
                         key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index,
                         type: childInfo.valueTypeName,
@@ -5503,23 +5578,21 @@ class LocalApi extends Api {
                         address: typeof childInfo.address === 'object' && 'pageNr' in childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined
                     });
                 }
-                if (limit > 0 && n > stop) {
-                    return false; // Stop iterating
-                }
+                stop = limit > 0 && children.length === limit; // flag, but don't stop now. Otherwise we won't know if there's more
             })
             .catch(err => {
                 // Node doesn't exist? No children..
             })
             .then(() => {
                 return {
-                    more: limit !== 0 && n > stop,
+                    more,
                     list: children
                 };
             });
         }
         switch(type) {
             case "children": {
-                return getChildren(path, args.limit, args.skip);
+                return getChildren(path, args.limit, args.skip, args.from);
             }
             case "info": {
                 const info = {
@@ -5546,7 +5619,7 @@ class LocalApi extends Api {
                     }
                     else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
                         return isObjectOrArray 
-                            ? getChildren(path, args.child_limit, args.child_skip)
+                            ? getChildren(path, args.child_limit, args.child_skip, args.child_from)
                             : info.children; // Use empty stub if target is not an object or array
                     }
                 })
@@ -5572,6 +5645,10 @@ class LocalApi extends Api {
 
     async getSchemas() { 
         return this.storage.getSchemas();
+    }
+
+    async validateSchema(path, value, isUpdate) {
+        return this.storage.validateSchema(path, value, { updates: isUpdate });
     }
 }
 
@@ -8051,6 +8128,15 @@ const { SchemaDefinition } = require('./schema');
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
+class SchemaValidationError extends Error {
+    /**
+     * @param {string} reason 
+     */
+    constructor(reason) {
+        super(`Schema validation failed: ${reason}`);
+        this.reason = reason;
+    }
+}
 
 class ClusterSettings {
 
@@ -8617,7 +8703,7 @@ class Storage extends SimpleEventEmitter {
         // Does the value meet schema requirements?
         const validation = this.validateSchema(path, value, { updates: options.merge });
         if (!validation.ok) {
-            return Promise.reject(new Error(`Schema validation failed: ${validation.reason}`));
+            return Promise.reject(new SchemaValidationError(validation.reason));
         }
 
         const tid = options.tid;
@@ -9851,7 +9937,8 @@ module.exports = {
     Storage,
     StorageSettings,
     NodeNotFoundError,
-    NodeRevisionError
+    NodeRevisionError,
+    SchemaValidationError
 };
 },{"./data-index":32,"./node-info":28,"./node-lock":29,"./node-value-types":30,"./promise-fs":32,"./schema":33,"acebase-core":12}],36:[function(require,module,exports){
 

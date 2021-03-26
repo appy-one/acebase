@@ -7,7 +7,7 @@ const { NodeAddress } = require('./node-address');
 const { NodeCache } = require('./node-cache');
 const { NodeInfo } = require('./node-info');
 const { NodeLock } = require('./node-lock');
-const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
+const { Storage, StorageSettings, NodeNotFoundError, SchemaValidationError } = require('./storage');
 const { VALUE_TYPES } = require('./node-value-types');
 const { BinaryBPlusTree, BPlusTreeBuilder, BinaryWriter } = require('./btree');
 
@@ -1072,6 +1072,7 @@ class AceBaseStorage extends Storage {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
      * @param {any} [options.context=null]
+     * @param {boolean} [options.merge=true]
      * @returns {Promise<void>}
      */
     async _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false, suppress_events: false, context: null }) {
@@ -1174,7 +1175,12 @@ class AceBaseStorage extends Storage {
             // return true;
         }
         catch(err) {
-            !recursive && this.debug.error(`Node.update ERROR: `, err);
+            // if (err instanceof SchemaValidationError) {
+            //     !recursive && this.debug.error(`Schema validation error ${options.merge ? 'updating' : 'setting'} path "${path}": `, err.reason);
+            // }
+            if (!(err instanceof SchemaValidationError)) {
+                this.debug.error(`Node.update ERROR: `, err);
+            }
             lock && lock.release(`Node.update: error`);
             throw err; //return false;
         }

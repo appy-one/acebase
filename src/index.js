@@ -22,6 +22,7 @@ const { AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorageSettings } = require('./storage-sqlite');
 const { MSSQLStorageSettings } = require('./storage-mssql');
 const { CustomStorageTransaction, CustomStorageSettings, CustomStorageHelpers } = require('./storage-custom');
+const { SchemaValidationError } = require('./storage');
 
 module.exports = {
     AceBase, 
@@ -37,6 +38,7 @@ module.exports = {
     CustomStorageTransaction,
     CustomStorageSettings,
     CustomStorageHelpers,
+    SchemaValidationError,
     ID,
     proxyAccess
 };

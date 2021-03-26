@@ -215,6 +215,10 @@ export class CustomStorageHelpers {
     static readonly PathInfo: typeof acebasecore.PathInfo
 }
 
+export class SchemaValidationError extends Error {
+    reason: string
+}
+
 export import DataSnapshot = acebasecore.DataSnapshot;
 export import DataReference = acebasecore.DataReference;
 export import EventStream = acebasecore.EventStream;

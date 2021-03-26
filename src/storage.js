@@ -7,6 +7,15 @@ const { SchemaDefinition } = require('./schema');
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
+class SchemaValidationError extends Error {
+    /**
+     * @param {string} reason 
+     */
+    constructor(reason) {
+        super(`Schema validation failed: ${reason}`);
+        this.reason = reason;
+    }
+}
 
 class ClusterSettings {
 
@@ -573,7 +582,7 @@ class Storage extends SimpleEventEmitter {
         // Does the value meet schema requirements?
         const validation = this.validateSchema(path, value, { updates: options.merge });
         if (!validation.ok) {
-            return Promise.reject(new Error(`Schema validation failed: ${validation.reason}`));
+            return Promise.reject(new SchemaValidationError(validation.reason));
         }
 
         const tid = options.tid;
@@ -1807,5 +1816,6 @@ module.exports = {
     Storage,
     StorageSettings,
     NodeNotFoundError,
-    NodeRevisionError
+    NodeRevisionError,
+    SchemaValidationError
 };
