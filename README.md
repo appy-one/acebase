@@ -66,6 +66,7 @@ Excited? Read more about live data proxies [here](#realtime-synchronization-with
     * [Using arrays](#using-arrays)
     * [Counting children](#counting-children)
     * [Limit nested data loading](#limit-nested-data-loading)
+    * [Iterating (streaming) children](#iterating-streaming-children)
 * Realtime monitoring
     * [Monitoring realtime data changes](#monitoring-realtime-data-changes)
     * [Using variables and wildcards in subscription paths](#using-variables-and-wildcards-in-subscription-paths)
@@ -79,6 +80,7 @@ Excited? Read more about live data proxies [here](#realtime-synchronization-with
 * Queries
     * [Querying data](#querying-data)
     * [Removing data with a query](#removing-data-with-a-query)
+    * [Streaming query results](#streaming-query-results)
     * [Realtime queries](#realtime-queries)
 * Indexes
     * [Indexing data](#indexing-data)
@@ -423,6 +425,35 @@ db.ref('users/someuser/posts')
 ```
 
 **NOTE**: This enables you to do what Firebase can't: store your data in logical places, and only get the data you are interested in, fast! On top of that, you're even able to index your nested data and query it, even faster. See [Indexing data](#indexing-data) for more info about that..
+
+### Iterating (streaming) children
+(NEW since v1.4.0)
+
+To iterate through all children of an object collection without loading all data into memory at once, you can use `forEach` which streams each child and executes a callback function with a snapshot of its data. If the callback function returns `false`, iteration will stop. If the callback returns a `Promise`, iteration will wait for it to resolve before loading the next child.
+
+The children to iterate are determined at the start of the function. Because `forEach` does not read/write lock the collection, it is possible for the data to be changed while iterating. Children that are added while iterating will be ignored, removed children will be skipped.
+
+It is also possible to selectively load data for each child, using the same options object available for `ref.get(options)`
+
+Examples:
+```js
+// Stream all books one at a time (loads all data for each book):
+await db.ref('books').forEach(bookSnapshot => {
+   const book = bookSnapshot.val();
+   console.log(`Got book "${book.title}": "${book.description}"`);
+});
+
+// Now do the same but only load 'title' and 'description' of each book:
+await db.ref('books').forEach(
+   { include: ['title', 'description'] }, 
+   bookSnapshot => {
+      const book = bookSnapshot.val();
+      console.log(`Got book "${book.title}": "${book.description}"`);
+   }
+);
+```
+
+Also see [Streaming query results](#streaming-query-results)
 
 ## Monitoring realtime data changes
 
@@ -1073,6 +1104,39 @@ db.query('songs')
 }); 
 ```
 
+### Streaming query results
+(NEW since v1.4.0)
+
+To iterate through the results of a query without loading all data into memory at once, you can use `forEach` which streams each child and executes a callback function with a snapshot of its data. If the callback function returns `false`, iteration will stop. If the callback returns a `Promise`, iteration will wait for it to resolve before loading the next child.
+
+The query will be executed at the start of the function, retrieving references to all matching children (not their values). After this, `forEach` will load their values one at a time. It is possible for the underlying data to be changed while iterating. Matching children that were removed while iterating will be skipped. Children that had any of the filtered properties changed after initial results were populated might not match the query anymore, this is not checked.
+
+It is also possible to selectively load data for each child, using the same options object available for `query.get(options)`.
+
+Example:
+```js
+// Query books, streaming the results one at a time:
+await db.query('books')
+ .filter('category', '==', 'cooking')
+ .forEach(bookSnapshot => {
+    const book = bookSnapshot.val();
+    console.log(`Found cooking book "${book.title}": "${book.description}"`);
+ });
+
+// Now only load book properties 'title' and 'description'
+await db.query('books')
+ .filter('category', '==', 'cooking')
+ .forEach(
+   { include: ['title', 'description'] },
+   bookSnapshot => {
+      const book = bookSnapshot.val();
+      console.log(`Found cooking book "${book.title}": "${book.description}"`);
+   }
+);
+```
+
+Also see [Iterating (streaming) children](#iterating-streaming-children)
+
 ### Realtime queries 
 (NEW 0.9.9, alpha)
 
@@ -1719,7 +1783,7 @@ db.ready(ready => {
 
 ## Reflect API
 
-AceBase has a built-in reflection API that enables browsing the database content without retrieving any (nested) data. This API is available for local databases, and remote databases ~~when signed in as the ```admin``` user~~ (from server v0.9.29+) on paths the authenticated user has access to.
+AceBase has a built-in reflection API that enables browsing the database content without retrieving any (nested) data. This API is available for local databases, and remote databases when signed in as the ```admin``` user or on paths the authenticated user has access to.
 
 The reflect API is also used internally: AceBase server's webmanager uses it to allow database exploration, and the ```DataReference``` class uses it to deliver results for ```count()``` and initial ```notify_child_added``` event callbacks.
 
