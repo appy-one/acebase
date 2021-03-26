@@ -27,9 +27,9 @@ liveChat.messages.push({
     text: 'Updating a database was never this easy' 
 });
 
-// db updates done remotely will also change liveChat's properties
+// Remote db updates will also change liveChat's properties
 ```
-Using live data proxies, you won't have to worry about data storage and synchronization, just focus on your business logic. All changes are **automatically synchronized** with others, and it can even work while **offline** (use an ```AceBaseClient``` with local cache database)!
+Using live data proxies, you won't have to worry about data storage and synchronization, just focus on your business logic. All changes are **automatically synchronized** with others, and it can even work while **offline** (use an ```AceBaseClient``` with local cache database)
 
 Excited? Read more about live data proxies [here](#realtime-synchronization-with-a-live-data-proxy) 🔥
 
