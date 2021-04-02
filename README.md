@@ -1554,7 +1554,7 @@ const db = new AceBase('mydb', new MSSQLStorageSettings({ server: 'localhost', p
 
 ## Running AceBase in the browser
 
-AceBase is now able to run stand-alone in the browser. It uses IndexedDB or localStorage to store the data, or sessionStorage if you want a temporary database.
+AceBase is now able to run stand-alone in the browser. It uses IndexedDB or LocalStorage to store the data, or SessionStorage if you want a temporary database.
 
 NOTE: If you want to connect to a remote AceBase [acebase-server](https://www.npmjs.com/package/acebase-server) from the browser instead of running one locally, use [acebase-client](https://www.npmjs.com/package/acebase-client) instead.
 
@@ -1610,6 +1610,22 @@ If you want AceBase to use localStorage instead, use `AceBase.WithLocalStorage`:
 const db = AceBase.WithLocalStorage('mydb', { temp: false }); // temp:true to use sessionStorage instead
 ```
 
+### Cross-tab synchronization
+(NEW in v1.5.0, beta)
+
+When you're using AceBase with an IndexedDB or LocalStorage backend, you might notice that if you change data in one open tab, those changes do not raise change events in other open tabs monitoring that same data. This is because IndexedDB or LocalStorage databases do not raise change events themselves, and AceBase won't be able to either if the data was not changed through AceBase itself. To overcome this issue, AceBase will have to notify local changes to other AceBase instances in different browser tabs. 
+
+AceBase is now able to communicate with other tabs using the `BroadcastChannel` implemented in most browsers\*, and is able to notify others of changes made to the underlaying database. This functionality is in beta and disabled by default, to enable it set the `multipleTabs: true` in the options parameter:
+
+```js
+const db = AceBase.WithIndexedDB('mydb', { multipleTabs: true });
+```
+
+Once you've enabled this setting, the AceBase instances running in multiple tabs will exchange what events they are listening for, and notify eachother with any changes made to the monitored data.
+
+\* Safari (both desktop and iOS versions) do not currently support `BroadcastChannel`, a polyfill will be implemented for this soon. [Browser support](https://caniuse.com/broadcastchannel) is currently at 77% (April 2021)
+
+NOTE: This applies to local databases only. If you are using an `AceBaseClient`, connected to an `AceBaseServer`, changing something in one browser tab will already notify other tabs, because the events are raised by the AceBase server and sent back to the clients automatically. If you use a local AceBase instance as offline cache for an `AceBaseClient`, setting `multipleTabs` on for your cache db might cause events to be raised twice when online - more work is needed here. 
 
 ## Using a CustomStorage backend
 
