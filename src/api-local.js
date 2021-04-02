@@ -49,10 +49,12 @@ class LocalApi extends Api {
 
     subscribe(path, event, callback) {
         this.storage.subscriptions.add(path, event, callback);
+        this.db.emit('subscribe', { path, event, callback }); // Allow 3rd parties to monitor subscriptions and emitting events. Implemented for cross-tab communication in browser 
     }
 
     unsubscribe(path, event = undefined, callback = undefined) {
         this.storage.subscriptions.remove(path, event, callback);
+        this.db.emit('unsubscribe', { path, event, callback }); // Allow 3rd parties to monitor subscriptions and emitting events. Implemented for cross-tab communication in browser 
     }
 
     set(path, value, options = { suppress_events: false, context: null }) {

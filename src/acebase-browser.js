@@ -46,6 +46,7 @@ class BrowserAceBase extends AceBase {
      * @param {string} [settings.logLevel='error'] what level to use for logging to the console
      * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
      * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
+     * @param {number} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
      */
     static WithIndexedDB(dbname, settings) {
 
@@ -95,7 +96,16 @@ class BrowserAceBase extends AceBase {
                 return new IndexedDBStorageTransaction(context, target);
             }
         });
-        return new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
+        const acebaseDb = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
+
+        if (settings.multipleTabs === true) {
+            // Create BroadcastChannel to allow multi-tab communication
+            // This allows other tabs to make changes to the database, notifying us of those changes.
+            const { BrowserTabIPC } = require('./ipc/browser-tabs');
+            BrowserTabIPC.enable(acebaseDb, dbname);
+        }
+
+        return acebaseDb;
     }
 }
 
