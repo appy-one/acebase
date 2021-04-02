@@ -1712,7 +1712,7 @@ class DataReference {
                 if (event === "value") {
                     this.get(snap => {
                         eventPublisher.publish(snap);
-                        typeof callback === 'function' && callback(snap);
+                        // typeof callback === 'function' && callback(snap);
                     });
                 }
                 else if (event === "child_added") {
@@ -1724,7 +1724,7 @@ class DataReference {
                         Object.keys(val).forEach(key => {
                             let childSnap = new data_snapshot_1.DataSnapshot(this.child(key), val[key]);
                             eventPublisher.publish(childSnap);
-                            typeof callback === 'function' && callback(childSnap);
+                            // typeof callback === 'function' && callback(childSnap);
                         });
                     });
                 }
@@ -1739,7 +1739,7 @@ class DataReference {
                             children.list.forEach(child => {
                                 const childRef = this.child(child.key);
                                 eventPublisher.publish(childRef);
-                                typeof callback === 'function' && callback(childRef);
+                                // typeof callback === 'function' && callback(childRef);
                             });
                             if (children.more) {
                                 skip += step;
@@ -2507,7 +2507,7 @@ exports.ID = ID;
 },{"./cuid":5}],12:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.proxyAccess = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.DataSnapshot = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
+exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.proxyAccess = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
 var acebase_base_1 = require("./acebase-base");
 Object.defineProperty(exports, "AceBaseBase", { enumerable: true, get: function () { return acebase_base_1.AceBaseBase; } });
 Object.defineProperty(exports, "AceBaseBaseSettings", { enumerable: true, get: function () { return acebase_base_1.AceBaseBaseSettings; } });
@@ -2520,6 +2520,7 @@ Object.defineProperty(exports, "DataRetrievalOptions", { enumerable: true, get: 
 Object.defineProperty(exports, "QueryDataRetrievalOptions", { enumerable: true, get: function () { return data_reference_1.QueryDataRetrievalOptions; } });
 var data_snapshot_1 = require("./data-snapshot");
 Object.defineProperty(exports, "DataSnapshot", { enumerable: true, get: function () { return data_snapshot_1.DataSnapshot; } });
+Object.defineProperty(exports, "MutationsDataSnapshot", { enumerable: true, get: function () { return data_snapshot_1.MutationsDataSnapshot; } });
 var debug_1 = require("./debug");
 Object.defineProperty(exports, "DebugLogger", { enumerable: true, get: function () { return debug_1.DebugLogger; } });
 var id_1 = require("./id");
@@ -2580,7 +2581,7 @@ function setObservable(Observable) {
 }
 exports.setObservable = setObservable;
 
-},{"rxjs":36}],14:[function(require,module,exports){
+},{"rxjs":37}],14:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathInfo = exports.getChildPath = exports.getPathInfo = exports.getPathKeys = void 0;
@@ -4108,7 +4109,7 @@ function defer(fn) {
 exports.defer = defer;
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"./data-snapshot":9,"./path-reference":15,"./process":16,"buffer":36}],24:[function(require,module,exports){
+},{"./data-snapshot":9,"./path-reference":15,"./process":16,"buffer":37}],24:[function(require,module,exports){
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
@@ -4157,6 +4158,7 @@ class BrowserAceBase extends AceBase {
      * @param {string} [settings.logLevel='error'] what level to use for logging to the console
      * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
      * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
+     * @param {number} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
      */
     static WithIndexedDB(dbname, settings) {
 
@@ -4206,7 +4208,16 @@ class BrowserAceBase extends AceBase {
                 return new IndexedDBStorageTransaction(context, target);
             }
         });
-        return new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
+        const acebaseDb = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
+
+        if (settings.multipleTabs === true) {
+            // Create BroadcastChannel to allow multi-tab communication
+            // This allows other tabs to make changes to the database, notifying us of those changes.
+            const { BrowserTabIPC } = require('./ipc/browser-tabs');
+            BrowserTabIPC.enable(acebaseDb, dbname);
+        }
+
+        return acebaseDb;
     }
 }
 
@@ -4472,7 +4483,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { BrowserAceBase };
-},{"./acebase-local":25,"./storage-custom":34}],25:[function(require,module,exports){
+},{"./acebase-local":25,"./ipc/browser-tabs":28,"./storage-custom":35}],25:[function(require,module,exports){
 const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
 const { StorageSettings } = require('./storage');
 const { LocalApi } = require('./api-local');
@@ -4521,6 +4532,7 @@ class AceBase extends AceBaseBase {
      * @param {any} [settings.provider] Alternate localStorage provider for running in non-browser environments. Eg using 'node-localstorage'
      * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
      * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
+     * @param {number} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
      */
     static WithLocalStorage(dbname, settings) {
 
@@ -4551,7 +4563,16 @@ class AceBase extends AceBaseBase {
                 return Promise.resolve(transaction);
             }
         });
-        return new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
+        const db = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
+
+        if (settings.multipleTabs === true) {
+            // Create BroadcastChannel to allow multi-tab communication
+            // This allows other tabs to make changes to the database, notifying us of those changes.
+            const { BrowserTabIPC } = require('./ipc/browser-tabs');
+            BrowserTabIPC.enable(db, dbname);
+        }
+
+        return db;
     }
 
 }
@@ -4669,7 +4690,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":26,"./storage":35,"./storage-custom":34,"acebase-core":12}],26:[function(require,module,exports){
+},{"./api-local":26,"./ipc/browser-tabs":28,"./storage":36,"./storage-custom":35,"acebase-core":12}],26:[function(require,module,exports){
 const { Api } = require('acebase-core');
 const { StorageSettings, NodeNotFoundError } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
@@ -4721,10 +4742,12 @@ class LocalApi extends Api {
 
     subscribe(path, event, callback) {
         this.storage.subscriptions.add(path, event, callback);
+        this.db.emit('subscribe', { path, event, callback }); // Allow 3rd parties to monitor subscriptions and emitting events. Implemented for cross-tab communication in browser 
     }
 
     unsubscribe(path, event = undefined, callback = undefined) {
         this.storage.subscriptions.remove(path, event, callback);
+        this.db.emit('unsubscribe', { path, event, callback }); // Allow 3rd parties to monitor subscriptions and emitting events. Implemented for cross-tab communication in browser 
     }
 
     set(path, value, options = { suppress_events: false, context: null }) {
@@ -5653,7 +5676,7 @@ class LocalApi extends Api {
 }
 
 module.exports = { LocalApi };
-},{"./data-index":32,"./node":31,"./storage":35,"./storage-acebase":32,"./storage-custom":34,"./storage-mssql":32,"./storage-sqlite":32,"acebase-core":12}],27:[function(require,module,exports){
+},{"./data-index":33,"./node":32,"./storage":36,"./storage-acebase":33,"./storage-custom":35,"./storage-mssql":33,"./storage-sqlite":33,"acebase-core":12}],27:[function(require,module,exports){
 /**
    ________________________________________________________________________________
    
@@ -5699,7 +5722,206 @@ window.acebase = acebase;
 window.AceBase = BrowserAceBase;
 // Expose classes for module imports:
 module.exports = acebase;
-},{"./acebase-browser":24,"./acebase-local":25,"./storage-custom":34,"acebase-core":12}],28:[function(require,module,exports){
+},{"./acebase-browser":24,"./acebase-local":25,"./storage-custom":35,"acebase-core":12}],28:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.BrowserTabIPC = void 0;
+const acebase_core_1 = require("acebase-core");
+class BrowserTabIPC {
+    static enable(db, name) {
+        // Create BroadcastChannel to allow multi-tab communication
+        // This allows other tabs to make changes to the database, notifying us of those changes.
+        if (typeof window.BroadcastChannel === 'undefined') {
+            console.warn(`BroadCastChannel not available, browser tabs IPC not possible yet`);
+            return;
+        }
+        const tabId = acebase_core_1.ID.generate();
+        // Keep track of active event subscriptions
+        const ourSubscriptions = [];
+        const remoteSubscriptions = [];
+        const otherTabs = [];
+        const channel = new BroadcastChannel(name || db.name); // TODO: polyfill for Safari
+        function sendMessage(message) {
+            // if (['subscribe_ack','unsubscribe_ack'].includes(message.type)) {
+            //     return;
+            // }
+            console.log(`[BroadcastChannel] sending: `, message);
+            channel.postMessage(message);
+        }
+        // Monitor incoming messages
+        channel.addEventListener('message', event => {
+            const message = event.data;
+            if (message.to && message.to !== tabId) {
+                // Message is for somebody else. Ignore
+                return;
+            }
+            console.log(`[BroadcastChannel] received: `, message);
+            switch (message.type) {
+                case 'hello': {
+                    // New browser tab opened
+                    if (otherTabs.some(tab => tab.id === message.from)) {
+                        // We've seen this tab before. Happens when 2 tabs reload at the same time, both sending initial "hello" message, then both replying to one another.
+                        break;
+                    }
+                    otherTabs.push({ id: message.from, lastSeen: Date.now() });
+                    if (message.to === tabId) {
+                        // This message was sent to us specifically, so it was a reply to our own "hello". We're done
+                        break;
+                    }
+                    // Reply to sender & inform them about our subscriptions
+                    const to = message.from;
+                    // Send hello back to sender
+                    sendMessage({ type: 'hello', from: tabId, to });
+                    // Send our active subscriptions through
+                    ourSubscriptions.forEach(sub => {
+                        // Request to keep us updated
+                        const message = { type: 'subscribe', from: tabId, to, data: { path: sub.path, event: sub.event } };
+                        sendMessage(message);
+                    });
+                    break;
+                }
+                case 'pulse': {
+                    // Other tab letting us know it's still open
+                    const tab = otherTabs.find(tab => tab.id === message.from);
+                    if (!tab) {
+                        // Tab's pulse came before we were introduced with "hello". Ignore
+                        return;
+                    }
+                    tab.lastSeen = Date.now();
+                    break;
+                }
+                case 'bye': {
+                    // Other tab is being closed
+                    const tab = otherTabs.find(tab => tab.id === message.from);
+                    if (!tab) {
+                        // We had no knowlegde of this tab's existance. Ignore.
+                        return;
+                    }
+                    // Remove all their events
+                    const subscriptions = remoteSubscriptions.filter(sub => sub.for === message.from);
+                    subscriptions.forEach(sub => {
+                        // Remove & stop subscription
+                        remoteSubscriptions.splice(remoteSubscriptions.indexOf(sub), 1);
+                        db.api.unsubscribe(sub.path, sub.event, sub.callback);
+                    });
+                    break;
+                }
+                case 'subscribe': {
+                    // Other tab wants to subscribe to our events
+                    const subscribe = message.data;
+                    // Subscribe
+                    // console.log(`remote subscription being added`);
+                    if (remoteSubscriptions.some(sub => sub.for === message.from && sub.event === subscribe.event && sub.path === subscribe.path)) {
+                        // We're already serving this event for the other tab. Ignore
+                        break;
+                    }
+                    // Add remote subscription
+                    const subscribeCallback = (err, path, val, previous, context) => {
+                        // db triggered an event, send notification to remote subscriber
+                        let eventMessage = {
+                            type: 'event',
+                            from: tabId,
+                            to: message.from,
+                            path: subscribe.path,
+                            event: subscribe.event,
+                            data: {
+                                path,
+                                val,
+                                previous,
+                                context
+                            }
+                        };
+                        sendMessage(eventMessage);
+                    };
+                    remoteSubscriptions.push({ for: message.from, event: subscribe.event, path: subscribe.path, callback: subscribeCallback });
+                    db.api.subscribe(subscribe.path, subscribe.event, subscribeCallback);
+                    break;
+                }
+                case 'unsubscribe': {
+                    // Other tab requests to remove previously subscribed event
+                    const unsubscribe = message.data;
+                    const sub = remoteSubscriptions.find(sub => sub.for === message.from && sub.event === unsubscribe.event && sub.path === unsubscribe.event);
+                    if (!sub) {
+                        // We don't know this subscription so we weren't notifying in the first place. Ignore
+                        return;
+                    }
+                    // Stop subscription
+                    db.api.unsubscribe(unsubscribe.path, unsubscribe.event, sub.callback);
+                    break;
+                }
+                case 'event': {
+                    const eventMessage = message;
+                    const context = eventMessage.data.context || {};
+                    context.acebase_ipc = { type: 'crosstab', origin: eventMessage.from }; // Add IPC details
+                    // Other tab raised an event we are monitoring
+                    const subscriptions = ourSubscriptions.filter(sub => sub.event === eventMessage.event && sub.path === eventMessage.path);
+                    subscriptions.forEach(sub => {
+                        sub.callback(null, eventMessage.data.path, eventMessage.data.val, eventMessage.data.previous, context);
+                    });
+                    break;
+                }
+                default: {
+                    // Other unhandled event
+                }
+            }
+        });
+        db.on('subscribe', (subscription) => {
+            // Subscription was added to db
+            // console.log(`database subscription being added`);
+            const remoteSubscription = remoteSubscriptions.find(sub => sub.callback === subscription.callback);
+            if (remoteSubscription) {
+                // Send ack
+                // return sendMessage({ type: 'subscribe_ack', from: tabId, to: remoteSubscription.for, data: { path: subscription.path, event: subscription.event } });
+                return;
+            }
+            const othersAlreadyNotifying = ourSubscriptions.some(sub => sub.event === subscription.event && sub.path === subscription.path);
+            // Add subscription
+            ourSubscriptions.push(subscription);
+            if (othersAlreadyNotifying) {
+                // Same subscription as other previously added. Others already know we want to be notified
+                return;
+            }
+            // Request other tabs to keep us updated of this event
+            const message = { type: 'subscribe', from: tabId, data: { path: subscription.path, event: subscription.event } };
+            sendMessage(message);
+        });
+        db.on('unsubscribe', (subscription) => {
+            // Subscription was removed from db
+            const remoteSubscription = remoteSubscriptions.find(sub => sub.callback === subscription.callback);
+            if (remoteSubscription) {
+                // Remove
+                remoteSubscriptions.splice(remoteSubscriptions.indexOf(remoteSubscription), 1);
+                // Send ack
+                // return sendMessage({ type: 'unsubscribe_ack', from: tabId, to: remoteSubscription.for, data: { path: subscription.path, event: subscription.event } });
+                return;
+            }
+            ourSubscriptions
+                .filter(sub => sub.path === subscription.path && (!subscription.event || sub.event === subscription.event) && (!subscription.callback || sub.callback === subscription.callback))
+                .forEach(sub => {
+                // Remove from our subscriptions
+                ourSubscriptions.splice(ourSubscriptions.indexOf(sub), 1);
+                // Request other tabs to stop notifying
+                const message = { type: 'unsubscribe', from: tabId, data: { path: sub.path, event: sub.event } };
+                sendMessage(message);
+            });
+        });
+        // Monitor onbeforeunload event to say goodbye when the window is closed
+        window.addEventListener('beforeunload', () => {
+            sendMessage({ type: 'bye', from: tabId });
+        });
+        // Send "hello" to others
+        sendMessage({ from: tabId, type: 'hello' });
+        // // Schedule periodic "pulse" to let others know we're still around
+        // setInterval(() => {
+        //     sendMessage(<IPulseMessage>{ from: tabId, type: 'pulse' });
+        // }, 30000);
+        console.log(`[BroadcastChannel] AceBase multitabs enabled`);
+    }
+}
+exports.BrowserTabIPC = BrowserTabIPC;
+//tsc src/index.ts --target es6 --lib es2017 --module commonjs --outDir . -d --sourceMap
+
+},{"acebase-core":12}],29:[function(require,module,exports){
 const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
 
@@ -5761,7 +5983,7 @@ class NodeInfo {
 }
 
 module.exports = { NodeInfo };
-},{"./node-value-types":30,"acebase-core":12}],29:[function(require,module,exports){
+},{"./node-value-types":31,"acebase-core":12}],30:[function(require,module,exports){
 const { PathInfo } = require('acebase-core');
 
 const SECOND = 1000;
@@ -6068,7 +6290,7 @@ class NodeLock {
 }
 
 module.exports = { NodeLocker, NodeLock };
-},{"acebase-core":12}],30:[function(require,module,exports){
+},{"acebase-core":12}],31:[function(require,module,exports){
 const VALUE_TYPES = {
     // Native types:
     OBJECT: 1,
@@ -6107,7 +6329,7 @@ function getNodeValueType(value) {
 };
 
 module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType };
-},{}],31:[function(require,module,exports){
+},{}],32:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
@@ -6421,9 +6643,9 @@ module.exports = {
     Node,
     NodeInfo
 };
-},{"./node-info":28,"./node-value-types":30,"./storage":35}],32:[function(require,module,exports){
+},{"./node-info":29,"./node-value-types":31,"./storage":36}],33:[function(require,module,exports){
 // Not supported in current environment
-},{}],33:[function(require,module,exports){
+},{}],34:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SchemaDefinition = void 0;
@@ -6700,7 +6922,7 @@ class SchemaDefinition {
 exports.SchemaDefinition = SchemaDefinition;
 //tsc src/index.ts --target es6 --lib es2017 --module commonjs --outDir . -d --sourceMap
 
-},{}],34:[function(require,module,exports){
+},{}],35:[function(require,module,exports){
 const { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils } = require('acebase-core');
 const { compareValues } = Utils;
 const { NodeInfo } = require('./node-info');
@@ -8118,7 +8340,7 @@ module.exports = {
     ICustomStorageNodeMetaData,
     ICustomStorageNode
 }
-},{"./node-info":28,"./node-lock":29,"./node-value-types":30,"./storage":35,"acebase-core":12}],35:[function(require,module,exports){
+},{"./node-info":29,"./node-lock":30,"./node-value-types":31,"./storage":36,"acebase-core":12}],36:[function(require,module,exports){
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle } = require('acebase-core');
 const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES, getNodeValueType } = require('./node-value-types');
@@ -9940,7 +10162,7 @@ module.exports = {
     NodeRevisionError,
     SchemaValidationError
 };
-},{"./data-index":32,"./node-info":28,"./node-lock":29,"./node-value-types":30,"./promise-fs":32,"./schema":33,"acebase-core":12}],36:[function(require,module,exports){
+},{"./data-index":33,"./node-info":29,"./node-lock":30,"./node-value-types":31,"./promise-fs":33,"./schema":34,"acebase-core":12}],37:[function(require,module,exports){
 
 },{}]},{},[27])(27)
 });
