@@ -1584,7 +1584,7 @@ const ref = await db.ref('browser').set({
 console.log(`"${ref.path}" was saved!`);
 
 const snapshot = await ref.get();
-console.log(`Got "${snapshot.ref.path}" value:`, snap.val());
+console.log(`Got "${snapshot.ref.path}" value:`, snapshot.val());
 ```
 
 Or, if you prefer using `Promises` instead of `async` / `await`:
