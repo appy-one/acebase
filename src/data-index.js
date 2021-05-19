@@ -5,8 +5,7 @@ const { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryWriter, BinaryBPlusT
 const { PathInfo, Utils, ID, debug, ColorStyle } = require('acebase-core');
 const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
 const Geohash = require('./geohash');
-const pfs = require('./promise-fs');
-const fs = require('fs');
+const { pfs } = require('./promise-fs');
 const ThreadSafe = require('./thread-safe');
 const unidecode = require('unidecode');
 
@@ -95,6 +94,18 @@ function _parseRecordPointer(path, recordPointer) {
     return { key, path: `${path}/${key}`, wildcards };
 }
 
+
+// const _debounceTimeouts = {};
+// function debounce(id, ms, callback) {
+//     if (_debounceTimeouts[id]) {
+//         clearTimeout(_debounceTimeouts[id]);
+//     }
+//     _debounceTimeouts[id] = setTimeout(() => {
+//         delete _debounceTimeouts[id];
+//         callback(); 
+//     }, ms);
+// }
+
 class DataIndex {
 
     static get STATE() {
@@ -103,7 +114,8 @@ class DataIndex {
             READY: 'ready',
             BUILD: 'build',
             REBUILD: 'rebuild',
-            ERROR: 'error'
+            ERROR: 'error',
+            REMOVED: 'removed'
         }
     };
 
@@ -191,24 +203,37 @@ class DataIndex {
                 opCache = new Map();
                 this._cache.set(op, opCache);
             }
-            let clear = () => {
-                // this.storage.debug.log(`Index ${this.description}, cache clean for ${op} "${val}"`);
-                opCache.delete(val);
+            // let clear = () => {
+            //     // this.storage.debug.log(`Index ${this.description}, cache clean for ${op} "${val}"`);
+            //     opCache.delete(val);
+            // }
+            let scheduleClear = () => {
+                const timeout = setTimeout(() => opCache.delete(val), this._cacheTimeoutSettings.duration);
+                timeout.unref && timeout.unref();
+                return timeout;
             }
             let cache = {
                 results,
                 added: Date.now(),
                 reads: 0,
-                timeout: setTimeout(clear, this._cacheTimeoutSettings.duration),
+                timeout: scheduleClear(),
                 extendLife: () => {
                     // this.storage.debug.log(`Index ${this.description}, cache lifetime extended for ${op} "${val}". reads: ${cache.reads}`);
                     clearTimeout(cache.timeout);
-                    cache.timeout = setTimeout(clear, this._cacheTimeoutSettings.duration);
+                    cache.timeout = scheduleClear();
                 }
-            }
-            opCache.set(val, cache);            
+            };
+            opCache.set(val, cache);
             // this.storage.debug.log(`Index ${this.description}, cached ${results.length} results for ${op} "${val}"`);
         }
+    }
+
+    async delete() {
+        const lock = await this._lock(true, 'delete');
+        const filePath = `${this.storage.settings.path}/${this.storage.name}.acebase/${this.fileName}`;
+        await pfs.rm(filePath);
+        this.state = DataIndex.STATE.REMOVED;
+        lock.release();
     }
 
     static readFromFile(storage, fileName) {
@@ -442,140 +467,111 @@ class DataIndex {
     /**
      * @param {BinaryBPlusTree} tree
      */
-    _rebuild() {
+    async _rebuild() {
         // NEW: Rebuild with streams
         const newIndexFile = this.fileName + '.tmp';
-        return pfs.open(newIndexFile, pfs.flags.write)
-        .then(fd => {
-            const treeStatistics = {};
-            const headerStats = {
-                written: false,
-                length: 0,
-                promise: null
-            };
+        const fd = await pfs.open(newIndexFile, pfs.flags.write);
+        const treeStatistics = {};
+        const headerStats = {
+            written: false,
+            length: 0,
+            promise: null
+        };
 
-            const writer = (data, index) => { 
-                let go = () => {
-                    return pfs.write(fd, data, 0, data.length, headerStats.length + index);
-                };
-                if (!headerStats.written) {
-                    // Write header first, or wait until done
-                    let promise = 
-                        headerStats.promise
-                        || this._writeIndexHeader(fd, treeStatistics)
-                        .then(result => {
-                            headerStats.written = true;
-                            headerStats.length = result.length;
-                            headerStats.updateTreeLength = result.treeLengthCallback;
-                        });
-                    headerStats.promise = promise.then(go); // Chain to original promise
-                    return headerStats.promise;
+        const writer = async (data, index) => { 
+            if (!headerStats.written) {
+                // Write header first, or wait until done
+                if (!headerStats.promise) {
+                    headerStats.promise = this._writeIndexHeader(fd, treeStatistics).then(result => {
+                        headerStats.written = true;
+                        headerStats.length = result.length;
+                        headerStats.updateTreeLength = result.treeLengthCallback;
+                    });
                 }
-                else {
-                    return go();
-                }
+                await headerStats.promise;
             }
-            return this._getTree()
-            .then(idx => {
-                this.state = DataIndex.STATE.REBUILD;
-                return idx.tree.rebuild(
-                    BinaryWriter.forFunction(writer), 
-                    { treeStatistics }
-                )
-                .then(() => {
-                    idx.close(true);
-                    return headerStats.updateTreeLength(treeStatistics.byteLength);
-                })
-                .then(() => {
-                    return pfs.close(fd);
-                })
-                .then(() => {
-                    // rename new file, overwriting the old file
-                    return pfs.rename(newIndexFile, this.fileName);
-                })
-                .then(() => {
-                    this.state = DataIndex.STATE.READY;
-                })
-                .catch(err => {
-                    this.state = DataIndex.STATE.ERROR;
-                    this._buildError = err;
-                    throw err;
-                });
-            });
-        });
+            return pfs.write(fd, data, 0, data.length, headerStats.length + index);
+        }
+        const idx = await this._getTree();
+        this.state = DataIndex.STATE.REBUILD;
+        try {
+            // this._fst = []; // Reset fst memory
+            await idx.tree.rebuild(
+                BinaryWriter.forFunction(writer), 
+                { treeStatistics }
+            )
+            idx.close(true);
+            await headerStats.updateTreeLength(treeStatistics.byteLength);
+            await pfs.close(fd);
+
+            // rename new file, overwriting the old file
+            await pfs.rename(newIndexFile, this.fileName);
+            this.state = DataIndex.STATE.READY;
+        }
+        catch(err) {
+            this.state = DataIndex.STATE.ERROR;
+            this._buildError = err;
+            throw err;
+        }
     }
 
     /**
      * @param {string} path
      * @param {BinaryBPlusTreeTransactionOperation[]}
      */
-    _processTreeOperations(path, operations) {
+    async _processTreeOperations(path, operations) {
         const startTime = Date.now();
-        let lock;
-        return this._lock(true, `index._processTreeOperations "/${path}"`)
-        .then(l => {
-            // this.storage.debug.log(`Got update lock on index ${this.description}`.colorize(ColorStyle.blue), l);
-            if (this._buildError) {
-                l.release();
-                throw new Error('Cannot update index because there was an error building it');
-            }
-            lock = l;
-            return this._getTree();
-        })
-        .then(idx => {
-
-            // const oldEntry = tree.find(keyValues.oldValue);
-            
-            const go = (retry = 0) => {
-                /**
-                 * @type BinaryBPlusTree
-                 */
-                const tree = idx.tree;
-                return tree.transaction(operations)
-                .then(() => {
-                    // Index updated
-                    idx.close();
-                    return false; // "not rebuilt"
-                })
-                .catch(err => {
-                    // Could not update index --> leaf full?
-                    this.storage.debug.log(`Could not update index ${this.description}: ${err.message}`.colorize(ColorStyle.yellow));
-    
-                    console.assert(retry === 0, `unable to process operations because tree was rebuilt, and it didn't help?!`);
-
-                    idx.close(); // rebuild will overwrite the idx file
-                    return this._rebuild()
-                    .then(() => {
-                        // Process left-over operations
-                        console.log(`Index was rebuilt, retrying pending operations`);
-                        return this._getTree();
-                    })
-                    .then(newIdx => {
-                        idx = newIdx;
-                        return go(retry + 1);
-                    })
-                    .then(() => {
-                        return true; // "rebuilt"
-                    });
-                });
-            };
-            return go();
-        })
-        .then(rebuilt => {
-            // this.storage.debug.log(`Released update lock on index ${this.description}`.colorize(ColorStyle.blue));
+        const lock = await this._lock(true, `index._processTreeOperations "/${path}"`);
+        // this.storage.debug.log(`Got update lock on index ${this.description}`.colorize(ColorStyle.blue), l);
+        if (this._buildError) {
             lock.release();
-            const doneTime = Date.now();
-            const duration = Math.round((doneTime - startTime) / 1000);
-            this.storage.debug.log(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration} seconds`.colorize(ColorStyle.green));
+            throw new Error('Cannot update index because there was an error building it');
+        }
+        let idx = await this._getTree();
 
-            // Process any queued updates
-            return this._processUpdateQueue();
-        });
+        // const oldEntry = tree.find(keyValues.oldValue);
+        
+        const go = async (retry = 0) => {
+            /**
+             * @type BinaryBPlusTree
+             */
+            const tree = idx.tree;
+            try {
+                await tree.transaction(operations);
+                // Index updated
+                idx.close();
+                return false; // "not rebuilt"
+            }
+            catch(err) {
+                // Could not update index --> leaf full?
+                this.storage.debug.log(`Could not update index ${this.description}: ${err.message}`.colorize(ColorStyle.yellow));
+
+                console.assert(retry === 0, `unable to process operations because tree was rebuilt, and it didn't help?!`);
+
+                idx.close(); // rebuild will overwrite the idx file
+                await this._rebuild();
+                // Process left-over operations
+                this.storage.debug.log(`Index was rebuilt, retrying pending operations`);
+                idx = await this._getTree();
+                await go(retry + 1);
+                return true; // "rebuilt"
+            }
+        };
+        const rebuilt = await go();
+
+        // this.storage.debug.log(`Released update lock on index ${this.description}`.colorize(ColorStyle.blue));
+        lock.release();
+        const doneTime = Date.now();
+        const duration = Math.round((doneTime - startTime) / 1000);
+        this.storage.debug.log(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration} seconds`.colorize(ColorStyle.green));
+
+        // Process any queued updates
+        return await this._processUpdateQueue();
     }
 
-    _processUpdateQueue() {
+    async _processUpdateQueue() {
         const queue = this._updateQueue.splice(0);
-        if (queue.length === 0) { return Promise.resolve(); }
+        if (queue.length === 0) { return; }
         // Invalidate query cache
         this._cache.clear(); // TODO: check which cache results should be adjusted intelligently
         // Process all queued items
@@ -589,7 +585,7 @@ class DataIndex {
                 // Do not throw again
             })
         });
-        return Promise.all(promises);
+        await Promise.all(promises);
     }
 
     /**
@@ -654,10 +650,14 @@ class DataIndex {
             const p = new Promise((resolve, reject) => {
                 update.resolve = resolve;
                 update.reject = reject;
+            })
+            .catch(err => {
+                this.storage.debug.error(`Unable to process queued index update for ${this.description}:`, err);
             });
 
             this._updateQueue.push(update);
-            return p;
+            //return p;
+            return Promise.resolve(); // Don't return p, prevents deadlock
         }
     }
 
@@ -1069,7 +1069,7 @@ class DataIndex {
         const buildFile = this.fileName + '.build';
         const createBuildFile = () => {
             return new Promise((resolve, reject) => {
-                const buildWriteStream = fs.createWriteStream(buildFile, { flags: pfs.flags.readAndAppendAndCreate });
+                const buildWriteStream = pfs.fs.createWriteStream(buildFile, { flags: pfs.flags.readAndAppendAndCreate });
                 const streamState = { wait: false, chunks: [] };
                 buildWriteStream.on('error', (err) => {
                     console.error(err);
@@ -1511,7 +1511,7 @@ class DataIndex {
                         });
     
                         // write batch
-                        let batchStream = fs.createWriteStream(`${buildFile}.${batchNr}`, { flags: pfs.flags.appendAndCreate });
+                        let batchStream = pfs.fs.createWriteStream(`${buildFile}.${batchNr}`, { flags: pfs.flags.appendAndCreate });
                         const writeKey = i => {
                             const key = sortedKeys[i];
                             const values = map.get(key);
@@ -1631,7 +1631,7 @@ class DataIndex {
                     }
     
                     // create write stream for merged data
-                    const outputStream = fs.createWriteStream(mergeFile, { flags: pfs.flags.writeAndCreate });
+                    const outputStream = pfs.fs.createWriteStream(mergeFile, { flags: pfs.flags.writeAndCreate });
                     // const outputStream = BinaryWriter.forFunction((data, position) => {
                     //     return pfs.write(fd, data, 0, data.byteLength, position);
                     // });
@@ -1937,6 +1937,7 @@ class DataIndex {
             this.storage.debug.log(`Index ${this.description} was built successfully, took ${duration} minutes`.colorize(ColorStyle.green));
             this.state = DataIndex.STATE.READY;
             lock.release(); // release index lock
+            this._processUpdateQueue(); // Process updates queued during build
             return this;
         })
         .catch(err => {
@@ -1957,7 +1958,7 @@ class DataIndex {
      * @param {number} fd
      * @param {{ totalEntries: number, totalValues: number }} treeStatistics
      */
-    _writeIndexHeader(fd, treeStatistics) {
+    async _writeIndexHeader(fd, treeStatistics) {
         const indexEntries = treeStatistics.totalEntries;
         const indexedValues = treeStatistics.totalValues;
 
@@ -2119,29 +2120,27 @@ class DataIndex {
 
         // anything else?
 
-        return pfs.write(fd, Buffer.from(header))
-        .then(() => {
-            return {
-                length: headerLength,
-                treeLengthCallback: (treeByteLength) => {
-                    const bytes = [
-                        (treeByteLength >> 24) & 0xff,
-                        (treeByteLength >> 16) & 0xff,
-                        (treeByteLength >> 8) & 0xff,
-                        treeByteLength & 0xff
-                    ];
-                    // treeDetails.byteLength = treeByteLength;
-                    return pfs.write(fd, Buffer.from(bytes), 0, bytes.length, treeRefIndex+4);
-                }
-            };
-        });
+        await pfs.write(fd, Buffer.from(header));
+        return {
+            length: headerLength,
+            treeLengthCallback: async (treeByteLength) => {
+                const bytes = [
+                    (treeByteLength >> 24) & 0xff,
+                    (treeByteLength >> 16) & 0xff,
+                    (treeByteLength >> 8) & 0xff,
+                    treeByteLength & 0xff
+                ];
+                // treeDetails.byteLength = treeByteLength;
+                return pfs.write(fd, Buffer.from(bytes), 0, bytes.length, treeRefIndex+4);
+            }
+        };
     }
 
     /**
      * 
      * @param {BPlusTreeBuilder} builder 
      */
-    _writeIndex(builder) {
+    async _writeIndex(builder) {
         // Index v1 layout:
         // data             = header, trees_data
         // header           = signature, layout_version, header_length, index_info, trees_info
@@ -2183,264 +2182,260 @@ class DataIndex {
         // const tree = builder.create();
         // const binary = new Uint8Array(tree.toBinary(true));
         
-        return pfs.open(this.fileName, pfs.flags.write)
-        .then(fd => {
-            const addNameBytes = (bytes, name) => {
-                // name_length:
-                bytes.push(name.length);
-                // name_data:
-                for(let i = 0; i < name.length; i++) {
-                    bytes.push(name.charCodeAt(i));
-                }
+        const fd = await pfs.open(this.fileName, pfs.flags.write);
+        const addNameBytes = (bytes, name) => {
+            // name_length:
+            bytes.push(name.length);
+            // name_data:
+            for(let i = 0; i < name.length; i++) {
+                bytes.push(name.charCodeAt(i));
             }
-            const addValueBytes = (bytes, value) => {
-                let valBytes = [];
-                if (typeof value === 'undefined') {
-                    // value_type:
-                    bytes.push(0);
-                    // no value_length or value_data
-                    return;
-                }
-                else if (typeof value === 'string') {
-                    // value_type:
-                    bytes.push(1);
-                    valBytes = Array.from(encodeString(value)); // textEncoder.encode(value)
-                }
-                else if (typeof value === 'number') {
-                    // value_type:
-                    bytes.push(2);
-                    valBytes = numberToBytes(value);
-                }
-                else if (typeof value === 'boolean') {
-                    // value_type:
-                    bytes.push(3);
-                    // no value_length
-                    // value_data:
-                    bytes.push(value ? 1 : 0);
-                    // done
-                    return;
-                }
-                else if (value instanceof Array) {
-                    // value_type:
-                    bytes.push(4);
-                    // value_length:
-                    if (value.length > 0xffff) {
-                        throw new Error(`Array is too large to store. Max length is 0xffff`)
-                    }
-                    bytes.push((value.length >> 8) & 0xff);
-                    bytes.push(value.length & 0xff);
-                    // value_data:
-                    value.forEach(val => {
-                        addValueBytes(bytes, val);
-                    });
-                    // done
-                    return;
-                }
-                else {
-                    throw new Error(`Invalid value type "${typeof value}"`);
-                }
-                // value_length:
-                bytes.push((valBytes.length >> 8) & 0xff);
-                bytes.push(valBytes.length & 0xff);
+        }
+        const addValueBytes = (bytes, value) => {
+            let valBytes = [];
+            if (typeof value === 'undefined') {
+                // value_type:
+                bytes.push(0);
+                // no value_length or value_data
+                return;
+            }
+            else if (typeof value === 'string') {
+                // value_type:
+                bytes.push(1);
+                valBytes = Array.from(encodeString(value)); // textEncoder.encode(value)
+            }
+            else if (typeof value === 'number') {
+                // value_type:
+                bytes.push(2);
+                valBytes = numberToBytes(value);
+            }
+            else if (typeof value === 'boolean') {
+                // value_type:
+                bytes.push(3);
+                // no value_length
                 // value_data:
-                bytes.push(...valBytes);
+                bytes.push(value ? 1 : 0);
+                // done
+                return;
             }
-            const addInfoBytes = (bytes, obj) => {
-                const keys = Object.keys(obj);
-                // info_count:
-                bytes.push(keys.length);
-                // info, [info, [info...]]
-                keys.forEach(key => {
-                    addNameBytes(bytes, key); // name
-
-                    const value = obj[key];
-                    // if (value instanceof Array) {
-                    //     bytes.push(1); // is_array
-                    //     bytes.push(value.length); // values_count
-                    //     value.forEach(val => {
-                    //         addValueBytes(bytes, val); // value
-                    //     });
-                    // }
-                    // else {
-                    //     bytes.push(0); // is_array
-                    //     addValueBytes(bytes, value); // value
-                    // }
-                    addValueBytes(bytes, value);
+            else if (value instanceof Array) {
+                // value_type:
+                bytes.push(4);
+                // value_length:
+                if (value.length > 0xffff) {
+                    throw new Error(`Array is too large to store. Max length is 0xffff`)
+                }
+                bytes.push((value.length >> 8) & 0xff);
+                bytes.push(value.length & 0xff);
+                // value_data:
+                value.forEach(val => {
+                    addValueBytes(bytes, val);
                 });
-            };
+                // done
+                return;
+            }
+            else {
+                throw new Error(`Invalid value type "${typeof value}"`);
+            }
+            // value_length:
+            bytes.push((valBytes.length >> 8) & 0xff);
+            bytes.push(valBytes.length & 0xff);
+            // value_data:
+            bytes.push(...valBytes);
+        }
+        const addInfoBytes = (bytes, obj) => {
+            const keys = Object.keys(obj);
+            // info_count:
+            bytes.push(keys.length);
+            // info, [info, [info...]]
+            keys.forEach(key => {
+                addNameBytes(bytes, key); // name
 
-            const header = [
-                // signature:
-                65, 67, 69, 66, 65, 83, 69, 73, 68, 88, // 'ACEBASEIDX'
-                // layout_version:
-                1,
-                // header_length:
-                0, 0, 0, 0
+                const value = obj[key];
+                // if (value instanceof Array) {
+                //     bytes.push(1); // is_array
+                //     bytes.push(value.length); // values_count
+                //     value.forEach(val => {
+                //         addValueBytes(bytes, val); // value
+                //     });
+                // }
+                // else {
+                //     bytes.push(0); // is_array
+                //     addValueBytes(bytes, value); // value
+                // }
+                addValueBytes(bytes, value);
+            });
+        };
+
+        const header = [
+            // signature:
+            65, 67, 69, 66, 65, 83, 69, 73, 68, 88, // 'ACEBASEIDX'
+            // layout_version:
+            1,
+            // header_length:
+            0, 0, 0, 0
+        ];
+        // info:
+        const indexInfo = {
+            type: this.type,
+            version: 1, // TODO: implement this.versionNr
+            path: this.path,
+            key: this.key,
+            include: this.includeKeys,
+            cs: this.caseSensitive,
+            locale: this.textLocale,
+        };
+        addInfoBytes(header, indexInfo);
+
+        // const treeNames = Object.keys(this.trees);
+        // trees_info:
+        header.push(1); // trees_count
+        const treeName = 'default';
+        const treeDetails = this.trees[treeName];
+        
+        // tree_info:
+        addNameBytes(header, treeName); // tree_name
+        
+        const treeRefIndex = header.length;
+        header.push(0, 0, 0, 0); // file_index
+        header.push(0, 0, 0, 0); // byte_length
+
+        treeDetails.entries = indexEntries;
+        treeDetails.values = indexedValues;
+        const extraTreeInfo = {
+            class: treeDetails.class, // 'BPlusTree',
+            version: treeDetails.version, // TODO: implement tree.version
+            entries: indexEntries,
+            values: indexedValues
+        };
+        addInfoBytes(header, extraTreeInfo);
+
+        // align header bytes to block size
+        while (header.length % DISK_BLOCK_SIZE !== 0) {
+            header.push(0);
+        }
+
+        // end of header
+
+        const headerLength = header.length;
+        treeDetails.fileIndex = headerLength;
+        // treeDetails.byteLength = binary.length;
+
+        // Update header_length:
+        header[11] = (headerLength >> 24) & 0xff;
+        header[12] = (headerLength >> 16) & 0xff;
+        header[13] = (headerLength >> 8) & 0xff;
+        header[14] = headerLength & 0xff;       
+
+        // Update default tree file_index:
+        header[treeRefIndex] = (headerLength >> 24) & 0xff;
+        header[treeRefIndex+1] = (headerLength >> 16) & 0xff;
+        header[treeRefIndex+2] = (headerLength >> 8) & 0xff;
+        header[treeRefIndex+3] = headerLength & 0xff;
+
+        // // Update default tree byte_length:
+        // header[treeRefIndex+4] = (binary.byteLength >> 24) & 0xff;
+        // header[treeRefIndex+5] = (binary.byteLength >> 16) & 0xff;
+        // header[treeRefIndex+6] = (binary.byteLength >> 8) & 0xff;
+        // header[treeRefIndex+7] = binary.byteLength & 0xff;
+
+        // anything else?
+
+        try {
+            await pfs.write(fd, Buffer.from(header));
+            // append binary tree data
+            const tree = builder.create();
+            const stream = pfs.fs.createWriteStream(null, { fd, autoClose: false });
+            const references = [];
+            const writer = new BinaryWriter(stream, (data, position) => {
+                references.push({ data, position });
+                return Promise.resolve();
+                // return pfs.write(fd, data, 0, data.byteLength, headerLength + position);
+            });
+            await tree.toBinary(true, writer);
+            // Update all references
+            while (references.length > 0) {
+                const ref = references.shift();
+                await pfs.write(fd, ref.data, 0, ref.data.byteLength, headerLength + ref.position);
+            }
+
+            // Update default tree byte_length:
+            const treeByteLength = writer.length;
+            const bytes = [
+                (treeByteLength >> 24) & 0xff,
+                (treeByteLength >> 16) & 0xff,
+                (treeByteLength >> 8) & 0xff,
+                treeByteLength & 0xff
             ];
-            // info:
-            const indexInfo = {
-                type: this.type,
-                version: 1, // TODO: implement this.versionNr
-                path: this.path,
-                key: this.key,
-                include: this.includeKeys,
-                cs: this.caseSensitive,
-                locale: this.textLocale,
-            };
-            addInfoBytes(header, indexInfo);
+            treeDetails.byteLength = treeByteLength;
+            await pfs.write(fd, Buffer.from(bytes), 0, bytes.length, treeRefIndex+4);
 
-            // const treeNames = Object.keys(this.trees);
-            // trees_info:
-            header.push(1); // trees_count
-            const treeName = 'default';
-            const treeDetails = this.trees[treeName];
-            
-            // tree_info:
-            addNameBytes(header, treeName); // tree_name
-            
-            const treeRefIndex = header.length;
-            header.push(0, 0, 0, 0); // file_index
-            header.push(0, 0, 0, 0); // byte_length
-
-            treeDetails.entries = indexEntries;
-            treeDetails.values = indexedValues;
-            const extraTreeInfo = {
-                class: treeDetails.class, // 'BPlusTree',
-                version: treeDetails.version, // TODO: implement tree.version
-                entries: indexEntries,
-                values: indexedValues
-            };
-            addInfoBytes(header, extraTreeInfo);
-
-            // align header bytes to block size
-            while (header.length % DISK_BLOCK_SIZE !== 0) {
-                header.push(0);
-            }
-
-            // end of header
-
-            const headerLength = header.length;
-            treeDetails.fileIndex = headerLength;
-            // treeDetails.byteLength = binary.length;
-
-            // Update header_length:
-            header[11] = (headerLength >> 24) & 0xff;
-            header[12] = (headerLength >> 16) & 0xff;
-            header[13] = (headerLength >> 8) & 0xff;
-            header[14] = headerLength & 0xff;       
-
-            // Update default tree file_index:
-            header[treeRefIndex] = (headerLength >> 24) & 0xff;
-            header[treeRefIndex+1] = (headerLength >> 16) & 0xff;
-            header[treeRefIndex+2] = (headerLength >> 8) & 0xff;
-            header[treeRefIndex+3] = headerLength & 0xff;
-
-            // // Update default tree byte_length:
-            // header[treeRefIndex+4] = (binary.byteLength >> 24) & 0xff;
-            // header[treeRefIndex+5] = (binary.byteLength >> 16) & 0xff;
-            // header[treeRefIndex+6] = (binary.byteLength >> 8) & 0xff;
-            // header[treeRefIndex+7] = binary.byteLength & 0xff;
-
-            // anything else?
-
-            return pfs.write(fd, Buffer.from(header))
-            .then(() => {
-                // append binary tree data
-                const tree = builder.create();
-                const stream = fs.createWriteStream(null, { fd, autoClose: false });
-                // const stream = fs.createWriteStream(this.fileName, { start: headerLength });
-                const references = [];
-                const writer = new BinaryWriter(stream, (data, position) => {
-                    references.push({ data, position });
-                    return Promise.resolve();
-                    // return pfs.write(fd, data, 0, data.byteLength, headerLength + position);
-                });
-                return tree.toBinary(true, writer)
-                .then(() => {
-                    // Update all references
-                    const nextReference = () => {
-                        const ref = references.shift();
-                        if (!ref) { return Promise.resolve(); }
-                        return pfs.write(fd, ref.data, 0, ref.data.byteLength, headerLength + ref.position)
-                        .then(nextReference);
-                    }
-                    return nextReference();
-                })
-                .then(() => {                    
-                    // Update default tree byte_length:
-                    const treeByteLength = writer.length;
-                    const bytes = [
-                        (treeByteLength >> 24) & 0xff,
-                        (treeByteLength >> 16) & 0xff,
-                        (treeByteLength >> 8) & 0xff,
-                        treeByteLength & 0xff
-                    ];
-                    treeDetails.byteLength = treeByteLength;
-                    return pfs.write(fd, Buffer.from(bytes), 0, bytes.length, treeRefIndex+4);
-                });
-                // return pfs.write(fd, binary);
-            })
-            .then(() => {
-                return pfs.close(fd);
-            })
-            .catch(err => {
-                this.storage.debug.error(err);
-                throw err;
-            })
-        });
+            // return pfs.write(fd, binary);
+            await pfs.close(fd);
+        }
+        catch(err) {
+            this.storage.debug.error(err);
+            throw err;
+        }
     }
 
-    _getTree () {
-        if (this._idx) {
-            this._idx.open++;
-            return Promise.resolve(this._idx);
-        }
-        return ThreadSafe.lock(this.fileName)
-        .then(lock => { 
-            if (this._idx) {
-                this._idx.open++;
-                lock.release();
-                return Promise.resolve(this._idx);
+    // _fst = []
+    async _getTree () {
+        // TODO:
+        // Improve performance - the index is now opened each times it is accessed, and closed right after.
+        // This means that the B+Tree inside cannot keep track of the free space (FST) in it, and it will need
+        // very frequent rebuilds. Also, the "autoGrow" feature on the B+Tree seems to cause file corruptions, 
+        // so I had to keep that disabled until further investaged and fixed. I attempted to keep the tree's FST
+        // array available in-memory here (this._fst), but tested it in conjunction with autoGrow so, not sure
+        // where the corruption starts in that combination. 
+
+        // Future goals: 
+        // - Add FST to B+Tree's binary data layout!
+        // - Keep the tree open while in use, close upon rebuilds and reopen.
+
+        const lock = await ThreadSafe.lock(this.fileName);
+        // if (this._idx) {
+        //     this._idx.open++;
+        //     lock.release();
+        //     return this._idx;
+        // }
+        const fd = await pfs.open(this.fileName, pfs.flags.readAndWrite);
+        const reader = async (index, length) => {
+            const buffer = Buffer.alloc(length); //new Uint8Array(length);
+            await pfs.read(fd, buffer, 0, length, this.trees.default.fileIndex + index)
+            return buffer;
+        };
+        const writer = async (data, index) => {
+            const buffer = data.constructor === Uint8Array 
+                ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) 
+                : Buffer.from(data);
+            const result = await pfs.write(fd, buffer, 0, data.length, this.trees.default.fileIndex + index);
+            return result;
+        };
+        const tree = new BinaryBPlusTree(reader, DISK_BLOCK_SIZE, writer);
+        tree.id = this.fileName; // For tree locking
+        // tree.autoGrow = true; // Allow the tree to grow. DISABLE THIS IS THERE ARE MULTIPLE TREES IN THE INDEX FILE LATER! (which is not implemented yet)
+        // tree._fst = this._fst; // Set free space table
+        const idx = { 
+            open: 1,
+            tree,
+            close: () => {
+                idx.open--;
+                // debounce(`close:${this.fileName}`, 10000, () => {
+                if (idx.open === 0) {
+                    // this._fst = tree._fst; // Cache the free space table
+                    // this._idx = null;
+                    pfs.close(fd)
+                    .catch(err => {
+                        this.storage.debug.warn(`Could not close index file "${this.fileName}":`, err);
+                    });
+                }
+                // });
             }
-            return pfs.open(this.fileName, pfs.flags.readAndWrite)
-            .then(fd => {
-                const reader = (index, length) => {
-                    const buffer = Buffer.alloc(length); //new Uint8Array(length);
-                    return pfs.read(fd, buffer, 0, length, this.trees.default.fileIndex + index)
-                    .then(result => {
-                        return buffer;
-                    });
-                };
-                const writer = (data, index) => {
-                    const buffer = data.constructor === Uint8Array 
-                        ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) 
-                        : Buffer.from(data);
-                    return pfs.write(fd, buffer, 0, data.length, this.trees.default.fileIndex + index)
-                    .then(result => {
-                        return result;
-                    });
-                };
-                const tree = new BinaryBPlusTree(reader, DISK_BLOCK_SIZE, writer);
-                tree.id = this.fileName; // For tree locking
-                const idx = { 
-                    open: 1,
-                    tree,
-                    close: () => {
-                        idx.open--;
-                        if (idx.open === 0) {
-                            this._idx = null;
-                            pfs.close(fd)
-                            .catch(err => {
-                                this.storage.debug.warn(`Could not close index file "${this.fileName}":`, err);
-                            });
-                        }
-                    }
-                };
-                // this._idx = idx;
-                lock.release();
-                return idx;
-            });
-        });
+        };
+        // this._idx = idx;
+        lock.release();
+        return idx;
     }
 }
 
