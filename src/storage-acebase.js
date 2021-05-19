@@ -1,5 +1,5 @@
 const fs = require('fs');
-const pfs = require('./promise-fs');
+const { pfs } = require('./promise-fs');
 const { ID, PathInfo, PathReference, Utils, ColorStyle } = require('acebase-core');
 const { concatTypedArrays, bytesToNumber, numberToBytes, encodeString, decodeString } = Utils;
 const { Node } = require('./node');
@@ -36,9 +36,6 @@ class AceBaseStorage extends Storage {
         if (settings.pageSize > 65536) {
             throw new Error("pageSize cannot be larger than 65536"); // Technically not possible because record_nr references are 16 bit: range = 0 - 2^16 = 0 - 65535
         }
-        // if (settings.clusterMaster && (typeof settings.clusterMaster.host !== "string" || typeof settings.clusterMaster.port !== "number")) {
-        //     throw new TypeError("clusterMaster must be an object with host and port properties");
-        // }
 
         this.name = name;
         this.settings = settings; // uses settings from file when existing db
@@ -49,7 +46,26 @@ class AceBaseStorage extends Storage {
             bytesWritten: 0
         };
         this.stats = stats;
+
         this.nodeCache = new NodeCache();
+        /**
+         * Use this method to update cache, instead of through this.nodeCache
+         * @param {boolean} fromIPC Whether this update came from an IPC notification to prevent infinite loop
+         * @param {NodeInfo} nodeInfo 
+         * @param {boolean} [overwrite=true] Consider renaming to `hasMoved`, because that is what we seem to be using this flag for: it is set to false when reading a record's children - not because the address is actually changing
+         */
+        this.updateCache = (fromIPC, nodeInfo, hasMoved = true) => {
+            this.nodeCache.update(nodeInfo, hasMoved);
+            if (!fromIPC && hasMoved) {
+                this.ipc.sendNotification({ type: 'cache.update', info: nodeInfo });
+            }
+        };
+        this.invalidateCache = (fromIPC, path, recursive, reason) => {
+            this.nodeCache.invalidate(path, recursive, reason);
+            if (!fromIPC) {
+                this.ipc.sendNotification({ type: 'cache.invalidate', path, recursive, reason });
+            }
+        };
 
         const filename = `${this.settings.path}/${this.name}.acebase/data.db`;
         let fd = null;
@@ -120,54 +136,84 @@ class AceBaseStorage extends Storage {
         this.readData = readData;
 
         // Setup cluster functionality
-        if (this.cluster.enabled && this.cluster.isMaster) {
-            // Handle worker requests
-            this.cluster.on('worker_request', ({ request, reply, broadcast }) => {
-                if (request.type === 'some_request') { 
-                    reply('ok'); 
-                }
-                let promise;
-                if (request.type === "allocate") {
-                    promise = this.FST.allocate(request.records);
-                }
-                else if (request.type === "release") {
-                    this.FST.release(request.ranges);
-                    reply('ok');
-                }
-                else if (request.type === "lock") {
-                    promise = this.nodeLocker.lock(request.path, request.tid, request.forWriting, request.comment, request.options);
-                }
-                else if (request.type === "unlock") {
-                    promise = this.nodeLocker.unlock(request.lockId, request.comment, request.processQueue);
-                }
-                else if (request.type === "add_key") {
-                    let index = this.KIT.getOrAdd(request.key);
-                    reply(index);
-                }
-                else if (request.type === "update_address") {
-                     // Send it to all other workers
-                    this.addressCache.update(request.address, true);
-                    broadcast(request);
-                    reply(true);
-                }
-                promise && promise.then(result => {
-                    reply(result);
-                });
-            })
-        }
+        this.ipc.on('request', async message => {
+            // Master functionality: handle requests from workers
 
-        // Setup Key Index Table object and functions
-        if (this.cluster.enabled && !this.cluster.isMaster) {
-            // Subscribe to new keys added events
-            this.cluster.on("master_notification", msg => {
-                if (msg.type === "key_added") {
-                    this.KIT.keys[msg.index] = msg.key;
+            console.assert(this.ipc.isMaster, `Workers should not receive requests`);
+            const request = message.data;
+            const reply = result => {
+                // const reply = { type: 'result', id: message.id, ok: true, from: this.ipc.id, to: message.from, data: result };
+                // this.ipc.sendMessage(reply);
+                this.ipc.replyRequest(message, result);
+            };
+            try {
+                switch (request.type) {
+                    // FST (free space table / allocation) requests:
+                    case 'fst.allocate': {
+                        const allocation = await this.FST.allocate(request.records);
+                        return reply({ ok: true, allocation });
+                    }
+                    case 'fst.release': {
+                        this.FST.release(request.ranges);
+                        return reply({ ok: true });
+                    }
+                    // KIT (key index table) requests:
+                    case 'kit.add': {
+                        let index = this.KIT.getOrAdd(request.key);
+                        return reply({ ok: true, index });
+                    }
+                    // Indexing requests:
+                    // Room for improvement: implement distributed index locks 
+                    // so they can be created & updated by any worker, instead of
+                    // putting the master to work for this.
+                    case 'index.create': {
+                        const index = await this.indexes.create(request.path, request.key, request.options);
+                        return reply({ ok: true, fileName: index.fileName });
+                    }
+                    case 'index.update': {
+                        const index = this.indexes.list().find(index => index.fileName === request.fileName);
+                        if (!index) { return reply({ ok: false, reason: `Index ${request.fileName} not found` }); }
+                        const result = await index.handleRecordUpdate(request.path, request.oldValue, request.newValue);
+                        return reply({ ok: true });
+                    }
+                    default: {
+                        throw new Error(`Unknown ipc request "${request.type}"`);
+                    }
                 }
-                else if (msg.type === "update_address") {
-                    this.addressCache.update(msg.address, true);
+            }
+            catch(err) {
+                reply({ ok: false, reason: err.message });
+            }
+        });
+        this.ipc.on('notification', message => {
+            const notification = message.data;
+            switch(notification.type) {
+                case 'kit.new_key': {
+                    this.KIT.keys[notification.index] = notification.key;
+                    break;
                 }
-            });
-        };
+                case 'root.update': {
+                    return this.rootRecord.update(notification.address, false);
+                }
+                case 'cache.update': {                    
+                    const nodeInfo = new NodeInfo(notification.info);
+                    nodeInfo.address = new NodeAddress(nodeInfo.address.path, nodeInfo.address.pageNr, nodeInfo.address.recordNr);
+                    return this.updateCache(true, nodeInfo, true);
+                }
+                case 'cache.invalidate': {
+                    return this.invalidateCache(true, notification.path, notification.recursive, notification.reason);
+                }
+                case 'index.created': {
+                    return this.indexes.add(notification.fileName);
+                }
+                case 'index.deleted': {
+                    return this.indexes.remove(notification.fileName);
+                }
+                default: {
+                    throw new Error(`Unknown ipc notification "${notification.type}"`);
+                }
+            }
+        });
 
         const storage = this;
 
@@ -191,19 +237,18 @@ class AceBaseStorage extends Storage {
                 }
                 let index = this.keys.indexOf(key);
                 if (index < 0) {
-                    if (storage.cluster.enabled && !storage.cluster.isMaster) {
+                    if (!storage.ipc.isMaster) {
                         // Forward request to cluster master. Response will be too late for us, but it will be cached for future calls
-                        storage.cluster.request({ type: "add_key", key }).then(index => {
-                            this.keys[index] = key; // Add to our local array
+                        storage.ipc.sendRequest({ type: 'kit.add', key })
+                        .then(result => {
+                            this.keys[result.index] = key; // Add to our local array
                         });
                         return -1;
                     }
                     index = this.keys.push(key) - 1;
-                    if (storage.cluster.enabled && storage.cluster.isMaster) {
+                    if (storage.ipc.isMaster) {
                         // Notify all workers
-                        storage.cluster.workers.forEach(worker => {
-                            worker.send({ type: "key_added", key, index });
-                        });
+                        storage.ipc.sendNotification({ type: 'kit.new_key', key, index });
                     }
                 }
                 else {
@@ -220,7 +265,7 @@ class AceBaseStorage extends Storage {
             },
 
             write() {
-                if (storage.cluster.enabled && !storage.cluster.isMaster) {
+                if (!storage.ipc.isMaster) {
                     throw new Error(`DEV ERROR: KIT.write not allowed to run if it is a cluster worker!!`);
                 }
                 // Key Index Table starts at index 64, and is 2^16 (65536) bytes long
@@ -289,21 +334,20 @@ class AceBaseStorage extends Storage {
         };
 
         // Setup Free Space Table object and functions        
-        if (this.cluster.enabled && !this.cluster.isMaster) {
+        if (!this.ipc.isMaster) {
+            // We are a worker in a Node cluster, FST requests must be handled by the master via IPC
             this.FST = {
                 /**
                  * 
                  * @param {number} requiredRecords 
                  * @returns {Promise<Array<{ pageNr: number, recordNr: number, length: number }>>}
                  */
-                allocate(requiredRecords) {
-                    return storage.cluster.request({ type: "allocate", records: requiredRecords })
-                    // .then(result => {
-                    //     return result;
-                    // });
+                async allocate(requiredRecords) {
+                    const result = await storage.ipc.sendRequest({ type: 'fst.allocate', records: requiredRecords })
+                    return result.allocation;
                 },
-                release(ranges) {
-                    return storage.cluster.request({ type: "release", ranges });
+                async release(ranges) {
+                    await storage.ipc.sendRequest({ type: 'fst.release', ranges });
                 },
                 load() {
                     return Promise.resolve([]); // Fake loader
@@ -581,29 +625,33 @@ class AceBaseStorage extends Storage {
             /**
              * Updates the root node address
              * @param {NodeAddress} address 
+             * @param {boolean} [write=true] whether this update comes from an IPC notification, prevent infinite loopbacks
              */
-            update (address) {
+            async update (address, fromIPC = false) {
                 // Root address changed
                 console.assert(address.path === "");
                 if (address.pageNr === this.pageNr && address.recordNr === this.recordNr) {
                     // No need to update
-                    return Promise.resolve();
+                    return;
                 }
                 this.pageNr = address.pageNr;
                 this.recordNr = address.recordNr;
                 this.exists = true;
                 // storage.debug.log(`Root record address updated to ${address.pageNr}, ${address.recordNr}`.colorize(ColorStyle.bold));
 
-                // Save to file, or it didn't happen
-                const bytes = new Uint8Array(6);
-                const view = new DataView(bytes.buffer);
-                view.setUint32(0, address.pageNr);
-                view.setUint16(4, address.recordNr);
-                
-                return writeData(HEADER_INDEXES.ROOT_RECORD_ADDRESS, bytes, 0, bytes.length)
-                .then(bytesWritten => {
+                if (!fromIPC) {
+                    // Notify others
+                    storage.ipc.sendNotification({ type: 'root.update', address });
+
+                    // Save to file, or it didn't happen
+                    const bytes = new Uint8Array(6);
+                    const view = new DataView(bytes.buffer);
+                    view.setUint32(0, address.pageNr);
+                    view.setUint16(4, address.recordNr);
+                    
+                    const bytesWritten = await writeData(HEADER_INDEXES.ROOT_RECORD_ADDRESS, bytes, 0, bytes.length)
                     storage.debug.log(`Root record address updated to ${address.pageNr}, ${address.recordNr}`.colorize(ColorStyle.bold));
-                });
+                }
             }
         }
 
@@ -674,9 +722,6 @@ class AceBaseStorage extends Storage {
 
                         // Read root record address
                         const view = new DataView(header.buffer, index, 6);
-                        // let address = this.addressCache.find(""); //this.addressCache.root.address;
-                        // address.pageNr = view.getUint32(0);
-                        // address.recordNr = view.getUint16(4);
                         this.rootRecord.pageNr = view.getUint32(0);
                         this.rootRecord.recordNr = view.getUint16(4);
                         if (!justCreated) {
@@ -716,7 +761,7 @@ class AceBaseStorage extends Storage {
         };
 
         // Open or create database 
-        fs.exists(filename, (exists) => {
+        fs.exists(filename, async (exists) => {
             if (exists) {
                 // Open
                 openDatabaseFile(false);
@@ -765,22 +810,17 @@ class AceBaseStorage extends Storage {
                 uint8 = concatTypedArrays(uint8, fst);
 
                 const dir = filename.slice(0, filename.lastIndexOf('/'));
-                if (dir !== '.' && !fs.existsSync(dir)) {
-                    fs.mkdirSync(dir);
+                const exists = await pfs.exists(dir);
+                if (dir !== '.' && !exists) {
+                    await pfs.mkdir(dir);
                 }
-                fs.writeFile(filename, Buffer.from(uint8.buffer), (err) => {
-                    if (err) {
-                        throw err;
-                    }
-                    openDatabaseFile(true)
-                    .then(() => {
-                        // Now create the root record
-                        return Node.set(this, "", {}); //Record.create(this, "", {});
-                    })
-                    .then(rootRecord => {
-                        this.emit("ready");
-                    });
-                });
+                
+                await pfs.writeFile(filename, Buffer.from(uint8.buffer)); 
+                await openDatabaseFile(true);
+                // Now create the root record
+                await Node.set(this, "", {});
+                this.rootRecord.exists = true;
+                this.emit("ready");
             }
         });
     }
@@ -826,7 +866,7 @@ class AceBaseStorage extends Storage {
             }
         };
         const start = () => {
-            const tid = this.nodeLocker.createTid(); //ID.generate();
+            const tid = this.createTid(); //ID.generate();
             let canceled = false;
             var lock;
             return this.nodeLocker.lock(path, tid, false, `Node.getChildren "/${path}"`)
@@ -871,31 +911,32 @@ class AceBaseStorage extends Storage {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @returns {Promise<{ revision: string, value: any}>}
      */
-    getNode(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
-        const tid = options.tid || this.nodeLocker.createTid(); // ID.generate();
-        var lock;
-        return this.nodeLocker.lock(path, tid, false, `Node.getValue "/${path}"`)
-        .then(l => {
-            lock = l;
-            return this.getNodeInfo(path, { tid });
-        })
-        .then(nodeInfo => {
+    async getNode(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
+        const tid = options.tid || this.createTid(); // ID.generate();
+        const lock = await this.nodeLocker.lock(path, tid, false, `Node.getValue "/${path}"`)
+        try {
+            const nodeInfo = await this.getNodeInfo(path, { tid });
+            let value = nodeInfo.value;
             if (!nodeInfo.exists) {
-                return null;
+                value = null;
             }
-            if (nodeInfo.address) {
-                let reader = new NodeReader(this, nodeInfo.address, lock, true);
-                return reader.getValue({ include: options.include, exclude: options.exclude, child_objects: options.child_objects });
+            else if (nodeInfo.address) {
+                const reader = new NodeReader(this, nodeInfo.address, lock, true);
+                value = await reader.getValue({ include: options.include, exclude: options.exclude, child_objects: options.child_objects });
             }
-            return nodeInfo.value;
-        })
-        .then(value => {
-            lock.release();
             return {
                 revision: null, // TODO: implement
                 value
             };
-        });
+        }
+        catch(err) {
+            this.debug.error(`DEBUG THIS: getNode error:`, err);
+            debugger;
+            throw err;
+        }
+        finally {
+            lock.release();
+        }
     }
 
     /**
@@ -908,27 +949,24 @@ class AceBaseStorage extends Storage {
      * @param {boolean} [options.allow_expand=true] whether to allow expansion of path references (follow "symbolic links")
      * @returns {Promise<NodeInfo>}
      */
-    getNodeInfo(path, options = { tid: undefined, no_cache: false, include_child_count: false, allow_expand: true }) {
+    async getNodeInfo(path, options = { tid: undefined, no_cache: false, include_child_count: false, allow_expand: true }) {
         options = options || {};
         options.no_cache = options.no_cache === true;
         options.allow_expand = false; // Don't use yet! // options.allow_expand !== false;
 
-        if (path === "") {
+        if (path === '') {
             if (!this.rootRecord.exists) {
-                return Promise.resolve(new NodeInfo({ path, exists: false }));
+                return new NodeInfo({ path, exists: false });
             }
-            return Promise.resolve(new NodeInfo({ path, address: this.rootRecord.address, exists: true, type: VALUE_TYPES.OBJECT }));
+            return new NodeInfo({ path, address: this.rootRecord.address, exists: true, type: VALUE_TYPES.OBJECT });
         }
 
         if (!options.include_child_count) {
             // Check if the info has been cached
             let cachedInfo = this.nodeCache.find(path, true);
-            if (cachedInfo instanceof Promise) {
-                // not currently cached, but it was announced
+            if (cachedInfo) {
+                // cached, or announced
                 return cachedInfo;
-            }
-            else if (cachedInfo) {
-                return Promise.resolve(cachedInfo);
             }
         }
 
@@ -938,7 +976,7 @@ class AceBaseStorage extends Storage {
         // Try again on the parent node, enable others to bind to our lookup result
         const pathInfo = PathInfo.get(path); // getPathInfo(path);
         const parentPath = pathInfo.parentPath; //pathInfo.parent;
-        const tid = options.tid || this.nodeLocker.createTid(); //ID.generate();
+        const tid = options.tid || this.createTid(); //ID.generate();
 
         // Performance issue: 250 requests for different children of a single parent.
         // They will all wait until 1 figures out the parent's address, and then
@@ -947,78 +985,63 @@ class AceBaseStorage extends Storage {
         // handle them in 1 read. Use RxJS Observable?
 
         // Achieve a read lock on the parent node and read it
-        let lock;
-        return this.nodeLocker.lock(parentPath, tid, false, `Node.getInfo "/${parentPath}"`)
-        .then(l => {
-            lock = l;
-            return this.getNodeInfo(parentPath, { tid, no_cache: options.no_cache });
-        })
-        .then(parentInfo => {
+        let lock = await this.nodeLocker.lock(parentPath, tid, false, `Node.getInfo "/${parentPath}"`);
+        try {
+            let parentInfo = await this.getNodeInfo(parentPath, { tid, no_cache: options.no_cache });
+            let childInfo;
 
             if (parentInfo.exists && parentInfo.valueType === VALUE_TYPES.REFERENCE && options.allow_expand) {
-                // NEW: Expand path reference, get new parentInfo.
-                return new Promise((resolve, reject) => {
-                    const gotPathReference = pathReference => {
-                        // lock.release();
-                        // TODO: implement relative path references: '../users/ewout'
-                        const childPath = PathInfo.getChildPath(pathReference.path, pathInfo.key);
-                        return this.getNodeInfo(childPath)
-                            .then(resolve)
-                            .catch(reject);
-                    };
-                    if (parentInfo.address) {
-                        // Must read target address to get target path
-                        const reader = new NodeReader(this, parentInfo.address, lock, true);
-                        return reader.getValue()
-                            .then(gotPathReference)
-                            .catch(reject);
-                    }
-                    else {
-                        // We have the path already
-                        return gotPathReference(parentInfo.value);
-                    }
-                });
+                // NEW (but not used yet): This is a path reference. Expand to get new parentInfo.
+                let pathReference;
+                if (parentInfo.address) {
+                    // Must read target address to get target path
+                    const reader = new NodeReader(this, parentInfo.address, lock, true);
+                    pathReference = await reader.getValue();
+                }
+                else {
+                    // We have the path already
+                    pathReference = parentInfo.value;
+                }
+                // TODO: implement relative path references: '../users/ewout'
+                const childPath = PathInfo.getChildPath(pathReference.path, pathInfo.key);
+                childInfo = await this.getNodeInfo(childPath);
             }
             else if (!parentInfo.exists || ![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentInfo.valueType) || !parentInfo.address) {
                 // Parent does not exist, is not an object or array, or has no children (object not stored in own address)
                 // so child doesn't exist
-                const childInfo = new NodeInfo({ path, exists: false });
-                this.nodeCache.update(childInfo);
-                return childInfo;
+                childInfo = new NodeInfo({ path, exists: false });
+            }
+            else {
+                const reader = new NodeReader(this, parentInfo.address, lock, true);
+                childInfo = await reader.getChildInfo(pathInfo.key);
             }
 
-            const reader = new NodeReader(this, parentInfo.address, lock, true);
-            return reader.getChildInfo(pathInfo.key);
-        })
-        .then(childInfo => {
             if (options.include_child_count && [VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(childInfo.valueType)) {
                 if (!childInfo.address) {
                     // value is stored inline, empty object or array: value === {} or []
                     childInfo.childCount = 0;
-                    return childInfo;
                 }
-                // Get number of children
-                let lock;
-                return this.nodeLocker.lock(path, tid, false, `Node.getInfo "/${path}"`)
-                .then(l => {
-                    lock = l;
-                    const reader = new NodeReader(this, childInfo.address, lock, true);
-                    return reader.getChildCount();
-                })
-                .then(childCount => {
-                    lock.release(`Node.getInfo: done with path "/${path}"`);
-                    childInfo.childCount = childCount;
-                    return childInfo;
-                });
+                else {
+                    // Get number of children
+                    lock = await this.nodeLocker.lock(path, tid, false, `Node.getInfo "/${path}"`)
+                    const childReader = new NodeReader(this, childInfo.address, lock, true);
+                    childInfo.childCount = await childReader.getChildCount();
+                    // lock.release(`Node.getInfo: done with path "/${path}"`);
+                }
             }
-            return childInfo;
-        })
-        .then(childInfo => {
-            lock.release(`Node.getInfo: done with path "/${parentPath}"`);
-            this.nodeCache.update(childInfo, true); // NodeCache.update(childInfo); // Don't have to, nodeReader will have done it already
+            // lock.release(`Node.getInfo: done with path "/${parentPath}"`);
+            this.updateCache(false, childInfo, false); // Don't have to, nodeReader will have done it already
             
             return childInfo;
-        });
+        }
+        catch(err) {
+            this.debug.error(`DEBUG THIS: getNodeInfo error`, err);
+            debugger;
+            throw err;
+        }
+        finally {
+            lock.release(`Node.getInfo: done with path "/${parentPath}"`);
+        }
     }
 
     // /**
@@ -1078,7 +1101,7 @@ class AceBaseStorage extends Storage {
     async _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false, suppress_events: false, context: null }) {
         // this.debug.log(`Update request for node "/${path}"`);
 
-        const tid = options.tid || this.nodeLocker.createTid(); // ID.generate();
+        const tid = options.tid || this.createTid(); // ID.generate();
         const pathInfo = PathInfo.get(path);
 
         if (value === null) {
@@ -1440,15 +1463,19 @@ class NodeReader {
     }
 
     _assertLock() {
-        if (this.lock.state !== NodeLock.LOCK_STATE.LOCKED) {
-            throw new Error(`Node "/${this.address.path}" must be (read) locked, current state is ${this.lock.state}`);
+        const expired = this.storage.ipc.isMaster ? this.lock.state !== NodeLock.LOCK_STATE.LOCKED : this.lock.expires <= Date.now();
+        if (expired) {
+            throw new Error(`No lock on node "/${this.address.path}", it may have expired`);
         }
-        if (this.lock.granted !== this.lockTimestamp) {
-            // Lock has been renewed/changed? Will have to be read again if this happens.
-            //this.recordInfo = null; 
-            // Don't allow this to happen
-            throw new Error(`Lock on node "/${this.address.path}" has changed. This is not allowed. Debug this`);
-        }
+        // if (this.lock.state !== NodeLock.LOCK_STATE.LOCKED) {
+        //     throw new Error(`Node "/${this.address.path}" must be (read) locked, current state is ${this.lock.state}`);
+        // }
+        // if (this.lock.granted !== this.lockTimestamp) {
+        //     // Lock has been renewed/changed? Will have to be read again if this happens.
+        //     //this.recordInfo = null; 
+        //     // Don't allow this to happen
+        //     throw new Error(`Lock on node "/${this.address.path}" has changed. This is not allowed. Debug this`);
+        // }
     }
 
     /**
@@ -1511,24 +1538,20 @@ class NodeReader {
      * Reads all data for this node. Only do this when a stream won't do (eg if you need all data because the record contains a string)
      * @returns {Promise<Uint8Array>}
      */
-    getAllData() {
+    async getAllData() {
         this._assertLock();
         if (this.recordInfo === null) {
-            return this.readHeader().then(() => {
-                return this.getAllData();
-            });
+            await this.readHeader();
         }
 
-        let allData = new Uint8Array(this.recordInfo.totalByteLength);
+        const allData = new Uint8Array(this.recordInfo.totalByteLength);
         let index = 0;
-        return this.getDataStream()
+        await this.getDataStream()
         .next(({ data }) => {
             allData.set(data, index);
             index += data.length;
-        })
-        .then(() => {
-            return allData;
         });
+        return allData;
     }
 
     /**
@@ -1700,15 +1723,8 @@ class NodeReader {
     getDataStream() {
         this._assertLock();
 
-        if (this.recordInfo === null) {
-            return this.readHeader()
-            .then(() => {
-                return this.getDataStream();
-            })
-        }
-
         const bytesPerRecord = this.storage.settings.recordSize;
-        const maxRecordsPerChunk = 200; // 200: about 25KB of data when using 128 byte records
+        const maxRecordsPerChunk = this.storage.settings.pageSize; // Reading whole pages at a time is faster, approx 130KB with default settings (1024 records of 128 bytes each) // 200: about 25KB of data when using 128 byte records
         let resolve, reject;
         let callback;
         const generator = {
@@ -1724,108 +1740,117 @@ class NodeReader {
             }
         };
 
-        const read = () => {
+        const read = async () => {
             const fileIndex = this.storage.getRecordFileIndex(this.address.pageNr, this.address.recordNr);
 
-            return this.readHeader()
-            .then(recordInfo => {
+            if (this.recordInfo === null) {
+                await this.readHeader();
+            }
+            const recordInfo = this.recordInfo;
 
-                // Divide all allocation ranges into chunks of maxRecordsPerChunk
-                const ranges = recordInfo.allocation.ranges;
-                const chunks = [];
-                let totalBytes = 0;
-                ranges.forEach((range, i) => {
-                    let chunk = {
-                        pageNr: range.pageNr,
-                        recordNr: range.recordNr,
-                        length: range.length
-                    }
-                    let chunkLength = (chunk.length * bytesPerRecord);
-                    if (i === ranges.length-1) { 
-                        chunkLength -= bytesPerRecord;
-                        chunkLength += recordInfo.lastRecordLength;
-                    }
-                    totalBytes += chunkLength;
-                    if (i === 0 && chunk.length > 1) {
-                        // Split, first chunk contains start data only
-                        let remaining = chunk.length - 1;
-                        chunk.length = 1;
-                        chunks.push(chunk);
-                        chunk = {
-                            pageNr: chunk.pageNr,
-                            recordNr: chunk.recordNr + 1,
-                            length: remaining
-                        };
-                    }
-                    while (chunk.length > maxRecordsPerChunk) {
-                        // Split so the chunk has maxRecordsPerChunk
-                        let remaining = chunk.length - maxRecordsPerChunk;
-                        chunk.length = maxRecordsPerChunk;
-                        chunks.push(chunk);
-                        chunk = {
-                            pageNr: chunk.pageNr,
-                            recordNr: chunk.recordNr + maxRecordsPerChunk,
-                            length: remaining
-                        };
-                    }
+            // Divide all allocation ranges into chunks of maxRecordsPerChunk
+            const ranges = recordInfo.allocation.ranges;
+            const chunks = []; // nicer approach would be: const chunks = ranges.reduce((chunks, range) => { ... }, []);
+            let totalBytes = 0;
+            ranges.forEach((range, i) => {
+                let chunk = {
+                    pageNr: range.pageNr,
+                    recordNr: range.recordNr,
+                    length: range.length
+                };
+                let chunkLength = (chunk.length * bytesPerRecord);
+                if (i === ranges.length-1) { 
+                    chunkLength -= bytesPerRecord;
+                    chunkLength += recordInfo.lastRecordLength;
+                }
+                totalBytes += chunkLength;
+                if (i === 0 && chunk.length > 1) {
+                    // Split, first chunk contains start data only
+                    let remaining = chunk.length - 1;
+                    chunk.length = 1;
                     chunks.push(chunk);
-                });
+                    chunk = {
+                        pageNr: chunk.pageNr,
+                        recordNr: chunk.recordNr + 1,
+                        length: remaining
+                    };
+                }
+                while (chunk.length > maxRecordsPerChunk) {
+                    // Split so the chunk has maxRecordsPerChunk
+                    let remaining = chunk.length - maxRecordsPerChunk;
+                    chunk.length = maxRecordsPerChunk;
+                    chunks.push(chunk);
+                    chunk = {
+                        pageNr: chunk.pageNr,
+                        recordNr: chunk.recordNr + maxRecordsPerChunk,
+                        length: remaining
+                    };
+                }
+                chunks.push(chunk);
+            });
 
-                const isLastChunk = chunks.length === 1;
+            const isLastChunk = chunks.length === 1;
 
-                // Run callback with the first chunk (and possibly the only chunk) already read
-                const firstChunkData = recordInfo.startData;
-                const { valueType, hasKeyIndex, headerLength, lastRecordLength } = recordInfo;
-                let proceed = callback({ 
-                    data: recordInfo.startData, 
+            // Run callback with the first chunk (and possibly the only chunk) already read
+            const firstChunkData = recordInfo.startData;
+            let headerBytesSkipped = recordInfo.bytesPerRecord - firstChunkData.length;
+            const { valueType, hasKeyIndex, headerLength, lastRecordLength } = recordInfo;
+            let proceed = firstChunkData.length === 0 || (callback({ 
+                data: firstChunkData, 
+                valueType, 
+                chunks, 
+                chunkIndex: 0, 
+                totalBytes, 
+                hasKeyTree: hasKeyIndex, 
+                fileIndex, 
+                headerLength
+            }) !== false);
+
+            if (!proceed || isLastChunk) {
+                resolve({ valueType, chunks });
+                return;
+            }
+            const next = async (index) => {
+                //this.storage.debug.log(address.path);
+                const chunk = chunks[index];
+                let fileIndex = this.storage.getRecordFileIndex(chunk.pageNr, chunk.recordNr);
+                let length = chunk.length * bytesPerRecord;
+                if (headerBytesSkipped < recordInfo.headerLength) {
+                    // How many more header bytes to skip?
+                    const remainingHeaderBytes = recordInfo.headerLength - headerBytesSkipped;
+                    const skip = Math.min(remainingHeaderBytes, length);
+                    fileIndex += skip;
+                    length -= skip;
+                    headerBytesSkipped += skip;
+                    if (length == 0) { 
+                        return next(index + 1);
+                    }
+                }
+                const isLastChunk = index + 1 === chunks.length;
+                if (isLastChunk) {
+                    length -= bytesPerRecord - lastRecordLength;
+                }
+                const data = new Uint8Array(length);
+                const bytesRead = await this.storage.readData(fileIndex, data);
+                const proceed = callback({ 
+                    data, 
                     valueType, 
                     chunks, 
-                    chunkIndex: 0, 
+                    chunkIndex:index, 
                     totalBytes, 
                     hasKeyTree: hasKeyIndex, 
                     fileIndex, 
-                    headerLength
+                    headerLength 
                 }) !== false;
 
                 if (!proceed || isLastChunk) {
                     resolve({ valueType, chunks });
-                    return;
                 }
-                const next = (index) => {
-                    //this.storage.debug.log(address.path);
-                    const chunk = chunks[index];
-                    const fileIndex = this.storage.getRecordFileIndex(chunk.pageNr, chunk.recordNr);
-                    let length = chunk.length * bytesPerRecord;
-                    if (index === chunks.length-1) {
-                        length -= bytesPerRecord;
-                        length += lastRecordLength;
-                    }
-                    const data = new Uint8Array(length);
-                    return this.storage.readData(fileIndex, data)
-                    .then(bytesRead => {
-                        const isLastChunk = index + 1 === chunks.length
-                        const proceed = callback({ 
-                            data, 
-                            valueType, 
-                            chunks, 
-                            chunkIndex:index, 
-                            totalBytes, 
-                            hasKeyTree: hasKeyIndex, 
-                            fileIndex, 
-                            headerLength 
-                        }) !== false;
-
-                        if (!proceed || isLastChunk) {
-                            resolve({ valueType, chunks });
-                            return;
-                        }
-                        else {
-                            return next(index+1);
-                        }
-                    });
+                else {
+                    return next(index+1);
                 }
-                return next(1);                
-            });
+            }
+            return next(1);
         };
 
         return generator;
@@ -2060,7 +2085,7 @@ class NodeReader {
                 // Cache anything that comes along
                 // TODO: Consider moving this to end of function so it caches small values as well
                 if (this.updateCache) {
-                    this.storage.nodeCache.update(child, false);
+                    this.storage.updateCache(false, child, false);
                 }
 
                 if (child.address && child.address.equals(this.address)) {
@@ -2583,7 +2608,7 @@ class NodeChangeTracker {
  * @param {NodeLock} lock
  * @returns {Promise<RecordInfo>}
  */
-function _mergeNode(storage, nodeInfo, updates, lock) {
+ async function _mergeNode(storage, nodeInfo, updates, lock) {
     if (typeof updates !== "object") {
         throw new TypeError(`updates parameter must be an object`);
     }
@@ -2597,288 +2622,273 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
     let isArray = false;
     let isInternalUpdate = false;
 
-    return nodeReader.readHeader()
-    .then(recordInfo => {
+    const recordInfo = await nodeReader.readHeader();
+    isArray = recordInfo.valueType === VALUE_TYPES.ARRAY;
+    nodeInfo.type = recordInfo.valueType; // Set in nodeInfo too, because it might be unknown
 
-        isArray = recordInfo.valueType === VALUE_TYPES.ARRAY;
-        nodeInfo.type = recordInfo.valueType; // Set in nodeInfo too, because it might be unknown
-
-        const childValuePromises = [];
-
-        if (isArray) {
-            // keys to update must be integers
-            for (let i = 0; i < affectedKeys.length; i++) {
-                if (isNaN(affectedKeys[i])) { throw new Error(`Cannot merge existing array of path "${nodeInfo.path}" with an object`); }
-                affectedKeys[i] = +affectedKeys[i]; // Now an index
-            }
-        }
-        return nodeReader.getChildStream({ keyFilter: affectedKeys })
-        .next(child => {
-
-            const keyOrIndex = isArray ? child.index : child.key;
-            newKeys.splice(newKeys.indexOf(keyOrIndex), 1); // Remove from newKeys array, it exists already
-            const newValue = updates[keyOrIndex];
-    
-            // Get current value
-            if (child.address) {
-
-                if (newValue instanceof InternalNodeReference) {
-                    // This update originates from a child node update, its record location changed
-                    // so we only have to update the reference to the new location
-
-                    isInternalUpdate = true;
-                    const oldAddress = child.address; //child.storedAddress || child.address;
-                    const currentValue = new InternalNodeReference(child.type, oldAddress);
-                    changes.add(keyOrIndex, currentValue, newValue);
-                    return true; // Proceed with next (there is no next, right? - this update must has have been triggered by child node that moved, the parent node only needs to update the referennce to the child node)
-                }
-
-                // Child is stored in own record, and it is updated or deleted so we need to get
-                // its allocation so we can release it when updating is done
-                const promise = storage.nodeLocker.lock(child.address.path, lock.tid, false, `_mergeNode: read child "/${child.address.path}"`)
-                .then(childLock => {
-                    const childReader = new NodeReader(storage, child.address, childLock, false);
-                    return childReader.getAllocation(true)
-                    .then(allocation => {
-                        childLock.release();
-                        discardAllocation.ranges.push(...allocation.ranges);
-                        const currentChildValue = new InternalNodeReference(child.type, child.address);
-                        changes.add(keyOrIndex, currentChildValue, newValue);
-                    });
-                });
-                childValuePromises.push(promise);
-            }
-            else {
-                changes.add(keyOrIndex, child.value, newValue);
-            }
-        })
-        .then(() => {
-            return Promise.all(childValuePromises);            
-        });
-    })
-    .then(() => {
-        // Check which keys we haven't seen (were not in the current node), these will be added
-        newKeys.forEach(key => {
-            const newValue = updates[key];
-            if (newValue !== null) {
-                changes.add(key, null, newValue);
-            }
-        });
-
-        if (changes.all.length === 0) {
-            storage.debug.log(`No effective changes to update node "/${nodeInfo.path}" with`.colorize(ColorStyle.yellow));
-            return nodeReader.recordInfo;
-        }
-
-        storage.debug.log(`Node "/${nodeInfo.path}" being updated:${isInternalUpdate ? ' (internal)' : ''} adding ${changes.inserts.length} keys (${changes.inserts.map(ch => `"${ch.keyOrIndex}"`).join(',')}), updating ${changes.updates.length} keys (${changes.updates.map(ch => `"${ch.keyOrIndex}"`).join(',')}), removing ${changes.deletes.length} keys (${changes.deletes.map(ch => `"${ch.keyOrIndex}"`).join(',')})`.colorize(ColorStyle.cyan));
-        if (!isInternalUpdate) {
-            // Update cache (remove entries or mark them as deleted)
-            const pathInfo = PathInfo.get(nodeInfo.path);
-            const invalidatePaths = changes.all
-                .filter(ch => !(ch.newValue instanceof InternalNodeReference))
-                .map(ch => {
-                    const childPath = pathInfo.childPath(ch.keyOrIndex);
-                    return { 
-                        path: childPath, 
-                        pathInfo: PathInfo.get(childPath), 
-                        action: ch.changeType === NodeChange.CHANGE_TYPE.DELETE ? 'delete' : 'invalidate' 
-                    };
-                });
-            storage.nodeCache.invalidate(nodeInfo.path, false, 'mergeNode');
-            invalidatePaths.forEach(item => {
-                if (item.action === 'invalidate') { storage.nodeCache.invalidate(item.path, true, 'mergeNode'); }
-                else { storage.nodeCache.delete(item.path); }
-            });
-        }
-
-        // What we need to do now is make changes to the actual record data. 
-        // The record is either a binary B+Tree (larger records), 
-        // or a list of key/value pairs (smaller records).
-        let updatePromise;
-        if (nodeReader.recordInfo.hasKeyIndex) {
-
-            // Try to have the binary B+Tree updated. If there is not enough free space for this
-            // (eg, if a leaf to add to is full), we have to rebuild the whole tree and write new records
-
-            const childPromises = [];
-            changes.all.forEach(change => {
-                const childPath = PathInfo.getChildPath(nodeInfo.path, change.keyOrIndex)
-                if (change.oldValue !== null) {
-                    let kvp = _serializeValue(storage, childPath, change.keyOrIndex, change.oldValue, null);
-                    console.assert(kvp instanceof SerializedKeyValue, `return value must be of type SerializedKeyValue, it cannot be a Promise!`);
-                    let bytes = _getValueBytes(kvp);
-                    change.oldValue = bytes;
-                }
-                if (change.newValue !== null) {
-                    let s = _serializeValue(storage, childPath, change.keyOrIndex, change.newValue, lock.tid);
-                    let convert = (kvp) => {
-                        let bytes = _getValueBytes(kvp);
-                        change.newValue = bytes;
-                    }
-                    if (s instanceof Promise) {
-                        s = s.then(convert);
-                        childPromises.push(s);
-                    }
-                    else {
-                        convert(s);
-                    }
-                }
-            });
-
-            let operations = [];
-            let tree = nodeReader.getChildTree();
-            updatePromise = Promise.all(childPromises)
-            .then(() => {
-                changes.deletes.forEach(change => {
-                    const op = BinaryBPlusTree.TransactionOperation.remove(change.keyOrIndex, change.oldValue);
-                    operations.push(op);
-                });
-                changes.updates.forEach(change => {
-                    const oldEntryValue = new BinaryBPlusTree.EntryValue(change.oldValue);
-                    const newEntryValue = new BinaryBPlusTree.EntryValue(change.newValue);
-                    const op = BinaryBPlusTree.TransactionOperation.update(change.keyOrIndex, newEntryValue, oldEntryValue);
-                    operations.push(op);
-                });
-                changes.inserts.forEach(change => {
-                    const op = BinaryBPlusTree.TransactionOperation.add(change.keyOrIndex, change.newValue);
-                    operations.push(op);
-                });
-
-                // Changed behaviour: 
-                // previously, if 1 operation failed, the tree was rebuilt. If any operation thereafter failed, it stopped processing
-                // now, processOperations() will be called after each rebuild, so all operations will be processed
-                const debugOpCounts = [];
-                const processOperations = (retry = 0, prevRecordInfo = nodeReader.recordInfo) => {
-                    if (retry > 1 && operations.length === debugOpCounts[debugOpCounts.length-1]) {
-                        // Number of pending operations did not decrease after rebuild?!
-                        debugger;
-                        throw new Error(`DEV: Tree rebuild did not fix ${operations.length} pending operation(s) failing to execute. Debug this!`);
-                    }
-                    debugOpCounts.push(operations.length);
-                    return tree.transaction(operations)
-                    .then(() => {
-                        // Successfully updated!
-                        storage.debug.log(`Updated tree for node "/${nodeInfo.path}"`.colorize(ColorStyle.green)); 
-                        return prevRecordInfo;
-                    })
-                    .catch(err => {
-                        storage.debug.log(`Could not update tree for "/${nodeInfo.path}"${retry > 0 ? ` (retry ${retry})` : ''}: ${err.message}`.colorize(ColorStyle.yellow), err.codes);
-                        // Failed to update the binary data, we need to recreate the whole tree
-        
-                        // NEW: Rebuild tree to a temp file
-                        const tempFilepath = `${storage.settings.path}/${storage.name}.acebase/tree-${ID.generate()}.tmp`;
-                        let bytesWritten = 0;
-                        return pfs.open(tempFilepath, pfs.flags.readAndWriteAndCreate)
-                        .then(fd => {
-                            const writer = BinaryWriter.forFunction((data, index) => {
-                                return pfs.write(fd, data, 0, data.length, index)
-                                .then(() => {
-                                    bytesWritten += data.length;
-                                });
-                            });
-                            return tree.rebuild(writer)
-                            .then(() => fd);
-                        })
-                        .then(fd => {
-                            // Now write the record with data read from the temp file
-                            let readOffset = 0;
-                            const reader = length => {
-                                const buffer = new Uint8Array(length);
-                                return pfs.read(fd, buffer, 0, buffer.length, readOffset)
-                                .then(() => {
-                                    readOffset += length;
-                                    return buffer;
-                                });
-                            };
-                            return _write(storage, nodeInfo.path, nodeReader.recordInfo.valueType, bytesWritten, true, reader, nodeReader.recordInfo)
-                            .then(recordInfo => {
-                                // Close and remove the tmp file, don't wait for this
-                                pfs.close(fd)
-                                .then(() => pfs.rm(tempFilepath))
-                                .catch(err => {
-                                    // Error removing the file?
-                                    storage.debug.error(`Can't remove temp rebuild file ${tempFilepath}: `, err);
-                                });
-                                return recordInfo;
-                            });
-                        })
-                        .then(recordInfo => {
-                            if (retry >= 1 && prevRecordInfo !== recordInfo) {
-                                // If this is a 2nd+ call to processOperations, we have to release the previous allocation here
-                                discardAllocation.ranges.push(...prevRecordInfo.allocation.ranges);
-                            }
-                            const newNodeReader = new NodeReader(storage, recordInfo.address, lock, false);
-                            return newNodeReader.readHeader()
-                            .then(info => {
-                                tree = new BinaryBPlusTree(
-                                    newNodeReader._treeDataReader.bind(newNodeReader), 
-                                    1024 * 100, // 100KB reads/writes
-                                    newNodeReader._treeDataWriter.bind(newNodeReader),
-                                    'record@' + newNodeReader.recordInfo.address.toString()
-                                );
-                                // Retry remaining operations
-                                return processOperations(retry+1, recordInfo);
-                            });
-                        });
-                    });
-                }
-                return processOperations();
-            });
-        }
-        else {
-            // This is a small record. In the future, it might be nice to make changes 
-            // in the record itself, but let's just rewrite it for now.
-
-            // TODO: Do not deallocate here, pass exising allocation to _writeNode, so it can be reused
-            // discardAllocation.ranges.push(...nodeReader.recordInfo.allocation.ranges);
-            let mergedValue = isArray ? [] : {};
-
-            updatePromise = nodeReader.getChildStream()
-            .next(child => {
-                let keyOrIndex = isArray ? child.index : child.key;
-                if (child.address) { //(child.storedAddress || child.address) {
-                    //mergedValue[keyOrIndex] = new InternalNodeReference(child.type, child.storedAddress || child.address);
-                    mergedValue[keyOrIndex] = new InternalNodeReference(child.type, child.address);
-                }
-                else {
-                    mergedValue[keyOrIndex] = child.value;
-                }
-            })
-            .then(() => {
-                changes.deletes.forEach(change => {
-                    delete mergedValue[change.keyOrIndex];
-                });
-                changes.updates.forEach(change => {
-                    mergedValue[change.keyOrIndex] = change.newValue;
-                });
-                changes.inserts.forEach(change => {
-                    mergedValue[change.keyOrIndex] = change.newValue;
-                });
-
-                if (isArray) {
-                    const isExhaustive = mergedValue.filter(val => typeof val !== 'undefined').length === mergedValue.length;
-                    if (!isExhaustive) {
-                        throw new Error(`Elements cannot be inserted beyond, or removed before the end of an array. Rewrite the whole array at path "${nodeInfo.path}" or change your schema to use an object collection instead`);
-                    }
-                }
-                return _writeNode(storage, nodeInfo.path, mergedValue, lock, nodeReader.recordInfo);
-            });
-        }
-
-        return updatePromise;
-    })
-    .then(recordInfo => {
+    const done = (newRecordInfo) => {
         let recordMoved = false;
-        if (recordInfo !== nodeReader.recordInfo) {
+        if (newRecordInfo !== nodeReader.recordInfo) {
             // release the old record allocation
             discardAllocation.ranges.push(...nodeReader.recordInfo.allocation.ranges);
             recordMoved = true;
         }
         // Necessary?
-        storage.nodeCache.update(new NodeInfo({ path: nodeInfo.path, type: nodeInfo.type, address: recordInfo.address, exists: true }), true);
-        return { recordMoved, recordInfo, deallocate: discardAllocation };
+        storage.updateCache(false, new NodeInfo({ path: nodeInfo.path, type: nodeInfo.type, address: newRecordInfo.address, exists: true }), recordMoved);
+        return { recordMoved, recordInfo: newRecordInfo, deallocate: discardAllocation };
+    }
+
+    const childValuePromises = [];
+
+    if (isArray) {
+        // keys to update must be integers
+        for (let i = 0; i < affectedKeys.length; i++) {
+            if (isNaN(affectedKeys[i])) { throw new Error(`Cannot merge existing array of path "${nodeInfo.path}" with an object`); }
+            affectedKeys[i] = +affectedKeys[i]; // Now an index
+        }
+    }
+
+    await nodeReader.getChildStream({ keyFilter: affectedKeys })
+    .next(child => {
+
+        const keyOrIndex = isArray ? child.index : child.key;
+        newKeys.splice(newKeys.indexOf(keyOrIndex), 1); // Remove from newKeys array, it exists already
+        const newValue = updates[keyOrIndex];
+
+        // Get current value
+        if (child.address) {
+
+            if (newValue instanceof InternalNodeReference) {
+                // This update originates from a child node update, its record location changed
+                // so we only have to update the reference to the new location
+
+                isInternalUpdate = true;
+                const oldAddress = child.address; //child.storedAddress || child.address;
+                const currentValue = new InternalNodeReference(child.type, oldAddress);
+                changes.add(keyOrIndex, currentValue, newValue);
+                return true; // Proceed with next (there is no next, right? - this update must has have been triggered by child node that moved, the parent node only needs to update the referennce to the child node)
+            }
+
+            // Child is stored in own record, and it is updated or deleted so we need to get
+            // its allocation so we can release it when updating is done
+            const promise = storage.nodeLocker.lock(child.address.path, lock.tid, false, `_mergeNode: read child "/${child.address.path}"`)
+            .then(childLock => {
+                const childReader = new NodeReader(storage, child.address, childLock, false);
+                return childReader.getAllocation(true)
+                .then(allocation => {
+                    childLock.release();
+                    discardAllocation.ranges.push(...allocation.ranges);
+                    const currentChildValue = new InternalNodeReference(child.type, child.address);
+                    changes.add(keyOrIndex, currentChildValue, newValue);
+                });
+            });
+            childValuePromises.push(promise);
+        }
+        else {
+            changes.add(keyOrIndex, child.value, newValue);
+        }
+    })
+    
+    let results = await Promise.all(childValuePromises);            
+
+    // Check which keys we haven't seen (were not in the current node), these will be added
+    newKeys.forEach(key => {
+        const newValue = updates[key];
+        if (newValue !== null) {
+            changes.add(key, null, newValue);
+        }
     });
+
+    if (changes.all.length === 0) {
+        storage.debug.log(`No effective changes to update node "/${nodeInfo.path}" with`.colorize(ColorStyle.yellow));
+        return done(nodeReader.recordInfo);
+    }
+
+    storage.debug.log(`Node "/${nodeInfo.path}" being updated:${isInternalUpdate ? ' (internal)' : ''} adding ${changes.inserts.length} keys (${changes.inserts.map(ch => `"${ch.keyOrIndex}"`).join(',')}), updating ${changes.updates.length} keys (${changes.updates.map(ch => `"${ch.keyOrIndex}"`).join(',')}), removing ${changes.deletes.length} keys (${changes.deletes.map(ch => `"${ch.keyOrIndex}"`).join(',')})`.colorize(ColorStyle.cyan));
+    if (!isInternalUpdate) {
+        // Update cache (remove entries or mark them as deleted)
+        const pathInfo = PathInfo.get(nodeInfo.path);
+        const invalidatePaths = changes.all
+            .filter(ch => !(ch.newValue instanceof InternalNodeReference))
+            .map(ch => {
+                const childPath = pathInfo.childPath(ch.keyOrIndex);
+                return { 
+                    path: childPath, 
+                    pathInfo: PathInfo.get(childPath), 
+                    action: ch.changeType === NodeChange.CHANGE_TYPE.DELETE ? 'delete' : 'invalidate' 
+                };
+            });
+        storage.invalidateCache(false, nodeInfo.path, false, 'mergeNode');
+        invalidatePaths.forEach(item => {
+            if (item.action === 'invalidate') { storage.invalidateCache(false, item.path, true, 'mergeNode'); }
+            else { storage.nodeCache.delete(item.path); }
+        });
+    }
+
+    // What we need to do now is make changes to the actual record data. 
+    // The record is either a binary B+Tree (larger records), 
+    // or a list of key/value pairs (smaller records).
+    // let updatePromise;
+    let newRecordInfo;
+    if (nodeReader.recordInfo.hasKeyIndex) {
+
+        // Try to have the binary B+Tree updated. If there is not enough free space for this
+        // (eg, if a leaf to add to is full), we have to rebuild the whole tree and write new records
+
+        const childPromises = [];
+        changes.all.forEach(change => {
+            const childPath = PathInfo.getChildPath(nodeInfo.path, change.keyOrIndex)
+            if (change.oldValue !== null) {
+                let kvp = _serializeValue(storage, childPath, change.keyOrIndex, change.oldValue, null);
+                console.assert(kvp instanceof SerializedKeyValue, `return value must be of type SerializedKeyValue, it cannot be a Promise!`);
+                let bytes = _getValueBytes(kvp);
+                change.oldValue = bytes;
+            }
+            if (change.newValue !== null) {
+                let s = _serializeValue(storage, childPath, change.keyOrIndex, change.newValue, lock.tid);
+                let convert = (kvp) => {
+                    let bytes = _getValueBytes(kvp);
+                    change.newValue = bytes;
+                }
+                if (s instanceof Promise) {
+                    s = s.then(convert);
+                    childPromises.push(s);
+                }
+                else {
+                    convert(s);
+                }
+            }
+        });
+
+        let operations = [];
+        let tree = nodeReader.getChildTree();
+        let results = await Promise.all(childPromises);
+        
+        changes.deletes.forEach(change => {
+            const op = BinaryBPlusTree.TransactionOperation.remove(change.keyOrIndex, change.oldValue);
+            operations.push(op);
+        });
+        changes.updates.forEach(change => {
+            const oldEntryValue = new BinaryBPlusTree.EntryValue(change.oldValue);
+            const newEntryValue = new BinaryBPlusTree.EntryValue(change.newValue);
+            const op = BinaryBPlusTree.TransactionOperation.update(change.keyOrIndex, newEntryValue, oldEntryValue);
+            operations.push(op);
+        });
+        changes.inserts.forEach(change => {
+            const op = BinaryBPlusTree.TransactionOperation.add(change.keyOrIndex, change.newValue);
+            operations.push(op);
+        });
+
+        // Changed behaviour: 
+        // previously, if 1 operation failed, the tree was rebuilt. If any operation thereafter failed, it stopped processing
+        // now, processOperations() will be called after each rebuild, so all operations will be processed
+        const debugOpCounts = [];
+        const processOperations = async (retry = 0, prevRecordInfo = nodeReader.recordInfo) => {
+            if (retry > 1 && operations.length === debugOpCounts[debugOpCounts.length-1]) {
+                // Number of pending operations did not decrease after rebuild?!
+                debugger;
+                throw new Error(`DEV: Tree rebuild did not fix ${operations.length} pending operation(s) failing to execute. Debug this!`);
+            }
+            debugOpCounts.push(operations.length);
+            try {
+                await tree.transaction(operations);
+                storage.debug.log(`Updated tree for node "/${nodeInfo.path}"`.colorize(ColorStyle.green)); 
+                return prevRecordInfo;
+            }
+            catch (err) {
+                storage.debug.log(`Could not update tree for "/${nodeInfo.path}"${retry > 0 ? ` (retry ${retry})` : ''}: ${err.message}`.colorize(ColorStyle.yellow), err.codes);
+                // Failed to update the binary data, we need to recreate the whole tree
+
+                // NEW: Rebuild tree to a temp file
+                const tempFilepath = `${storage.settings.path}/${storage.name}.acebase/tree-${ID.generate()}.tmp`;
+                let bytesWritten = 0;
+                const fd = await pfs.open(tempFilepath, pfs.flags.readAndWriteAndCreate)
+                const writer = BinaryWriter.forFunction((data, index) => {
+                    return pfs.write(fd, data, 0, data.length, index)
+                    .then(() => {
+                        bytesWritten += data.length;
+                    });
+                });
+                await tree.rebuild(writer);
+
+                // Now write the record with data read from the temp file
+                let readOffset = 0;
+                const reader = async length => {
+                    const buffer = new Uint8Array(length);
+                    await pfs.read(fd, buffer, 0, buffer.length, readOffset)
+                    readOffset += length;
+                    return buffer;
+                };
+                const recordInfo = await _write(storage, nodeInfo.path, nodeReader.recordInfo.valueType, bytesWritten, true, reader, nodeReader.recordInfo)
+                // Close and remove the tmp file, don't wait for this
+                pfs.close(fd)
+                .then(() => pfs.rm(tempFilepath))
+                .catch(err => {
+                    // Error removing the file?
+                    storage.debug.error(`Can't remove temp rebuild file ${tempFilepath}: `, err);
+                });
+
+                if (retry >= 1 && prevRecordInfo !== recordInfo) {
+                    // If this is a 2nd+ call to processOperations, we have to release the previous allocation here
+                    discardAllocation.ranges.push(...prevRecordInfo.allocation.ranges);
+                }
+                const newNodeReader = new NodeReader(storage, recordInfo.address, lock, false);
+                const info = await newNodeReader.readHeader();
+                tree = new BinaryBPlusTree(
+                    newNodeReader._treeDataReader.bind(newNodeReader), 
+                    1024 * 100, // 100KB reads/writes
+                    newNodeReader._treeDataWriter.bind(newNodeReader),
+                    'record@' + newNodeReader.recordInfo.address.toString()
+                );
+                // Retry remaining operations
+                return processOperations(retry+1, recordInfo);
+            }
+        }
+        newRecordInfo = await processOperations();
+    }
+    else {
+        // This is a small record. In the future, it might be nice to make changes 
+        // in the record itself, but let's just rewrite it for now.
+
+        // TODO: Do not deallocate here, pass exising allocation to _writeNode, so it can be reused
+        // discardAllocation.ranges.push(...nodeReader.recordInfo.allocation.ranges);
+        let mergedValue = isArray ? [] : {};
+
+        await nodeReader.getChildStream()
+        .next(child => {
+            let keyOrIndex = isArray ? child.index : child.key;
+            if (child.address) { //(child.storedAddress || child.address) {
+                //mergedValue[keyOrIndex] = new InternalNodeReference(child.type, child.storedAddress || child.address);
+                mergedValue[keyOrIndex] = new InternalNodeReference(child.type, child.address);
+            }
+            else {
+                mergedValue[keyOrIndex] = child.value;
+            }
+        });
+
+        changes.deletes.forEach(change => {
+            delete mergedValue[change.keyOrIndex];
+        });
+        changes.updates.forEach(change => {
+            mergedValue[change.keyOrIndex] = change.newValue;
+        });
+        changes.inserts.forEach(change => {
+            mergedValue[change.keyOrIndex] = change.newValue;
+        });
+
+        if (isArray) {
+            const isExhaustive = mergedValue.filter(val => typeof val !== 'undefined').length === mergedValue.length;
+            if (!isExhaustive) {
+                throw new Error(`Elements cannot be inserted beyond, or removed before the end of an array. Rewrite the whole array at path "${nodeInfo.path}" or change your schema to use an object collection instead`);
+            }
+        }
+        newRecordInfo = await _writeNode(storage, nodeInfo.path, mergedValue, lock, nodeReader.recordInfo);
+    }
+
+    // const newRecordInfo = await updatePromise;
+    return done(newRecordInfo);
 }
+
 
 /**
  * 
@@ -2888,30 +2898,23 @@ function _mergeNode(storage, nodeInfo, updates, lock) {
  * @param {NodeLock} lock
  * @returns {Promise<RecordInfo>}
  */
-function _createNode(storage, nodeInfo, newValue, lock, invalidateCache = true) {
+async function _createNode(storage, nodeInfo, newValue, lock, invalidateCache = true) {
     storage.debug.log(`Node "/${nodeInfo.path}" is being ${nodeInfo.exists ? 'overwritten' : 'created'}`.colorize(ColorStyle.cyan));
 
     /** @type {NodeAllocation} */
     let currentAllocation = null;
-
-    let getCurrentAllocation = Promise.resolve(null);
     if (nodeInfo.exists && nodeInfo.address) {
         // Current value occupies 1 or more records we can probably reuse. 
         // For now, we'll allocate new records though, then free the old allocation
         const nodeReader = new NodeReader(storage, nodeInfo.address, lock, false); //Node.getReader(storage, nodeInfo.address, lock);
-        getCurrentAllocation = nodeReader.getAllocation(true);
+        currentAllocation = await nodeReader.getAllocation(true);
     }
 
-    return getCurrentAllocation.then(allocation => {
-        currentAllocation = allocation;
-        if (invalidateCache) {
-            storage.nodeCache.invalidate(nodeInfo.path, true, 'createNode'); // remove cache
-        }
-        return _writeNode(storage, nodeInfo.path, newValue, lock); 
-    })
-    .then(recordInfo => {
-        return { recordMoved: true, recordInfo, deallocate: currentAllocation };
-    });
+    if (invalidateCache) {
+        storage.invalidateCache(false, nodeInfo.path, nodeInfo.exists, 'createNode'); // remove cache
+    }
+    const recordInfo = await _writeNode(storage, nodeInfo.path, newValue, lock); 
+    return { recordMoved: true, recordInfo, deallocate: currentAllocation };
 }
 
 /**
@@ -2922,17 +2925,11 @@ function _createNode(storage, nodeInfo, newValue, lock, invalidateCache = true) 
  * @param {string} parentTid 
  * @returns {Promise<RecordInfo>}
  */
-function _lockAndWriteNode(storage, path, value, parentTid) {
-    let lock;
-    return storage.nodeLocker.lock(path, parentTid, true, `_lockAndWrite "${path}"`)
-    .then(l => {
-        lock = l;
-        return _writeNode(storage, path, value, lock);
-    })
-    .then(recordInfo => {
-        lock.release();
-        return recordInfo;
-    });
+async function _lockAndWriteNode(storage, path, value, parentTid) {
+    const lock = await storage.nodeLocker.lock(path, parentTid, true, `_lockAndWrite "${path}"`)
+    const recordInfo = await _writeNode(storage, path, value, lock);
+    lock.release();
+    return recordInfo;
 }
 
 /**
@@ -2943,7 +2940,7 @@ function _lockAndWriteNode(storage, path, value, parentTid) {
  * @param {NodeLock} lock
  * @returns {Promise<RecordInfo>}
  */
-function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
+async function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
     if (lock.path !== path || !lock.forWriting) {
         throw new Error(`Cannot write to node "/${path}" because lock is on the wrong path or not for writing`);
     }
@@ -3034,76 +3031,72 @@ function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
         });
     }
 
-    return Promise.all(childPromises).then(() => {
-        // Append all serialized data into 1 binary array
+    let results = await Promise.all(childPromises);
+    
+    // Append all serialized data into 1 binary array
 
-        const minKeysPerNode = 25;
-        const minKeysForTreeCreation = 100;
-        if (true && serialized.length > minKeysForTreeCreation) {
-            // Create a B+tree
-            keyTree = true;
-            let fillFactor = 
-                isArray || serialized.every(kvp => typeof kvp.key === 'string' && /^[0-9]+$/.test(kvp.key))
-                    ? BINARY_TREE_FILL_FACTOR_50
-                    : BINARY_TREE_FILL_FACTOR_95;
+    /** @type {{ keyTree: boolean, data: Uint8Array }} */
+    let result;
+    const minKeysPerNode = 25;
+    const minKeysForTreeCreation = 100;
+    if (true && serialized.length > minKeysForTreeCreation) {
+        // Create a B+tree
+        keyTree = true;
+        let fillFactor = 
+            isArray || serialized.every(kvp => typeof kvp.key === 'string' && /^[0-9]+$/.test(kvp.key))
+                ? BINARY_TREE_FILL_FACTOR_50
+                : BINARY_TREE_FILL_FACTOR_95;
 
-            const builder = new BPlusTreeBuilder(true, fillFactor);
-            serialized.forEach(kvp => {
-                let binaryValue = _getValueBytes(kvp);
-                builder.add(isArray ? kvp.index : kvp.key, binaryValue);
-            });
+        const builder = new BPlusTreeBuilder(true, fillFactor);
+        serialized.forEach(kvp => {
+            let binaryValue = _getValueBytes(kvp);
+            builder.add(isArray ? kvp.index : kvp.key, binaryValue);
+        });
 
-            // TODO: switch from array to Uint8ArrayBuilder:
-            // Investigate how often this happens - 
-            // does this happen only once when the node becomes big enough for tree creation?
+        // TODO: switch from array to Uint8ArrayBuilder:
+        // Investigate how often this happens - 
+        // does this happen only once when the node becomes big enough for tree creation?
 
+        let bytes = [];
+        await builder.create().toBinary(true, BinaryWriter.forArray(bytes));
+        // // Test tree
+        // await BinaryBPlusTree.test(bytes)
+        result = { keyTree: true, data: Uint8Array.from(bytes) };
+    }
+    else {
+        const data = serialized.reduce((binary, kvp) => {
+            // For binary key/value layout, see _write function
             let bytes = [];
-            return builder.create().toBinary(true, BinaryWriter.forArray(bytes))
-            .then(() => {
-                // // Test tree
-                // return BinaryBPlusTree.test(bytes)
-                // .then(() => {
-                return { keyTree: true, data: Uint8Array.from(bytes) };
-                // })
-            });
-        }
-        else {
-            const data = serialized.reduce((binary, kvp) => {
-                // For binary key/value layout, see _write function
-                let bytes = [];
-                if (!isArray) {
-                    if (kvp.key.length > 128) { throw `Key ${kvp.key} is too long to store. Max length=128`; }
-                    let keyIndex = storage.KIT.getOrAdd(kvp.key); // Gets an caching index for this key
+            if (!isArray) {
+                if (kvp.key.length > 128) { throw `Key ${kvp.key} is too long to store. Max length=128`; }
+                let keyIndex = storage.KIT.getOrAdd(kvp.key); // Gets KIT index for this key
 
-                    // key_info:
-                    if (keyIndex >= 0) {
-                        // Cached key name
-                        bytes[0] = 128;                       // key_indexed = 1
-                        bytes[0] |= (keyIndex >> 8) & 127;    // key_nr (first 7 bits)
-                        bytes[1] = keyIndex & 255;            // key_nr (last 8 bits)
-                    }
-                    else {
-                        // Inline key name
-                        bytes[0] = kvp.key.length - 1;        // key_length
-                        // key_name:
-                        for (let i = 0; i < kvp.key.length; i++) {
-                            let charCode = kvp.key.charCodeAt(i);
-                            if (charCode > 255) { throw `Invalid character in key ${kvp.key} at char ${i+1}`; }
-                            bytes.push(charCode);
-                        }
+                // key_info:
+                if (keyIndex >= 0) {
+                    // Cached key name
+                    bytes[0] = 128;                       // key_indexed = 1
+                    bytes[0] |= (keyIndex >> 8) & 127;    // key_nr (first 7 bits)
+                    bytes[1] = keyIndex & 255;            // key_nr (last 8 bits)
+                }
+                else {
+                    // Inline key name
+                    bytes[0] = kvp.key.length - 1;        // key_length
+                    // key_name:
+                    for (let i = 0; i < kvp.key.length; i++) {
+                        let charCode = kvp.key.charCodeAt(i);
+                        if (charCode > 255) { throw `Invalid character in key ${kvp.key} at char ${i+1}`; }
+                        bytes.push(charCode);
                     }
                 }
-                const binaryValue = _getValueBytes(kvp);
-                binaryValue.forEach(val => bytes.push(val));//bytes.push(...binaryValue);
-                return concatTypedArrays(binary, new Uint8Array(bytes));
-            }, new Uint8Array());
-            return { keyTree: false, data };
-        }
-    })
-    .then(result => {
-        // Now write the record
-        return write(isArray ? VALUE_TYPES.ARRAY : VALUE_TYPES.OBJECT, result.data, result.keyTree);
-    });
+            }
+            const binaryValue = _getValueBytes(kvp);
+            binaryValue.forEach(val => bytes.push(val));//bytes.push(...binaryValue);
+            return concatTypedArrays(binary, new Uint8Array(bytes));
+        }, new Uint8Array());
+        result = { keyTree: false, data };
+    }
+    // Now write the record
+    return write(isArray ? VALUE_TYPES.ARRAY : VALUE_TYPES.OBJECT, result.data, result.keyTree);
 }
 
 class SerializedKeyValue {
@@ -3139,6 +3132,7 @@ function _getValueBytes(kvp) {
     else if (kvp.type === VALUE_TYPES.STRING && kvp.binary && kvp.binary.length === 0) { tinyValue = 0; }
     else if (kvp.type === VALUE_TYPES.ARRAY && kvp.ref.length === 0) { tinyValue = 0; }
     else if (kvp.type === VALUE_TYPES.OBJECT && Object.keys(kvp.ref).length === 0) { tinyValue = 0; }
+    else if (kvp.type === VALUE_TYPES.BINARY && kvp.ref.byteLength === 0) { tinyValue = 0; }
     if (tinyValue >= 0) {
         // Tiny value
         bytes[index] |= tinyValue;
@@ -3164,9 +3158,10 @@ function _getValueBytes(kvp) {
     else {
         // Inline value
         let data = kvp.bytes || kvp.binary;
+        let length = 'byteLength' in data ? data.byteLength : data.length;
         index = bytes.length;
         bytes[index] = 128; // 10000000 --> inline value
-        bytes[index] |= data.length - 1; // inline_length
+        bytes[index] |= length - 1; // inline_length
         if (data instanceof ArrayBuffer) {
             data = new Uint8Array(data);
         }
@@ -3307,7 +3302,7 @@ function _serializeValue (storage, path, keyOrIndex, val, parentTid) {
  * @param {RecordInfo} currentRecordInfo
  * @returns {Promise<RecordInfo>}
  */
-function _write(storage, path, type, length, hasKeyTree, reader, currentRecordInfo = undefined) {
+async function _write(storage, path, type, length, hasKeyTree, reader, currentRecordInfo = undefined) {
     // Record layout:
     // record           := record_header, record_data
     // record_header    := record_info, value_type, chunk_table, last_record_len
@@ -3409,145 +3404,131 @@ function _write(storage, path, type, length, hasKeyTree, reader, currentRecordIn
     }
 
     // Request storage space for these records
-    let useExistingAllocation = currentRecordInfo && currentRecordInfo.allocation.totalAddresses === requiredRecords;
-    let allocationPromise = 
-        useExistingAllocation
-        ? Promise.resolve(currentRecordInfo.allocation.ranges)
-        : storage.FST.allocate(requiredRecords);
+    const useExistingAllocation = currentRecordInfo && currentRecordInfo.allocation.totalAddresses === requiredRecords;
+    const ranges = useExistingAllocation 
+        ? currentRecordInfo.allocation.ranges
+        : await storage.FST.allocate(requiredRecords);
 
-    return allocationPromise
-    .then(ranges => {
-        let allocation = new NodeAllocation(ranges);
-        !useExistingAllocation && storage.debug.verbose(`Allocated ${allocation.totalAddresses} addresses for node "/${path}": ${allocation}`.colorize(ColorStyle.grey));
+    let allocation = new NodeAllocation(ranges);
+    !useExistingAllocation && storage.debug.verbose(`Allocated ${allocation.totalAddresses} addresses for node "/${path}": ${allocation}`.colorize(ColorStyle.grey));
         
+    calculateStorageNeeds(allocation.ranges.length);
+    if (requiredRecords < allocation.totalAddresses) {
+        const addresses = allocation.addresses;
+        const deallocate = addresses.splice(requiredRecords);
+        storage.debug.verbose(`Requested ${deallocate.length} too many addresses to store node "/${path}", releasing them`.colorize(ColorStyle.grey));
+        storage.FST.release(NodeAllocation.fromAdresses(deallocate).ranges);
+        allocation = NodeAllocation.fromAdresses(addresses);
         calculateStorageNeeds(allocation.ranges.length);
-        if (requiredRecords < allocation.totalAddresses) {
-            const addresses = allocation.addresses;
-            const deallocate = addresses.splice(requiredRecords);
-            storage.debug.verbose(`Requested ${deallocate.length} too many addresses to store node "/${path}", releasing them`.colorize(ColorStyle.grey));
-            storage.FST.release(NodeAllocation.fromAdresses(deallocate).ranges);
-            allocation = NodeAllocation.fromAdresses(addresses);
-            calculateStorageNeeds(allocation.ranges.length);
-        }
+    }
         
-        // Build the binary header data
-        let header = new Uint8Array(headerByteLength);
-        let headerView = new DataView(header.buffer, 0, header.length);
-        header[0] = type; // value_type
-        if (hasKeyTree) {
-            header[0] |= FLAG_KEY_TREE;
+    // Build the binary header data
+    let header = new Uint8Array(headerByteLength);
+    let headerView = new DataView(header.buffer, 0, header.length);
+    header[0] = type; // value_type
+    if (hasKeyTree) {
+        header[0] |= FLAG_KEY_TREE;
+    }
+
+    // Add chunk table
+    const chunkTable = allocation.toChunkTable();
+    let offset = 1;
+    chunkTable.ranges.forEach(range => {
+        headerView.setUint8(offset, range.type);
+        if (range.type === 0) {
+            return; // No additional CT data
         }
+        else if (range.type === 1) {
+            headerView.setUint16(offset + 1, range.length);
+            offset += 3;
+        }
+        else if (range.type === 2) {
+            headerView.setUint32(offset + 1, range.pageNr);
+            headerView.setUint16(offset + 5, range.recordNr);
+            headerView.setUint16(offset + 7, range.length);
+            offset += 9;
+        }
+        else {
+            throw "Unsupported range type";
+        }
+    });
+    headerView.setUint8(offset, 0);             // ct_type 0 (end of CT), 1 byte
+    offset++;
+    headerView.setUint16(offset, lastChunkSize);  // last_chunk_size, 2 bytes
+    offset += 2;
 
-        // Add chunk table
-        const chunkTable = allocation.toChunkTable();
-        let offset = 1;
-        chunkTable.ranges.forEach(range => {
-            headerView.setUint8(offset, range.type);
-            if (range.type === 0) {
-                return; // No additional CT data
-            }
-            else if (range.type === 1) {
-                headerView.setUint16(offset + 1, range.length);
-                offset += 3;
-            }
-            else if (range.type === 2) {
-                headerView.setUint32(offset + 1, range.pageNr);
-                headerView.setUint16(offset + 5, range.recordNr);
-                headerView.setUint16(offset + 7, range.length);
-                offset += 9;
-            }
-            else {
-                throw "Unsupported range type";
-            }
-        });
-        headerView.setUint8(offset, 0);             // ct_type 0 (end of CT), 1 byte
-        offset++;
-        headerView.setUint16(offset, lastChunkSize);  // last_chunk_size, 2 bytes
-        offset += 2;
-
-        let bytesRead = 0;
-        const readChunk = (length) => {
-            let headerBytes;
-            if (bytesRead < header.byteLength) {
-                headerBytes = header.slice(bytesRead, bytesRead + length);
-                bytesRead += headerBytes.byteLength;
-                length -= headerBytes.byteLength;
-                if (length === 0) { return Promise.resolve(headerBytes); }
-            }
-            return reader(length)
-            .then(dataBytes => {
-                bytesRead += dataBytes.byteLength;
-                if (dataBytes instanceof Array) {
-                    dataBytes = Uint8Array.from(dataBytes);
-                }
-                else if (!(dataBytes instanceof Uint8Array)) {
-                    throw new Error(`bytes must be Uint8Array or plain byte Array`);
-                }
-                if (headerBytes) {
-                    dataBytes = concatTypedArrays(headerBytes, dataBytes);
-                }
-                return dataBytes;
-            });
-        };
+    let bytesRead = 0;
+    const readChunk = async (length) => {
+        let headerBytes;
+        if (bytesRead < header.byteLength) {
+            headerBytes = header.slice(bytesRead, bytesRead + length);
+            bytesRead += headerBytes.byteLength;
+            length -= headerBytes.byteLength;
+            if (length === 0) { return headerBytes; }
+        }
+        let dataBytes = await reader(length);
+        bytesRead += dataBytes.byteLength;
+        if (dataBytes instanceof Array) {
+            dataBytes = Uint8Array.from(dataBytes);
+        }
+        else if (!(dataBytes instanceof Uint8Array)) {
+            throw new Error(`bytes must be Uint8Array or plain byte Array`);
+        }
+        if (headerBytes) {
+            dataBytes = concatTypedArrays(headerBytes, dataBytes);
+        }
+        return dataBytes;
+    };
     
+    try {
         // Create and write all chunks
-        const allWritten = chunkTable.ranges.reduce((promise, range, r) => {
+        const bytesWritten = await chunkTable.ranges.reduce(async (promise, range, r) => {
             const fileIndex = storage.getRecordFileIndex(range.pageNr, range.recordNr);
             if (isNaN(fileIndex)) {
                 throw new Error(`fileIndex is NaN!!`);
             }
             let bytesWritten = 0;
-            return promise
-            .then(totalBytes => {
-                bytesWritten = totalBytes;
-                return readChunk(range.length * bytesPerRecord);
-            })
-            .then(data => {
-                bytesWritten += data.byteLength;
-                return storage.writeData(fileIndex, data);
-            })
-            .then(() => bytesWritten);
+            const totalBytes = await promise;
+            bytesWritten = totalBytes;
+            const data = await readChunk(range.length * bytesPerRecord);
+            bytesWritten += data.byteLength;
+            await storage.writeData(fileIndex, data);
+            return bytesWritten;
         }, Promise.resolve(0));
 
-        return allWritten
-        .then(bytesWritten => {
-            const chunks = chunkTable.ranges.length;
-            const address = new NodeAddress(path, allocation.ranges[0].pageNr, allocation.ranges[0].recordNr);
-            const nodeInfo = new NodeInfo({ path, type, exists: true, address });
+        const chunks = chunkTable.ranges.length;
+        const address = new NodeAddress(path, allocation.ranges[0].pageNr, allocation.ranges[0].recordNr);
+        const nodeInfo = new NodeInfo({ path, type, exists: true, address });
 
-            storage.nodeCache.update(nodeInfo); // NodeCache.update(address, type);
-            storage.debug.log(`Node "/${address.path}" saved at address ${address.pageNr},${address.recordNr} - ${allocation.totalAddresses} addresses, ${bytesWritten} bytes written in ${chunks} chunk(s)`.colorize(ColorStyle.green));
-            // storage.logwrite({ address: address, allocation, chunks, bytesWritten });
+        storage.updateCache(false, nodeInfo, true); // hasMoved?
+        storage.debug.log(`Node "/${address.path}" saved at address ${address.pageNr},${address.recordNr} - ${allocation.totalAddresses} addresses, ${bytesWritten} bytes written in ${chunks} chunk(s)`.colorize(ColorStyle.green));
+        // storage.logwrite({ address: address, allocation, chunks, bytesWritten });
 
-            let recordInfo;
-            if (useExistingAllocation) {
-                // By using the exising info, caller knows it should not release the allocation
-                recordInfo = currentRecordInfo;
-                recordInfo.allocation = allocation; // Necessary?
-                recordInfo.hasKeyIndex = hasKeyTree;
-                recordInfo.headerLength = headerByteLength;
-                recordInfo.lastChunkSize = lastChunkSize;
-            }
-            else {
-                recordInfo = new RecordInfo(address.path, hasKeyTree, type, allocation, headerByteLength, lastChunkSize, bytesPerRecord);
-                recordInfo.fileIndex = storage.getRecordFileIndex(address.pageNr, address.recordNr);
-            }
-            recordInfo.timestamp = Date.now();
+        let recordInfo;
+        if (useExistingAllocation) {
+            // By using the exising info, caller knows it should not release the allocation
+            recordInfo = currentRecordInfo;
+            recordInfo.allocation = allocation; // Necessary?
+            recordInfo.hasKeyIndex = hasKeyTree;
+            recordInfo.headerLength = headerByteLength;
+            recordInfo.lastChunkSize = lastChunkSize;
+        }
+        else {
+            recordInfo = new RecordInfo(address.path, hasKeyTree, type, allocation, headerByteLength, lastChunkSize, bytesPerRecord);
+            recordInfo.fileIndex = storage.getRecordFileIndex(address.pageNr, address.recordNr);
+        }
+        recordInfo.timestamp = Date.now();
 
-            if (address.path === "") {
-                return storage.rootRecord.update(address) // Wait for this, the address update has to be written to file
-                .then(() => recordInfo);
-            }
-            else {
-                return recordInfo;
-            }
-        })
-        .catch(reason => {
-            // If any write failed, what do we do?
-            storage.debug.error(`Failed to write node "/${path}": ${reason}`);
-            throw reason;
-        });
-    });
+        if (address.path === "") {
+            await storage.rootRecord.update(address); // Wait for this, the address update has to be written to file
+        }
+        return recordInfo;
+    }
+    catch (reason) {
+        // If any write failed, what do we do?
+        storage.debug.error(`Failed to write node "/${path}": ${reason}`);
+        throw reason;
+    }
 }
 
 class InternalNodeReference {
