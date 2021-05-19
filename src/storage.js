@@ -4,6 +4,8 @@ const { VALUE_TYPES, getNodeValueType } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
 const { cloneObject, compareValues, getChildValues, encodeString, defer } = Utils;
 const { SchemaDefinition } = require('./schema');
+const { IPCPeer } = require('./ipc');
+const { pfs } = require('./promise-fs');
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
@@ -17,111 +19,6 @@ class SchemaValidationError extends Error {
     }
 }
 
-class ClusterSettings {
-
-    /**
-     * 
-     * @param {object} settings 
-     * @param {boolean} [settings.enabled=false]
-     * @param {boolean} [settings.isMaster=false]
-     * @param {NodeJS.Process} [settings.master=null]
-     * @param {NodeJS.Process[]} [settings.workers=null]
-     */
-    constructor(settings) {
-        settings = settings || {};
-        this.enabled = settings.enabled === true;
-        this.isMaster = settings.isMaster === true;
-        this.master = this.isMaster ? null : settings.master;
-        this.workers = this.isMaster ? settings.workers : null;
-    }
-}
-
-class ClusterManager extends SimpleEventEmitter {
-    /**
-     * @param {ClusterSettings} settings 
-     */
-    constructor(settings) {
-        super();
-        this.settings = new ClusterSettings(settings);
-
-        if (!settings.enabled) {
-            // do nothing
-        }
-        else if (settings.isMaster) {
-            // This is the master process, we have to respond to requests
-            settings.workers.forEach(worker => {
-                // Setup communication channel with worker
-                worker.on("message", data => {
-                    // Received message from a worker process
-
-                    const { id, request } = data;
-                    if (typeof request === 'object' && request.type === "ping") {
-                        // Reply pong
-                        worker.send({ id, result: "pong" });
-                    }
-                    else {
-                        // Storage subclass handles this by listening to worker requests:
-                        // this.cluster.on('worker_request', ({ request, reply, broadcast }) => {
-                        //    if (request.type === 'some_request') { (...) reply('ok'); }
-                        // }) 
-                        const reply = result => { 
-                            // Sends reply to worker
-                            worker.send({ id, result }); 
-                        };
-                        const broadcast = msg => {
-                            // Broadcasts message to all other workers
-                            console.assert(!('id' in msg), 'message to broadcast cannot have id property, it will confuse workers because they think it is a reply to their request')
-                            settings.workers.forEach(otherWorker => {
-                                if (otherWorker !== worker) {
-                                    otherWorker.send(msg);
-                                }
-                            });
-                        }
-                        this.emit('worker_request', { request, reply, broadcast });
-                    }
-                });
-            });
-            this.request = msg => {
-                throw new Error(`request can only be called by worker processes!`);
-            }
-        }
-        else {
-            // This is a worker process, setup request/result communication
-            const master = settings.master;
-            const requests = { };
-            this.request = (msg) => {
-                return new Promise((resolve, reject) => {
-                    const id = ID.generate();
-                    requests[id] = resolve;
-                    master.send({ id, request: msg });
-                });
-            };
-            master.on("message", data => {
-                if (typeof data.id !== 'undefined') {
-                    // Reply to a request sent to us
-                    let resolve = requests[data.id];
-                    delete requests[data.id];
-                    resolve(data.result); // if this throw an error, a sent master notification has id property, which it should not have!
-                }
-                else {
-                    this.emit('master_notification', data);
-                }
-            });
-            // Test communication:
-            this.request({ type: "ping" }).then(result => {
-                console.log(`PING master process result: ${result}`);
-            });
-        }
-    }
-
-    get isMaster() {
-        return this.settings.isMaster;
-    }
-    get enabled() {
-        return this.settings.enabled;
-    }
-}
-
 class StorageSettings {
 
     /**
@@ -129,7 +26,6 @@ class StorageSettings {
      * @param {object} settings 
      * @param {number} [settings.maxInlineValueSize=50] in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
      * @param {boolean} [settings.removeVoidProperties=false] Instead of throwing errors on undefined values, remove the properties automatically. Default is false
-     * @param {ClusterSettings} [settings.cluster] cluster settings
      * @param {string} [settings.path="."] Target path to store database files in, default is '.'
      * @param {string} [settings.info="realtime database"] optional info to be written to the console output underneith the logo
      */
@@ -137,7 +33,6 @@ class StorageSettings {
         settings = settings || {};
         this.maxInlineValueSize = typeof settings.maxInlineValueSize === 'number' ? settings.maxInlineValueSize : 50;
         this.removeVoidProperties = settings.removeVoidProperties === true;
-        this.cluster = new ClusterSettings(settings.cluster); // When running in a cluster, managing node locking must be done by the cluster master
         /** @type {string} */
         this.path = settings.path || '.';
         if (this.path.endsWith('/')) { this.path = this.path.slice(0, -1); }
@@ -148,6 +43,10 @@ class StorageSettings {
 }
 
 class Storage extends SimpleEventEmitter {
+
+    createTid() {
+        return ++this._lastTid;
+    }
 
     /**
      * Base class for database storage, must be extended by back-end specific methods.
@@ -161,11 +60,25 @@ class Storage extends SimpleEventEmitter {
         this.settings = settings;
         this.debug = new DebugLogger(settings.logLevel, `[${name}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
-        // Setup node locking
-        this.nodeLocker = new NodeLocker();
+        // // Setup node locking
+        // this.nodeLocker = new NodeLocker();
 
-        // Setup cluster functionality
-        this.cluster = new ClusterManager(settings.cluster);
+        // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
+        this.ipc = new IPCPeer(this);
+        this.ipc.on('exit', code => {
+            // We can perform any custom cleanup here:
+            // - storage-acebase should close the db file
+            // - storage-mssql / sqlite should close connection
+            if (this.indexes.supported) {
+                this.indexes.close();
+            }
+        })
+        this.nodeLocker = {
+            lock: (path, tid, write, comment) => {
+                return this.ipc.lock({ path, tid, write, comment });
+            }
+        }; 
+        this._lastTid = 0;
 
         // Setup indexing functionality
         const { DataIndex, ArrayIndex, FullTextIndex, GeoIndex } = require('./data-index'); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
@@ -185,7 +98,6 @@ class Storage extends SimpleEventEmitter {
              * TODO: Implement storage specific indexes (eg in SQLite, MySQL, MSSQL, in-memory)
              */
             get supported() {
-                const pfs = require('./promise-fs');
                 return pfs && pfs.hasFileSystem;
             },
 
@@ -200,7 +112,17 @@ class Storage extends SimpleEventEmitter {
              * @param {object} [options.config] additional index-specific configuration settings 
              * @returns {Promise<DataIndex>}
              */
-            create(path, key, options = { rebuild: false, type: undefined, include: undefined }) { //, refresh = false) {
+            async create(path, key, options = { rebuild: false, type: undefined, include: undefined }) { //, refresh = false) {
+                if (!storage.ipc.isMaster) {
+                    // Pass create request to master
+                    const result = await storage.ipc.request({ type: 'index.create', path, key, options });
+                    if (result.ok) {
+                        const index = await DataIndex.readFromFile(storage, result.fileName);
+                        _indexes.push(index);
+                        return;
+                    }
+                    throw new Error(result.reason);
+                }
                 path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
                 const rebuild = options && options.rebuild === true;
                 const indexType = (options && options.type) || 'normal';
@@ -213,7 +135,7 @@ class Storage extends SimpleEventEmitter {
                 );
                 if (existingIndex && rebuild !== true) {
                     storage.debug.log(`Index on "/${path}/*/${key}" already exists`.colorize(ColorStyle.inverse));
-                    return Promise.resolve(existingIndex);
+                    return existingIndex;
                 }
                 const index = existingIndex || (() => {
                     switch (indexType) {
@@ -226,10 +148,7 @@ class Storage extends SimpleEventEmitter {
                 if (!existingIndex) {
                     _indexes.push(index);
                 }
-                return index.build()
-                .then(() => {
-                    return index;
-                })
+                await index.build()
                 .catch(err => {
                     storage.debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.colorize(ColorStyle.red));
                     if (!existingIndex) {
@@ -238,6 +157,8 @@ class Storage extends SimpleEventEmitter {
                     }
                     throw err;
                 });
+                storage.ipc.sendNotification({ type: 'index.created', fileName: index.fileName, path, key, options });
+                return index;
             },
 
             /**
@@ -304,8 +225,7 @@ class Storage extends SimpleEventEmitter {
              */
             load() {
                 _indexes.splice(0);
-                const pfs = require('./promise-fs');
-                if (!pfs || !pfs.readdir) { 
+                if (!pfs.hasFileSystem) { 
                     // If pfs (fs) is not available, don't try using it
                     return Promise.resolve();
                 }
@@ -314,13 +234,7 @@ class Storage extends SimpleEventEmitter {
                     const promises = [];
                     files.forEach(fileName => {
                         if (fileName.endsWith('.idx')) {
-                            const p = DataIndex.readFromFile(storage, fileName)
-                            .then(index => {
-                                _indexes.push(index);
-                            })
-                            .catch(err => {
-                                storage.debug.error(err);
-                            });
+                            const p = this.add(fileName);
                             promises.push(p);
                         }
                     });
@@ -333,6 +247,34 @@ class Storage extends SimpleEventEmitter {
                         storage.debug.error(err);
                     }
                 });
+            },
+
+            async add(fileName) {
+                try {
+                    const index = await DataIndex.readFromFile(storage, fileName)
+                    _indexes.push(index);
+                }
+                catch(err) {
+                    storage.debug.error(err);
+                }
+            },
+
+            async delete(index) {
+                await index.delete();
+                storage.ipc.sendNotification({ type: 'index.deleted', fileName: index.fileName, path: index.path, keys: index.key });
+            },
+
+            async remove(fileName) {
+                const index = _indexes.find(index => index.fileName === fileName);
+                if (!index) { throw new Error(`Index ${fileName} not found`); }
+                _indexes.splice(_indexes.indexOf(index), 1);
+            },
+
+            close() {
+                // TODO:
+                // this.list().forEach(index => {
+                //     index.close();
+                // });
             }
         };
 
@@ -348,7 +290,7 @@ class Storage extends SimpleEventEmitter {
              * @param {string} type - Type of the subscription
              * @param {(err: Error, path: string, newValue: any, oldValue: any) => void} callback - Subscription callback function
              */
-            add(path, type, callback) {
+            add: (path, type, callback) => {
                 if (_supportedEvents.indexOf(type) < 0) {
                     throw new TypeError(`Invalid event type "${type}"`);
                 }
@@ -358,6 +300,7 @@ class Storage extends SimpleEventEmitter {
                 //     storage.debug.warn(`Identical subscription of type ${type} on path "${path}" being added`);
                 // }
                 pathSubs.push({ created: Date.now(), type, callback });
+                this.emit('subscribe', { path, event: type, callback }); // Enables IPC peers to be notified
             },
 
             /**
@@ -366,7 +309,7 @@ class Storage extends SimpleEventEmitter {
              * @param {string} type - Type of subscription(s) to remove (optional: if omitted all types will be removed)
              * @param {Function} callback - Callback to remove (optional: if omitted all of the same type will be removed)
              */
-            remove(path, type = undefined, callback = undefined) {
+            remove: (path, type = undefined, callback = undefined) => {
                 let pathSubs = _subs[path];
                 if (!pathSubs) { return; }
                 while(true) {
@@ -376,6 +319,7 @@ class Storage extends SimpleEventEmitter {
                     if (i < 0) { break; }
                     pathSubs.splice(i, 1);
                 }
+                this.emit('unsubscribe', { path, event: type, callback }); // Enables IPC peers to be notified 
             },
 
             /**
@@ -837,7 +781,9 @@ class Storage extends SimpleEventEmitter {
                 if (trailKeys.length === 0) {
                     console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
                     // Index is on updated path
-                    const p = index.handleRecordUpdate(topEventPath, oldValue, newValue);
+                    const p = this.ipc.isMaster
+                        ? index.handleRecordUpdate(topEventPath, oldValue, newValue)
+                        : this.ipc.sendRequest({ type: 'index.update', path: topEventPath, oldValue, newValue });
                     indexUpdates.push(p);
                     return; // next index
                 }
@@ -888,7 +834,9 @@ class Storage extends SimpleEventEmitter {
                 };
                 let results = getAllIndexUpdates(topEventPath, oldValue, newValue);
                 results.forEach(result => {
-                    const p = index.handleRecordUpdate(result.path, result.oldValue, result.newValue);
+                    const p = this.ipc.isMaster
+                        ? index.handleRecordUpdate(result.path, result.oldValue, result.newValue)
+                        : this.ipc.sendRequest({ type: 'index.update', path: result.path, oldValue: result.oldValue, newValue: result.newValue });
                     indexUpdates.push(p);
                 });
             });
@@ -1128,11 +1076,9 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @returns {Promise<any>}
      */
-    getNodeValue(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
-        return this.getNode(path, options)
-        .then(node => {
-            return node.value;
-        });
+    async getNodeValue(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
+        const node = await this.getNode(path, options);
+        return node.value;
     }
 
     /**
@@ -1217,7 +1163,7 @@ class Storage extends SimpleEventEmitter {
     transactNode(path, callback, options = { no_lock: false, suppress_events: false, context: null }) {
         let checkRevision;
 
-        const tid = this.nodeLocker.createTid(); // ID.generate();
+        const tid = this.createTid(); // ID.generate();
         const lockPromise = options && options.no_lock === true 
             ? Promise.resolve({ tid, release() {} }) // Fake lock, we'll use revision checking & retrying instead
             : this.nodeLocker.lock(path, tid, true, 'transactNode');
@@ -1470,7 +1416,7 @@ class Storage extends SimpleEventEmitter {
                         proceed = (contains && f.op === "contains") || (!contains && f.op === "!contains");
                     }
                     else {
-                        const ret = this.test(child.value, f.op, f.compare);
+                        let ret = this.test(child.value, f.op, f.compare);
                         if (ret instanceof Promise) {
                             promises.push(ret);
                             ret = true;
