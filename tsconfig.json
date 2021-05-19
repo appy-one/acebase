@@ -1,0 +1,13 @@
+{
+    "compilerOptions": {
+        "target": "ES2017",
+        "lib": ["ES2017", "DOM"],
+        "module": "CommonJS",
+        "listEmittedFiles": true,
+        "outDir": "src",
+        "sourceMap": true
+    },
+    "exclude": [
+        "node_modules"
+    ]
+}
