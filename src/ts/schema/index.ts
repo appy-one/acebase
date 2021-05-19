@@ -292,5 +292,3 @@ export class SchemaDefinition {
         return checkType(path, this.type, value, partial);
     }
 }
-
-//tsc src/index.ts --target es6 --lib es2017 --module commonjs --outDir . -d --sourceMap

@@ -272,5 +272,4 @@ class SchemaDefinition {
     }
 }
 exports.SchemaDefinition = SchemaDefinition;
-//tsc src/index.ts --target es6 --lib es2017 --module commonjs --outDir . -d --sourceMap
 //# sourceMappingURL=index.js.map
