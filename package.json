@@ -1,14 +1,15 @@
 {
   "name": "acebase",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "AceBase realtime database. Open source firebase alternative for nodejs and browser, with additional features: indexes, geo, fulltext, queries, custom storage, offline usage, synchronization, live data proxies and more",
   "main": "./src/index.js",
   "browser": {
     "./src/index.js": "./src/browser.js",
+    "./src/ipc/index.js": "./src/ipc/browser.js",
+    "./src/promise-fs/index.js": "./src/promise-fs/browser.js",
     "./src/storage-acebase.js": "./src/not-supported.js",
     "./src/storage-mssql.js": "./src/not-supported.js",
     "./src/storage-sqlite.js": "./src/not-supported.js",
-    "./src/promise-fs.js": "./src/not-supported.js",
     "./src/data-index.js": "./src/not-supported.js",
     "./src/btree.js": "./src/not-supported.js"
   },
@@ -36,5 +37,8 @@
   "dependencies": {
     "acebase-core": "^1.4.1",
     "unidecode": "^0.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "^14.14.37"
   }
 }
