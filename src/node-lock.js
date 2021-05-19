@@ -23,6 +23,10 @@ class NodeLocker {
          */
         this._locks = [];
         this._lastTid = 0;
+        /**
+         * When .quit() is called, will be set to the quit promise's resolve function
+         */
+        this._quit = undefined;
     }
 
     createTid() {
@@ -56,7 +60,41 @@ class NodeLocker {
         return { allow: !conflict, conflict };
     }
 
+    quit() {
+        return new Promise(resolve => {
+            if (this._locks.length === 0) { return resolve(); }
+            this._quit = resolve;
+        })
+    }
+
+    /**
+     * Safely reject a pending lock, catching any unhandled promise rejections (that should not happen in the first place, obviously)
+     * @param {NodeLock} lock 
+     */
+    _rejectLock(lock, err) {
+        this._locks.splice(this._locks.indexOf(lock), 1); // Remove from queue
+        clearTimeout(lock.timeout);
+        try {
+            lock.reject(err);
+        }
+        catch(err) {
+            console.error(`Unhandled promise rejection:`, err);
+        }
+    }
+
     _processLockQueue() {
+        if (this._quit) {
+            // Reject all pending locks
+            const quitError = new Error('Quitting');
+            this._locks
+                .filter(lock => lock.state === LOCK_STATE.PENDING)
+                .forEach(lock => this._rejectLock(lock, quitError));
+
+            // Resolve quit promise if queue is empty:
+            if (this._locks.length === 0) {
+                this._quit();
+            }
+        }
         const pending = this._locks
             .filter(lock => 
                 lock.state === LOCK_STATE.PENDING
@@ -80,7 +118,7 @@ class NodeLocker {
             if (check.allow) {
                 this.lock(lock)
                 .then(lock.resolve)
-                .catch(lock.reject);
+                .catch(err => this._rejectLock(lock, err));
             }
         });
     }
@@ -101,6 +139,9 @@ class NodeLocker {
         }
         else if (this._locks.findIndex((l => l.tid === tid && l.state === LOCK_STATE.EXPIRED)) >= 0) {
             return Promise.reject(new Error(`lock on tid ${tid} has expired, not allowed to continue`));
+        }
+        else if (this._quit && !options.withPriority) {
+            return Promise.reject(new Error(`Quitting`));
         }
         else {
             DEBUG_MODE && console.error(`${forWriting ? "write" : "read"} lock requested on "${path}" by tid ${tid}`);
@@ -276,6 +317,9 @@ class NodeLock {
         }
     }
 
+    /**
+     * Not used? Will be removed
+     */
     moveTo(otherPath, forWriting) {
         //const check = _allowLock(otherPath, this.tid, forWriting);
         const allowed = this.locker.isAllowed(otherPath, this.tid, forWriting);
