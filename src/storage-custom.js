@@ -541,7 +541,7 @@ class CustomStorage extends Storage {
      * @returns {Promise<void>}
      */
     async _writeNode(path, value, options) {
-        if (this.valueFitsInline(value) && path !== '') {
+        if (!options.merge && this.valueFitsInline(value) && path !== '') {
             throw new Error(`invalid value to store in its own node`);
         }
         else if (path === '' && (typeof value !== 'object' || value instanceof Array)) {
@@ -1361,8 +1361,11 @@ class CustomStorage extends Storage {
      */
     async updateNode(path, updates, options = { suppress_events: false, context: null }) {
 
-        if (typeof updates !== 'object') { //  || Object.keys(updates).length === 0
+        if (typeof updates !== 'object') {
             throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
+        }
+        else if (Object.keys(updates).length === 0) {
+            return; // Nothing to update. Done!
         }
 
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
