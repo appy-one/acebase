@@ -85,9 +85,8 @@ class NodeCache {
     /**
      * Updates or adds a NodeAddress to the cache
      * @param {NodeInfo} nodeInfo 
-     * @param {boolean} [overwrite=true] if the cache must be overwritten if the entry already exists
      */
-    update(nodeInfo, overwrite = true) {
+    update(nodeInfo) {
         if (!(nodeInfo instanceof NodeInfo)) {
             throw new TypeError(`nodeInfo must be an instance of NodeInfo`);
         }
@@ -97,13 +96,8 @@ class NodeCache {
         }
         let entry = this._cache.get(nodeInfo.path);
         if (entry) {
-            if (!overwrite) {
-                DEBUG_MODE && console.error(`CACHE SKIP ${nodeInfo}`);
-            }
-            else {
-                DEBUG_MODE && console.error(`CACHE UPDATE ${nodeInfo}`);
-                entry.update(nodeInfo);
-            }
+            DEBUG_MODE && console.error(`CACHE UPDATE ${nodeInfo}`);
+            entry.update(nodeInfo);
         }
         else {
             // New entry
