@@ -31,7 +31,7 @@ class AceBase extends AceBaseBase {
             storage: options.storage,
             logLevel: options.logLevel
         };
-        this.api = new LocalApi(dbname, apiSettings, ready => {
+        this.api = new LocalApi(dbname, apiSettings, () => {
             this.emit("ready");
         });
     }
@@ -113,86 +113,70 @@ class LocalStorageTransaction extends CustomStorageTransaction {
         this._storageKeysPrefix = `${this.context.dbname}.acebase::`;
     }
 
-    commit() {
-        // All changes have already been committed
-        return Promise.resolve();
+    async commit() {
+        // All changes have already been committed. TODO: use same approach as IndexedDB
     }
     
-    rollback(err) {
+    async rollback(err) {
         // Not able to rollback changes, because we did not keep track
-        return Promise.resolve();
     }
 
-    get(path) {
+    async get(path) {
         // Gets value from localStorage, wrapped in Promise
-        return new Promise(resolve => {
-            const json = this.context.localStorage.getItem(this.getStorageKeyForPath(path));
-            const val = JSON.parse(json);
-            resolve(val);
-        });
+        const json = this.context.localStorage.getItem(this.getStorageKeyForPath(path));
+        const val = JSON.parse(json);
+        return val;
     }
 
-    set(path, val) {
+    async set(path, val) {
         // Sets value in localStorage, wrapped in Promise
-        return new Promise(resolve => {
-            const json = JSON.stringify(val);
-            this.context.localStorage.setItem(this.getStorageKeyForPath(path), json);
-            resolve();
-        });
+        const json = JSON.stringify(val);
+        this.context.localStorage.setItem(this.getStorageKeyForPath(path), json);
     }
 
-    remove(path) {
+    async remove(path) {
         // Removes a value from localStorage, wrapped in Promise
-        return new Promise(resolve => {
-            this.context.localStorage.removeItem(this.getStorageKeyForPath(path));
-            resolve();
-        });
+        this.context.localStorage.removeItem(this.getStorageKeyForPath(path));
     }
 
-    childrenOf(path, include, checkCallback, addCallback) {
+    async childrenOf(path, include, checkCallback, addCallback) {
         // Streams all child paths
         // Cannot query localStorage, so loop through all stored keys to find children
-        return new Promise(resolve => {
-            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-            for (let i = 0; i < this.context.localStorage.length; i++) {
-                const key = this.context.localStorage.key(i);
-                if (!key.startsWith(this._storageKeysPrefix)) { continue; }                
-                let otherPath = this.getPathFromStorageKey(key);
-                if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
-                    let node;
-                    if (include.metadata || include.value) {
-                        const json = this.context.localStorage.getItem(key);
-                        node = JSON.parse(json);
-                    }
-                    const keepGoing = addCallback(otherPath, node);
-                    if (!keepGoing) { break; }
+        const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+        for (let i = 0; i < this.context.localStorage.length; i++) {
+            const key = this.context.localStorage.key(i);
+            if (!key.startsWith(this._storageKeysPrefix)) { continue; }                
+            let otherPath = this.getPathFromStorageKey(key);
+            if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
+                let node;
+                if (include.metadata || include.value) {
+                    const json = this.context.localStorage.getItem(key);
+                    node = JSON.parse(json);
                 }
+                const keepGoing = addCallback(otherPath, node);
+                if (!keepGoing) { break; }
             }
-            resolve();
-        });
+        }
     }
 
-    descendantsOf(path, include, checkCallback, addCallback) {
+    async descendantsOf(path, include, checkCallback, addCallback) {
         // Streams all descendant paths
         // Cannot query localStorage, so loop through all stored keys to find descendants
-        return new Promise(resolve => {
-            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-            for (let i = 0; i < this.context.localStorage.length; i++) {
-                const key = this.context.localStorage.key(i);
-                if (!key.startsWith(this._storageKeysPrefix)) { continue; }
-                let otherPath = this.getPathFromStorageKey(key);
-                if (pathInfo.isAncestorOf(otherPath) && checkCallback(otherPath)) {
-                    let node;
-                    if (include.metadata || include.value) {
-                        const json = this.context.localStorage.getItem(key);
-                        node = JSON.parse(json);
-                    }
-                    const keepGoing = addCallback(otherPath, node);
-                    if (!keepGoing) { break; }
+        const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+        for (let i = 0; i < this.context.localStorage.length; i++) {
+            const key = this.context.localStorage.key(i);
+            if (!key.startsWith(this._storageKeysPrefix)) { continue; }
+            let otherPath = this.getPathFromStorageKey(key);
+            if (pathInfo.isAncestorOf(otherPath) && checkCallback(otherPath)) {
+                let node;
+                if (include.metadata || include.value) {
+                    const json = this.context.localStorage.getItem(key);
+                    node = JSON.parse(json);
                 }
+                const keepGoing = addCallback(otherPath, node);
+                if (!keepGoing) { break; }
             }
-            resolve();
-        });
+        }
     }
 
     /**
