@@ -341,7 +341,7 @@ class LocalApi extends Api {
         const tableScanFilters = query.filters.filter(filter => !filter.index);
 
         // Check if there are filters that require an index to run (such as "fulltext:contains", and "geo:nearby" etc)
-        const specialOpsRegex = /^[a-z]+\:/i;
+        const specialOpsRegex = /^[a-z]+:/i;
         if (tableScanFilters.some(filter => specialOpsRegex.test(filter.op))) {
             const f = tableScanFilters.find(filter => specialOpsRegex.test(filter.op));
             const err = new Error(`query contains operator "${f.op}" which requires a special index that was not found on path "${path}", key "${f.key}"`)
@@ -880,15 +880,15 @@ class LocalApi extends Api {
         return Promise.resolve(this.storage.indexes.list());
     }
 
-    reflect(path, type, args) {
+    async reflect(path, type, args) {
         args = args || {};
-        const getChildren = (path, limit = 50, skip = 0, from = null) => {
+        const getChildren = async (path, limit = 50, skip = 0, from = null) => {
             if (typeof limit === 'string') { limit = parseInt(limit); }
             if (typeof skip === 'string') { skip = parseInt(skip); }
             if (['null','undefined'].includes(from)) { from = null; }
             const children = [];
             let n = 0, stop = false, more = false; //stop = skip + limit, 
-            return Node.getChildren(this.storage, path)
+            await Node.getChildren(this.storage, path)
             .next(childInfo => {
                 if (stop) {
                     // Stop 1 child too late on purpose to make sure there's more
@@ -910,13 +910,11 @@ class LocalApi extends Api {
             })
             .catch(err => {
                 // Node doesn't exist? No children..
-            })
-            .then(() => {
-                return {
-                    more,
-                    list: children
-                };
             });
+            return {
+                more,
+                list: children
+            };
         }
         switch(type) {
             case "children": {
@@ -934,27 +932,22 @@ class LocalApi extends Api {
                         list: []
                     }
                 };
-                return Node.getInfo(this.storage, path, { include_child_count: args.child_count === true })
-                .then(nodeInfo => {
-                    info.key = typeof nodeInfo.key !== 'undefined' ? nodeInfo.key : nodeInfo.index;
-                    info.exists = nodeInfo.exists;
-                    info.type = nodeInfo.valueTypeName;
-                    info.value = nodeInfo.value;
-                    let isObjectOrArray = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
-                    if (args.child_count === true) {
-                        // return child count instead of enumerating
-                        return { count: isObjectOrArray ? nodeInfo.childCount : 0 };
+                const nodeInfo = await Node.getInfo(this.storage, path, { include_child_count: args.child_count === true });
+                info.key = typeof nodeInfo.key !== 'undefined' ? nodeInfo.key : nodeInfo.index;
+                info.exists = nodeInfo.exists;
+                info.type = nodeInfo.valueTypeName;
+                info.value = nodeInfo.value;
+                let isObjectOrArray = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
+                if (args.child_count === true) {
+                    // set child count instead of enumerating
+                    info.children = { count: isObjectOrArray ? nodeInfo.childCount : 0 };
+                }
+                else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
+                    if (isObjectOrArray) {
+                        info.children = await getChildren(path, args.child_limit, args.child_skip, args.child_from)
                     }
-                    else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
-                        return isObjectOrArray 
-                            ? getChildren(path, args.child_limit, args.child_skip, args.child_from)
-                            : info.children; // Use empty stub if target is not an object or array
-                    }
-                })
-                .then(children => {
-                    info.children = children;
-                    return info;
-                });
+                }
+                return info;
             }
         }
     }
