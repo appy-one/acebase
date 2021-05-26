@@ -1,5 +1,5 @@
 const { ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
-const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
+const { Storage, StorageSettings, NodeNotFoundError, NodeRevisionError } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
 const { pfs } = require('./promise-fs');
@@ -862,7 +862,7 @@ class SQLiteStorage extends Storage {
                         if (checkPath[0] === '/') { checkPath = checkPath.slice(1); }
                         const match = (includeCheck ? includeCheck.test(checkPath) : true) 
                             && (excludeCheck ? !excludeCheck.test(checkPath) : true)
-                            && (options.child_objects === false ? row.type !== VALUE_TYPES.OBJECT && !/[\/\[]/.test(checkPath) : true);
+                            && (options.child_objects === false ? row.type !== VALUE_TYPES.OBJECT && !/[/[]/.test(checkPath) : true);
                         if (match) {
                             paths.push(row.path);
                         }
@@ -1263,7 +1263,7 @@ class SQLiteStorage extends Storage {
                 return lock.moveToParent()
                 .then(parentLock => {
                     lock = parentLock;
-                    return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
+                    return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
                 });
             }
             else {
