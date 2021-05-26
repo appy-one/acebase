@@ -213,19 +213,19 @@ class NodeCache {
         return entry ? entry.nodeInfo : null;
     }
 
-    /**
-     * Finds the first cached NodeInfo for the closest ancestor of a given path
-     * @param {string} path 
-     * @returns {NodeInfo} cached info for an ancestor
-     */
-    findAncestor(path) {
-        while (true) {
-            path = getPathInfo(path).parent;
-            if (path === null) { return null; }
-            const entry = this.find(path);
-            if (entry) { return entry; }
-        }
-    }
+    // /**
+    //  * Finds the first cached NodeInfo for the closest ancestor of a given path
+    //  * @param {string} path 
+    //  * @returns {NodeInfo} cached info for an ancestor
+    //  */
+    // findAncestor(path) {
+    //     while (true) {
+    //         path = PathInfo.get(path).parentPath;
+    //         if (path === null) { return null; }
+    //         const entry = this.find(path);
+    //         if (entry) { return entry; }
+    //     }
+    // }
 }
 
 module.exports = { NodeCache, NodeCacheEntry };
