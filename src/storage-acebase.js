@@ -2,7 +2,7 @@ const fs = require('fs');
 const { pfs } = require('./promise-fs');
 const { ID, PathInfo, PathReference, Utils, ColorStyle } = require('acebase-core');
 const { concatTypedArrays, bytesToNumber, numberToBytes, encodeString, decodeString } = Utils;
-const { Node } = require('./node');
+const { Node, NodeChangeTracker, NodeChange } = require('./node');
 const { NodeAddress } = require('./node-address');
 const { NodeCache } = require('./node-cache');
 const { NodeInfo } = require('./node-info');
@@ -11,6 +11,8 @@ const { Storage, StorageSettings, NodeNotFoundError, SchemaValidationError } = r
 const { VALUE_TYPES } = require('./node-value-types');
 const { BinaryBPlusTree, BPlusTreeBuilder, BinaryWriter } = require('./btree');
 
+const REMOVED_CHILD_DATA_IMPLEMENTED = false; // not used yet - allows marking of deleted children without having to rewrite the whole node
+
 class AceBaseStorageSettings extends StorageSettings {
     constructor(settings) {
         super(settings);
@@ -18,7 +20,7 @@ class AceBaseStorageSettings extends StorageSettings {
         this.recordSize = settings.recordSize || 128;   // record size in bytes
         this.pageSize = settings.pageSize || 1024;      // page size in records
     }
-};
+}
 
 class AceBaseStorage extends Storage {
     /**
@@ -70,7 +72,7 @@ class AceBaseStorage extends Storage {
         const filename = `${this.settings.path}/${this.name}.acebase/data.db`;
         let fd = null;
 
-        const writeData = (fileIndex, buffer, offset = 0, length = -1) => {
+        const writeData = async (fileIndex, buffer, offset = 0, length = -1) => {
             if (buffer.constructor === Uint8Array) { //buffer instanceof Uint8Array) {
                 // If the passsed buffer is of type Uint8Array (which is essentially the same as Buffer),
                 // convert it to a Buffer instance or fs.write will FAIL.
@@ -80,22 +82,13 @@ class AceBaseStorage extends Storage {
             if (length === -1) {
                 length = buffer.byteLength;
             }
-            const work = (fileIndex, buffer, offset, length, resolve, reject) => {
-                fs.write(fd, buffer, offset, length, fileIndex, (err, bytesWritten) => {
-                    if (err) {
-                        this.debug.error(`Error writing to file`, err);
-                        reject(err);
-                    }
-                    else {
-                        stats.writes++;
-                        stats.bytesWritten += bytesWritten;
-                        resolve(bytesWritten);
-                    }
-                });
-            };
-            return new Promise((resolve, reject) => {
-                work(fileIndex, buffer, offset, length, resolve, reject);
+            const { bytesWritten } = await pfs.write(fd, buffer, offset, length, fileIndex).catch(err => {
+                this.debug.error(`Error writing to file`, err);
+                throw err;
             });
+            stats.writes++;
+            stats.bytesWritten += bytesWritten;
+            return bytesWritten;
         };
         this.writeData = writeData; // Make available to external classes
 
@@ -105,33 +98,30 @@ class AceBaseStorage extends Storage {
          * @param {Buffer|ArrayBuffer|ArrayBufferView} buffer Buffer object, ArrayBuffer or TypedArray (Uint8Array, Int8Array, Uint16Array etc) to read data into
          * @param {number} offset byte offset in the buffer to read data into, default is 0
          * @param {number} length total bytes to read (if omitted or -1, it will use buffer.byteLength)
+         * @returns {Promise<number>} returns the total bytes read
          */
-        const readData = (fileIndex, buffer, offset = 0, length = -1) => {
+        const readData = async (fileIndex, buffer, offset = 0, length = -1) => {
             if (length === -1) {
                 length = buffer.byteLength;
             }
-            return new Promise((resolve, reject) => {
-                if (buffer instanceof ArrayBuffer) {
-                    buffer = Buffer.from(buffer);
+            if (buffer instanceof ArrayBuffer) {
+                buffer = Buffer.from(buffer);
+            }
+            else if (!(buffer instanceof Buffer) && buffer.buffer instanceof ArrayBuffer) {
+                // Convert a typed array such as Uint8Array to Buffer with shared memory space
+                buffer = Buffer.from(buffer.buffer);
+                if (buffer.byteOffset > 0) {
+                    throw new Error(`When using a TypedArray as buffer, its byteOffset MUST be 0.`);
                 }
-                else if (!(buffer instanceof Buffer) && buffer.buffer instanceof ArrayBuffer) {
-                    // Convert a typed array such as Uint8Array to Buffer with shared memory space
-                    buffer = Buffer.from(buffer.buffer);
-                    if (buffer.byteOffset > 0) {
-                        throw new Error(`When using a TypedArray as buffer, its byteOffset MUST be 0.`);
-                    }
-                }
-                fs.read(fd, buffer, offset, length, fileIndex, (err, bytesRead) => {
-                    if (err) {
-                        this.debug.error(`Error reading record`, buffer, offset, length, fileIndex);
-                        this.debug.error(err);
-                        return reject(err);
-                    }
-                    stats.reads++;
-                    stats.bytesRead += bytesRead;
-                    resolve(bytesRead);
-                })
+            }
+            const { bytesRead } = await pfs.read(fd, buffer, offset, length, fileIndex).catch(err => {
+                this.debug.error(`Error reading record`, buffer, offset, length, fileIndex);
+                this.debug.error(err);
+                throw err;
             });
+            stats.reads++;
+            stats.bytesRead += bytesRead;
+            return bytesRead;
         }
         this.readData = readData;
 
@@ -173,7 +163,7 @@ class AceBaseStorage extends Storage {
                     case 'index.update': {
                         const index = this.indexes.list().find(index => index.fileName === request.fileName);
                         if (!index) { return reply({ ok: false, reason: `Index ${request.fileName} not found` }); }
-                        const result = await index.handleRecordUpdate(request.path, request.oldValue, request.newValue);
+                        await index.handleRecordUpdate(request.path, request.oldValue, request.newValue);
                         return reply({ ok: true });
                     }
                     default: {
@@ -261,7 +251,7 @@ class AceBaseStorage extends Storage {
                     this.keys.pop(); // Remove the key
                     index = -1;
                 }
-                return index; //return Promise.resolve(index);
+                return index;
             },
 
             write() {
@@ -283,7 +273,7 @@ class AceBaseStorage extends Storage {
                             throw new Error(`Too many keys to store in KIT, size limit of ${this.length} has been reached; current amount of keys is ${this.keys.length}`);
                         }
                         let charCode = key.charCodeAt(i);
-                        if (charCode > 255) { throw `Invalid character in key ${key} at char ${i+1}`; }
+                        if (charCode > 255) { throw new Error(`Invalid character in key ${key} at char ${i+1}`); }
                         view.setUint8(index, charCode);
                         index++;
                     }
@@ -300,36 +290,32 @@ class AceBaseStorage extends Storage {
                 });
             },
 
-            load() {
-                return new Promise((resolve, reject) => {
-                    let data = Buffer.alloc(this.length);
-                    fs.read(fd, data, 0, data.length, this.fileIndex, (err, bytesRead) => {
-                        if (err) {
-                            storage.debug.error(`Error reading KIT from file: `, err);
-                            return reject(err);
-                        }
-                        // Interpret the read data
-                        let view = new DataView(data.buffer);
-                        let keys = [];
-                        let index = 0;
-                        while(true) {
-                            const keyLength = view.getUint8(index);
-                            if (keyLength === 0) { break; }
-                            index++;
-                            let key = "";
-                            for(let i = 0; i < keyLength; i++) {
-                                key += String.fromCharCode(view.getUint8(index + i));
-                            }
-                            keys.push(key);
-                            index += keyLength;
-                        }
-                        this.bytesUsed = index;
-                        this.keys = keys;
-                        storage.debug.log(`KIT read, ${this.keys.length} keys indexed`.colorize(ColorStyle.bold));
-                        //storage.debug.log(keys);
-                        resolve(keys);
-                    });
+            async load() {
+                let data = Buffer.alloc(this.length);
+                const { bytesRead } = await pfs.read(fd, data, 0, data.length, this.fileIndex).catch(err => {
+                    storage.debug.error(`Error reading KIT from file: `, err);
+                    throw err;
                 });
+
+                // Interpret the read data
+                let view = new DataView(data.buffer, 0, bytesRead);
+                let keys = [];
+                let index = 0;
+                let keyLength = 0;
+                while((keyLength = view.getUint8(index)) > 0) {
+                    index++;
+                    let key = "";
+                    for(let i = 0; i < keyLength; i++) {
+                        key += String.fromCharCode(view.getUint8(index + i));
+                    }
+                    keys.push(key);
+                    index += keyLength;
+                }
+                this.bytesUsed = index;
+                this.keys = keys;
+                storage.debug.log(`KIT read, ${this.keys.length} keys indexed`.colorize(ColorStyle.bold));
+                //storage.debug.log(keys);
+                return keys;
             }
         };
 
@@ -349,8 +335,8 @@ class AceBaseStorage extends Storage {
                 async release(ranges) {
                     await storage.ipc.sendRequest({ type: 'fst.release', ranges });
                 },
-                load() {
-                    return Promise.resolve([]); // Fake loader
+                async load() {
+                    return []; // Fake loader
                 }
             };
         }
@@ -367,7 +353,7 @@ class AceBaseStorage extends Storage {
                  * @param {number} requiredRecords 
                  * @returns {Promise<Array<{ pageNr: number, recordNr: number, length: number }>>}
                  */
-                allocate(requiredRecords) {
+                async allocate(requiredRecords) {
                     // First, try to find a range that fits all requested records sequentially
                     const recordsPerPage = storage.settings.pageSize;
                     let allocation = [];
@@ -375,7 +361,7 @@ class AceBaseStorage extends Storage {
                     const ret = (comment) => {
                         // console.error(`ALLOCATED ${comment}: ${allocation.map(a => `${a.pageNr},${a.recordNr}+${a.length-1}`).join('; ')}`);
                         this.write(pageAdded);
-                        return Promise.resolve(allocation);
+                        return allocation;
                     };
 
                     let totalFree = this.ranges.reduce((t, r) => t + r.end - r.start, 0);
@@ -563,7 +549,7 @@ class AceBaseStorage extends Storage {
                         throw new Error(`FST grew too big to store in the database file. Fix this!`);
                     }
 
-                    writeData(this.fileIndex, data, 0, bytesToWrite)
+                    return writeData(this.fileIndex, data, 0, bytesToWrite)
                     .then(bytesWritten => {
                         //storage.debug.log(`FST saved, ${this.bytesUsed} bytes used for ${this.ranges.length} ranges`);
                         if (updatedPageCount === true) {
@@ -577,38 +563,34 @@ class AceBaseStorage extends Storage {
                     });
                 },
 
-                load() {
-                    return new Promise((resolve, reject) => {
-                        let data = Buffer.alloc(this.length);
-                        fs.read(fd, data, 0, data.length, this.fileIndex, (err, bytesRead) => {
-                            if (err) {
-                                storage.debug.error(`Error reading FST from file`);
-                                storage.debug.error(err);
-                                return reject(err);
-                            }
-                            // Interpret the read data
-                            let view = new DataView(data.buffer);
-                            let allocatedPages = view.getUint32(0); //new DataView(data.buffer, 0, 4).getUint32(0);
-                            let freeRangeCount = view.getUint16(4); //new DataView(data.buffer, 4, 2).getUint16(0);
-                            let ranges = [];
-                            let index = 6;
-                            for (let i = 0; i < freeRangeCount; i++) {
-                                //let view = new DataView(data.buffer, index, 8);
-                                let range = {
-                                    page: view.getUint32(index),
-                                    start: view.getUint16(index + 4),
-                                    end: view.getUint16(index + 6)
-                                }
-                                ranges.push(range);
-                                index += 8;
-                            }
-                            this.pages = allocatedPages;
-                            this.bytesUsed = index;
-                            this.ranges = ranges;
-                            storage.debug.log(`FST read, ${allocatedPages} pages allocated, ${freeRangeCount} free ranges`.colorize(ColorStyle.bold));
-                            resolve(ranges);
-                        });
-                    });
+                async load() {
+                    let data = Buffer.alloc(this.length);
+                    const { bytesRead } = await pfs.read(fd, data, 0, data.length, this.fileIndex).catch(err => {
+                        storage.debug.error(`Error reading FST from file`);
+                        storage.debug.error(err);
+                        throw err;
+                    })
+                    // Interpret the read data
+                    let view = new DataView(data.buffer, 0, bytesRead);
+                    let allocatedPages = view.getUint32(0); //new DataView(data.buffer, 0, 4).getUint32(0);
+                    let freeRangeCount = view.getUint16(4); //new DataView(data.buffer, 4, 2).getUint16(0);
+                    let ranges = [];
+                    let index = 6;
+                    for (let i = 0; i < freeRangeCount; i++) {
+                        //let view = new DataView(data.buffer, index, 8);
+                        let range = {
+                            page: view.getUint32(index),
+                            start: view.getUint16(index + 4),
+                            end: view.getUint16(index + 6)
+                        }
+                        ranges.push(range);
+                        index += 8;
+                    }
+                    this.pages = allocatedPages;
+                    this.bytesUsed = index;
+                    this.ranges = ranges;
+                    storage.debug.log(`FST read, ${allocatedPages} pages allocated, ${freeRangeCount} free ranges`.colorize(ColorStyle.bold));
+                    return ranges;
                 }
             };
         }
@@ -666,98 +648,89 @@ class AceBaseStorage extends Storage {
             MAX_INLINE_VALUE_SIZE: baseIndex + 12
         };
 
-        const openDatabaseFile = (justCreated) => {
-            return new Promise((resolve, reject) => {
-                const error = (err, txt) => {
-                    this.debug.error(txt);
-                    this.debug.error(err);
-                    if (this.file) {
-                        fs.close(this.file, (err) => {
-                            // ...
-                        });
-                    }
-                    this.emit("error", err);
-                    reject(err);
-                };
-
-                fs.open(filename, "r+", 0, (err, file) => {
-                    if (err) {
-                        return error(err, `Failed to open database file`);
-                    }
-                    this.file = fd = file;
-
-                    // const logfile = fs.openSync(`${this.settings.path}/${this.name}.acebase/log`, 'as');
-                    // this.logwrite = (action) => {
-                    //     fs.appendFile(logfile, JSON.stringify(action), () => {});
-                    // }; 
-            
-                    const data = Buffer.alloc(64);
-                    fs.read(fd, data, 0, data.length, 0, (err, bytesRead) => {
-                        if (err) {
-                            return error(err, `Could not read database header`);
-                        }
-
-                        // Cast Buffer to Uint8Array
-                        const header = new Uint8Array(data);
-                        
-                        // Check descriptor
-                        for(let i = 0; i < descriptor.length; i++) {
-                            if (header[i] !== descriptor[i]) {
-                                return error(`unsupported_db`, `This is not a supported database file`); 
-                            }
-                        }
-                        
-                        // Version should be 1
-                        let index = descriptor.length;
-                        if (header[index] !== 1) {
-                            return error(`unsupported_db`, `This database version is not supported, update your source code`);
-                        }
-                        index++;
-                        
-                        // File should not be locked
-                        if (header[index] !== 0) {
-                            return error(`locked_db`, `The database is locked`);
-                        }
-                        index++;
-
-                        // Read root record address
-                        const view = new DataView(header.buffer, index, 6);
-                        this.rootRecord.pageNr = view.getUint32(0);
-                        this.rootRecord.recordNr = view.getUint16(4);
-                        if (!justCreated) {
-                            this.rootRecord.exists = true;
-                        }
-                        index += 6;
-
-                        // Read saved settings
-                        this.settings.recordSize = header[index] << 8 | header[index+1];
-                        this.settings.pageSize = header[index+2] << 8 | header[index+3];
-                        this.settings.maxInlineValueSize = header[index+4] << 8 | header[index+5];
-
-                        const intro = ColorStyle.dim;
-                        this.debug.log(`Database "${name}" details:`.colorize(intro));
-                        this.debug.log(`- Type: AceBase binary`.colorize(intro));
-                        this.debug.log(`- Record size: ${this.settings.recordSize}`.colorize(intro));
-                        this.debug.log(`- Page size: ${this.settings.pageSize}`.colorize(intro));
-                        this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(intro));
-                        this.debug.log(`- Root record address: ${this.rootRecord.pageNr}, ${this.rootRecord.recordNr}`.colorize(intro));
-
-                        this.KIT.load()  // Read Key Index Table
-                        .then(() => {
-                            return this.FST.load(); // Read Free Space Table
-                        })
-                        .then(() => {
-                            // Load indexes
-                            return this.indexes.load();
-                        })
-                        .then(() => {
-                            resolve(fd);
-                            !justCreated && this.emit("ready");
-                        });
+        const openDatabaseFile = async (justCreated) => {
+            const handleError = (err, txt) => {
+                this.debug.error(txt);
+                this.debug.error(err);
+                if (this.file) {
+                    pfs.close(this.file).catch(err => {
+                        // ...
                     });
+                }
+                this.emit("error", err);
+                throw err;
+            };
 
-                });
+            this.file = fd = await pfs.open(filename, "r+", 0).catch(err => {
+                handleError(err, `Failed to open database file`);
             });
+
+            // const logfile = fs.openSync(`${this.settings.path}/${this.name}.acebase/log`, 'as');
+            // this.logwrite = (action) => {
+            //     fs.appendFile(logfile, JSON.stringify(action), () => {});
+            // }; 
+    
+            const data = Buffer.alloc(64);
+            const { bytesRead } = await pfs.read(fd, data, 0, data.length, 0).catch(err => {
+                handleError(err, `Could not read database header`);
+            });
+
+            // Cast Buffer to Uint8Array
+            const header = new Uint8Array(data);
+
+            // Check descriptor
+            const hasAceBaseDescriptor = () => {
+                for(let i = 0; i < descriptor.length; i++) {
+                    if (header[i] !== descriptor[i]) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (bytesRead < 64 || !hasAceBaseDescriptor()) {
+                return  handleError(`unsupported_db`, `This is not a supported database file`); 
+            }
+            
+            // Version should be 1
+            let index = descriptor.length;
+            if (header[index] !== 1) {
+                return handleError(`unsupported_db`, `This database version is not supported, update your source code`);
+            }
+            index++;
+            
+            // File should not be locked
+            if (header[index] !== 0) {
+                return handleError(`locked_db`, `The database is locked`);
+            }
+            index++;
+
+            // Read root record address
+            const view = new DataView(header.buffer, index, 6);
+            this.rootRecord.pageNr = view.getUint32(0);
+            this.rootRecord.recordNr = view.getUint16(4);
+            if (!justCreated) {
+                this.rootRecord.exists = true;
+            }
+            index += 6;
+
+            // Read saved settings
+            this.settings.recordSize = header[index] << 8 | header[index+1];
+            this.settings.pageSize = header[index+2] << 8 | header[index+3];
+            this.settings.maxInlineValueSize = header[index+4] << 8 | header[index+5];
+
+            const intro = ColorStyle.dim;
+            this.debug.log(`Database "${name}" details:`.colorize(intro));
+            this.debug.log(`- Type: AceBase binary`.colorize(intro));
+            this.debug.log(`- Record size: ${this.settings.recordSize}`.colorize(intro));
+            this.debug.log(`- Page size: ${this.settings.pageSize}`.colorize(intro));
+            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(intro));
+            this.debug.log(`- Root record address: ${this.rootRecord.pageNr}, ${this.rootRecord.recordNr}`.colorize(intro));
+
+            await this.KIT.load();  // Read Key Index Table
+            await this.FST.load();  // Read Free Space Table
+            await this.indexes.load(); // Load indexes
+            !justCreated && this.emit("ready");
+            return fd;
         };
 
         // Open or create database 
@@ -765,6 +738,17 @@ class AceBaseStorage extends Storage {
             if (exists) {
                 // Open
                 openDatabaseFile(false);
+            }
+            else if (!this.ipc.isMaster) {
+                // Prevent race condition - let master process create database, poll for existance
+                const poll = () => {
+                    setTimeout(async () => {
+                        exists = await pfs.exists(filename);
+                        if (exists) { openDatabaseFile(); }
+                        else { poll(); }
+                    }, 10); // Wait 10ms before trying again
+                }
+                poll();
             }
             else {
                 // Create the file with 64 byte header (settings etc), KIT, FST & root record
@@ -848,11 +832,10 @@ class AceBaseStorage extends Storage {
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string[]|number[]} [options.keyFilter] specify the child keys to get callbacks for, skips .next callbacks for other keys
      * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {{ next(child: NodeInfo) => Promise<void>}} returns a generator object that calls .next for each child until the .next callback returns false
+     * @returns {{ next((child: NodeInfo) => boolean) => Promise<boolean>}} returns a generator object that calls .next for each child until the .next callback returns false
      */
     getChildren(path, options = { keyFilter: undefined, tid: undefined }) {
         options = options || {};
-        var callback;
         const generator = {
             /**
              * 
@@ -860,43 +843,36 @@ class AceBaseStorage extends Storage {
              * @oldparam {(child: { key?: string, index?: number, valueType: number, value?: any }) => boolean} valueCallback callback function to run for each child. Return false to stop iterating
              * @returns {Promise<bool>} returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
              */
-            next(valueCallback) {
-                callback = valueCallback;
-                return start();
+            async next(valueCallback, useAsync = false) {
+                return start(valueCallback, useAsync);
             }
         };
-        const start = () => {
+        const start = async (callback, isAsync = false) => {
             const tid = this.createTid(); //ID.generate();
             let canceled = false;
-            var lock;
-            return this.nodeLocker.lock(path, tid, false, `Node.getChildren "/${path}"`)
-            .then(l => {
-                lock = l;
-                return this.getNodeInfo(path, { tid });
-            })
-            .then(nodeInfo => {
+            const lock = await this.nodeLocker.lock(path, tid, false, `Node.getChildren "/${path}"`)
+            try {
+                const nodeInfo = await this.getNodeInfo(path, { tid });
                 if (!nodeInfo.exists) {
                     throw new NodeNotFoundError(`Node "/${path}" does not exist`);
                 }
                 let reader = new NodeReader(this, nodeInfo.address, lock, true);
-                return reader.getChildStream({ keyFilter: options.keyFilter })
-                .next(childInfo => {
-                    const proceed = callback(childInfo);
-                    if (proceed === false) { canceled = true; }
-                    return proceed;
-                });
-            })
-            .then(() => {
-                lock.release();
+                const nextCallback = isAsync 
+                    ? async childInfo => (await callback(childInfo)) !== false
+                    : childInfo => callback(childInfo) !== false;
+                await reader.getChildStream({ keyFilter: options.keyFilter })
+                .next(nextCallback);
                 return canceled;
-            })
-            .catch(err => {
-                lock.release('Node.getChildren error');
+            }
+            catch(err) {
                 if (!(err instanceof NodeNotFoundError)) {
                     this.debug.error(`Error getting children: ${err.stack}`);
                 }
                 throw err;
-            });
+            }
+            finally {
+                lock.release();
+            }
         };
         return generator;
     }
@@ -931,7 +907,6 @@ class AceBaseStorage extends Storage {
         }
         catch(err) {
             this.debug.error(`DEBUG THIS: getNode error:`, err);
-            debugger;
             throw err;
         }
         finally {
@@ -1036,7 +1011,6 @@ class AceBaseStorage extends Storage {
         }
         catch(err) {
             this.debug.error(`DEBUG THIS: getNodeInfo error`, err);
-            debugger;
             throw err;
         }
         finally {
@@ -1114,7 +1088,6 @@ class AceBaseStorage extends Storage {
             return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
         }
 
-        let recursive = false;
         let lock;
         try {
             lock = await this.nodeLocker.lock(path, tid, true, '_updateNode');
@@ -1122,7 +1095,6 @@ class AceBaseStorage extends Storage {
             if (!nodeInfo.exists && path !== "") {
                 // Node doesn't exist, update parent instead
                 lock = await lock.moveToParent();
-                recursive = true;
                 await this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
                 return lock.release();
             }
@@ -1482,56 +1454,43 @@ class NodeReader {
      * @param {boolean} includeChildNodes
      * @returns {Promise<NodeAllocation>}
      */
-    getAllocation(includeChildNodes = false) {
+    async getAllocation(includeChildNodes = false) {
         this._assertLock();
 
         if (!includeChildNodes && this.recordInfo !== null) {
-            return Promise.resolve(this.recordInfo.allocation);
+            return this.recordInfo.allocation;
         }
-        else {
-            /** @type {NodeAllocation} */
-            let allocation = null;
+        /** @type {NodeAllocation} */
+        let allocation = null;
 
-            return this.readHeader()
-            .then(() => {
-                allocation = this.recordInfo.allocation;
-                if (!includeChildNodes) { 
-                    return [{ path: this.address.path, allocation }]; 
-                }
+        await this.readHeader();
+        allocation = this.recordInfo.allocation;
+        if (!includeChildNodes) { 
+            return [{ path: this.address.path, allocation }]; 
+        }
 
-                const childPromises = [];
-                return this.getChildStream()
-                .next(child => {
-                    let address = child.address;
-                    if (address) {
-                        // Get child Allocation
-                        let childLock;
-                        let promise = this.storage.nodeLocker.lock(child.path, this.lock.tid, false, `NodeReader:getAllocation:child "/${child.path}"`)
-                        .then(l => {
-                            childLock = l;
-                            const reader = new NodeReader(this.storage, address, childLock, this.updateCache);
-                            return reader.getAllocation(true);
-                        })
-                        .then(childAllocation => {
-                            childLock.release();
-                            //allocation.ranges.push(...childAllocation.ranges);
-                            return { path: child.path, allocation: childAllocation };
-                        });
-                        childPromises.push(promise);
-                    }
-                })
-                .then(() => {
-                    return Promise.all(childPromises);
+        const childPromises = [];
+        await this.getChildStream()
+        .next(child => {
+            let address = child.address;
+            if (address) {
+                // Get child Allocation
+                let promise = this.storage.nodeLocker.lock(child.path, this.lock.tid, false, `NodeReader:getAllocation:child "/${child.path}"`)
+                .then(async childLock => {
+                    const reader = new NodeReader(this.storage, address, childLock, this.updateCache);
+                    const childAllocation = await reader.getAllocation(true);
+                    childLock.release();
+                    return { path: child.path, allocation: childAllocation };
                 });
-            })
-            .then(arr => {
-                arr.forEach(result => {
-                    allocation.ranges.push(...result.allocation.ranges);
-                })
-                //console.log(childAllocations);
-                return allocation;
-            });
-        }
+                childPromises.push(promise);
+            }
+        });
+        const arr = await Promise.all(childPromises);
+        arr.forEach(result => {
+            allocation.ranges.push(...result.allocation.ranges);
+        })
+        //console.log(childAllocations);
+        return allocation;
     }
 
     /**
@@ -1559,7 +1518,7 @@ class NodeReader {
      * @param {options} - options: when omitted retrieves all nested data. If include is set to an array of keys it will only return those children. If exclude is set to an array of keys, those values will not be included
      * @returns {Promise<any>} - returns the stored object, array or string
      */
-    getValue(options = { include: undefined, exclude: undefined, child_objects: true, no_cache: false }) {
+    async getValue(options = { include: undefined, exclude: undefined, child_objects: true, no_cache: false }) {
         if (!options) { options = {}; }
         if (typeof options.include !== "undefined" && !(options.include instanceof Array)) {
             throw new TypeError(`options.include must be an array of key names`);
@@ -1574,56 +1533,97 @@ class NodeReader {
         this._assertLock();
 
         if (this.recordInfo === null) {
-            return this.readHeader().then(() => {
-                return this.getValue(options);
-            });
+            await this.readHeader();
         }
         
         this.storage.debug.log(`Reading node "/${this.address.path}" from address ${this.address.pageNr},${this.address.recordNr}`.colorize(ColorStyle.magenta));
 
-        return new Promise((resolve, reject) => {
-            switch (this.recordInfo.valueType) {
-                case VALUE_TYPES.STRING: {
-                    this.getAllData()
-                    .then(binary => {
-                        let str = decodeString(binary); // textDecoder.decode(binary.buffer);
-                        resolve(str);
-                    });
-                    break;
-                }
-                case VALUE_TYPES.REFERENCE: {
-                    this.getAllData()
-                    .then(binary => {
-                        let path = decodeString(binary); // textDecoder.decode(binary.buffer);
-                        resolve(new PathReference(path));
-                    });
-                    break;
-                }
-                case VALUE_TYPES.BINARY: {
-                    this.getAllData()
-                    .then(binary => {
-                        resolve(binary.buffer);
-                    });
-                    break;
-                }
-                case VALUE_TYPES.ARRAY:
-                case VALUE_TYPES.OBJECT: {
-                    // We need ALL data, including from child sub records
-                    const isArray = this.recordInfo.valueType === VALUE_TYPES.ARRAY;
-                    const promises = [];
-                    const obj = isArray ? [] : {};
-                    const streamOptions = { };
-                    if (options.include && options.include.length > 0 && options.include.find(k => k[0] !== '*')) {
-                        const keyFilter = options.include
-                            .map(key => key.includes('/') ? key.slice(0, key.indexOf('/')) : key)
-                            .reduce((keys, key) => (keys.includes(key) || keys.push(key)) && keys, []);
-                        if (keyFilter.length > 0) { 
-                            streamOptions.keyFilter = keyFilter;
-                        }
+        switch (this.recordInfo.valueType) {
+            case VALUE_TYPES.STRING: {
+                const binary = await this.getAllData();
+                const str = decodeString(binary);
+                return str;
+            }
+            case VALUE_TYPES.REFERENCE: {
+                const binary = await this.getAllData();
+                const path = decodeString(binary);
+                return new PathReference(path);
+            }
+            case VALUE_TYPES.BINARY: {
+                const binary = await this.getAllData();
+                return binary.buffer;
+            }
+            case VALUE_TYPES.ARRAY:
+            case VALUE_TYPES.OBJECT: {
+                // We need ALL data, including from child sub records
+                const isArray = this.recordInfo.valueType === VALUE_TYPES.ARRAY;
+                const promises = [];
+                const obj = isArray ? [] : {};
+                const streamOptions = { };
+                if (options.include && options.include.length > 0 && options.include.find(k => k[0] !== '*')) {
+                    const keyFilter = options.include
+                        .map(key => key.includes('/') ? key.slice(0, key.indexOf('/')) : key)
+                        .reduce((keys, key) => (keys.includes(key) || keys.push(key)) && keys, []);
+                    if (keyFilter.length > 0) { 
+                        streamOptions.keyFilter = keyFilter;
                     }
+                }
 
-                    this.getChildStream(streamOptions)
-                    .next((child, index) => {
+                /**
+                 * @param {NodeInfo} child 
+                 */
+                const loadChildValue = async (child) => {
+                    let childLock;
+                    try {
+                        childLock = await this.storage.nodeLocker.lock(child.address.path, this.lock.tid, false, `NodeReader.getValue:child "/${child.address.path}"`);
+
+                        // Are there any relevant nested includes / excludes?
+                        let childOptions = {};
+                        if (options.include) {
+                            const include = options.include
+                                .filter((path) => path.startsWith("*/") || path.startsWith(`${child.key}/`))
+                                .map(path => path.substr(path.indexOf('/') + 1));
+                            if (include.length > 0) { childOptions.include = include; }
+                        }
+                        if (options.exclude) {
+                            const exclude = options.exclude
+                                .filter((path) => path.startsWith("*/") || path.startsWith(`${child.key}/`))
+                                .map(path => path.substr(path.indexOf('/') + 1));
+
+                            if (exclude.length > 0) { childOptions.exclude = exclude; }
+                        }
+                        // if (typeof options.no_cache === 'boolean') {
+                        //     childOptions.no_cache = options.no_cache;
+                        // }
+
+                        // if (options.no_cache !== true) {
+                        //     let cachedEntry = NodeCache.find(child.address.path);
+                        //     if (!cachedEntry) {
+                        //         NodeCache.update(child.address, child.valueType); // Cache its address
+                        //     }
+                        //     // else if (!cachedAddress.equals(child.address)) {
+                        //     //     this.storage.debug.warn(`Using cached address to read child node "/${child.address.path}" from  address ${cachedAddress.pageNr},${cachedAddress.recordNr} instead of (${child.address.pageNr},${child.address.recordNr})`.colorize(ColorStyle.magenta));
+                        //     //     child.address = cachedAddress;
+                        //     // }
+                        // }
+
+                        // this.storage.debug.log(`Reading child node "/${child.address.path}" from ${child.address.pageNr},${child.address.recordNr}`.colorize(ColorStyle.magenta));
+                        const reader = new NodeReader(this.storage, child.address, childLock, this.updateCache);
+                        const val = await reader.getValue(childOptions);
+                        obj[isArray ? child.index : child.key] = val;
+                    }
+                    catch (reason) {
+                        this.storage.debug.error(`NodeReader.getValue:child error: `, reason);
+                        throw reason;
+                    }
+                    finally {
+                        childLock && childLock.release();
+                    }
+                }
+
+                try {
+                    await this.getChildStream(streamOptions)
+                    .next(child => {
                         if (options.child_objects === false && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(child.type)) {
                             // Options specify not to include any child objects
                             return;
@@ -1637,54 +1637,7 @@ class NodeReader {
                             return; 
                         }
                         if (child.address) {
-                            let childLock;
-                            let childValuePromise = this.storage.nodeLocker.lock(child.address.path, this.lock.tid, false, `NodeReader.getValue:child "/${child.address.path}"`)
-                            .then(lock => {
-                                childLock = lock;
-
-                                // Are there any relevant nested includes / excludes?
-                                let childOptions = {};
-                                if (options.include) {
-                                    const include = options.include
-                                        .filter((path) => path.startsWith("*/") || path.startsWith(`${child.key}/`))
-                                        .map(path => path.substr(path.indexOf('/') + 1));
-                                    if (include.length > 0) { childOptions.include = include; }
-                                }
-                                if (options.exclude) {
-                                    const exclude = options.exclude
-                                        .filter((path) => path.startsWith("*/") || path.startsWith(`${child.key}/`))
-                                        .map(path => path.substr(path.indexOf('/') + 1));
-
-                                    if (exclude.length > 0) { childOptions.exclude = exclude; }
-                                }
-                                // if (typeof options.no_cache === 'boolean') {
-                                //     childOptions.no_cache = options.no_cache;
-                                // }
-
-                                // if (options.no_cache !== true) {
-                                //     let cachedEntry = NodeCache.find(child.address.path);
-                                //     if (!cachedEntry) {
-                                //         NodeCache.update(child.address, child.valueType); // Cache its address
-                                //     }
-                                //     // else if (!cachedAddress.equals(child.address)) {
-                                //     //     this.storage.debug.warn(`Using cached address to read child node "/${child.address.path}" from  address ${cachedAddress.pageNr},${cachedAddress.recordNr} instead of (${child.address.pageNr},${child.address.recordNr})`.colorize(ColorStyle.magenta));
-                                //     //     child.address = cachedAddress;
-                                //     // }
-                                // }
-
-                                // this.storage.debug.log(`Reading child node "/${child.address.path}" from ${child.address.pageNr},${child.address.recordNr}`.colorize(ColorStyle.magenta));
-                                const reader = new NodeReader(this.storage, child.address, childLock, this.updateCache);
-                                return reader.getValue(childOptions);
-                            })
-                            .then(val => {
-                                childLock.release(`NodeReader.getValue:child done`);
-                                obj[isArray ? child.index : child.key] = val;
-                            })
-                            .catch(reason => {
-                                childLock && childLock.release(`NodeReader.getValue:child ERROR`);
-                                this.storage.debug.error(`NodeReader.getValue:child error: `, reason);
-                                throw reason;
-                            });
+                            const childValuePromise = loadChildValue(child);
                             promises.push(childValuePromise);
                         }
                         else if (typeof child.value !== "undefined") {
@@ -1692,32 +1645,26 @@ class NodeReader {
                         }
                         else {
                             if (isArray) {
-                                throw `Value for index ${child.index} has not been set yet, find out why. Path: ${this.address.path}`;
+                                throw new Error(`Value for index ${child.index} has not been set yet, find out why. Path: ${this.address.path}`);
                             }
                             else {
-                                throw `Value for key ${child.key} has not been set yet, find out why. Path: ${this.address.path}`;
+                                throw new Error(`Value for key ${child.key} has not been set yet, find out why. Path: ${this.address.path}`);
                             }
                         }
-                    })
-                    .then(() => {
-                        // We're done reading child info
-                        return Promise.all(promises); // Wait for any child reads to complete
-                    })
-                    .then(() => {
-                        resolve(obj);
-                    })                        
-                    .catch(err => {
-                        this.storage.debug.error(err);
-                        reject(err);
                     });
-
-                    break;
+                    // We're done reading child info
+                    await Promise.all(promises); // Wait for any child reads to complete
+                    return obj;
                 }
-                default: {
-                    throw "Unsupported record value type";
+                catch (err) {
+                    this.storage.debug.error(err);
+                    throw err;
                 }
             }
-        });
+            default: {
+                throw new Error(`Unsupported record value type: ${this.recordInfo.valueType}`);
+            }
+        }
     }
 
     getDataStream() {
@@ -1725,22 +1672,17 @@ class NodeReader {
 
         const bytesPerRecord = this.storage.settings.recordSize;
         const maxRecordsPerChunk = this.storage.settings.pageSize; // Reading whole pages at a time is faster, approx 130KB with default settings (1024 records of 128 bytes each) // 200: about 25KB of data when using 128 byte records
-        let resolve, reject;
-        let callback;
         const generator = {
             /**
-             * @param {(result: {data: Uint8Array, valueType: number, chunks: { pageNr: number, recordNr: number, length: number }[], chunkIndex: number, totalBytes: number, hasKeyTree: boolean }) => boolean} cb callback function that is called with each chunk read. Reading will stop immediately when false is returned
+             * @param {(result: {data: Uint8Array, valueType: number, chunks: { pageNr: number, recordNr: number, length: number }[], chunkIndex: number, totalBytes: number, hasKeyTree: boolean }) => boolean} callback callback function that is called with each chunk read. Reading will stop immediately when false is returned
              * @returns {Promise<{ valueType: number, chunks: { pageNr: number, recordNr: number, length: number }[]}>} returns a promise that resolves when all data is read
              */
-            next(cb) { 
-                callback = cb; 
-                const promise = new Promise((rs, rj) => { resolve = rs; reject = rj; }); 
-                read();
-                return promise;
+            async next(callback) { 
+                return read(callback);
             }
         };
 
-        const read = async () => {
+        const read = async (callback) => {
             const fileIndex = this.storage.getRecordFileIndex(this.address.pageNr, this.address.recordNr);
 
             if (this.recordInfo === null) {
@@ -1792,10 +1734,12 @@ class NodeReader {
             const isLastChunk = chunks.length === 1;
 
             // Run callback with the first chunk (and possibly the only chunk) already read
+            // TODO: Refactor to get additional data first, then run first callback
             const firstChunkData = recordInfo.startData;
             let headerBytesSkipped = recordInfo.bytesPerRecord - firstChunkData.length;
             const { valueType, hasKeyIndex, headerLength, lastRecordLength } = recordInfo;
-            let proceed = firstChunkData.length === 0 || (callback({ 
+            
+            let proceed = firstChunkData.length === 0 || (await callback({ 
                 data: firstChunkData, 
                 valueType, 
                 chunks, 
@@ -1806,11 +1750,9 @@ class NodeReader {
                 headerLength
             }) !== false);
 
-            if (!proceed || isLastChunk) {
-                resolve({ valueType, chunks });
-                return;
-            }
-            const next = async (index) => {
+            if (isLastChunk) { proceed = false; }
+            let index = 1;
+            while (proceed) {
                 //this.storage.debug.log(address.path);
                 const chunk = chunks[index];
                 let fileIndex = this.storage.getRecordFileIndex(chunk.pageNr, chunk.recordNr);
@@ -1823,7 +1765,8 @@ class NodeReader {
                     length -= skip;
                     headerBytesSkipped += skip;
                     if (length == 0) { 
-                        return next(index + 1);
+                        index++;
+                        continue;
                     }
                 }
                 const isLastChunk = index + 1 === chunks.length;
@@ -1832,7 +1775,7 @@ class NodeReader {
                 }
                 const data = new Uint8Array(length);
                 const bytesRead = await this.storage.readData(fileIndex, data);
-                const proceed = callback({ 
+                proceed = await callback({ 
                     data, 
                     valueType, 
                     chunks, 
@@ -1843,14 +1786,10 @@ class NodeReader {
                     headerLength 
                 }) !== false;
 
-                if (!proceed || isLastChunk) {
-                    resolve({ valueType, chunks });
-                }
-                else {
-                    return next(index+1);
-                }
+                if (isLastChunk) { proceed = false; }
+                index++;
             }
-            return next(1);
+            return { valueType, chunks };
         };
 
         return generator;
@@ -1864,141 +1803,89 @@ class NodeReader {
     getChildStream(options = { keyFilter: undefined }) {
         this._assertLock();
 
-        // if (this.recordInfo === null) {
-        //     return this.readHeader()
-        //     .then(() => {
-        //         return this.getChildStream(options);
-        //     })
-        // }
-
-        let resolve, reject;
         /** @type {(childInfo: NodeInfo, index: number)} */ let callback;
+        let isAsync = false;
         let childCount = 0;
         const generator = {
             /**
              * 
              * @param {(childInfo: NodeInfo, index: number)} cb 
              */
-            next(cb) { 
+            async next(cb, useAsync = false) { 
                 callback = cb; 
-                const promise = new Promise((rs, rj) => { resolve = rs; reject = rj; });
-                start();
-                return promise;
+                isAsync = useAsync;
+                return start();
             }
         };
 
         let isArray = false;
-        const start = () => {
+        const start = async () => {
             if (this.recordInfo === null) {
-                return this.readHeader()
-                .then(() => {
-                    start();
-                });
+                await this.readHeader();
             }
 
             isArray = this.recordInfo.valueType === VALUE_TYPES.ARRAY;
             if (this.recordInfo.hasKeyIndex) {
-                return createStreamFromBinaryTree()
-                .then(resolve)
-                .catch(reject);
+                return createStreamFromBinaryTree();
             }
-            // TODO: Enable again?
-            // else if (this.allocation.length === 1 && this.allocation[0].length === 1) {
-            //     // We have all data in memory (small record)
-            //     return createStreamFromLinearData(this.recordInfo.startData, true).then(resolve).catch(reject);
-            // }
+            else if (this.recordInfo.allocation.addresses.length === 1) {
+                // We have all data in memory (small record)
+                return createStreamFromLinearData(this.recordInfo.startData, true);
+            }
             else {
                 return this.getDataStream()
-                .next(({ data, valueType, chunks, chunkIndex, hasKeyTree, headerLength, fileIndex }) => {
+                .next(({ data, chunks, chunkIndex }) => {
                     let isLastChunk = chunkIndex === chunks.length-1;
                     return createStreamFromLinearData(data, isLastChunk); //, fileIndex
-                })
-                .then(resolve)
-                .catch(reject);
+                });
             }
         };
 
         // Gets children from a indexed binary tree of key/value data
-        const createStreamFromBinaryTree = () => {
-            
-            return new Promise((resolve, reject) => {
-                let i = 0;
-                const tree = new BinaryBPlusTree(this._treeDataReader.bind(this));
-                const processLeaf = (leaf) => {
+        const createStreamFromBinaryTree = async () => {
+            const tree = new BinaryBPlusTree(this._treeDataReader.bind(this));
 
-                    // if (!leaf.getNext) {
-                    //     resolve(); // Resolve already, so lock can be removed
-                    // }
+            let canceled = false;
+            if (options.keyFilter) {
+                // Only get children for requested keys
+                for (let i = 0; i < options.keyFilter.length; i++) {
+                    const key = options.keyFilter[i];
+                    const value = await tree.find(key).catch(err => {
+                        console.error(`Error reading tree for node ${this.address}: ${err.message}`, err);
+                        throw err;
+                    });
 
-                    const children = leaf.entries
-                    .map(entry => {
-                        // DISABLED 2020/04/15: key datatype must NEVER be changed!!
-                        // if (typeof entry.key !== 'string') { 
-                        //     // Have to do this because numeric string keys were saved as numbers for sorting & matching purposes
-                        //     entry.key = entry.key.toString(); 
-                        // }
-                        // /DISABLED
-                        if (options.keyFilter && !options.keyFilter.includes(entry.key)) {
-                            return null;
-                        }
+                    if (value === null) { continue; /* Key not found? */ }
+                    const childInfo = isArray ? new NodeInfo({ path: `${this.address.path}[${key}]`, index: key }) : new NodeInfo({ path: `${this.address.path}/${key}`, key });
+                    const res = getValueFromBinary(childInfo, value.recordPointer, 0);
+                    if (!res.skip) {
+                        let result = callback(childInfo, i);
+                        if (isAsync && result instanceof Promise) { result = await result; }
+                        canceled = result === false; // Keep going until callback returns false
+                        if (canceled) { break; }
+                    }
+                }
+            }
+            else {
+                // Loop the tree leafs, run callback for each child
+                let leaf = await tree.getFirstLeaf();
+                while (leaf) {
+                    const children = leaf.entries.reduce((nodes, entry) => {
                         const child = isArray ? new NodeInfo({ path: `${this.address.path}[${entry.key}]`, index: entry.key }) : new NodeInfo({ path: `${this.address.path}/${entry.key}`, key: entry.key });
                         const res = getValueFromBinary(child, entry.value.recordPointer, 0);
-                        if (res.skip) {
-                            return null;
-                        }
-                        return child;
-                    })
-                    .filter(child => child !== null);
-
-                    const stop = !children.every(child => {
-                        return callback(child, i++) !== false; // Keep going until callback returns false
-                    });
-                    if (!stop && leaf.getNext) {
-                        return leaf.getNext().then(processLeaf);
+                        if (!res.skip) { nodes.push(child); }
+                        return nodes;
+                    }, []);
+    
+                    for(let i = 0; !canceled && i < children.length; i++) {
+                        let result = callback(children[i], i);
+                        if (isAsync && result instanceof Promise) { result = await result; }
+                        canceled = result === false; // Keep going until callback returns false
                     }
-                    else { //} if (stop) {
-                        resolve(); //done(`readKeyStream:processLeaf, stop=${stop}, last=${!leaf.getNext}`);
-                    }
-                };
-
-                if (options.keyFilter) { // && !isArray
-                    let i = 0;
-                    const nextKey = () => {
-                        const isLastKey = i + 1 === options.keyFilter.length;
-                        const key = options.keyFilter[i];
-                        return tree.find(key)
-                        .catch(err => {
-                            console.error(`Error reading tree for node ${this.address}: ${err.message}`, err);
-                            throw err;
-                        })
-                        .then(value => {
-                            // if (isLastKey) {
-                            //     resolve();  // Resolve already, so lock can be removed
-                            // }
-
-                            let proceed = true;
-                            if (value !== null) {
-                                const childInfo = isArray ? new NodeInfo({ path: `${this.address.path}[${key}]`, index: key }) : new NodeInfo({ path: `${this.address.path}/${key}`, key });
-                                const res = getValueFromBinary(childInfo, value.recordPointer, 0);
-                                if (!res.skip) {
-                                    proceed = callback(childInfo, i) !== false;
-                                }
-                            }
-                            if (proceed && !isLastKey) {
-                                i++;
-                                nextKey();
-                            }
-                            else { //if (!proceed) {
-                                resolve(); //done(`readKeyStream:nextKey, proceed=${proceed}, last=${isLastKey}`);
-                            }
-                        });                        
-                    }
-                    nextKey().catch(reject);
+                    leaf = !canceled && leaf.getNext ? await leaf.getNext() : null;
                 }
-                else {
-                    tree.getFirstLeaf().then(processLeaf).catch(reject);
-                }
-            });              
+            }
+            return !canceled;
         }
 
         // To get values from binary data:
@@ -2009,7 +1896,7 @@ class NodeReader {
          * @param {number} index 
          */
         const getValueFromBinary = (child, binary, index) => {
-            const startIndex = index;
+            // const startIndex = index;
             const assert = (bytes) => {
                 if (index + bytes > binary.length) {
                     throw new AdditionalDataRequest(); 
@@ -2028,7 +1915,9 @@ class NodeReader {
 
             index += 2;
             if (isRemoved) {
-                throw new Error("corrupt: removed child data isn't implemented yet");
+                if (!REMOVED_CHILD_DATA_IMPLEMENTED) {
+                    throw new Error("corrupt: removed child data isn't implemented yet");
+                }
                 // NOTE: will not happen yet because record saving currently rewrites
                 // whole records on updating. Adding new/updated data to the end of a 
                 // record will offer performance improvements. Rewriting a whole new record
@@ -2046,7 +1935,7 @@ class NodeReader {
                 else if (child.type === VALUE_TYPES.OBJECT) { child.value = {}; }
                 else if (child.type === VALUE_TYPES.BINARY) { child.value = new ArrayBuffer(0); }
                 else if (child.type === VALUE_TYPES.REFERENCE) { child.value = new PathReference(""); }
-                else { throw `Tiny value deserialization method missing for value type ${child.type}`};
+                else { throw new Error(`Tiny value deserialization method missing for value type ${child.type}`); }
             }
             else if (isInlineValue) {
                 const length = (valueInfo & 63) + 1;
@@ -2066,8 +1955,8 @@ class NodeReader {
                     child.value = new PathReference(path); 
                 }
                 else { 
-                    throw `Inline value deserialization method missing for value type ${child.type}`
-                };
+                    throw new Error(`Inline value deserialization method missing for value type ${child.type}`);
+                }
                 index += length;
             }
             else if (isRecordValue) {
@@ -2099,8 +1988,6 @@ class NodeReader {
             }
 
             //child.file.length = index - startIndex;
-
-
             return { index };
         };
 
@@ -2186,15 +2073,16 @@ class NodeReader {
             return children;
         }
 
-        let i = 0;
-        const createStreamFromLinearData = (chunkData, isLastChunk) => { // , chunkStartIndex
+        const createStreamFromLinearData = async (chunkData, isLastChunk) => { // , chunkStartIndex
             let children = getChildrenFromChunk(this.recordInfo.valueType, chunkData); //, chunkStartIndex);
-            let stop = !children.every(child => {
-                const proceed = callback(child, i) !== false; // Keep going until callback returns false
-                i++;
-                return proceed;
-            });
-            if (stop || isLastChunk) {
+            let canceled = false;
+            for (let i = 0; !canceled && i < children.length; i++) {
+                const child = children[i];
+                let result = callback(child, i);
+                if (isAsync && result instanceof Promise) { result = await result; }
+                canceled = result === false; // Keep going until callback returns false
+            }
+            if (canceled || isLastChunk) {
                 return false;
             }
         }
@@ -2207,16 +2095,14 @@ class NodeReader {
      * NEEDS OPTIMIZATION - currently uses getChildStream to get count, 
      * but this is quite heavy for the purpose
      */
-    getChildCount() {
+    async getChildCount() {
         let count = 0;
-        return this.getChildStream()
+        await this.getChildStream()
         .next(childInfo => {
             count++;
             return true; // next!
-        })
-        .then(() => {
-            return count;
-        })
+        });
+        return count;
     }
 
     /**
@@ -2224,22 +2110,20 @@ class NodeReader {
      * @param {string|number} key key name or index number
      * @returns {Promise<NodeInfo>} returns a Promise that resolves with NodeInfo of the child
      */
-    getChildInfo(key) {
+    async getChildInfo(key) {
         let childInfo = null;
-        return this.getChildStream({ keyFilter: [key] })
+        await this.getChildStream({ keyFilter: [key] })
         .next(info => {
             childInfo = info;
-        })
-        .then(() => {
-            if (childInfo) {
-                return childInfo;
-            }
-            let childPath = PathInfo.getChildPath(this.address.path, key);
-            return new NodeInfo({ path: childPath, key, exists: false });
         });
+        if (childInfo) {
+            return childInfo;
+        }
+        let childPath = PathInfo.getChildPath(this.address.path, key);
+        return new NodeInfo({ path: childPath, key, exists: false });
     }
 
-    _treeDataWriter(binary, index) {
+    async _treeDataWriter(binary, index) {
         if (binary instanceof Array) {
             binary = Buffer.from(binary);
         }
@@ -2277,19 +2161,8 @@ class NodeReader {
     }
 
     // Translates requested data index and length to actual record data location and reads it
-    _treeDataReader(index, length) {
+    async _treeDataReader(index, length) {
         // console.log(`...read request for index ${index}, length ${length}...`);
-        // index to fileIndex:
-        // fileIndex + headerLength + (floor(index / recordSize)*recordSize) + (index % recordSize)
-        // above is not true for fragmented records
-
-        // start recordNr & offset:
-        // recordNr = floor((index + headerLength) / recordSize)
-        // offset = (index + headerLength) % recordSize
-        // end recordNr & offset:
-        // recordNr = floor((index + headerLength + length) / recordSize)
-        // offset = (index + headerLength + length) % recordSize
-        
         const recordSize = this.storage.settings.recordSize;
         const headerLength = this.recordInfo.headerLength;
         const startRecord = {
@@ -2321,125 +2194,101 @@ class NodeReader {
             reads.push(p);
             bOffset += bLength;
         }
-        return Promise.all(reads)
-        .then(() => {
-            // Convert Uint8Array to byte array (as long as BinaryBPlusTree doesn't work with typed arrays)
-            // let bytes = [];
-            // binary.forEach(val => bytes.push(val));
-            // return bytes;
-            return Buffer.from(binary.buffer);
-        });
+        await Promise.all(reads);
+        return Buffer.from(binary.buffer);
     }
 
-    readHeader() {
+    async readHeader() {
         this._assertLock();
         // console.error(`NodeReader.readHeader ${this.address}, tid ${this.lock.tid}`);
 
         const bytesPerRecord = this.storage.settings.recordSize;
         const fileIndex = this.storage.getRecordFileIndex(this.address.pageNr, this.address.recordNr);
         let data = new Uint8Array(bytesPerRecord);
-        return this.storage.readData(fileIndex, data.buffer)
-        .then(bytesRead => {
 
-            const hasKeyIndex = (data[0] & FLAG_KEY_TREE) === FLAG_KEY_TREE;
-            const valueType = data[0] & FLAG_VALUE_TYPE; // Last 4-bits of first byte of read data has value type
+        const bytesRead = await this.storage.readData(fileIndex, data.buffer);
+        if (bytesRead < bytesPerRecord) { throw new Error(`Not enough bytes read from file, expected ${bytesPerRecord} but got ${bytesRead}`); }
 
-            let view = new DataView(data.buffer);
-            // Read Chunk Table
-            // TODO: If the CT is too big for 1 record, it needs to read more records or it will crash... 
-            // UPDATE: the max amount of chunks === nr of whole pages needed + 3, so this will (probably) never happen
-            // UPDATE: It does! It happened! 17 pages: 2MB of data for 1 node - 17 * 9 = 153 bytes which is > 128!
+        const hasKeyIndex = (data[0] & FLAG_KEY_TREE) === FLAG_KEY_TREE;
+        const valueType = data[0] & FLAG_VALUE_TYPE; // Last 4-bits of first byte of read data has value type
 
-            let offset = 1;
-            let firstRange = new StorageAddressRange(this.address.pageNr, this.address.recordNr, 1);
+        // Read Chunk Table
+        let view = new DataView(data.buffer);
+        let offset = 1;
+        let firstRange = new StorageAddressRange(this.address.pageNr, this.address.recordNr, 1);
+        /** @type {StorageAddressRange[]} */
+        const ranges = [firstRange];
+        const allocation = new NodeAllocation(ranges);
+        let readingRecordIndex = 0;
+        let done = false;
+        while(!done) {
 
-            /**
-             * @type {StorageAddressRange[]}
-             */
-            const ranges = [firstRange];
-            const allocation = new NodeAllocation(ranges);
-            let readingRecordIndex = 0;
-            const readAllocationTable = () => {
-                return new Promise((resolve, reject) => {                    
-                    while(true) {
-
-                        if (offset + 9 + 2 >= data.length) {
-                            // Read more data
-                            readingRecordIndex++;
-                            let address = allocation.addresses[readingRecordIndex];
-                            let fileIndex = this.storage.getRecordFileIndex(address.pageNr, address.recordNr);
-                            let moreData = new Uint8Array(bytesPerRecord);
-                            return this.storage.readData(fileIndex, moreData.buffer)
-                            .then(() => {
-                                data = concatTypedArrays(data, moreData);
-                                view = new DataView(data.buffer);
-                                readAllocationTable().then(resolve).catch(reject);
-                            });
-                        }
-
-                        const type = view.getUint8(offset);
-                        if (type === 0) { 
-                            // No more chunks, exit
-                            offset++;
-                            break;
-                        }
-                        else if (type === 1) {
-                            // First chunk is longer than the 1 record already read
-                            firstRange.length = view.getUint16(offset + 1);
-                            offset += 3;
-                        }
-                        else if (type === 2) {
-                            // Next chunk is location somewhere else (not contigious)
-                            const pageNr = view.getUint32(offset + 1);
-                            const recordNr = view.getUint16(offset + 5);
-                            const length = view.getUint16(offset + 7);
-
-                            const range = new StorageAddressRange(pageNr, recordNr, length);
-                            ranges.push(range);
-                            offset += 9;    
-                        }
-                        else if (type === 3) {
-                            // NEW Next chunk is a number of contigious pages (large!)
-                            // NOT IMPLEMENTED YET
-                            const pageNr = view.getUint32(offset + 1);
-                            const totalPages = view.getUint16(offset + 5);
-                            const range = new StorageAddressRange(pageNr, 0, totalPages * this.storage.settings.pageSize);
-                            ranges.push(range);
-                            offset += 7;
-                        }
-                        else {
-                            throw new TypeError(`Unknown chunk type ${type} while reading record at ${this.address}`);
-                        }
-                    }
-                    resolve();
-                });
+            if (offset + 9 + 2 >= data.length) {
+                // Read more data (next record)
+                readingRecordIndex++;
+                let address = allocation.addresses[readingRecordIndex];
+                let fileIndex = this.storage.getRecordFileIndex(address.pageNr, address.recordNr);
+                let moreData = new Uint8Array(bytesPerRecord);
+                await this.storage.readData(fileIndex, moreData.buffer);
+                data = concatTypedArrays(data, moreData);
+                view = new DataView(data.buffer);
             }
 
-            return readAllocationTable()
-            .then(() => {
-                const lastRecordDataLength = view.getUint16(offset);
-                offset += 2;
+            const type = view.getUint8(offset);
+            if (type === 0) { 
+                // No more chunks, exit
+                offset++;
+                done = true;
+            }
+            else if (type === 1) {
+                // First chunk is longer than the 1 record already read
+                firstRange.length = view.getUint16(offset + 1);
+                offset += 3;
+            }
+            else if (type === 2) {
+                // Next chunk is location somewhere else (not contigious)
+                const pageNr = view.getUint32(offset + 1);
+                const recordNr = view.getUint16(offset + 5);
+                const length = view.getUint16(offset + 7);
 
-                const headerLength = offset;
-                // const allocation = new NodeAllocation(ranges);
-                const firstRecordDataLength = ranges.length === 1 && ranges[0].length == 1 
-                    ? lastRecordDataLength 
-                    : bytesPerRecord - headerLength;
+                const range = new StorageAddressRange(pageNr, recordNr, length);
+                ranges.push(range);
+                offset += 9;    
+            }
+            else if (type === 3) {
+                // NEW Next chunk is a number of contigious pages (large!)
+                // NOT IMPLEMENTED YET
+                const pageNr = view.getUint32(offset + 1);
+                const totalPages = view.getUint16(offset + 5);
+                const range = new StorageAddressRange(pageNr, 0, totalPages * this.storage.settings.pageSize);
+                ranges.push(range);
+                offset += 7;
+            }
+            else {
+                throw new TypeError(`Unknown chunk type ${type} while reading record at ${this.address}`);
+            }
+        }
 
-                this.recordInfo = new RecordInfo(
-                    this.address.path,
-                    hasKeyIndex,
-                    valueType,
-                    allocation,
-                    headerLength,
-                    lastRecordDataLength,
-                    bytesPerRecord,
-                    data.slice(headerLength, headerLength + firstRecordDataLength)
-                );
+        const lastRecordDataLength = view.getUint16(offset);
+        offset += 2;
 
-                return this.recordInfo;
-            });
-        });
+        const headerLength = offset;
+        // const allocation = new NodeAllocation(ranges);
+        const firstRecordDataLength = ranges.length === 1 && ranges[0].length == 1 
+            ? lastRecordDataLength 
+            : bytesPerRecord - headerLength;
+
+        this.recordInfo = new RecordInfo(
+            this.address.path,
+            hasKeyIndex,
+            valueType,
+            allocation,
+            headerLength,
+            lastRecordDataLength,
+            bytesPerRecord,
+            data.slice(headerLength, headerLength + firstRecordDataLength)
+        );
+        return this.recordInfo;
     }
 
     getChildTree() {
@@ -2451,152 +2300,6 @@ class NodeReader {
             this._treeDataWriter.bind(this),
             'record@' + this.recordInfo.address.toString()
         );
-    }
-}
-
-class NodeChange {
-    static get CHANGE_TYPE() {
-        return {
-            UPDATE: 'update',
-            DELETE: 'delete',
-            INSERT: 'insert'
-        };
-    }
-
-    /**
-     * 
-     * @param {string|number} keyOrIndex 
-     * @param {string} changeType 
-     * @param {any} oldValue 
-     * @param {any} newValue 
-     */
-    constructor(keyOrIndex, changeType, oldValue, newValue) {
-        this.keyOrIndex = keyOrIndex;
-        this.changeType = changeType;
-        this.oldValue = oldValue;
-        this.newValue = newValue;
-    }
-}
-
-class NodeChangeTracker {
-    /**
-     * 
-     * @param {string} path 
-     */
-    constructor(path) {
-        this.path = path;
-        /** @type {NodeChange[]} */ 
-        this._changes = [];
-        /** @type {object|Array} */ 
-        this._oldValue = undefined;
-        this._newValue = undefined;
-    }
-
-    addDelete(keyOrIndex, oldValue) {
-        const change = new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.DELETE, oldValue, null);
-        this._changes.push(change);
-        return change;
-    }
-    addUpdate(keyOrIndex, oldValue, newValue) {
-        const change = new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.UPDATE, oldValue, newValue)
-        this._changes.push(change);
-        return change;
-    }
-    addInsert(keyOrIndex, newValue) {
-        const change = new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.INSERT, null, newValue)
-        this._changes.push(change);
-        return change;
-    }
-    add(keyOrIndex, currentValue, newValue) {
-        if (currentValue === null) {
-            if (newValue === null) { 
-                throw new Error(`Wrong logic for node change on "${this.nodeInfo.path}/${keyOrIndex}" - both old and new values are null`);
-            }
-            return this.addInsert(keyOrIndex, newValue);
-        }
-        else if (newValue === null) {
-            return this.addDelete(keyOrIndex, currentValue);
-        }
-        else {
-            return this.addUpdate(keyOrIndex, currentValue, newValue);
-        }            
-    }
-
-    get updates() {
-        return this._changes.filter(change => change.changeType === NodeChange.CHANGE_TYPE.UPDATE);
-    }
-    get deletes() {
-        return this._changes.filter(change => change.changeType === NodeChange.CHANGE_TYPE.DELETE);
-    }
-    get inserts() {
-        return this._changes.filter(change => change.changeType === NodeChange.CHANGE_TYPE.INSERT);
-    }
-    get all() {
-        return this._changes;
-    }
-    get totalChanges() {
-        return this._changes.length;
-    }
-    get(keyOrIndex) {
-        return this._changes.find(change => change.keyOrIndex === keyOrIndex);
-    }
-    hasChanged(keyOrIndex) {
-        return !!this.get(keyOrIndex);
-    }
-
-    get newValue() {
-        if (typeof this._newValue === 'object') { return this._newValue; }
-        if (typeof this._oldValue === 'undefined') { throw new TypeError(`oldValue is not set`); }
-        let newValue = {};
-        Object.keys(this.oldValue).forEach(key => newValue[key] = oldValue[key]);
-        this.deletes.forEach(change => delete newValue[change.key]);
-        this.updates.forEach(change => newValue[change.key] = change.newValue);
-        this.inserts.forEach(change => newValue[change.key] = change.newValue);
-        return newValue;
-    }
-    set newValue(value) {
-        this._newValue = value;
-    }
-
-    get oldValue() {
-        if (typeof this._oldValue === 'object') { return this._oldValue; }
-        if (typeof this._newValue === 'undefined') { throw new TypeError(`newValue is not set`); }
-        let oldValue = {};
-        Object.keys(this.newValue).forEach(key => oldValue[key] = newValue[key]);
-        this.deletes.forEach(change => oldValue[change.key] = change.oldValue);
-        this.updates.forEach(change => oldValue[change.key] = change.oldValue);
-        this.inserts.forEach(change => delete oldValue[change.key]);
-        return oldValue;
-    }
-    set oldValue(value) {
-        this._oldValue = value;
-    }
-
-    get typeChanged() {
-        return typeof this.oldValue !== typeof this.newValue 
-            || (this.oldValue instanceof Array && !(this.newValue instanceof Array))
-            || (this.newValue instanceof Array && !(this.oldValue instanceof Array));
-    }
-
-    static create(path, oldValue, newValue) {
-        const changes = new NodeChangeTracker(path);
-        changes.oldValue = oldValue;
-        changes.newValue = newValue;
-
-        typeof oldValue === 'object' && Object.keys(oldValue).forEach(key => {
-            if (typeof newValue === 'object' && key in newValue && newValue !== null) {
-                changes.add(key, oldValue[key], newValue[key]);
-            }
-            else {
-                changes.add(key, oldValue[key], null);
-            }
-        });
-        typeof newValue === 'object' && Object.keys(newValue).forEach(key => {
-            if (typeof oldValue !== 'object' || !(key in oldValue) || oldValue[key] === null) {
-                changes.add(key, null, newValue[key]);
-            }
-        });
-        return changes;
     }
 }
 
@@ -2672,15 +2375,13 @@ class NodeChangeTracker {
             // Child is stored in own record, and it is updated or deleted so we need to get
             // its allocation so we can release it when updating is done
             const promise = storage.nodeLocker.lock(child.address.path, lock.tid, false, `_mergeNode: read child "/${child.address.path}"`)
-            .then(childLock => {
+            .then(async childLock => {
                 const childReader = new NodeReader(storage, child.address, childLock, false);
-                return childReader.getAllocation(true)
-                .then(allocation => {
-                    childLock.release();
-                    discardAllocation.ranges.push(...allocation.ranges);
-                    const currentChildValue = new InternalNodeReference(child.type, child.address);
-                    changes.add(keyOrIndex, currentChildValue, newValue);
-                });
+                const allocation = await childReader.getAllocation(true);
+                childLock.release();
+                discardAllocation.ranges.push(...allocation.ranges);
+                const currentChildValue = new InternalNodeReference(child.type, child.address);
+                changes.add(keyOrIndex, currentChildValue, newValue);
             });
             childValuePromises.push(promise);
         }
@@ -2689,7 +2390,7 @@ class NodeChangeTracker {
         }
     })
     
-    let results = await Promise.all(childValuePromises);            
+    await Promise.all(childValuePromises);            
 
     // Check which keys we haven't seen (were not in the current node), these will be added
     newKeys.forEach(key => {
@@ -2762,7 +2463,7 @@ class NodeChangeTracker {
 
         let operations = [];
         let tree = nodeReader.getChildTree();
-        let results = await Promise.all(childPromises);
+        await Promise.all(childPromises);
         
         changes.deletes.forEach(change => {
             const op = BinaryBPlusTree.TransactionOperation.remove(change.keyOrIndex, change.oldValue);
@@ -2786,7 +2487,6 @@ class NodeChangeTracker {
         const processOperations = async (retry = 0, prevRecordInfo = nodeReader.recordInfo) => {
             if (retry > 1 && operations.length === debugOpCounts[debugOpCounts.length-1]) {
                 // Number of pending operations did not decrease after rebuild?!
-                debugger;
                 throw new Error(`DEV: Tree rebuild did not fix ${operations.length} pending operation(s) failing to execute. Debug this!`);
             }
             debugOpCounts.push(operations.length);
@@ -2803,11 +2503,9 @@ class NodeChangeTracker {
                 const tempFilepath = `${storage.settings.path}/${storage.name}.acebase/tree-${ID.generate()}.tmp`;
                 let bytesWritten = 0;
                 const fd = await pfs.open(tempFilepath, pfs.flags.readAndWriteAndCreate)
-                const writer = BinaryWriter.forFunction((data, index) => {
-                    return pfs.write(fd, data, 0, data.length, index)
-                    .then(() => {
-                        bytesWritten += data.length;
-                    });
+                const writer = BinaryWriter.forFunction(async (data, index) => {
+                    await pfs.write(fd, data, 0, data.length, index)
+                    bytesWritten += data.length;
                 });
                 await tree.rebuild(writer);
 
@@ -2815,11 +2513,14 @@ class NodeChangeTracker {
                 let readOffset = 0;
                 const reader = async length => {
                     const buffer = new Uint8Array(length);
-                    await pfs.read(fd, buffer, 0, buffer.length, readOffset)
-                    readOffset += length;
+                    const { bytesRead } = await pfs.read(fd, buffer, 0, buffer.length, readOffset);
+                    readOffset += bytesRead;
+                    if (bytesRead < length) { 
+                        return buffer.slice(0, bytesRead); // throw new Error(`Failed to read ${length} bytes from file, only got ${bytesRead}`); 
+                    }
                     return buffer;
                 };
-                const recordInfo = await _write(storage, nodeInfo.path, nodeReader.recordInfo.valueType, bytesWritten, true, reader, nodeReader.recordInfo)
+                const recordInfo = await _write(storage, nodeInfo.path, nodeReader.recordInfo.valueType, bytesWritten, true, reader, nodeReader.recordInfo);
                 // Close and remove the tmp file, don't wait for this
                 pfs.close(fd)
                 .then(() => pfs.rm(tempFilepath))
@@ -2885,7 +2586,6 @@ class NodeChangeTracker {
         newRecordInfo = await _writeNode(storage, nodeInfo.path, mergedValue, lock, nodeReader.recordInfo);
     }
 
-    // const newRecordInfo = await updatePromise;
     return done(newRecordInfo);
 }
 
@@ -2950,7 +2650,7 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
         const reader = (length) => {
             const slice = buffer.slice(readOffset, readOffset + length);
             readOffset += length;
-            return Promise.resolve(slice);
+            return slice;
         };
         return _write(storage, path, valueType, buffer.length, keyTree, reader, currentRecordInfo);
     };
@@ -3031,7 +2731,7 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
         });
     }
 
-    let results = await Promise.all(childPromises);
+    await Promise.all(childPromises);
     
     // Append all serialized data into 1 binary array
 
@@ -3041,8 +2741,7 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
     const minKeysForTreeCreation = 100;
     if (true && serialized.length > minKeysForTreeCreation) {
         // Create a B+tree
-        keyTree = true;
-        let fillFactor = 
+        const fillFactor = 
             isArray || serialized.every(kvp => typeof kvp.key === 'string' && /^[0-9]+$/.test(kvp.key))
                 ? BINARY_TREE_FILL_FACTOR_50
                 : BINARY_TREE_FILL_FACTOR_95;
@@ -3068,7 +2767,7 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
             // For binary key/value layout, see _write function
             let bytes = [];
             if (!isArray) {
-                if (kvp.key.length > 128) { throw `Key ${kvp.key} is too long to store. Max length=128`; }
+                if (kvp.key.length > 128) { throw new Error(`Key ${kvp.key} is too long to store. Max length=128`); }
                 let keyIndex = storage.KIT.getOrAdd(kvp.key); // Gets KIT index for this key
 
                 // key_info:
@@ -3084,7 +2783,7 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
                     // key_name:
                     for (let i = 0; i < kvp.key.length; i++) {
                         let charCode = kvp.key.charCodeAt(i);
-                        if (charCode > 255) { throw `Invalid character in key ${kvp.key} at char ${i+1}`; }
+                        if (charCode > 255) { throw new Error(`Invalid character in key ${kvp.key} at char ${i+1}`); }
                         bytes.push(charCode);
                     }
                 }
@@ -3288,7 +2987,7 @@ function _serializeValue (storage, path, keyOrIndex, val, parentTid) {
             return create({ type: VALUE_TYPES.STRING, binary: encoded });
         }
     }
-};
+}
 
 
 /**
@@ -3298,7 +2997,7 @@ function _serializeValue (storage, path, keyOrIndex, val, parentTid) {
  * @param {number} type 
  * @param {number} length 
  * @param {boolean} hasKeyTree 
- * @param {(length: number) => Promise<Uint8Array|Number[]>} reader
+ * @param {(length: number) => Uint8Array|number[]|Promise<Uint8Array|number[]>} reader
  * @param {RecordInfo} currentRecordInfo
  * @returns {Promise<RecordInfo>}
  */
@@ -3466,8 +3165,9 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
             length -= headerBytes.byteLength;
             if (length === 0) { return headerBytes; }
         }
-        let dataBytes = await reader(length);
-        bytesRead += dataBytes.byteLength;
+        let dataBytes = reader(length);
+        bytesRead += length;
+        if (dataBytes instanceof Promise) { dataBytes = await dataBytes; }
         if (dataBytes instanceof Array) {
             dataBytes = Uint8Array.from(dataBytes);
         }
@@ -3482,19 +3182,17 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
     
     try {
         // Create and write all chunks
-        const bytesWritten = await chunkTable.ranges.reduce(async (promise, range, r) => {
+        const bytesWritten = await chunkTable.ranges.reduce(async (promise, range) => {
             const fileIndex = storage.getRecordFileIndex(range.pageNr, range.recordNr);
             if (isNaN(fileIndex)) {
                 throw new Error(`fileIndex is NaN!!`);
             }
-            let bytesWritten = 0;
-            const totalBytes = await promise;
-            bytesWritten = totalBytes;
+            let bytesWritten = promise ? await promise : 0;
             const data = await readChunk(range.length * bytesPerRecord);
             bytesWritten += data.byteLength;
             await storage.writeData(fileIndex, data);
             return bytesWritten;
-        }, Promise.resolve(0));
+        }, null);
 
         const chunks = chunkTable.ranges.length;
         const address = new NodeAddress(path, allocation.ranges[0].pageNr, allocation.ranges[0].recordNr);
