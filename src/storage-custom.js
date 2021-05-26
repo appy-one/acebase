@@ -2,8 +2,8 @@ const { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils } = require('ace
 const { compareValues } = Utils;
 const { NodeInfo } = require('./node-info');
 const { NodeLocker } = require('./node-lock');
-const { VALUE_TYPES, getNodeValueType } = require('./node-value-types');
-const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
+const { VALUE_TYPES } = require('./node-value-types');
+const { Storage, StorageSettings, NodeNotFoundError, NodeRevisionError } = require('./storage');
 
 /** Interface for metadata being stored for nodes */
 class ICustomStorageNodeMetaData {
@@ -51,20 +51,23 @@ class CustomStorageTransaction {
      * @param {string} path 
      * @returns {Promise<ICustomStorageNode>}
      */
-    get(path) { throw new Error(`CustomStorageTransaction.get must be overridden by subclass`); }
+    // eslint-disable-next-line no-unused-vars
+    async get(path) { throw new Error(`CustomStorageTransaction.get must be overridden by subclass`); }
     
     /**
      * @param {string} path 
      * @param {ICustomStorageNode} node
      * @returns {Promise<any>}
      */
-    set(path, node) { throw new Error(`CustomStorageTransaction.set must be overridden by subclass`); }
+    // eslint-disable-next-line no-unused-vars
+    async set(path, node) { throw new Error(`CustomStorageTransaction.set must be overridden by subclass`); }
     
     /**
      * @param {string} path
      * @returns {Promise<any>}
      */
-    remove(path) { throw new Error(`CustomStorageTransaction.remove must be overridden by subclass`); }
+    // eslint-disable-next-line no-unused-vars
+    async remove(path) { throw new Error(`CustomStorageTransaction.remove must be overridden by subclass`); }
     
     /**
      * 
@@ -76,7 +79,8 @@ class CustomStorageTransaction {
      * @param {(childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean} addCallback callback method that adds the child node. Returns whether or not to keep calling with more children
      * @returns {Promise<any>} Returns a promise that resolves when there are no more children to be streamed
      */
-    childrenOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.childrenOf must be overridden by subclass`); }
+    // eslint-disable-next-line no-unused-vars
+    async childrenOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.childrenOf must be overridden by subclass`); }
 
     /**
      * 
@@ -84,11 +88,12 @@ class CustomStorageTransaction {
      * @param {object} include 
      * @param {boolean} include.metadata Whether metadata needs to be loaded
      * @param {boolean} include.value  Whether value needs to be loaded
-     * @param {(childPath: string) => boolean} checkCallback callback method to precheck if descendant needs to be added, perform before loading metadata/value if possible
-     * @param {(childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean} addCallback callback method that adds the descendant node. Returns whether or not to keep calling with more children
+     * @param {(descPath: string, metadata?: ICustomStorageNodeMetaData) => boolean} checkCallback callback method to precheck if descendant needs to be added, perform before loading metadata/value if possible. NOTE: if include.metadata === true, you should load and pass the metadata to the checkCallback if doing so has no or small performance impact
+     * @param {(descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean} addCallback callback method that adds the descendant node. Returns whether or not to keep calling with more children
      * @returns {Promise<any>} Returns a promise that resolves when there are no more descendants to be streamed
      */
-    descendantsOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.descendantsOf must be overridden by subclass`); }
+    // eslint-disable-next-line no-unused-vars
+    async descendantsOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.descendantsOf must be overridden by subclass`); }
 
     /**
      * NOT USED YET
@@ -96,10 +101,10 @@ class CustomStorageTransaction {
      * @param {string[]} paths
      * @returns {Promise<Map<string, ICustomStorageNode>>} Returns promise with a Map of paths to nodes
      */
-    getMultiple(paths) {
+    async getMultiple(paths) {
         const map = new Map();
-        return Promise.all(paths.map(path => this.get(path).then(val => map.set(path, val))))
-        .then(done => map);
+        await Promise.all(paths.map(path => this.get(path).then(val => map.set(path, val))));
+        return map;
     }
 
     /**
@@ -123,12 +128,13 @@ class CustomStorageTransaction {
      * @param {Error} reason 
      * @returns {Promise<any>}
      */
-    rollback(reason) { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
+    // eslint-disable-next-line no-unused-vars
+    async rollback(reason) { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
 
     /**
      * @returns {Promise<any>}
      */
-    commit() { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
+    async commit() { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
     
     /**
      * Moves the transaction path to the parent node. If node locking is used, it will request a new lock
@@ -221,7 +227,7 @@ class CustomStorageSettings extends StorageSettings {
             return transaction;
         }
     }
-};
+}
 
 class CustomStorageNodeAddress {
     constructor(containerPath) {
@@ -270,7 +276,7 @@ class CustomStorageHelpers {
      * @returns {RegExp} Returns regular expression to test paths with
      */
     static ChildPathsRegex(path) {
-        return new RegExp(`^${path}(?:/[^/\[]+|\[[0-9]+\])$`);
+        return new RegExp(`^${path}(?:/[^/[]+|\\[[0-9]+\\])$`);
     }
 
     /**
@@ -291,7 +297,7 @@ class CustomStorageHelpers {
      * @returns {RegExp} Returns regular expression to test paths with
      */
     static DescendantPathsRegex(path) {
-        return new RegExp(`^${path}(?:/[^/\[]+|\[[0-9]+\])`);
+        return new RegExp(`^${path}(?:/[^/[]+|\\[[0-9]+\\])`);
     }
 
     /**
@@ -370,7 +376,7 @@ class CustomStorage extends Storage {
                 return { type: VALUE_TYPES.DATETIME, value: val.getTime() };
             }
             else if (val instanceof PathReference) {
-                return { type: VALUE_TYPES.REFERENCE, value: child.path };
+                return { type: VALUE_TYPES.REFERENCE, value: val.path };
             }
             else if (val instanceof ArrayBuffer) {
                 return { type: VALUE_TYPES.BINARY, value: ascii85.encode(val) };
@@ -1039,7 +1045,7 @@ class CustomStorage extends Storage {
                 //     : null;
 
                 let checkExecuted = false;
-                const includeDescendantCheck = (descPath) => {
+                const includeDescendantCheck = (descPath, metadata) => {
                     checkExecuted = true;
                     if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
                         // Double check failed
@@ -1058,10 +1064,10 @@ class CustomStorage extends Storage {
                         ? !options.exclude.some(k => checkPathInfo.equals(k) || checkPathInfo.isDescendantOf(k))
                         : true);
 
-                    // Apply child_objects filter
+                    // Apply child_objects filter. If metadata is not loaded, we can only skip deeper descendants here - any child object that does get through will be ignored by addDescendant
                     if (include 
                         && options.child_objects === false 
-                        && (pathInfo.isParentOf(descPath) && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(childNode.type)
+                        && (pathInfo.isParentOf(descPath) && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(metadata ? metadata.type : -1)
                         || PathInfo.getPathKeys(descPath).length > pathInfo.pathKeys.length + 1)
                     ) {
                         include = false;
@@ -1079,7 +1085,11 @@ class CustomStorage extends Storage {
                     if (!checkExecuted) {
                         throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
                     }
-                    
+                    if (options.child_objects === false && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type)) {
+                        // child objects are filtered out, but this one got through because includeDescendantCheck did not have access to its metadata,
+                        // which is ok because doing that might drastically improve performance in client code. Skip it now.
+                        return true;
+                    }
                     // Process the value
                     this._processReadNodeValue(node);
                     
