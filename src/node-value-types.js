@@ -1,3 +1,5 @@
+const { PathReference } = require('acebase-core');
+
 const VALUE_TYPES = {
     // Native types:
     OBJECT: 1,
@@ -33,6 +35,6 @@ function getNodeValueType(value) {
     else if (typeof value === 'string') { return VALUE_TYPES.STRING; }
     else if (typeof value === 'object') { return VALUE_TYPES.OBJECT; }
     throw new Error(`Invalid value for standalone node: ${value}`);
-};
+}
 
 module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType };
