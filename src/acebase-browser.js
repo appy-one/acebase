@@ -154,7 +154,6 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
             await new Promise((resolve, reject) => {
                 let stop = false, processed = 0;
                 const handleError = err => {
-                    debugger;
                     stop = true;
                     reject(err);
                 };
@@ -165,11 +164,9 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                 };
                 batch.forEach((op, i) => {
                     if (stop) { return; }
-                    // const isLast = i + 1 === batch.length;
                     let r1, r2;
                     const path = op.path;
                     if (op.action === 'set') { 
-                        // return this._set(tx, op.path, op.node); 
                         const { metadata, value } = this._splitMetadata(op.node);
                         /** @type {IIndexedDBNodeData} */
                         const nodeInfo = { path, metadata }
@@ -177,7 +174,6 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                         r2 = tx.objectStore('content').put(value, path); // Add value to "content" object store
                     }
                     else if (op.action === 'remove') { 
-                        // return this._remove(tx, op.path); 
                         r1 = tx.objectStore('content').delete(path); // Remove from "content" object store
                         r2 = tx.objectStore('nodes').delete(path); // Remove from "nodes" data store
                     }
@@ -251,31 +247,6 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         return Promise.resolve();
     }
 
-    // _set(tx, path, node) {
-    //     /** @type {ICustomStorageNode} */
-    //     const copy = {};
-    //     const value = node.value;
-    //     Object.assign(copy, node);
-    //     delete copy.value;
-    //     /** @type {ICustomStorageNodeMetaData} */
-    //     const metadata = copy;
-    //     // const { metadata, value } = this._splitMetadata(node);
-    //     /** @type {IIndexedDBNodeData} */
-    //     const obj = {
-    //         path,
-    //         metadata
-    //     }
-    //     const r1 = _requestToPromise(tx.objectStore('nodes').put(obj)); // Insert into "nodes" object store
-    //     const r2 = _requestToPromise(tx.objectStore('content').put(value, path)); // Add value to "content" object store
-    //     return Promise.all([r1, r2]);
-    // }
-
-    // _remove(tx, path) {
-    //     const r1 = _requestToPromise(tx.objectStore('content').delete(path)); // Remove from "content" object store
-    //     const r2 = _requestToPromise(tx.objectStore('nodes').delete(path)); // Remove from "nodes" data store
-    //     return Promise.all([r1, r2]);
-    // }
-
     childrenOf(path, include, checkCallback, addCallback) {
         include.descendants = false;
         return this._getChildrenOf(path, include, checkCallback, addCallback);
@@ -293,7 +264,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
      * @param {boolean} include.descendants
      * @param {boolean} include.metadata
      * @param {boolean} include.value
-     * @param {(path: string) => boolean} checkCallback 
+     * @param {(path: string, metadata?: ICustomStorageNodeMetaData) => boolean} checkCallback 
      * @param {(path: string, node: any) => boolean} addCallback 
      */
     _getChildrenOf(path, include, checkCallback, addCallback) {
@@ -321,7 +292,8 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     // Paths are sorted, no more children or ancestors to be expected!
                     keepGoing = false;
                 }
-                else if ((include.descendants || pathInfo.isParentOf(otherPath)) && checkCallback(otherPath)) {
+                else if (include.descendants || pathInfo.isParentOf(otherPath)) {
+                    
                     /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
                     let node;
                     if (include.metadata) {
@@ -330,6 +302,9 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                         /** @type {IIndexedDBNodeData} */
                         const data = valueCursor.result.value;
                         node = data.metadata;
+                    }
+                    const shouldAdd = checkCallback(otherPath, node);
+                    if (shouldAdd) {
                         if (include.value) {
                             // Load value!
                             const req = tx.objectStore('content').get(otherPath);
@@ -342,8 +317,8 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                                 };
                             });
                         }
+                        keepGoing = addCallback(otherPath, node);
                     }
-                    keepGoing = addCallback(otherPath, node);
                 }
                 if (keepGoing) {
                     try { cursor.result.continue(); }
