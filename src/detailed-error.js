@@ -9,26 +9,24 @@ class DetailedError extends Error {
         super(message);
         this.code = code;
         this.originalError = originalError;
-        // if (originalError) {
-        //     // this.currentStack = this.stack;
-        //     this.stack += '\n---------\n' + originalError.stack;
-        // }
     }
 
     get codes() {
-        const arr = [this.code];
+        const arr = [];
         let err = this;
-        while(err = err.originalError) {
+        while(err) {
             arr.push(err.code);
+            err = err.originalError;
         }
         return arr;
     }
 
     get stacks() {
-        const arr = [this.stack];
+        const arr = [];
         let err = this;
-        while(err = err.originalError) {
+        while(err) {
             arr.push(err.stack);
+            err = err.originalError;
         }
         return arr.join('\r\n-----------------\r\n');
     }
