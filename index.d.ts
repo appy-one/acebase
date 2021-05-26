@@ -136,11 +136,11 @@ export abstract class CustomStorageTransaction {
      * @param include 
      * @param include.metadata Whether metadata needs to be loaded
      * @param include.value  Whether value needs to be loaded
-     * @param checkCallback callback method to precheck if descendant needs to be added, perform before loading metadata/value if possible
+     * @param checkCallback callback method to precheck if descendant needs to be added, perform before loading metadata/value if possible. NOTE: if include.metadata === true, you should load and pass the metadata to the checkCallback if doing so has no or small performance impact
      * @param addCallback callback method that adds the descendant node. Returns whether or not to keep calling with more children
      * @returns Returns a promise that resolves when there are no more descendants to be streamed
      */
-    abstract descendantsOf(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (childPath: string) => boolean, addCallback: (descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean): Promise<any>;
+    abstract descendantsOf(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (descPath: string, metadata?: ICustomStorageNodeMetaData) => boolean, addCallback: (descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean): Promise<any>;
 
     /** (optional, not used yet) Function that gets multiple nodes (metadata AND value) from your custom data store at once. Must return a Promise that resolves with Map<path,value> */
     getMultiple?(paths: string[]): Promise<Map<string, ICustomStorageNode|null>>;
