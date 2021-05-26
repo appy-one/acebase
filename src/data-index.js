@@ -2,7 +2,7 @@
 const { Storage } = require('./storage');
 const { Node } = require('./node');
 const { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryWriter, BinaryBPlusTreeLeafEntry, BinaryReader, BlacklistingSearchOperator } = require('./btree');
-const { PathInfo, Utils, ID, debug, ColorStyle } = require('acebase-core');
+const { PathInfo, Utils, ID, ColorStyle } = require('acebase-core');
 const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
 const Geohash = require('./geohash');
 const { pfs } = require('./promise-fs');
@@ -53,7 +53,7 @@ function _createRecordPointer(wildcards, key) { //, address) {
     // recordPointer.push((address.recordNr >> 8) & 0xff);
     // recordPointer.push(address.recordNr & 0xff);
     return recordPointer;
-};
+}
 
 function _parseRecordPointer(path, recordPointer) {
     if (recordPointer.length === 0) {
@@ -117,7 +117,7 @@ class DataIndex {
             ERROR: 'error',
             REMOVED: 'removed'
         }
-    };
+    }
 
     /**
      * Creates a new index
@@ -594,7 +594,7 @@ class DataIndex {
      * @param {any} oldValue 
      * @param {any} newValue 
      */
-    handleRecordUpdate(path, oldValue, newValue, indexMetadata) {
+    async handleRecordUpdate(path, oldValue, newValue, indexMetadata) {
 
         const updatedKey = PathInfo.get(path).key;
         const keyValues = this.key === '{key}' 
@@ -614,7 +614,7 @@ class DataIndex {
         const includedValuesChanged = includedValues.some(values => compareValues(values.oldValue, values.newValue) !== 'identical');
 
         if (!keyValueChanged && !includedValuesChanged) {
-            return Promise.resolve();
+            return;
         }
 
         const wildcardKeys = this._getWildcardKeys(path);
@@ -632,7 +632,7 @@ class DataIndex {
             // Invalidate query cache
             this._cache.clear();
             // Update the tree
-            return this._updateTree(path, keyValues.oldValue, keyValues.newValue, recordPointer, recordPointer, metadata);
+            return await this._updateTree(path, keyValues.oldValue, keyValues.newValue, recordPointer, recordPointer, metadata);
         }
         else {
             // Queue the update
@@ -656,8 +656,7 @@ class DataIndex {
             });
 
             this._updateQueue.push(update);
-            //return p;
-            return Promise.resolve(); // Don't return p, prevents deadlock
+            //return p; // Don't wait for p, prevents deadlock when tree is rebuilding
         }
     }
 
@@ -1141,10 +1140,10 @@ class DataIndex {
                     }
                     const isTargetNode = keyIndex === keys.length;
                     
-                    const getChildren = () => {
+                    const getChildren = async () => {
                         let children = [];
 
-                        return Node.getChildren(this.storage, path)
+                        await Node.getChildren(this.storage, path)
                         .next(child => {
                             let keyOrIndex = typeof child.index === 'number' ? child.index : child.key;
                             if (!child.address || child.type !== Node.VALUE_TYPES.OBJECT) { //if (child.storageType !== "record" || child.valueType !== VALUE_TYPES.OBJECT) {
@@ -1158,189 +1157,172 @@ class DataIndex {
                             // Record doesn't exist? No biggy
                             this.storage.debug.warn(`Could not load record "/${path}": ${reason.message}`);
                         })
-                        .then(() => {
-                            // Iterate through the children in batches of max n nodes
-                            // should be determined by amount of * wildcards in index path
-                            // If there are 0 wildcards, batch size of 500 is ok
-                            // if there is 1 wildcard, use batch size 22 (sqrt of 500, 500^0.5), 
-                            // 2 wildcards: batch size 5 (2v500 or 500^0.25), 
-                            // 3 wildcards: batch size 2 (3v500 or 500^00.125)
-                            // Algebra refresh:
-                            // a = Math.pow(b, c)
-                            // c = Math.log(a) / Math.log(b)
-                            // b = Math.pow(a, Math.pow(0.5, c))
-                            // a is our max batch size, we'll use 500
-                            // c is our depth (nrOfWildcards) so we know this
-                            // b is our unknown start number
-                            const maxBatchSize = Math.round(Math.pow(500, Math.pow(0.5, wildcardNames.length))); 
-                            let batches = [];
-                            while (children.length > 0) {
-                                let batchChildren = children.splice(0, maxBatchSize);
-                                batches.push(batchChildren);
-                            }
 
-                            const nextBatch = () => {
-                                const batch = batches.shift();
-                                return Promise.all(batch.map(childKey => {
-                                    const childPath = PathInfo.getChildPath(path, childKey);
-                                    // do it
-                                    if (!isTargetNode) {
-                                        // Go deeper
-                                        return getAll(childPath, keyIndex+1);
-                                    }
-                                    else {
-                                        // We have to index this child, get all required values for the entry
-                                        const wildcardValues = childPath.match(wildcardRE).slice(1);
-                                        const neededKeys = [this.key].concat(this.includeKeys);
-                                        const keyFilter = neededKeys.filter(key => key !== '{key}' && !wildcardNames.includes(key));
-                                        let keyValue = null; // initialize to null so we can check if it had a valid indexable value
-                                        const metadata = (() => {
-                                            // create properties for each included key, if they are not set by the loop they will still be in the metadata (which is required for B+Tree metadata)
-                                            const obj = {};
-                                            this.includeKeys.forEach(key => obj[key] = undefined);
-                                            return obj;
-                                        })();
-                                        const addValue = (key, value) => {
-                                            // if (typeof value === 'string' && value.length > 255) {
-                                            //     value = value.slice(0, 255);
-                                            // }
-                                            if (typeof value === 'string' && !this.caseSensitive) {
-                                                value = value.toLocaleLowerCase(this.textLocale);
-                                            }
-                                            if (key === this.key) { keyValue = value; }
-                                            else { metadata[key] = value; };
-                                        };
-                                        let valuePromise;
-                                        const gotNamedWildcardKeys = ['{key}'].concat(wildcardNames).filter(key => key !== '*');
-                                        
-                                        neededKeys.filter(key => gotNamedWildcardKeys.includes(key)).forEach(key => {
-                                            if (key === '{key}') { 
-                                                keyValue = childKey; 
-                                            }
-                                            else {
-                                                const index = wildcardNames.indexOf(key);
-                                                if (index < 0) { throw new Error(`Requested key variable "${key}" not found index path`); }
-                                                const value = wildcardValues[index];
-                                                addValue(key, value);
-                                            }
-                                        });
+                        // Iterate through the children in batches of max n nodes
+                        // should be determined by amount of * wildcards in index path
+                        // If there are 0 wildcards, batch size of 500 is ok
+                        // if there is 1 wildcard, use batch size 22 (sqrt of 500, 500^0.5), 
+                        // 2 wildcards: batch size 5 (2v500 or 500^0.25), 
+                        // 3 wildcards: batch size 2 (3v500 or 500^00.125)
+                        // Algebra refresh:
+                        // a = Math.pow(b, c)
+                        // c = Math.log(a) / Math.log(b)
+                        // b = Math.pow(a, Math.pow(0.5, c))
+                        // a is our max batch size, we'll use 500
+                        // c is our depth (nrOfWildcards) so we know this
+                        // b is our unknown start number
+                        const maxBatchSize = Math.round(Math.pow(500, Math.pow(0.5, wildcardNames.length))); 
+                        let batches = [];
+                        while (children.length > 0) {
+                            let batchChildren = children.splice(0, maxBatchSize);
+                            batches.push(batchChildren);
+                        }
 
-                                        const gotAllData = neededKeys.every(key => gotNamedWildcardKeys.includes(key));
-                                        if (gotAllData) {
-                                            // No need to fetch node value, we've got all data needed
-                                            valuePromise = Promise.resolve();
+                        while (batches.length > 0) {
+                            const batch = batches.shift();
+                            await Promise.all(batch.map(async childKey => {
+                                const childPath = PathInfo.getChildPath(path, childKey);
+                                // do it
+                                if (!isTargetNode) {
+                                    // Go deeper
+                                    return getAll(childPath, keyIndex+1);
+                                }
+                                else {
+                                    // We have to index this child, get all required values for the entry
+                                    const wildcardValues = childPath.match(wildcardRE).slice(1);
+                                    const neededKeys = [this.key].concat(this.includeKeys);
+                                    const keyFilter = neededKeys.filter(key => key !== '{key}' && !wildcardNames.includes(key));
+                                    let keyValue = null; // initialize to null so we can check if it had a valid indexable value
+                                    const metadata = (() => {
+                                        // create properties for each included key, if they are not set by the loop they will still be in the metadata (which is required for B+Tree metadata)
+                                        const obj = {};
+                                        this.includeKeys.forEach(key => obj[key] = undefined);
+                                        return obj;
+                                    })();
+                                    const addValue = (key, value) => {
+                                        // if (typeof value === 'string' && value.length > 255) {
+                                        //     value = value.slice(0, 255);
+                                        // }
+                                        if (typeof value === 'string' && !this.caseSensitive) {
+                                            value = value.toLocaleLowerCase(this.textLocale);
+                                        }
+                                        if (key === this.key) { keyValue = value; }
+                                        else { metadata[key] = value; }
+                                    };
+                                    const gotNamedWildcardKeys = ['{key}'].concat(wildcardNames).filter(key => key !== '*');
+                                    
+                                    neededKeys.filter(key => gotNamedWildcardKeys.includes(key)).forEach(key => {
+                                        if (key === '{key}') { 
+                                            keyValue = childKey; 
                                         }
                                         else {
-                                            // Get child values
-                                            const keyPromises = [];
-                                            const seenKeys = gotNamedWildcardKeys.slice();
-                                            valuePromise = Node.getChildren(this.storage, childPath, keyFilter)
-                                            .next(childInfo => {
-                                                // What can be indexed? 
-                                                // strings, numbers, booleans, dates, undefined
-                                                seenKeys.push(childInfo.key);
-                                                if (childInfo.key === this.key && !allowedKeyValueTypes.includes(childInfo.valueType)) {
-                                                    // Key value isn't allowed to be this type, mark it as null so it won't be indexed
-                                                    keyValue = null;
-                                                    return;
-                                                }
-                                                else if (childInfo.key !== this.key && !indexableTypes.includes(childInfo.valueType)) {
-                                                    // Metadata that can't be indexed because it has the wrong type
-                                                    return;
-                                                }
-                                                // Index this value
-                                                if (childInfo.address) {
-                                                    const p = Node.getValue(this.storage, childInfo.address.path, { tid })
-                                                        .then(value => {
-                                                            addValue(childInfo.key, value);
-                                                        });
-                                                    keyPromises.push(p);
-                                                }
-                                                else {
-                                                    addValue(childInfo.key, childInfo.value);
-                                                }
-                                            })
-                                            .then(() => {
-                                                // If the key value wasn't present, set it to undefined (so it'll be indexed)
-                                                if (!seenKeys.includes(this.key)) { keyValue = undefined; }
-                                                return Promise.all(keyPromises);
-                                            });
+                                            const index = wildcardNames.indexOf(key);
+                                            if (index < 0) { throw new Error(`Requested key variable "${key}" not found index path`); }
+                                            const value = wildcardValues[index];
+                                            addValue(key, value);
+                                        }
+                                    });
+
+                                    const gotAllData = neededKeys.every(key => gotNamedWildcardKeys.includes(key));
+                                    if (!gotAllData) {
+                                        // Fetch node value, we need more data
+                                        // Get child values
+                                        const keyPromises = [];
+                                        const seenKeys = gotNamedWildcardKeys.slice();
+                                        await Node.getChildren(this.storage, childPath, keyFilter)
+                                        .next(childInfo => {
+                                            // What can be indexed? 
+                                            // strings, numbers, booleans, dates, undefined
+                                            seenKeys.push(childInfo.key);
+                                            if (childInfo.key === this.key && !allowedKeyValueTypes.includes(childInfo.valueType)) {
+                                                // Key value isn't allowed to be this type, mark it as null so it won't be indexed
+                                                keyValue = null;
+                                                return;
+                                            }
+                                            else if (childInfo.key !== this.key && !indexableTypes.includes(childInfo.valueType)) {
+                                                // Metadata that can't be indexed because it has the wrong type
+                                                return;
+                                            }
+                                            // Index this value
+                                            if (childInfo.address) {
+                                                const p = Node.getValue(this.storage, childInfo.address.path, { tid })
+                                                    .then(value => {
+                                                        addValue(childInfo.key, value);
+                                                    });
+                                                keyPromises.push(p);
+                                            }
+                                            else {
+                                                addValue(childInfo.key, childInfo.value);
+                                            }
+                                        });
+                                        // If the key value wasn't present, set it to undefined (so it'll be indexed)
+                                        if (!seenKeys.includes(this.key)) { keyValue = undefined; }
+                                        await Promise.all(keyPromises);
+                                    }
+
+                                    const addIndexValue = (key, recordPointer, metadata) => {
+
+                                        if (typeof key === 'string' && key.length > 255) {
+                                            // Make sure strings are not too large to store. Use first 255 chars only
+                                            console.warn(`Truncating key value "${key}" because it is too large to index`);
+                                            key = key.slice(0, 255);
                                         }
 
-                                        return valuePromise.then(() => {
-                                            const addIndexValue = (key, recordPointer, metadata) => {
+                                        // NEW: write value to buildStream
+                                        const bytes = [
+                                            0, 0, 0, 0, // entry_length
+                                            0 // processed
+                                        ];
 
-                                                if (typeof key === 'string' && key.length > 255) {
-                                                    // Make sure strings are not too large to store. Use first 255 chars only
-                                                    console.warn(`Truncating key value "${key}" because it is too large to index`);
-                                                    key = key.slice(0, 255);
-                                                }
+                                        // key:
+                                        let keyBytes = BinaryWriter.getBytes(key);
+                                        bytes.push(...keyBytes);
+                
+                                        // rp_length:
+                                        bytes.push(recordPointer.length);
 
-                                                // NEW: write value to buildStream
-                                                const bytes = [
-                                                    0, 0, 0, 0, // entry_length
-                                                    0 // processed
-                                                ];
+                                        // rp_data:
+                                        bytes.push(...recordPointer);
 
-                                                // key:
-                                                let keyBytes = BinaryWriter.getBytes(key);
-                                                bytes.push(...keyBytes);
-                        
-                                                // rp_length:
-                                                bytes.push(recordPointer.length);
+                                        // metadata:
+                                        this.allMetadataKeys && this.allMetadataKeys.forEach(key => {
+                                            let metadataValue = metadata[key];
 
-                                                // rp_data:
-                                                bytes.push(...recordPointer);
-
-                                                // metadata:
-                                                this.allMetadataKeys && this.allMetadataKeys.forEach(key => {
-                                                    let metadataValue = metadata[key];
-
-                                                    if (typeof metadataValue === 'string' && metadataValue.length > 255) {
-                                                        // Make sure strings are not too large to store. Use first 255 chars only
-                                                        console.warn(`Truncating "${key}" metadata value "${metadataValue}" because it is too large to index`);
-                                                        metadataValue = metadataValue.slice(0, 255);
-                                                    }
-
-                                                    const valueBytes = BinaryWriter.getBytes(metadataValue); // metadata_value
-                                                    bytes.push(...valueBytes);
-                                                });
-
-                                                // update entry_length:
-                                                BinaryWriter.writeUint32(bytes.length, bytes, 0);
-
-                                                writeToStream(bytes);
-                                                indexedValues++;
+                                            if (typeof metadataValue === 'string' && metadataValue.length > 255) {
+                                                // Make sure strings are not too large to store. Use first 255 chars only
+                                                console.warn(`Truncating "${key}" metadata value "${metadataValue}" because it is too large to index`);
+                                                metadataValue = metadataValue.slice(0, 255);
                                             }
 
-                                            if (keyValue !== null) { // typeof keyValue !== 'undefined' && 
-                                                // Add it to the index, using value as the index key, a record pointer as the value
-                                                // Create record pointer
-                                                const recordPointer = _createRecordPointer(wildcardValues, childKey); //, child.address);
-                                                // const entryValue = new BinaryBPlusTree.EntryValue(recordPointer, metadata)
-                                                // Add it to the index
-                                                if (options && options.addCallback) {
-                                                    keyValue = options.addCallback(addIndexValue, keyValue, recordPointer, metadata, { path: childPath, wildcards: wildcardValues, key: childKey });
-                                                }
-                                                else {
-                                                    addIndexValue(keyValue, recordPointer, metadata);
-                                                }
-                                                this.storage.debug.log(`Indexed "/${childPath}/${this.key}" value: '${keyValue}' (${typeof keyValue})`.colorize(ColorStyle.cyan));
-                                            }
-                                            // return addPromise; // Do we really have to wait for this?
+                                            const valueBytes = BinaryWriter.getBytes(metadataValue); // metadata_value
+                                            bytes.push(...valueBytes);
                                         });
-                                    }
-                                }))
-                                .then(() => {
-                                    if (batches.length > 0) { 
-                                        return nextBatch(); 
-                                    }
-                                })
-                            }; // nextBatch
 
-                            if (batches.length === 0) { return; }
-                            return nextBatch();
-                        });
+                                        // update entry_length:
+                                        BinaryWriter.writeUint32(bytes.length, bytes, 0);
+
+                                        writeToStream(bytes);
+                                        indexedValues++;
+                                    }
+
+                                    if (keyValue !== null) { // typeof keyValue !== 'undefined' && 
+                                        // Add it to the index, using value as the index key, a record pointer as the value
+                                        // Create record pointer
+                                        const recordPointer = _createRecordPointer(wildcardValues, childKey); //, child.address);
+                                        // const entryValue = new BinaryBPlusTree.EntryValue(recordPointer, metadata)
+                                        // Add it to the index
+                                        if (options && options.addCallback) {
+                                            keyValue = options.addCallback(addIndexValue, keyValue, recordPointer, metadata, { path: childPath, wildcards: wildcardValues, key: childKey });
+                                        }
+                                        else {
+                                            addIndexValue(keyValue, recordPointer, metadata);
+                                        }
+                                        this.storage.debug.log(`Indexed "/${childPath}/${this.key}" value: '${keyValue}' (${typeof keyValue})`.colorize(ColorStyle.cyan));
+                                    }
+                                    // return addPromise; // Do we really have to wait for this?
+                                }
+                            }));
+                        }
                     };
 
                     return getChildren();            
@@ -1349,7 +1331,7 @@ class DataIndex {
         };
 
         const mergeFile = `${buildFile}.merge`;
-        const createMergeFile = () => {
+        const createMergeFile = async () => {
             // start by grouping the keys:
             // take the first n keys in the .build file, read through the entire file 
             // to find other occurences of the same key. 
@@ -1357,51 +1339,46 @@ class DataIndex {
 
             if (indexedValues === 0) {
                 // Remove build file, nothing else to do
-                return pfs.rm(buildFile).catch(err => {}); 
+                return await pfs.rm(buildFile).catch(err => {}); 
             }
 
-            return pfs.exists(mergeFile)
-            .then(exists => {
+            try {
+                const exists = await pfs.exists(mergeFile);
                 if (exists) { 
                     const err = new Error('File already exists');
                     err.code = 'EEXIST';
                     throw err;
                 }
 
-                return pfs.open(buildFile, pfs.flags.readAndWrite);
-            })
-            .then(fd => {
+                const fd = await pfs.open(buildFile, pfs.flags.readAndWrite);
                 let writer = BinaryWriter.forFunction((data, position) => {
                     let buffer = data instanceof Buffer ? data : Buffer.from(data);
                     return pfs.write(fd, buffer, 0, buffer.byteLength, position);
-                })
+                });
                 let reader = new BinaryReader(fd, 512 * 1024); // Read 512KB chunks
-                return reader.init()
-                .then(() => ({ fd, writer, reader }));
-            })
-            .then(({ fd, writer, reader }) => {
+                await reader.init();
+                
                 // const maxKeys = 10000; // Work with max 10.000 in-memory keys at a time
                 const maxValues = 100000; // Max 100K in-memory values    
-                const _processedEntries = new Set();
     
-                const readNext = () => {
+                const readNext = async () => {
                     // Read next from file
-                    const entryIndex = reader.sourceIndex;
-                    return reader.getUint32() // entry_length
-                    .catch(err => {
-                        console.assert(err.code === 'EOF');
-                        err.message = 'No more unprocessed entries';
-                        throw err;
-                    })
-                    .then(entryLength => {
-                        return reader.get(entryLength - 4);
-                    })
-                    .then(buffer => {
-                        // processed:
-                        let processed = buffer[0] === 1 || _processedEntries.has(entryIndex);
-                        if (processed) { 
-                            // this one has been processed
-                            return readNext();
+                    try {
+                        let processed = true;
+                        /** @type {Buffer} */
+                        let buffer;
+                        /** @type {number} */
+                        let entryIndex;
+                        while (processed) {
+                            entryIndex = reader.sourceIndex;
+                            const entryLength = await reader.getUint32(); // entry_length
+                            if (entryLength < 4) {
+                                throw new Error(`Invalid entry length ${entryLength} at build file index ${entryIndex}`);
+                            }
+                            buffer = await reader.get(entryLength - 4);
+                            
+                            // processed:
+                            processed = buffer[0] === 1;
                         }
     
                         // key:
@@ -1412,6 +1389,7 @@ class DataIndex {
                         // value: (combine rp_length, rp_data, metadata)
                         const len = buffer.byteLength - index;
                         let val = buffer.slice(index, index + len); // Buffer.from(buffer.buffer, index, len);
+                        // console.log(`Read "${keyValue.value}" @${entryIndex} with value length ${len}`);
                         return {
                             key: keyValue.value,
                             value: val,
@@ -1420,8 +1398,6 @@ class DataIndex {
                             flagProcessed() { 
                                 buffer[0] = 1;
                                 buffer = null;
-                                // TODO: refactor back to use file flagging:
-                                // _processedEntries.add(this.index);
                                 return writer.write([1], this.index + 4); // flag file
                             }
                             // flagProcessed() { 
@@ -1433,415 +1409,311 @@ class DataIndex {
                             //     return writer.write([1], this.index + 4); // flag file
                             // }
                         }
-                    })
-                    .catch(err => {
+                    }
+                    catch (err) {
                         if (err.code === 'EOF') { return null; }
                         throw err;
-                    });
+                    }
                 };
 
-                const flagProcessed = (entry) => {
-                    // set entry's processed flag to 1 so it'll be skipped in next batch
-                    // return writer.write([1], entry.index + 4);
-                    return entry.flagProcessed();
-                };
-    
+                // Write batch files
                 let batchNr = 0;
-                let nextBatchStartEntry = null;
-                let nextBatch = () => {
+                let batchStartEntry = null;
+
+                // Find out how many written batches there are already (if process was terminated while building, we can resume)
+                const path = buildFile.slice(0, buildFile.lastIndexOf('/'));
+                const entries = await pfs.readdir(path);
+                let high = 0;
+                const checkFile = buildFile.slice(path.length + 1) + '.';
+                entries.forEach(entry => {
+                    if (typeof entry === 'string' && entry.startsWith(checkFile)) {
+                        const match = /\.([0-9]+)$/.exec(entry);
+                        if (!match) { return; }
+                        const nr = parseInt(match[1]);
+                        high = Math.max(high, nr);
+                    }
+                });
+                batchNr = high;
+
+                let more = true;
+                while (more) {
                     batchNr++;
                     let map = new Map();
-                    let more = false;
                     let processedValues = 0;
-                    let nextEntry = () => {
-                        return readNext()
-                        .then(next => {
-                            if (!next) { return; }
     
-                            processedValues++;
-                            const isDate = next.key instanceof Date;
-                            const key = isDate ? next.key.getTime() : next.key;
-                            let values = map.get(key);
-                            if (values) {
-                                values.push(next.value);
-                                flagProcessed(next);
-                            }
-                            else if (processedValues < maxValues) {
-                                values = [next.value];
-                                if (isDate) { values.dateKey = true; }
-                                map.set(key, values);
-                                flagProcessed(next);
-                            }
-                            else {
-                                more = true;
-                                nextBatchStartEntry = next;
-                                return; // Stop this batch
-                            }
-                            return nextEntry();
-                        });
-                    };
-    
-                    const getBatchEntries = () => {
-                        if (nextBatchStartEntry !== null) {
-                            // Skip already processed entries
-                            return reader.go(nextBatchStartEntry.index)
-                            .then(() => {
-                                nextBatchStartEntry = null;
-                                return nextEntry();
-                            });
+                    if (batchStartEntry !== null) {
+                        // Skip already processed entries
+                        await reader.go(batchStartEntry.index);
+                        batchStartEntry = null;
+                    }
+
+                    let next;
+                    while ((next = await readNext()) !== null) {
+
+                        processedValues++;
+                        const isDate = next.key instanceof Date;
+                        const key = isDate ? next.key.getTime() : next.key;
+                        let values = map.get(key);
+                        if (values) {
+                            values.push(next.value);
+                            next.flagProcessed();
+                        }
+                        else if (processedValues < maxValues) {
+                            values = [next.value];
+                            if (isDate) { values.dateKey = true; }
+                            map.set(key, values);
+                            next.flagProcessed();
                         }
                         else {
-                            return nextEntry();
+                            more = true;
+                            batchStartEntry = next;
+                            break; // Stop adding values to this batch
                         }
-                    };
-    
-                    return getBatchEntries()
-                    .then(() => {
-                        if (map.size === 0) {
-                            // no entries
-                            batchNr--;
-                            return;
-                        }
+                    }
 
-                        // sort the map keys
-                        let sortedKeys = quickSort(map.keys(), (a, b) => {
-                            if (BPlusTree.typeSafeComparison.isLess(a, b)) { return -1; }
-                            if (BPlusTree.typeSafeComparison.isMore(a, b)) { return 1; }
-                            return 0;
-                        });
-    
-                        // write batch
-                        let batchStream = pfs.fs.createWriteStream(`${buildFile}.${batchNr}`, { flags: pfs.flags.appendAndCreate });
-                        const writeKey = i => {
-                            const key = sortedKeys[i];
-                            const values = map.get(key);
-                            const isDateKey = values.dateKey === true;
-                            
-                            let bytes = [
-                                0, 0, 0, 0 // entry_length
-                            ];
-    
-                            // key:
-                            let b = BinaryWriter.getBytes(isDateKey ? new Date(key) : key);
-                            bytes.push(...b);
-    
-                            // // values_byte_length:
-                            // const valuesByteLengthIndex = bytes.length;
-                            // bytes.push(0, 0, 0, 0);
-    
-                            // values_length:
-                            b = BinaryWriter.writeUint32(values.length, [0, 0, 0, 0], 0);
-                            bytes.push(...b);
-    
-                            for (let j = 0; j < values.length; j++) {
-                                let value = values[j];
-                                // value_length:
-                                b = BinaryWriter.writeUint32(value.length, [0, 0, 0, 0], 0);
-                                bytes.push(...b);
-    
-                                // value:
-                                bytes.push(...value);
-                            }
-                            
-                            // // update values_byte_length:
-                            // const valuesByteLength = bytes.length - valuesByteLengthIndex
-                            // BinaryWriter.writeUint32(valuesByteLength, bytes, valuesByteLengthIndex);
-    
-                            // Update entry_length:
-                            BinaryWriter.writeUint32(bytes.length, bytes, 0);
-    
-                            let ok = batchStream.write(Uint8Array.from(bytes));
+                    if (map.size === 0) {
+                        // no entries
+                        batchNr--;
+                        break;
+                    }
 
-                            const proceed = () => {
-                                if (i + 1 < sortedKeys.length) {
-                                    return writeKey(i + 1);
-                                }
-                                else {
-                                    return new Promise(resolve => {
-                                        batchStream.end(resolve);
-                                    });
-                                }
-                            };
-                            if (!ok) {
-                                return new Promise(resolve => {
-                                    batchStream.once('drain', resolve);
-                                })
-                                .then(() => {
-                                    return proceed();
-                                });
-                            }
-                            return proceed();
-                        };
-                        const writeBatchKeys = () => {
-                            return writeKey(0);
-                        };
-                        return writeBatchKeys()
-                        .then(() => {
-                            if (more) {
-                                // Proceed with next batch
-                               return nextBatch();
-                           }
-                        });
+                    // sort the map keys
+                    let sortedKeys = quickSort(map.keys(), (a, b) => {
+                        if (BPlusTree.typeSafeComparison.isLess(a, b)) { return -1; }
+                        if (BPlusTree.typeSafeComparison.isMore(a, b)) { return 1; }
+                        return 0;
                     });
-                };
-    
-                const createBatches = () => {
-                    return pfs.exists(`${buildFile}.1`)
-                    .then(exists => {
-                        if (!exists) {
-                            // Start building batches
-                            return nextBatch();
-                        }
 
-                        // Find out how many batches there are already
-                        const path = buildFile.slice(0, buildFile.lastIndexOf('/'));
-                        return pfs.readdir(path)
-                        .then(entries => {
-                            let high = 0;
-                            const checkFile = buildFile.slice(path.length + 1) + '.';
-                            entries.forEach(entry => {
-                                if (typeof entry === 'string' && entry.startsWith(checkFile)) {
-                                    const match = /\.([0-9]+)$/.exec(entry);
-                                    if (!match) { return; }
-                                    const nr = parseInt(match[1]);
-                                    high = Math.max(high, nr);
-                                }
-                            });
-                            batchNr = high;
-                        })
-                    })
-                    
-                }
-    
-                return createBatches()
-                .then(() => {
-                    return pfs.close(fd); // Close build file
-                })
-                .then(() => {
-                    return pfs.rm(buildFile); // Remove build file
-                })
-                .then(() => {
-                    // Now merge-sort all keys, by reading keys from each batch, 
-                    // taking the smallest value from each batch a time
-                    const batches = batchNr;
-
-                    if (batches === 0) {
-                        // No batches -> no indexed entries
-                        return;
-                    }
-    
-                    // create write stream for merged data
-                    const outputStream = pfs.fs.createWriteStream(mergeFile, { flags: pfs.flags.writeAndCreate });
-                    // const outputStream = BinaryWriter.forFunction((data, position) => {
-                    //     return pfs.write(fd, data, 0, data.byteLength, position);
-                    // });
-                    
-                    // open readers
-                    const readers = new Array(batches);
-                    const readyPromises = [];
-                    const bufferChunkSize = Math.max(10240, Math.round((10 * 1024 * 1024) / readers.length)); // 10MB dedicated memory to divide between readers, with a minimum of 10KB per reader
-                    for (let i = 0; i < readers.length; i++) {
-                        let reader = new BinaryReader(`${buildFile}.${i+1}`, bufferChunkSize);
-                        readers[i] = reader;
-                        let p = reader.init();
-                        readyPromises.push(p);
-                    }
-    
-                    const entriesPerBatch = new Array(batches);
-                    let sortedEntryIndexes = [];
-                    const loadEntry = (batchIndex) => {
-                        const reader = readers[batchIndex];
-    
-                        // entry_length:
-                        return reader.getUint32()
-                        .catch(err => {
-                            // EOF
-                            console.assert(err.code === 'EOF');
-                            err.message = 'No more entries in batch file';
-                            throw err;
-                        })
-                        .then(entryLength => {
-                            return reader.get(entryLength - 4);
-                        })
-                        .then(buffer => {
-                            // key:
-                            const keyValue = BinaryReader.readValue(buffer, 0);
-                            const key = keyValue.value;
-                            const values = buffer.slice(keyValue.byteLength); //Buffer.from(buffer.buffer, keyValue.byteLength, buffer.byteLength - keyValue.byteLength);
-
-                            // Check if another batch has entry with the same key
-                            const existing = entriesPerBatch.find(entry => entry && entry.key === key);
-                            if (existing) {
-                                // Append values to existing
-                                // First 4 bytes of values contains values_length
-                                const currentValues = BinaryReader.readUint32(existing.values, 0);
-                                const additionalValues = BinaryReader.readUint32(values, 0);
-
-                                const concatenated = new Uint8Array(existing.values.byteLength + values.byteLength - 4);
-                                concatenated.set(existing.values, 0);
-                                concatenated.set(values.slice(4), existing.values.byteLength);
-
-                                // Update values_length to total
-                                BinaryWriter.writeUint32(currentValues + additionalValues, concatenated, 0);
-                                existing.values = concatenated;
-                                return loadEntry(batchIndex);
-                            }
-
-                            // Create new entry
-                            const entry = { key, values };
-                            entriesPerBatch[batchIndex] = entry;
-    
-                            // update sortedEntryIndexes (only if it has been populated already, not when loading start values)
-                            if (sortedEntryIndexes.length > 0) {
-                                // remove the old entry
-                                const oldSortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => sortEntry.index === batchIndex);
-                                sortedEntryIndexes.splice(oldSortEntryIndex, 1);
-                                // create new entry, insert at right sorted location
-                                // const newSortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => BPlusTree.typeSafeComparison.isMore(sortEntry.key, entry.key));
-                                let newSortEntryIndex = oldSortEntryIndex; // The newly read value >= previous value, because they are stored sorted in the batch file
-                                while(
-                                    newSortEntryIndex < sortedEntryIndexes.length 
-                                    && BPlusTree.typeSafeComparison.isMore(entry.key, sortedEntryIndexes[newSortEntryIndex].key)) 
-                                {
-                                    newSortEntryIndex++;
-                                }
-                                const newSortEntry = { index: batchIndex, key: entry.key };
-                                sortedEntryIndexes.splice(newSortEntryIndex, 0, newSortEntry);
-                            }
-                            return entry;
-                        })
-                        .catch(err => {
-                            if (err.code === 'EOF') {
-                                // set this batch's entry to null
-                                entriesPerBatch[batchIndex] = null;
-                                // remove from sortedEntryIndexes
-                                console.assert(sortedEntryIndexes.length > 0);
-                                const sortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => sortEntry.index === batchIndex);
-                                sortedEntryIndexes.splice(sortEntryIndex, 1);
-                            }
-                            else {
-                                throw err;
-                            }
-                        });
-                    }
-    
-                    const loadEntries = () => {
-                        let promises = [];
-                        for (let i = 0; i < readers.length; i++) {
-                            let p = loadEntry(i);
-                            promises.push(p);
-                        }
-    
-                        return Promise.all(promises)
-                        .then(() => {
-                            // Populate sortedEntryIndexes
-                            sortedEntryIndexes = entriesPerBatch.map((entry, index) => ({ index, key: entry.key }))
-                            .sort((a, b) => {
-                                if (BPlusTree.typeSafeComparison.isLess(a.key, b.key)) { return -1; }
-                                if (BPlusTree.typeSafeComparison.isMore(a.key, b.key)) { return 1; }
-                                return 0; // happens when a key had too many values (and were split into multiple batches)
-                            });
-                        });
-                    }
-    
-                    const writeSmallestEntry = () => {
-                        if (sortedEntryIndexes.length === 0) {
-                            // done!
-                            return new Promise(resolve => {
-                                outputStream.end(resolve);
-                            }); 
-                            // return outputStream.end();
-                        }
-                        // take smallest (always at index 0 in sorted array)
-                        const smallestDetails = sortedEntryIndexes[0];
-                        const batchIndex = smallestDetails.index;
-                        const smallestEntry = entriesPerBatch[batchIndex];
-
-                        const bytes = [
+                    // write batch
+                    let batchStream = pfs.fs.createWriteStream(`${buildFile}.${batchNr}`, { flags: pfs.flags.appendAndCreate });
+                    for (const key of sortedKeys) {
+                        const values = map.get(key);
+                        const isDateKey = values.dateKey === true;
+                        
+                        let bytes = [
                             0, 0, 0, 0 // entry_length
                         ];
+
                         // key:
-                        const keyBytes = BinaryWriter.getBytes(smallestEntry.key);
-                        bytes.push(...keyBytes);
-    
-                        // update entry_length
-                        const byteLength = bytes.length + smallestEntry.values.byteLength;
-                        BinaryWriter.writeUint32(byteLength, bytes, 0);
-    
-                        // build buffer
-                        const buffer = new Uint8Array(byteLength);
-                        buffer.set(bytes, 0);
-                        // values:
-                        buffer.set(smallestEntry.values, bytes.length);
+                        let b = BinaryWriter.getBytes(isDateKey ? new Date(key) : key);
+                        bytes.push(...b);
 
-                        // write to stream
-                        // console.log(`writing entry "${smallestEntry.key}"`);
-                        // return outputStream.append(buffer)
-                        // .then(() => {
-                        //     return loadEntry(batchIndex);
-                        // })
-                        // .then(writeSmallestEntry);
+                        // // values_byte_length:
+                        // const valuesByteLengthIndex = bytes.length;
+                        // bytes.push(0, 0, 0, 0);
 
-                        const ok = outputStream.write(buffer, err => {
-                            console.assert(!err, 'Error while writing. All is lost')
-                        });
+                        // values_length:
+                        b = BinaryWriter.writeUint32(values.length, [0, 0, 0, 0], 0);
+                        bytes.push(...b);
 
-                        // proceed with next entry
-                        const proceed = () => {
-                            return loadEntry(batchIndex)
-                            .then(writeSmallestEntry);
-                        };
+                        for (let j = 0; j < values.length; j++) {
+                            let value = values[j];
+                            // value_length:
+                            b = BinaryWriter.writeUint32(value.length, [0, 0, 0, 0], 0);
+                            bytes.push(...b);
 
+                            // value:
+                            bytes.push(...value);
+                        }
+                        
+                        // // update values_byte_length:
+                        // const valuesByteLength = bytes.length - valuesByteLengthIndex
+                        // BinaryWriter.writeUint32(valuesByteLength, bytes, valuesByteLengthIndex);
+
+                        // Update entry_length:
+                        BinaryWriter.writeUint32(bytes.length, bytes, 0);
+
+                        let ok = batchStream.write(Uint8Array.from(bytes));
                         if (!ok) {
-                            // console.log('waiting for merge output stream to drain');
-                            return new Promise(resolve => {
-                                outputStream.once('drain', () => {
-                                    // console.log('drained!');
-                                    resolve();
-                                });
-                            })
-                            .then(() => {
-                                return proceed();
+                            await new Promise(resolve => {
+                                batchStream.once('drain', resolve);
                             });
                         }
-                        else {
-                            return proceed();
-                        }
-                    };
-    
-                    const writeEntries = () => {
-                        return writeSmallestEntry();
                     }
-    
-                    return Promise.all(readyPromises)
-                    .then(loadEntries)
-                    .then(() => {
-                        return writeEntries();
-                    })
-                    .then(() => {
-                        // readers.forEach(reader => reader.close());
-                        // write stream has already been closed
-                        // const promises = [pfs.close(fd)];
-                        // promises.concat(readers.map(reader => reader.close()));
-                        const promises = readers.map(reader => reader.close());
-                        return Promise.all(promises);
-                    })
-                    .then(() => {
-                        // Delete all batch files
-                        const promises = [];    
-                        for(let i = 1; i <= batches; i++) {
-                            promises.push(pfs.rm(`${buildFile}.${i}`));
-                        }
-                        return Promise.all(promises);
+
+                    await new Promise(resolve => {
+                        batchStream.end(resolve);
                     });
-                });
-            })
-            .catch(err => {
+                }
+    
+                await pfs.close(fd);        // Close build file
+                await pfs.rm(buildFile);    // Remove build file
+
+                // Now merge-sort all keys, by reading keys from each batch, 
+                // taking the smallest value from each batch a time
+                const batches = batchNr;
+
+                if (batches === 0) {
+                    // No batches -> no indexed entries
+                    return;
+                }
+
+                // create write stream for merged data
+                const outputStream = pfs.fs.createWriteStream(mergeFile, { flags: pfs.flags.writeAndCreate });
+                // const outputStream = BinaryWriter.forFunction((data, position) => {
+                //     return pfs.write(fd, data, 0, data.byteLength, position);
+                // });
+                
+                // open readers for each batch file
+                const readers = [];
+                const bufferChunkSize = Math.max(10240, Math.round((10 * 1024 * 1024) / batches)); // 10MB dedicated memory to divide between readers, with a minimum of 10KB per reader
+                for (let i = 0; i < batches; i++) {
+                    let reader = new BinaryReader(`${buildFile}.${i+1}`, bufferChunkSize);
+                    readers.push(reader);
+                }
+                await Promise.all(readers.map(reader => reader.init()));
+
+                // load entries from each batch file
+                let sortedEntryIndexes = [];
+                const entriesPerBatch = new Array(batches);
+                const loadEntry = async (batchIndex) => {
+                    const reader = readers[batchIndex];
+
+                    try {
+                        const entryLength = await reader.getUint32(); // entry_length:
+                        const buffer = await reader.get(entryLength - 4);
+
+                        // key:
+                        const keyValue = BinaryReader.readValue(buffer, 0);
+                        const key = keyValue.value;
+                        const values = buffer.slice(keyValue.byteLength); //Buffer.from(buffer.buffer, keyValue.byteLength, buffer.byteLength - keyValue.byteLength);
+
+                        // Check if another batch has entry with the same key
+                        const existing = entriesPerBatch.find(entry => entry && entry.key === key);
+                        if (existing) {
+                            // Append values to existing
+                            // First 4 bytes of values contains values_length
+                            const currentValues = BinaryReader.readUint32(existing.values, 0);
+                            const additionalValues = BinaryReader.readUint32(values, 0);
+
+                            const concatenated = new Uint8Array(existing.values.byteLength + values.byteLength - 4);
+                            concatenated.set(existing.values, 0);
+                            concatenated.set(values.slice(4), existing.values.byteLength);
+
+                            // Update values_length to total
+                            BinaryWriter.writeUint32(currentValues + additionalValues, concatenated, 0);
+                            existing.values = concatenated;
+                            return loadEntry(batchIndex);
+                        }
+
+                        // Create new entry
+                        const entry = { key, values };
+                        entriesPerBatch[batchIndex] = entry;
+
+                        // update sortedEntryIndexes (only if it has been populated already, not when loading start values)
+                        if (sortedEntryIndexes.length > 0) {
+                            // remove the old entry
+                            const oldSortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => sortEntry.index === batchIndex);
+                            sortedEntryIndexes.splice(oldSortEntryIndex, 1);
+                            // create new entry, insert at right sorted location
+                            // const newSortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => BPlusTree.typeSafeComparison.isMore(sortEntry.key, entry.key));
+                            let newSortEntryIndex = oldSortEntryIndex; // The newly read value >= previous value, because they are stored sorted in the batch file
+                            while(
+                                newSortEntryIndex < sortedEntryIndexes.length 
+                                && BPlusTree.typeSafeComparison.isMore(entry.key, sortedEntryIndexes[newSortEntryIndex].key)) 
+                            {
+                                newSortEntryIndex++;
+                            }
+                            const newSortEntry = { index: batchIndex, key: entry.key };
+                            sortedEntryIndexes.splice(newSortEntryIndex, 0, newSortEntry);
+                        }
+                        return entry;
+                    }
+                    catch (err) {
+                        if (err.code === 'EOF') {
+                            // No more entries in batch file, set this batch's entry to null
+                            entriesPerBatch[batchIndex] = null;
+                            // remove from sortedEntryIndexes
+                            console.assert(sortedEntryIndexes.length > 0);
+                            const sortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => sortEntry.index === batchIndex);
+                            sortedEntryIndexes.splice(sortEntryIndex, 1);
+                        }
+                        else {
+                            throw err;
+                        }
+                    }
+                };
+
+                // load start entries from each batch file
+                const promises = readers.map((reader, index) => loadEntry(index));
+                await Promise.all(promises);
+
+                // Populate sortedEntryIndexes
+                sortedEntryIndexes = entriesPerBatch.map((entry, index) => ({ index, key: entry.key }))
+                .sort((a, b) => {
+                    if (BPlusTree.typeSafeComparison.isLess(a.key, b.key)) { return -1; }
+                    if (BPlusTree.typeSafeComparison.isMore(a.key, b.key)) { return 1; }
+                    return 0; // happens when a key had too many values (and were split into multiple batches)
+                });                
+
+                // write all entries
+                while (sortedEntryIndexes.length > 0) {
+
+                    // take smallest (always at index 0 in sorted array)
+                    const smallestDetails = sortedEntryIndexes[0];
+                    const batchIndex = smallestDetails.index;
+                    const smallestEntry = entriesPerBatch[batchIndex];
+
+                    const bytes = [
+                        0, 0, 0, 0 // entry_length
+                    ];
+                    // key:
+                    const keyBytes = BinaryWriter.getBytes(smallestEntry.key);
+                    bytes.push(...keyBytes);
+
+                    // update entry_length
+                    const byteLength = bytes.length + smallestEntry.values.byteLength;
+                    BinaryWriter.writeUint32(byteLength, bytes, 0);
+
+                    // build buffer
+                    const buffer = new Uint8Array(byteLength);
+                    buffer.set(bytes, 0);
+                    // values:
+                    buffer.set(smallestEntry.values, bytes.length);
+
+                    // write to stream
+                    // console.log(`writing entry "${smallestEntry.key}"`);
+                    // return outputStream.append(buffer)
+                    // .then(() => {
+                    //     return loadEntry(batchIndex);
+                    // })
+                    // .then(writeSmallestEntry);
+
+                    const ok = outputStream.write(buffer, err => {
+                        console.assert(!err, 'Error while writing?')
+                    });
+                    if (!ok) {
+                        await new Promise(resolve => {
+                            outputStream.once('drain', resolve);
+                        });                        
+                    }
+
+                    // load next entry from the batch we used
+                    await loadEntry(batchIndex);
+                }
+                
+                // Wait until output stream is done writing
+                await new Promise(resolve => {
+                    outputStream.end(resolve);
+                }); 
+
+                // Close all batch files
+                const crPromises = readers.map(reader => reader.close());
+                await Promise.all(crPromises);
+
+                // Delete all batch files
+                const dbfPromises = [];    
+                for(let i = 1; i <= batches; i++) {
+                    dbfPromises.push(pfs.rm(`${buildFile}.${i}`));
+                }
+                await Promise.all(dbfPromises);
+            }
+            catch (err) {
                 // EEXIST error is ok because that means the .merge file was already built
                 if (err.code !== 'EEXIST') {
                     throw err;
                 }
-            });
+            }
         };
 
         const startTime = Date.now();
@@ -1908,7 +1780,7 @@ class DataIndex {
 
             const reader = indexedValues > 0 
                 ? new BinaryReader(readFD)
-                : new BinaryReader((index, length) => Promise.resolve(Buffer.from([])));
+                : new BinaryReader(async (index, length) => Buffer.from([]));
             return BinaryBPlusTree.createFromEntryStream(
                 reader, 
                 writer, 
@@ -1949,9 +1821,8 @@ class DataIndex {
         });
     }
 
-    test(obj, op, val) {
-        throw new Error(`test method must be overridden by subclass`);
-    }
+    // eslint-disable-next-line no-unused-vars
+    test(obj, op, val) { throw new Error(`test method must be overridden by subclass`); }
 
     /**
      * 
@@ -2401,8 +2272,9 @@ class DataIndex {
         // }
         const fd = await pfs.open(this.fileName, pfs.flags.readAndWrite);
         const reader = async (index, length) => {
-            const buffer = Buffer.alloc(length); //new Uint8Array(length);
-            await pfs.read(fd, buffer, 0, length, this.trees.default.fileIndex + index)
+            const buffer = Buffer.alloc(length);
+            const { bytesRead } = await pfs.read(fd, buffer, 0, length, this.trees.default.fileIndex + index);
+            if (bytesRead < length) { return buffer.slice(0, bytesRead); }
             return buffer;
         };
         const writer = async (data, index) => {
@@ -2953,7 +2825,7 @@ class TextInfo {
               str = ret;
             }
             return ret;
-        };
+        }
         text = safe_unidecode(text);
 
         // Remove any single quotes, so "don't" will be stored as "dont", "isn't" as "isnt" etc
@@ -3077,10 +2949,9 @@ class FullTextIndex extends DataIndex {
         const locale = obj === null ? this.textLocale : this.config.localeKey && obj[this.config.localeKey] ? obj[this.config.localeKey] : this.textLocale;        
         const textInfo = new TextInfo(text, { locale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
         if (op === 'fulltext:contains') {
-            let tests = [val];
             if (~val.indexOf(' OR ')) {
                 // split
-                tests = val.split(' OR ');
+                const tests = val.split(' OR ');
                 return tests.some(val => this.test(text, op, val));
             }
             else if (~val.indexOf('"')) {
@@ -3113,7 +2984,7 @@ class FullTextIndex extends DataIndex {
             }
             else {
                 // test 1 or more words
-                const wordsInfo = new TextInfo(test, { locale: this.textLocale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
+                const wordsInfo = new TextInfo(val, { locale: this.textLocale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
                 return wordsInfo.words.every(word => {
                     return textInfo.words.includes(word);
                 });
@@ -3302,7 +3173,7 @@ class FullTextIndex extends DataIndex {
             // This is to safeguard the system against (possibly unwanted) very large 
             // result sets
             let i;
-            while (i = info.words.findIndex(w => /^[\*\?]+$/.test(w.word)), i >= 0) {
+            while (i = info.words.findIndex(w => /^[*?]+$/.test(w.word)), i >= 0) {
                 // Word is wildcards only. Ignore
                 info.ignored.push(info.words[i].word);
                 info.words.splice(i, 1);
