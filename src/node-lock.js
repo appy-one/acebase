@@ -130,7 +130,7 @@ class NodeLocker {
      * @param {boolean} forWriting if the record will be written to. Multiple read locks can be granted access at the same time if there is no write lock. Once a write lock is granted, no others can read from or write to it.
      * @returns {Promise<NodeLock>} returns a promise with the lock object once it is granted. It's .release method can be used as a shortcut to .unlock(path, tid) to release the lock
      */
-    lock(path, tid, forWriting = true, comment = '', options = { withPriority: false, noTimeout: false }) {
+    async lock(path, tid, forWriting = true, comment = '', options = { withPriority: false, noTimeout: false }) {
         let lock, proceed;
         if (path instanceof NodeLock) {
             lock = path;
@@ -138,10 +138,10 @@ class NodeLocker {
             proceed = true;
         }
         else if (this._locks.findIndex((l => l.tid === tid && l.state === LOCK_STATE.EXPIRED)) >= 0) {
-            return Promise.reject(new Error(`lock on tid ${tid} has expired, not allowed to continue`));
+            throw new Error(`lock on tid ${tid} has expired, not allowed to continue`);
         }
         else if (this._quit && !options.withPriority) {
-            return Promise.reject(new Error(`Quitting`));
+            throw new Error(`Quitting`);
         }
         else {
             DEBUG_MODE && console.error(`${forWriting ? "write" : "read"} lock requested on "${path}" by tid ${tid}`);
@@ -208,7 +208,7 @@ class NodeLocker {
                     lock.timeout = setTimeout(timeoutHandler, LOCK_TIMEOUT / 3);
                 }
             }
-            return Promise.resolve(lock);
+            return lock;
         }
         else {
             // Keep pending until clashing lock(s) is/are removed
@@ -222,7 +222,7 @@ class NodeLocker {
         }
     }
 
-    unlock(lockOrId, comment, processQueue = true) {// (path, tid, comment) {
+    async unlock(lockOrId, comment, processQueue = true) {// (path, tid, comment) {
         let lock, i;
         if (lockOrId instanceof NodeLock) {
             lock = lockOrId;
@@ -237,7 +237,7 @@ class NodeLocker {
         if (i < 0) {
             const msg = `lock on "/${lock.path}" for tid ${lock.tid} wasn't found; ${comment}`;
             // debug.error(`unlock :: ${msg}`);
-            return Promise.reject(new Error(msg));
+            throw new Error(msg);
         }
         lock.state = LOCK_STATE.DONE;
         clearTimeout(lock.timeout);
@@ -246,7 +246,7 @@ class NodeLocker {
         //debug.warn(`unlock :: RELEASED ${lock.forWriting ? "write" : "read" } lock on "/${lock.path}" for tid ${lock.tid}; ${lock.comment}; ${comment}`);
 
         processQueue && this._processLockQueue();
-        return Promise.resolve(lock);
+        return lock;
     }
 
     list() {
@@ -287,13 +287,13 @@ class NodeLock {
         this.history = [];
     }
 
-    release(comment) {
+    async release(comment) {
         //return this.storage.unlock(this.path, this.tid, comment);
         this.history.push({ action: 'release', path: this.path, forWriting: this.forWriting, comment })
         return this.locker.unlock(this, comment || this.comment);
     }
 
-    moveToParent() {
+    async moveToParent() {
         const parentPath = PathInfo.get(this.path).parentPath; //getPathInfo(this.path).parent;
         const allowed = this.locker.isAllowed(parentPath, this.tid, this.forWriting); //_allowLock(parentPath, this.tid, this.forWriting);
         if (allowed) {
@@ -301,19 +301,17 @@ class NodeLock {
             this.waitingFor = null;
             this.path = parentPath;
             // this.comment = `moved to parent: ${this.comment}`;
-            return Promise.resolve(this);
+            return this;
         }
         else {
             // Unlock without processing the queue
             this.locker.unlock(this, `moveLockToParent: ${this.comment}`, false);
 
             // Lock parent node with priority to jump the queue
-            return this.locker.lock(parentPath, this.tid, this.forWriting, this.comment, { withPriority: true }) // `moved to parent (queued): ${this.comment}`
-            .then(newLock => {
-                newLock.history = this.history;
-                newLock.history.push({ path: this.path, forWriting: this.forWriting, action: 'moving to parent through queue' });
-                return newLock;
-            });
+            const newLock = await this.locker.lock(parentPath, this.tid, this.forWriting, this.comment, { withPriority: true }) // `moved to parent (queued): ${this.comment}`
+            newLock.history = this.history;
+            newLock.history.push({ path: this.path, forWriting: this.forWriting, action: 'moving to parent through queue' });
+            return newLock;
         }
     }
 
