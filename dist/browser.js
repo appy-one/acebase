@@ -2581,7 +2581,7 @@ function setObservable(Observable) {
 }
 exports.setObservable = setObservable;
 
-},{"rxjs":37}],14:[function(require,module,exports){
+},{"rxjs":39}],14:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathInfo = exports.getChildPath = exports.getPathInfo = exports.getPathKeys = void 0;
@@ -4109,7 +4109,7 @@ function defer(fn) {
 exports.defer = defer;
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"./data-snapshot":9,"./path-reference":15,"./process":16,"buffer":37}],24:[function(require,module,exports){
+},{"./data-snapshot":9,"./path-reference":15,"./process":16,"buffer":39}],24:[function(require,module,exports){
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
@@ -4149,6 +4149,7 @@ class BrowserAceBase extends AceBase {
             throw new Error(deprecatedConstructorError);
         }
         super(name, settings);
+        this.settings.ipcEvents = settings.multipleTabs === true;
     }
 
     /**
@@ -4158,7 +4159,7 @@ class BrowserAceBase extends AceBase {
      * @param {string} [settings.logLevel='error'] what level to use for logging to the console
      * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
      * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
-     * @param {number} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
+     * @param {boolean} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
      */
     static WithIndexedDB(dbname, settings) {
 
@@ -4208,16 +4209,7 @@ class BrowserAceBase extends AceBase {
                 return new IndexedDBStorageTransaction(context, target);
             }
         });
-        const acebaseDb = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
-
-        if (settings.multipleTabs === true) {
-            // Create BroadcastChannel to allow multi-tab communication
-            // This allows other tabs to make changes to the database, notifying us of those changes.
-            const { BrowserTabIPC } = require('./ipc/browser-tabs');
-            BrowserTabIPC.enable(acebaseDb, dbname);
-        }
-
-        return acebaseDb;
+        return new BrowserAceBase(dbname, { multipleTabs: settings.multipleTabs, logLevel: settings.logLevel, storage: storageSettings });
     }
 }
 
@@ -4274,7 +4266,6 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
             await new Promise((resolve, reject) => {
                 let stop = false, processed = 0;
                 const handleError = err => {
-                    debugger;
                     stop = true;
                     reject(err);
                 };
@@ -4285,11 +4276,9 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                 };
                 batch.forEach((op, i) => {
                     if (stop) { return; }
-                    // const isLast = i + 1 === batch.length;
                     let r1, r2;
                     const path = op.path;
                     if (op.action === 'set') { 
-                        // return this._set(tx, op.path, op.node); 
                         const { metadata, value } = this._splitMetadata(op.node);
                         /** @type {IIndexedDBNodeData} */
                         const nodeInfo = { path, metadata }
@@ -4297,7 +4286,6 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                         r2 = tx.objectStore('content').put(value, path); // Add value to "content" object store
                     }
                     else if (op.action === 'remove') { 
-                        // return this._remove(tx, op.path); 
                         r1 = tx.objectStore('content').delete(path); // Remove from "content" object store
                         r2 = tx.objectStore('nodes').delete(path); // Remove from "nodes" data store
                     }
@@ -4371,31 +4359,6 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         return Promise.resolve();
     }
 
-    // _set(tx, path, node) {
-    //     /** @type {ICustomStorageNode} */
-    //     const copy = {};
-    //     const value = node.value;
-    //     Object.assign(copy, node);
-    //     delete copy.value;
-    //     /** @type {ICustomStorageNodeMetaData} */
-    //     const metadata = copy;
-    //     // const { metadata, value } = this._splitMetadata(node);
-    //     /** @type {IIndexedDBNodeData} */
-    //     const obj = {
-    //         path,
-    //         metadata
-    //     }
-    //     const r1 = _requestToPromise(tx.objectStore('nodes').put(obj)); // Insert into "nodes" object store
-    //     const r2 = _requestToPromise(tx.objectStore('content').put(value, path)); // Add value to "content" object store
-    //     return Promise.all([r1, r2]);
-    // }
-
-    // _remove(tx, path) {
-    //     const r1 = _requestToPromise(tx.objectStore('content').delete(path)); // Remove from "content" object store
-    //     const r2 = _requestToPromise(tx.objectStore('nodes').delete(path)); // Remove from "nodes" data store
-    //     return Promise.all([r1, r2]);
-    // }
-
     childrenOf(path, include, checkCallback, addCallback) {
         include.descendants = false;
         return this._getChildrenOf(path, include, checkCallback, addCallback);
@@ -4413,7 +4376,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
      * @param {boolean} include.descendants
      * @param {boolean} include.metadata
      * @param {boolean} include.value
-     * @param {(path: string) => boolean} checkCallback 
+     * @param {(path: string, metadata?: ICustomStorageNodeMetaData) => boolean} checkCallback 
      * @param {(path: string, node: any) => boolean} addCallback 
      */
     _getChildrenOf(path, include, checkCallback, addCallback) {
@@ -4441,7 +4404,8 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     // Paths are sorted, no more children or ancestors to be expected!
                     keepGoing = false;
                 }
-                else if ((include.descendants || pathInfo.isParentOf(otherPath)) && checkCallback(otherPath)) {
+                else if (include.descendants || pathInfo.isParentOf(otherPath)) {
+                    
                     /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
                     let node;
                     if (include.metadata) {
@@ -4450,6 +4414,9 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                         /** @type {IIndexedDBNodeData} */
                         const data = valueCursor.result.value;
                         node = data.metadata;
+                    }
+                    const shouldAdd = checkCallback(otherPath, node);
+                    if (shouldAdd) {
                         if (include.value) {
                             // Load value!
                             const req = tx.objectStore('content').get(otherPath);
@@ -4462,8 +4429,8 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                                 };
                             });
                         }
+                        keepGoing = addCallback(otherPath, node);
                     }
-                    keepGoing = addCallback(otherPath, node);
                 }
                 if (keepGoing) {
                     try { cursor.result.continue(); }
@@ -4483,7 +4450,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { BrowserAceBase };
-},{"./acebase-local":25,"./ipc/browser-tabs":28,"./storage-custom":35}],25:[function(require,module,exports){
+},{"./acebase-local":25,"./storage-custom":37}],25:[function(require,module,exports){
 const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
 const { StorageSettings } = require('./storage');
 const { LocalApi } = require('./api-local');
@@ -4517,9 +4484,24 @@ class AceBase extends AceBaseBase {
             storage: options.storage,
             logLevel: options.logLevel
         };
-        this.api = new LocalApi(dbname, apiSettings, ready => {
+        this.api = new LocalApi(dbname, apiSettings, () => {
             this.emit("ready");
         });
+    }
+
+    close() {
+        // Closes the database
+        return this.api.storage.ipc.exit();
+    }
+
+    get settings() {
+        const ipc = this.api.storage.ipc, debug = this.debug;
+        return {
+            get logLevel() { return debug.level; },
+            set logLevel(level) { debug.setLevel(level); },
+            get ipcEvents() { return ipc.eventsEnabled; },
+            set ipcEvents(enabled) { ipc.eventsEnabled = enabled; }
+        }
     }
 
     /**
@@ -4532,7 +4514,7 @@ class AceBase extends AceBaseBase {
      * @param {any} [settings.provider] Alternate localStorage provider for running in non-browser environments. Eg using 'node-localstorage'
      * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
      * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
-     * @param {number} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
+     * @param {boolean} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
      */
     static WithLocalStorage(dbname, settings) {
 
@@ -4564,13 +4546,7 @@ class AceBase extends AceBaseBase {
             }
         });
         const db = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
-
-        if (settings.multipleTabs === true) {
-            // Create BroadcastChannel to allow multi-tab communication
-            // This allows other tabs to make changes to the database, notifying us of those changes.
-            const { BrowserTabIPC } = require('./ipc/browser-tabs');
-            BrowserTabIPC.enable(db, dbname);
-        }
+        db.settings.ipcEvents = settings.multipleTabs === true;
 
         return db;
     }
@@ -4590,86 +4566,70 @@ class LocalStorageTransaction extends CustomStorageTransaction {
         this._storageKeysPrefix = `${this.context.dbname}.acebase::`;
     }
 
-    commit() {
-        // All changes have already been committed
-        return Promise.resolve();
+    async commit() {
+        // All changes have already been committed. TODO: use same approach as IndexedDB
     }
     
-    rollback(err) {
+    async rollback(err) {
         // Not able to rollback changes, because we did not keep track
-        return Promise.resolve();
     }
 
-    get(path) {
+    async get(path) {
         // Gets value from localStorage, wrapped in Promise
-        return new Promise(resolve => {
-            const json = this.context.localStorage.getItem(this.getStorageKeyForPath(path));
-            const val = JSON.parse(json);
-            resolve(val);
-        });
+        const json = this.context.localStorage.getItem(this.getStorageKeyForPath(path));
+        const val = JSON.parse(json);
+        return val;
     }
 
-    set(path, val) {
+    async set(path, val) {
         // Sets value in localStorage, wrapped in Promise
-        return new Promise(resolve => {
-            const json = JSON.stringify(val);
-            this.context.localStorage.setItem(this.getStorageKeyForPath(path), json);
-            resolve();
-        });
+        const json = JSON.stringify(val);
+        this.context.localStorage.setItem(this.getStorageKeyForPath(path), json);
     }
 
-    remove(path) {
+    async remove(path) {
         // Removes a value from localStorage, wrapped in Promise
-        return new Promise(resolve => {
-            this.context.localStorage.removeItem(this.getStorageKeyForPath(path));
-            resolve();
-        });
+        this.context.localStorage.removeItem(this.getStorageKeyForPath(path));
     }
 
-    childrenOf(path, include, checkCallback, addCallback) {
+    async childrenOf(path, include, checkCallback, addCallback) {
         // Streams all child paths
         // Cannot query localStorage, so loop through all stored keys to find children
-        return new Promise(resolve => {
-            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-            for (let i = 0; i < this.context.localStorage.length; i++) {
-                const key = this.context.localStorage.key(i);
-                if (!key.startsWith(this._storageKeysPrefix)) { continue; }                
-                let otherPath = this.getPathFromStorageKey(key);
-                if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
-                    let node;
-                    if (include.metadata || include.value) {
-                        const json = this.context.localStorage.getItem(key);
-                        node = JSON.parse(json);
-                    }
-                    const keepGoing = addCallback(otherPath, node);
-                    if (!keepGoing) { break; }
+        const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+        for (let i = 0; i < this.context.localStorage.length; i++) {
+            const key = this.context.localStorage.key(i);
+            if (!key.startsWith(this._storageKeysPrefix)) { continue; }                
+            let otherPath = this.getPathFromStorageKey(key);
+            if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
+                let node;
+                if (include.metadata || include.value) {
+                    const json = this.context.localStorage.getItem(key);
+                    node = JSON.parse(json);
                 }
+                const keepGoing = addCallback(otherPath, node);
+                if (!keepGoing) { break; }
             }
-            resolve();
-        });
+        }
     }
 
-    descendantsOf(path, include, checkCallback, addCallback) {
+    async descendantsOf(path, include, checkCallback, addCallback) {
         // Streams all descendant paths
         // Cannot query localStorage, so loop through all stored keys to find descendants
-        return new Promise(resolve => {
-            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
-            for (let i = 0; i < this.context.localStorage.length; i++) {
-                const key = this.context.localStorage.key(i);
-                if (!key.startsWith(this._storageKeysPrefix)) { continue; }
-                let otherPath = this.getPathFromStorageKey(key);
-                if (pathInfo.isAncestorOf(otherPath) && checkCallback(otherPath)) {
-                    let node;
-                    if (include.metadata || include.value) {
-                        const json = this.context.localStorage.getItem(key);
-                        node = JSON.parse(json);
-                    }
-                    const keepGoing = addCallback(otherPath, node);
-                    if (!keepGoing) { break; }
+        const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+        for (let i = 0; i < this.context.localStorage.length; i++) {
+            const key = this.context.localStorage.key(i);
+            if (!key.startsWith(this._storageKeysPrefix)) { continue; }
+            let otherPath = this.getPathFromStorageKey(key);
+            if (pathInfo.isAncestorOf(otherPath) && checkCallback(otherPath)) {
+                let node;
+                if (include.metadata || include.value) {
+                    const json = this.context.localStorage.getItem(key);
+                    node = JSON.parse(json);
                 }
+                const keepGoing = addCallback(otherPath, node);
+                if (!keepGoing) { break; }
             }
-            resolve();
-        });
+        }
     }
 
     /**
@@ -4690,7 +4650,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":26,"./ipc/browser-tabs":28,"./storage":36,"./storage-custom":35,"acebase-core":12}],26:[function(require,module,exports){
+},{"./api-local":26,"./storage":38,"./storage-custom":37,"acebase-core":12}],26:[function(require,module,exports){
 const { Api } = require('acebase-core');
 const { StorageSettings, NodeNotFoundError } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
@@ -4742,12 +4702,10 @@ class LocalApi extends Api {
 
     subscribe(path, event, callback) {
         this.storage.subscriptions.add(path, event, callback);
-        this.db.emit('subscribe', { path, event, callback }); // Allow 3rd parties to monitor subscriptions and emitting events. Implemented for cross-tab communication in browser 
     }
 
     unsubscribe(path, event = undefined, callback = undefined) {
         this.storage.subscriptions.remove(path, event, callback);
-        this.db.emit('unsubscribe', { path, event, callback }); // Allow 3rd parties to monitor subscriptions and emitting events. Implemented for cross-tab communication in browser 
     }
 
     set(path, value, options = { suppress_events: false, context: null }) {
@@ -5036,7 +4994,7 @@ class LocalApi extends Api {
         const tableScanFilters = query.filters.filter(filter => !filter.index);
 
         // Check if there are filters that require an index to run (such as "fulltext:contains", and "geo:nearby" etc)
-        const specialOpsRegex = /^[a-z]+\:/i;
+        const specialOpsRegex = /^[a-z]+:/i;
         if (tableScanFilters.some(filter => specialOpsRegex.test(filter.op))) {
             const f = tableScanFilters.find(filter => specialOpsRegex.test(filter.op));
             const err = new Error(`query contains operator "${f.op}" which requires a special index that was not found on path "${path}", key "${f.key}"`)
@@ -5575,15 +5533,15 @@ class LocalApi extends Api {
         return Promise.resolve(this.storage.indexes.list());
     }
 
-    reflect(path, type, args) {
+    async reflect(path, type, args) {
         args = args || {};
-        const getChildren = (path, limit = 50, skip = 0, from = null) => {
+        const getChildren = async (path, limit = 50, skip = 0, from = null) => {
             if (typeof limit === 'string') { limit = parseInt(limit); }
             if (typeof skip === 'string') { skip = parseInt(skip); }
             if (['null','undefined'].includes(from)) { from = null; }
             const children = [];
             let n = 0, stop = false, more = false; //stop = skip + limit, 
-            return Node.getChildren(this.storage, path)
+            await Node.getChildren(this.storage, path)
             .next(childInfo => {
                 if (stop) {
                     // Stop 1 child too late on purpose to make sure there's more
@@ -5605,13 +5563,11 @@ class LocalApi extends Api {
             })
             .catch(err => {
                 // Node doesn't exist? No children..
-            })
-            .then(() => {
-                return {
-                    more,
-                    list: children
-                };
             });
+            return {
+                more,
+                list: children
+            };
         }
         switch(type) {
             case "children": {
@@ -5629,27 +5585,22 @@ class LocalApi extends Api {
                         list: []
                     }
                 };
-                return Node.getInfo(this.storage, path, { include_child_count: args.child_count === true })
-                .then(nodeInfo => {
-                    info.key = typeof nodeInfo.key !== 'undefined' ? nodeInfo.key : nodeInfo.index;
-                    info.exists = nodeInfo.exists;
-                    info.type = nodeInfo.valueTypeName;
-                    info.value = nodeInfo.value;
-                    let isObjectOrArray = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
-                    if (args.child_count === true) {
-                        // return child count instead of enumerating
-                        return { count: isObjectOrArray ? nodeInfo.childCount : 0 };
+                const nodeInfo = await Node.getInfo(this.storage, path, { include_child_count: args.child_count === true });
+                info.key = typeof nodeInfo.key !== 'undefined' ? nodeInfo.key : nodeInfo.index;
+                info.exists = nodeInfo.exists;
+                info.type = nodeInfo.valueTypeName;
+                info.value = nodeInfo.value;
+                let isObjectOrArray = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
+                if (args.child_count === true) {
+                    // set child count instead of enumerating
+                    info.children = { count: isObjectOrArray ? nodeInfo.childCount : 0 };
+                }
+                else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
+                    if (isObjectOrArray) {
+                        info.children = await getChildren(path, args.child_limit, args.child_skip, args.child_from)
                     }
-                    else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
-                        return isObjectOrArray 
-                            ? getChildren(path, args.child_limit, args.child_skip, args.child_from)
-                            : info.children; // Use empty stub if target is not an object or array
-                    }
-                })
-                .then(children => {
-                    info.children = children;
-                    return info;
-                });
+                }
+                return info;
             }
         }
     }
@@ -5676,7 +5627,7 @@ class LocalApi extends Api {
 }
 
 module.exports = { LocalApi };
-},{"./data-index":33,"./node":32,"./storage":36,"./storage-acebase":33,"./storage-custom":35,"./storage-mssql":33,"./storage-sqlite":33,"acebase-core":12}],27:[function(require,module,exports){
+},{"./data-index":34,"./node":33,"./storage":38,"./storage-acebase":34,"./storage-custom":37,"./storage-mssql":34,"./storage-sqlite":34,"acebase-core":12}],27:[function(require,module,exports){
 /**
    ________________________________________________________________________________
    
@@ -5722,207 +5673,590 @@ window.acebase = acebase;
 window.AceBase = BrowserAceBase;
 // Expose classes for module imports:
 module.exports = acebase;
-},{"./acebase-browser":24,"./acebase-local":25,"./storage-custom":35,"acebase-core":12}],28:[function(require,module,exports){
+},{"./acebase-browser":24,"./acebase-local":25,"./storage-custom":37,"acebase-core":12}],28:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.BrowserTabIPC = void 0;
+exports.IPCPeer = void 0;
 const acebase_core_1 = require("acebase-core");
-class BrowserTabIPC {
-    static enable(db, name) {
+const ipc_1 = require("./ipc");
+/**
+ * Browser tabs IPC. Database changes and events will be synchronized automatically.
+ * Locking of resources will be done by the election of a single locking master:
+ * the one with the lowest id.
+ */
+class IPCPeer extends ipc_1.AceBaseIPCPeer {
+    constructor(storage) {
+        super(storage, acebase_core_1.ID.generate());
+        this.masterPeerId = this.id; // We don't know who the master is yet...
+        this.ipcType = 'browser.bcc';
+        // Setup process exit handler
+        // Monitor onbeforeunload event to say goodbye when the window is closed
+        window.addEventListener('beforeunload', () => {
+            this.exit();
+        });
         // Create BroadcastChannel to allow multi-tab communication
         // This allows other tabs to make changes to the database, notifying us of those changes.
         if (typeof window.BroadcastChannel === 'undefined') {
-            console.warn(`BroadCastChannel not available, browser tabs IPC not possible yet`);
+            storage.debug.warn(`BroadCastChannel not available, browser tabs IPC not possible yet`);
             return;
         }
-        const tabId = acebase_core_1.ID.generate();
-        // Keep track of active event subscriptions
-        const ourSubscriptions = [];
-        const remoteSubscriptions = [];
-        const otherTabs = [];
-        const channel = new BroadcastChannel(name || db.name); // TODO: polyfill for Safari
-        function sendMessage(message) {
-            // if (['subscribe_ack','unsubscribe_ack'].includes(message.type)) {
-            //     return;
-            // }
-            console.log(`[BroadcastChannel] sending: `, message);
-            channel.postMessage(message);
-        }
+        this.channel = new BroadcastChannel(`acebase:${storage.name}`); // TODO: polyfill for Safari
         // Monitor incoming messages
-        channel.addEventListener('message', event => {
+        this.channel.addEventListener('message', async (event) => {
             const message = event.data;
-            if (message.to && message.to !== tabId) {
+            if (message.to && message.to !== this.id) {
                 // Message is for somebody else. Ignore
                 return;
             }
-            console.log(`[BroadcastChannel] received: `, message);
-            switch (message.type) {
-                case 'hello': {
-                    // New browser tab opened
-                    if (otherTabs.some(tab => tab.id === message.from)) {
-                        // We've seen this tab before. Happens when 2 tabs reload at the same time, both sending initial "hello" message, then both replying to one another.
-                        break;
-                    }
-                    otherTabs.push({ id: message.from, lastSeen: Date.now() });
-                    if (message.to === tabId) {
-                        // This message was sent to us specifically, so it was a reply to our own "hello". We're done
-                        break;
-                    }
-                    // Reply to sender & inform them about our subscriptions
-                    const to = message.from;
-                    // Send hello back to sender
-                    sendMessage({ type: 'hello', from: tabId, to });
-                    // Send our active subscriptions through
-                    ourSubscriptions.forEach(sub => {
-                        // Request to keep us updated
-                        const message = { type: 'subscribe', from: tabId, to, data: { path: sub.path, event: sub.event } };
-                        sendMessage(message);
-                    });
-                    break;
-                }
-                case 'pulse': {
-                    // Other tab letting us know it's still open
-                    const tab = otherTabs.find(tab => tab.id === message.from);
-                    if (!tab) {
-                        // Tab's pulse came before we were introduced with "hello". Ignore
-                        return;
-                    }
-                    tab.lastSeen = Date.now();
-                    break;
-                }
-                case 'bye': {
-                    // Other tab is being closed
-                    const tab = otherTabs.find(tab => tab.id === message.from);
-                    if (!tab) {
-                        // We had no knowlegde of this tab's existance. Ignore.
-                        return;
-                    }
-                    // Remove all their events
-                    const subscriptions = remoteSubscriptions.filter(sub => sub.for === message.from);
-                    subscriptions.forEach(sub => {
-                        // Remove & stop subscription
-                        remoteSubscriptions.splice(remoteSubscriptions.indexOf(sub), 1);
-                        db.api.unsubscribe(sub.path, sub.event, sub.callback);
-                    });
-                    break;
-                }
-                case 'subscribe': {
-                    // Other tab wants to subscribe to our events
-                    const subscribe = message.data;
-                    // Subscribe
-                    // console.log(`remote subscription being added`);
-                    if (remoteSubscriptions.some(sub => sub.for === message.from && sub.event === subscribe.event && sub.path === subscribe.path)) {
-                        // We're already serving this event for the other tab. Ignore
-                        break;
-                    }
-                    // Add remote subscription
-                    const subscribeCallback = (err, path, val, previous, context) => {
-                        // db triggered an event, send notification to remote subscriber
-                        let eventMessage = {
-                            type: 'event',
-                            from: tabId,
-                            to: message.from,
-                            path: subscribe.path,
-                            event: subscribe.event,
-                            data: {
-                                path,
-                                val,
-                                previous,
-                                context
-                            }
-                        };
-                        sendMessage(eventMessage);
-                    };
-                    remoteSubscriptions.push({ for: message.from, event: subscribe.event, path: subscribe.path, callback: subscribeCallback });
-                    db.api.subscribe(subscribe.path, subscribe.event, subscribeCallback);
-                    break;
-                }
-                case 'unsubscribe': {
-                    // Other tab requests to remove previously subscribed event
-                    const unsubscribe = message.data;
-                    const sub = remoteSubscriptions.find(sub => sub.for === message.from && sub.event === unsubscribe.event && sub.path === unsubscribe.event);
-                    if (!sub) {
-                        // We don't know this subscription so we weren't notifying in the first place. Ignore
-                        return;
-                    }
-                    // Stop subscription
-                    db.api.unsubscribe(unsubscribe.path, unsubscribe.event, sub.callback);
-                    break;
-                }
-                case 'event': {
-                    const eventMessage = message;
-                    const context = eventMessage.data.context || {};
-                    context.acebase_ipc = { type: 'crosstab', origin: eventMessage.from }; // Add IPC details
-                    // Other tab raised an event we are monitoring
-                    const subscriptions = ourSubscriptions.filter(sub => sub.event === eventMessage.event && sub.path === eventMessage.path);
-                    subscriptions.forEach(sub => {
-                        sub.callback(null, eventMessage.data.path, eventMessage.data.val, eventMessage.data.previous, context);
-                    });
-                    break;
-                }
-                default: {
-                    // Other unhandled event
-                }
+            storage.debug.verbose(`[BroadcastChannel] received: `, message);
+            if (message.type === 'hello' && message.from < this.masterPeerId) {
+                // This peer was created before other peer we thought was the master
+                this.masterPeerId = message.from;
+                storage.debug.log(`[BroadcastChannel] Tab ${this.masterPeerId} is the master.`);
             }
+            else if (message.type === 'bye' && message.from === this.masterPeerId) {
+                // The master tab is leaving
+                storage.debug.log(`[BroadcastChannel] Master tab ${this.masterPeerId} is leaving`);
+                // Elect new master
+                const allPeerIds = this.peers.map(peer => peer.id).concat(this.id).filter(id => id !== this.masterPeerId); // All peers, including us, excluding the leaving master peer
+                this.masterPeerId = allPeerIds.sort()[0];
+                storage.debug.log(`[BroadcastChannel] ${this.masterPeerId === this.id ? 'We are' : `tab ${this.masterPeerId} is`} the new master. Requesting ${this._locks.length} locks (${this._locks.filter(r => !r.granted).length} pending)`);
+                // Let the new master take over any locks and lock requests.
+                const requests = this._locks.splice(0); // Copy and clear current lock requests before granted locks are requested again.
+                // Request previously granted locks again
+                await Promise.all(requests.filter(req => req.granted).map(async (req) => {
+                    // Prevent race conditions: if the existing lock is released or moved to parent before it was
+                    // moved to the new master peer, we'll resolve their promises after releasing/moving the new lock
+                    let released, movedToParent;
+                    req.lock.release = () => { return new Promise(resolve => released = resolve); };
+                    req.lock.moveToParent = () => { return new Promise(resolve => movedToParent = resolve); };
+                    // Request lock again:
+                    const lock = await this.lock({ path: req.lock.path, write: req.lock.forWriting, tid: req.lock.tid, comment: req.lock.comment });
+                    if (movedToParent) {
+                        const newLock = await lock.moveToParent();
+                        movedToParent(newLock);
+                    }
+                    if (released) {
+                        await lock.release();
+                        released();
+                    }
+                }));
+                // Now request pending locks again
+                await Promise.all(requests.filter(req => !req.granted).map(async (req) => {
+                    await this.lock(req.request);
+                }));
+            }
+            return this.handleMessage(message);
         });
-        db.on('subscribe', (subscription) => {
+        // // Schedule periodic "pulse" to let others know we're still around
+        // setInterval(() => {
+        //     sendMessage(<IPulseMessage>{ from: tabId, type: 'pulse' });
+        // }, 30000);
+        // Send hello to other peers
+        const helloMsg = { type: 'hello', from: this.id, data: undefined };
+        this.sendMessage(helloMsg);
+    }
+    sendMessage(message) {
+        this.storage.debug.verbose(`[BroadcastChannel] sending: `, message);
+        this.channel.postMessage(message);
+    }
+}
+exports.IPCPeer = IPCPeer;
+
+},{"./ipc":29,"acebase-core":12}],29:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
+const acebase_core_1 = require("acebase-core");
+const node_lock_1 = require("../node-lock");
+class AceBaseIPCPeerExitingError extends Error {
+    constructor(message) { super(`Exiting: ${message}`); }
+}
+exports.AceBaseIPCPeerExitingError = AceBaseIPCPeerExitingError;
+/**
+ * Base class for Inter Process Communication, enables vertical scaling: using more CPU's on the same machine to share workload.
+ * These processes will have to communicate with eachother because they are reading and writing to the same database file
+ */
+class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
+    constructor(storage, id) {
+        super();
+        this.storage = storage;
+        this.id = id;
+        this.ipcType = 'ipc';
+        this.ourSubscriptions = [];
+        this.remoteSubscriptions = [];
+        this.peers = [];
+        this._exiting = false;
+        this._locks = [];
+        this._requests = new Map();
+        this._eventsEnabled = true;
+        this._nodeLocker = new node_lock_1.NodeLocker();
+        // Setup db event listeners
+        storage.on('subscribe', (subscription) => {
             // Subscription was added to db
-            // console.log(`database subscription being added`);
-            const remoteSubscription = remoteSubscriptions.find(sub => sub.callback === subscription.callback);
+            storage.debug.log(`database subscription being added on peer ${this.id}`);
+            const remoteSubscription = this.remoteSubscriptions.find(sub => sub.callback === subscription.callback);
             if (remoteSubscription) {
                 // Send ack
                 // return sendMessage({ type: 'subscribe_ack', from: tabId, to: remoteSubscription.for, data: { path: subscription.path, event: subscription.event } });
                 return;
             }
-            const othersAlreadyNotifying = ourSubscriptions.some(sub => sub.event === subscription.event && sub.path === subscription.path);
+            const othersAlreadyNotifying = this.ourSubscriptions.some(sub => sub.event === subscription.event && sub.path === subscription.path);
             // Add subscription
-            ourSubscriptions.push(subscription);
+            this.ourSubscriptions.push(subscription);
             if (othersAlreadyNotifying) {
                 // Same subscription as other previously added. Others already know we want to be notified
                 return;
             }
             // Request other tabs to keep us updated of this event
-            const message = { type: 'subscribe', from: tabId, data: { path: subscription.path, event: subscription.event } };
-            sendMessage(message);
+            const message = { type: 'subscribe', from: this.id, data: { path: subscription.path, event: subscription.event } };
+            this.sendMessage(message);
         });
-        db.on('unsubscribe', (subscription) => {
+        storage.on('unsubscribe', (subscription) => {
             // Subscription was removed from db
-            const remoteSubscription = remoteSubscriptions.find(sub => sub.callback === subscription.callback);
+            const remoteSubscription = this.remoteSubscriptions.find(sub => sub.callback === subscription.callback);
             if (remoteSubscription) {
                 // Remove
-                remoteSubscriptions.splice(remoteSubscriptions.indexOf(remoteSubscription), 1);
+                this.remoteSubscriptions.splice(this.remoteSubscriptions.indexOf(remoteSubscription), 1);
                 // Send ack
                 // return sendMessage({ type: 'unsubscribe_ack', from: tabId, to: remoteSubscription.for, data: { path: subscription.path, event: subscription.event } });
                 return;
             }
-            ourSubscriptions
+            this.ourSubscriptions
                 .filter(sub => sub.path === subscription.path && (!subscription.event || sub.event === subscription.event) && (!subscription.callback || sub.callback === subscription.callback))
                 .forEach(sub => {
                 // Remove from our subscriptions
-                ourSubscriptions.splice(ourSubscriptions.indexOf(sub), 1);
+                this.ourSubscriptions.splice(this.ourSubscriptions.indexOf(sub), 1);
                 // Request other tabs to stop notifying
-                const message = { type: 'unsubscribe', from: tabId, data: { path: sub.path, event: sub.event } };
-                sendMessage(message);
+                const message = { type: 'unsubscribe', from: this.id, data: { path: sub.path, event: sub.event } };
+                this.sendMessage(message);
             });
         });
-        // Monitor onbeforeunload event to say goodbye when the window is closed
-        window.addEventListener('beforeunload', () => {
-            sendMessage({ type: 'bye', from: tabId });
+    }
+    get isMaster() { return this.masterPeerId === this.id; }
+    ;
+    /**
+     * Requests the peer to shut down. Resolves once its locks are cleared. Has to be overridden by the IPC implementation to perform an actual process.exit
+     * @param code optional exit code (eg one provided by SIGINT event)
+     */
+    async exit(code = 0) {
+        if (this._exiting) {
+            // Already exiting...
+            return this.once('exit');
+        }
+        this._exiting = true;
+        this.storage.debug.warn(`Received ${this.isMaster ? 'master' : 'worker ' + this.id} process exit request`);
+        // if (this.isMaster) {
+        //     await this._nodeLocker.quit(); // Denies new lock requests, waits for current locks to be released
+        // }
+        // else if (this._locks.size > 0) {
+        //     // this.storage.debug.warn(`Waiting for worker ${this.id} locks to clear`);
+        //     await this.once('locks-cleared'); // Will be emitted when last lock was removed from list
+        // }
+        if (this._locks.length > 0) {
+            this.storage.debug.warn(`Waiting for ${this.isMaster ? 'master' : 'worker'} ${this.id} locks to clear`);
+            await this.once('locks-cleared');
+        }
+        // Send "bye"
+        this.sayGoodbye(this.id);
+        this.storage.debug.warn(`${this.isMaster ? 'Master' : 'Worker ' + this.id} will now exit`);
+        this.emitOnce('exit', code);
+    }
+    sayGoodbye(forPeerId) {
+        // Send "bye" message on their behalf
+        const bye = { type: 'bye', from: forPeerId, data: undefined };
+        this.sendMessage(bye);
+    }
+    addPeer(id, sendReply = true, ignoreDuplicate = false) {
+        if (this._exiting) {
+            return;
+        }
+        const peer = this.peers.find(w => w.id === id);
+        // if (peer) {
+        //     if (!ignoreDuplicate) {
+        //         throw new Error(`We're not supposed to know this peer!`);
+        //     }
+        //     return;
+        // }
+        if (!peer) {
+            this.peers.push({ id, lastSeen: Date.now() });
+        }
+        if (sendReply) {
+            // Send hello back to sender
+            const helloMessage = { type: 'hello', from: this.id, to: id, data: undefined };
+            this.sendMessage(helloMessage);
+            // Send our active subscriptions through
+            this.ourSubscriptions.forEach(sub => {
+                // Request to keep us updated
+                const message = { type: 'subscribe', from: this.id, to: id, data: { path: sub.path, event: sub.event } };
+                this.sendMessage(message);
+            });
+        }
+    }
+    removePeer(id, ignoreUnknown = false) {
+        if (this._exiting) {
+            return;
+        }
+        const peer = this.peers.find(peer => peer.id === id);
+        if (!peer) {
+            if (!ignoreUnknown) {
+                throw new Error(`We are supposed to know this peer!`);
+            }
+            return;
+        }
+        this.peers.splice(this.peers.indexOf(peer), 1);
+        // Remove their subscriptions
+        const subscriptions = this.remoteSubscriptions.filter(sub => sub.for === id);
+        subscriptions.forEach(sub => {
+            // Remove & stop their subscription
+            this.remoteSubscriptions.splice(this.remoteSubscriptions.indexOf(sub), 1);
+            this.storage.subscriptions.remove(sub.path, sub.event, sub.callback);
         });
-        // Send "hello" to others
-        sendMessage({ from: tabId, type: 'hello' });
-        // // Schedule periodic "pulse" to let others know we're still around
-        // setInterval(() => {
-        //     sendMessage(<IPulseMessage>{ from: tabId, type: 'pulse' });
-        // }, 30000);
-        console.log(`[BroadcastChannel] AceBase multitabs enabled`);
+    }
+    addRemoteSubscription(peerId, details) {
+        if (this._exiting) {
+            return;
+        }
+        // this.storage.debug.log(`remote subscription being added`);
+        if (this.remoteSubscriptions.some(sub => sub.for === peerId && sub.event === details.event && sub.path === details.path)) {
+            // We're already serving this event for the other peer. Ignore
+            return;
+        }
+        // Add remote subscription
+        const subscribeCallback = (err, path, val, previous, context) => {
+            // db triggered an event, send notification to remote subscriber
+            let eventMessage = {
+                type: 'event',
+                from: this.id,
+                to: peerId,
+                path: details.path,
+                event: details.event,
+                data: {
+                    path,
+                    val,
+                    previous,
+                    context
+                }
+            };
+            this.sendMessage(eventMessage);
+        };
+        this.remoteSubscriptions.push({ for: peerId, event: details.event, path: details.path, callback: subscribeCallback });
+        this.storage.subscriptions.add(details.path, details.event, subscribeCallback);
+    }
+    cancelRemoteSubscription(peerId, details) {
+        // Other tab requests to remove previously subscribed event
+        const sub = this.remoteSubscriptions.find(sub => sub.for === peerId && sub.event === details.event && sub.path === details.event);
+        if (!sub) {
+            // We don't know this subscription so we weren't notifying in the first place. Ignore
+            return;
+        }
+        // Stop subscription
+        this.storage.subscriptions.remove(details.path, details.event, sub.callback);
+    }
+    async handleMessage(message) {
+        switch (message.type) {
+            case 'hello': return this.addPeer(message.from, message.to !== this.id, false);
+            case 'bye': return this.removePeer(message.from, true);
+            case 'subscribe': return this.addRemoteSubscription(message.from, message.data);
+            case 'unsubscribe': return this.cancelRemoteSubscription(message.from, message.data);
+            case 'event': {
+                if (!this._eventsEnabled) {
+                    // IPC event handling is disabled for this client. Ignore message.
+                    break;
+                }
+                const eventMessage = message;
+                const context = eventMessage.data.context || {};
+                context.acebase_ipc = { type: this.ipcType, origin: eventMessage.from }; // Add IPC details
+                // Other peer raised an event we are monitoring
+                const subscriptions = this.ourSubscriptions.filter(sub => sub.event === eventMessage.event && sub.path === eventMessage.path);
+                subscriptions.forEach(sub => {
+                    sub.callback(null, eventMessage.data.path, eventMessage.data.val, eventMessage.data.previous, context);
+                });
+                break;
+            }
+            case 'lock-request': {
+                // Lock request sent by worker to master
+                console.assert(this.isMaster, `Workers are not supposed to receive lock requests!`);
+                const request = message;
+                const result = { type: 'lock-result', id: request.id, from: this.id, to: request.from, ok: true, data: undefined };
+                try {
+                    const lock = await this.lock(request.data);
+                    result.data = {
+                        id: lock.id,
+                        path: lock.path,
+                        tid: lock.tid,
+                        write: lock.forWriting,
+                        expires: lock.expires,
+                        comment: lock.comment
+                    };
+                }
+                catch (err) {
+                    result.ok = false;
+                    result.reason = err.stack || err.message || err;
+                }
+                return this.sendMessage(result);
+            }
+            case 'lock-result': {
+                // Lock result sent from master to worker
+                console.assert(!this.isMaster, `Masters are not supposed to receive results for lock requests!`);
+                const result = message;
+                const request = this._requests.get(result.id);
+                console.assert(typeof request === 'object', `The request must be known to us!`);
+                if (result.ok) {
+                    request.resolve(result.data);
+                }
+                else {
+                    request.reject(new Error(result.reason));
+                }
+                return;
+            }
+            case 'unlock-request': {
+                // lock release request sent from worker to master
+                console.assert(this.isMaster, `Workers are not supposed to receive unlock requests!`);
+                const request = message;
+                const result = { type: 'unlock-result', id: request.id, from: this.id, to: request.from, ok: true, data: { id: request.data.id } };
+                try {
+                    const lockInfo = this._locks.find(l => { var _a; return ((_a = l.lock) === null || _a === void 0 ? void 0 : _a.id) === request.data.id; }); // this._locks.get(request.data.id);
+                    await lockInfo.lock.release(); //this.unlock(request.data.id);
+                }
+                catch (err) {
+                    result.ok = false;
+                    result.reason = err.stack || err.message || err;
+                }
+                return this.sendMessage(result);
+            }
+            case 'unlock-result': {
+                // lock release result sent from master to worker
+                console.assert(!this.isMaster, `Masters are not supposed to receive results for unlock requests!`);
+                const result = message;
+                const request = this._requests.get(result.id);
+                console.assert(typeof request === 'object', `The request must be known to us!`);
+                if (result.ok) {
+                    request.resolve(result.data);
+                }
+                else {
+                    request.reject(new Error(result.reason));
+                }
+                return;
+            }
+            case 'move-lock-request': {
+                // move lock request sent from worker to master
+                console.assert(this.isMaster, `Workers are not supposed to receive move lock requests!`);
+                const request = message;
+                const result = { type: 'lock-result', id: request.id, from: this.id, to: request.from, ok: true, data: undefined };
+                try {
+                    let movedLock;
+                    // const lock = this._locks.get(request.data.id);
+                    const lockRequest = this._locks.find(r => { var _a; return ((_a = r.lock) === null || _a === void 0 ? void 0 : _a.id) === request.data.id; });
+                    if (request.data.move_to === 'parent') {
+                        movedLock = await lockRequest.lock.moveToParent();
+                    }
+                    else {
+                        throw new Error(`Unknown lock move_to "${request.data.move_to}"`);
+                    }
+                    // this._locks.delete(request.data.id);
+                    // this._locks.set(movedLock.id, movedLock);
+                    lockRequest.lock = movedLock;
+                    result.data = {
+                        id: movedLock.id,
+                        path: movedLock.path,
+                        tid: movedLock.tid,
+                        write: movedLock.forWriting,
+                        expires: movedLock.expires,
+                        comment: movedLock.comment
+                    };
+                }
+                catch (err) {
+                    result.ok = false;
+                    result.reason = err.stack || err.message || err;
+                }
+                return this.sendMessage(result);
+            }
+            case 'notification': {
+                // Custom notification received - raise event
+                return this.emit('notification', message);
+            }
+            case 'request': {
+                // Custom message received - raise event
+                return this.emit('request', message);
+            }
+            case 'result': {
+                // Result of custom request received - raise event
+                const result = message;
+                const request = this._requests.get(result.id);
+                console.assert(typeof request === 'object', `Result of unknown request received`);
+                if (result.ok) {
+                    request.resolve(result.data);
+                }
+                else {
+                    request.reject(new Error(result.reason));
+                }
+            }
+        }
+    }
+    /**
+     * Acquires a lock. If this peer is a worker, it will request the lock from the master
+     * @param details
+     */
+    async lock(details) {
+        if (this._exiting) {
+            // Peer is exiting. Do we have an existing lock with requested tid? If not, deny request.
+            const tidApproved = this._locks.find(l => l.tid === details.tid && l.granted);
+            if (!tidApproved) {
+                // We have no previously granted locks for this transaction. Deny.
+                throw new AceBaseIPCPeerExitingError('new transaction lock denied');
+            }
+        }
+        const removeLock = lockDetails => {
+            this._locks.splice(this._locks.indexOf(lockDetails), 1);
+            if (this._locks.length === 0) {
+                // this.storage.debug.log(`No more locks in worker ${this.id}`);
+                this.emit('locks-cleared');
+            }
+        };
+        if (this.isMaster) {
+            // Master
+            const lockInfo = { tid: details.tid, granted: false, request: details, lock: null };
+            this._locks.push(lockInfo);
+            const lock = await this._nodeLocker.lock(details.path, details.tid, details.write, details.comment);
+            lockInfo.tid = lock.tid;
+            lockInfo.granted = true;
+            const createIPCLock = (lock) => {
+                return {
+                    get id() { return lock.id; },
+                    get tid() { return lock.tid; },
+                    get path() { return lock.path; },
+                    get forWriting() { return lock.forWriting; },
+                    get expires() { return lock.expires; },
+                    get comment() { return lock.comment; },
+                    get state() { return lock.state; },
+                    release: async () => {
+                        await lock.release();
+                        removeLock(lockInfo);
+                    },
+                    moveToParent: async () => {
+                        const parentLock = await lock.moveToParent();
+                        lockInfo.lock = createIPCLock(parentLock);
+                        return lockInfo.lock;
+                    }
+                };
+            };
+            lockInfo.lock = createIPCLock(lock);
+            return lockInfo.lock;
+        }
+        else {
+            // Worker
+            const lockInfo = { tid: details.tid, granted: false, request: details, lock: null };
+            this._locks.push(lockInfo);
+            const createIPCLock = (result) => {
+                lockInfo.granted = true;
+                lockInfo.tid = result.tid;
+                lockInfo.lock = {
+                    id: result.id,
+                    tid: result.tid,
+                    path: result.path,
+                    forWriting: result.write,
+                    expires: result.expires,
+                    comment: result.comment,
+                    release: async () => {
+                        const req = { type: 'unlock-request', id: acebase_core_1.ID.generate(), from: this.id, to: this.masterPeerId, data: { id: lockInfo.lock.id } };
+                        const result = await this.request(req);
+                        this.storage.debug.log(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
+                        removeLock(lockInfo);
+                    },
+                    moveToParent: async () => {
+                        const req = { type: 'move-lock-request', id: acebase_core_1.ID.generate(), from: this.id, to: this.masterPeerId, data: { id: lockInfo.lock.id, move_to: 'parent' } };
+                        let result;
+                        try {
+                            result = await this.request(req);
+                        }
+                        catch (err) {
+                            // We didn't get new lock?!
+                            removeLock(lockInfo);
+                            throw err;
+                        }
+                        lockInfo.lock = createIPCLock(result);
+                        return lockInfo.lock;
+                    }
+                };
+                // this.storage.debug.log(`Worker ${this.id} received lock ${lock.id} (tid ${lock.tid}, ${lock.comment}, "/${lock.path}", ${lock.forWriting ? 'write' : 'read'})`);
+                return lockInfo.lock;
+            };
+            const req = { type: 'lock-request', id: acebase_core_1.ID.generate(), from: this.id, to: this.masterPeerId, data: details };
+            let result, err;
+            try {
+                result = await this.request(req);
+            }
+            catch (e) {
+                err = e;
+                result = null;
+            }
+            if (err) {
+                removeLock(lockInfo);
+                throw err;
+            }
+            return createIPCLock(result);
+        }
+    }
+    async request(req) {
+        // Send request, return result promise
+        let resolve, reject;
+        const promise = new Promise((rs, rj) => {
+            resolve = result => {
+                this._requests.delete(req.id);
+                rs(result);
+            };
+            reject = err => {
+                this._requests.delete(req.id);
+                rj(err);
+            };
+        });
+        this._requests.set(req.id, { resolve, reject, request: req });
+        this.sendMessage(req);
+        return promise;
+    }
+    /**
+     * Sends a custom request to the IPC master
+     * @param request
+     * @returns
+     */
+    sendRequest(request) {
+        const req = { type: 'request', from: this.id, to: this.masterPeerId, id: acebase_core_1.ID.generate(), data: request };
+        return this.request(req)
+            .catch(err => {
+            this.storage.debug.error(err);
+            throw err;
+        });
+    }
+    replyRequest(requestMessage, result) {
+        const reply = { type: 'result', id: requestMessage.id, ok: true, from: this.id, to: requestMessage.from, data: result };
+        this.sendMessage(reply);
+    }
+    /**
+     * Sends a custom notification to all IPC peers
+     * @param notification
+     * @returns
+     */
+    sendNotification(notification) {
+        const msg = { type: 'notification', from: this.id, data: notification };
+        this.sendMessage(msg);
+    }
+    /**
+     * If ipc event handling is currently enabled
+     */
+    get eventsEnabled() { return this._eventsEnabled; }
+    /**
+     * Enables or disables ipc event handling. When disabled, incoming event messages will be ignored.
+     */
+    set eventsEnabled(enabled) {
+        this.storage.debug.log(`ipc events ${enabled ? 'enabled' : 'disabled'}`);
+        this._eventsEnabled = enabled;
     }
 }
-exports.BrowserTabIPC = BrowserTabIPC;
-//tsc src/index.ts --target es6 --lib es2017 --module commonjs --outDir . -d --sourceMap
+exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"acebase-core":12}],29:[function(require,module,exports){
-const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
+},{"../node-lock":31,"acebase-core":12}],30:[function(require,module,exports){
+const { getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
 
 class NodeInfo {
@@ -5983,7 +6317,7 @@ class NodeInfo {
 }
 
 module.exports = { NodeInfo };
-},{"./node-value-types":31,"acebase-core":12}],30:[function(require,module,exports){
+},{"./node-value-types":32,"acebase-core":12}],31:[function(require,module,exports){
 const { PathInfo } = require('acebase-core');
 
 const SECOND = 1000;
@@ -6009,6 +6343,10 @@ class NodeLocker {
          */
         this._locks = [];
         this._lastTid = 0;
+        /**
+         * When .quit() is called, will be set to the quit promise's resolve function
+         */
+        this._quit = undefined;
     }
 
     createTid() {
@@ -6042,7 +6380,41 @@ class NodeLocker {
         return { allow: !conflict, conflict };
     }
 
+    quit() {
+        return new Promise(resolve => {
+            if (this._locks.length === 0) { return resolve(); }
+            this._quit = resolve;
+        })
+    }
+
+    /**
+     * Safely reject a pending lock, catching any unhandled promise rejections (that should not happen in the first place, obviously)
+     * @param {NodeLock} lock 
+     */
+    _rejectLock(lock, err) {
+        this._locks.splice(this._locks.indexOf(lock), 1); // Remove from queue
+        clearTimeout(lock.timeout);
+        try {
+            lock.reject(err);
+        }
+        catch(err) {
+            console.error(`Unhandled promise rejection:`, err);
+        }
+    }
+
     _processLockQueue() {
+        if (this._quit) {
+            // Reject all pending locks
+            const quitError = new Error('Quitting');
+            this._locks
+                .filter(lock => lock.state === LOCK_STATE.PENDING)
+                .forEach(lock => this._rejectLock(lock, quitError));
+
+            // Resolve quit promise if queue is empty:
+            if (this._locks.length === 0) {
+                this._quit();
+            }
+        }
         const pending = this._locks
             .filter(lock => 
                 lock.state === LOCK_STATE.PENDING
@@ -6066,7 +6438,7 @@ class NodeLocker {
             if (check.allow) {
                 this.lock(lock)
                 .then(lock.resolve)
-                .catch(lock.reject);
+                .catch(err => this._rejectLock(lock, err));
             }
         });
     }
@@ -6078,7 +6450,7 @@ class NodeLocker {
      * @param {boolean} forWriting if the record will be written to. Multiple read locks can be granted access at the same time if there is no write lock. Once a write lock is granted, no others can read from or write to it.
      * @returns {Promise<NodeLock>} returns a promise with the lock object once it is granted. It's .release method can be used as a shortcut to .unlock(path, tid) to release the lock
      */
-    lock(path, tid, forWriting = true, comment = '', options = { withPriority: false, noTimeout: false }) {
+    async lock(path, tid, forWriting = true, comment = '', options = { withPriority: false, noTimeout: false }) {
         let lock, proceed;
         if (path instanceof NodeLock) {
             lock = path;
@@ -6086,7 +6458,10 @@ class NodeLocker {
             proceed = true;
         }
         else if (this._locks.findIndex((l => l.tid === tid && l.state === LOCK_STATE.EXPIRED)) >= 0) {
-            return Promise.reject(new Error(`lock on tid ${tid} has expired, not allowed to continue`));
+            throw new Error(`lock on tid ${tid} has expired, not allowed to continue`);
+        }
+        else if (this._quit && !options.withPriority) {
+            throw new Error(`Quitting`);
         }
         else {
             DEBUG_MODE && console.error(`${forWriting ? "write" : "read"} lock requested on "${path}" by tid ${tid}`);
@@ -6153,7 +6528,7 @@ class NodeLocker {
                     lock.timeout = setTimeout(timeoutHandler, LOCK_TIMEOUT / 3);
                 }
             }
-            return Promise.resolve(lock);
+            return lock;
         }
         else {
             // Keep pending until clashing lock(s) is/are removed
@@ -6167,7 +6542,7 @@ class NodeLocker {
         }
     }
 
-    unlock(lockOrId, comment, processQueue = true) {// (path, tid, comment) {
+    async unlock(lockOrId, comment, processQueue = true) {// (path, tid, comment) {
         let lock, i;
         if (lockOrId instanceof NodeLock) {
             lock = lockOrId;
@@ -6182,7 +6557,7 @@ class NodeLocker {
         if (i < 0) {
             const msg = `lock on "/${lock.path}" for tid ${lock.tid} wasn't found; ${comment}`;
             // debug.error(`unlock :: ${msg}`);
-            return Promise.reject(new Error(msg));
+            throw new Error(msg);
         }
         lock.state = LOCK_STATE.DONE;
         clearTimeout(lock.timeout);
@@ -6191,7 +6566,7 @@ class NodeLocker {
         //debug.warn(`unlock :: RELEASED ${lock.forWriting ? "write" : "read" } lock on "/${lock.path}" for tid ${lock.tid}; ${lock.comment}; ${comment}`);
 
         processQueue && this._processLockQueue();
-        return Promise.resolve(lock);
+        return lock;
     }
 
     list() {
@@ -6232,13 +6607,13 @@ class NodeLock {
         this.history = [];
     }
 
-    release(comment) {
+    async release(comment) {
         //return this.storage.unlock(this.path, this.tid, comment);
         this.history.push({ action: 'release', path: this.path, forWriting: this.forWriting, comment })
         return this.locker.unlock(this, comment || this.comment);
     }
 
-    moveToParent() {
+    async moveToParent() {
         const parentPath = PathInfo.get(this.path).parentPath; //getPathInfo(this.path).parent;
         const allowed = this.locker.isAllowed(parentPath, this.tid, this.forWriting); //_allowLock(parentPath, this.tid, this.forWriting);
         if (allowed) {
@@ -6246,22 +6621,23 @@ class NodeLock {
             this.waitingFor = null;
             this.path = parentPath;
             // this.comment = `moved to parent: ${this.comment}`;
-            return Promise.resolve(this);
+            return this;
         }
         else {
             // Unlock without processing the queue
             this.locker.unlock(this, `moveLockToParent: ${this.comment}`, false);
 
             // Lock parent node with priority to jump the queue
-            return this.locker.lock(parentPath, this.tid, this.forWriting, this.comment, { withPriority: true }) // `moved to parent (queued): ${this.comment}`
-            .then(newLock => {
-                newLock.history = this.history;
-                newLock.history.push({ path: this.path, forWriting: this.forWriting, action: 'moving to parent through queue' });
-                return newLock;
-            });
+            const newLock = await this.locker.lock(parentPath, this.tid, this.forWriting, this.comment, { withPriority: true }) // `moved to parent (queued): ${this.comment}`
+            newLock.history = this.history;
+            newLock.history.push({ path: this.path, forWriting: this.forWriting, action: 'moving to parent through queue' });
+            return newLock;
         }
     }
 
+    /**
+     * Not used? Will be removed
+     */
     moveTo(otherPath, forWriting) {
         //const check = _allowLock(otherPath, this.tid, forWriting);
         const allowed = this.locker.isAllowed(otherPath, this.tid, forWriting);
@@ -6290,7 +6666,9 @@ class NodeLock {
 }
 
 module.exports = { NodeLocker, NodeLock };
-},{"acebase-core":12}],31:[function(require,module,exports){
+},{"acebase-core":12}],32:[function(require,module,exports){
+const { PathReference } = require('acebase-core');
+
 const VALUE_TYPES = {
     // Native types:
     OBJECT: 1,
@@ -6326,10 +6704,10 @@ function getNodeValueType(value) {
     else if (typeof value === 'string') { return VALUE_TYPES.STRING; }
     else if (typeof value === 'object') { return VALUE_TYPES.OBJECT; }
     throw new Error(`Invalid value for standalone node: ${value}`);
-};
+}
 
 module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType };
-},{}],32:[function(require,module,exports){
+},{"acebase-core":12}],33:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
@@ -6538,26 +6916,32 @@ class NodeChangeTracker {
     }
 
     addDelete(keyOrIndex, oldValue) {
-        this._changes.push(new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.DELETE, oldValue, null));
+        const change = new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.DELETE, oldValue, null);
+        this._changes.push(change);
+        return change;
     }
     addUpdate(keyOrIndex, oldValue, newValue) {
-        this._changes.push(new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.UPDATE, oldValue, newValue));
+        const change = new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.UPDATE, oldValue, newValue)
+        this._changes.push(change);
+        return change;
     }
     addInsert(keyOrIndex, newValue) {
-        this._changes.push(new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.INSERT, null, newValue));
+        const change = new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.INSERT, null, newValue)
+        this._changes.push(change);
+        return change;
     }
     add(keyOrIndex, currentValue, newValue) {
         if (currentValue === null) {
             if (newValue === null) { 
                 throw new Error(`Wrong logic for node change on "${this.nodeInfo.path}/${keyOrIndex}" - both old and new values are null`);
             }
-            this.addInsert(keyOrIndex, newValue);
+            return this.addInsert(keyOrIndex, newValue);
         }
         else if (newValue === null) {
-            this.addDelete(keyOrIndex, currentValue);
+            return this.addDelete(keyOrIndex, currentValue);
         }
         else {
-            this.addUpdate(keyOrIndex, currentValue, newValue);
+            return this.addUpdate(keyOrIndex, currentValue, newValue);
         }            
     }
 
@@ -6587,7 +6971,7 @@ class NodeChangeTracker {
         if (typeof this._newValue === 'object') { return this._newValue; }
         if (typeof this._oldValue === 'undefined') { throw new TypeError(`oldValue is not set`); }
         let newValue = {};
-        Object.keys(this.oldValue).forEach(key => newValue[key] = oldValue[key]);
+        Object.keys(this.oldValue).forEach(key => newValue[key] = this.oldValue[key]);
         this.deletes.forEach(change => delete newValue[change.key]);
         this.updates.forEach(change => newValue[change.key] = change.newValue);
         this.inserts.forEach(change => newValue[change.key] = change.newValue);
@@ -6601,7 +6985,7 @@ class NodeChangeTracker {
         if (typeof this._oldValue === 'object') { return this._oldValue; }
         if (typeof this._newValue === 'undefined') { throw new TypeError(`newValue is not set`); }
         let oldValue = {};
-        Object.keys(this.newValue).forEach(key => oldValue[key] = newValue[key]);
+        Object.keys(this.newValue).forEach(key => oldValue[key] = this.newValue[key]);
         this.deletes.forEach(change => oldValue[change.key] = change.oldValue);
         this.updates.forEach(change => oldValue[change.key] = change.oldValue);
         this.inserts.forEach(change => delete oldValue[change.key]);
@@ -6641,11 +7025,23 @@ class NodeChangeTracker {
 
 module.exports = {
     Node,
-    NodeInfo
+    NodeInfo,
+    NodeChange,
+    NodeChangeTracker
 };
-},{"./node-info":29,"./node-value-types":31,"./storage":36}],33:[function(require,module,exports){
+},{"./node-info":30,"./node-value-types":32,"./storage":38}],34:[function(require,module,exports){
 // Not supported in current environment
-},{}],34:[function(require,module,exports){
+},{}],35:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.pfs = void 0;
+class pfs {
+    static get hasFileSystem() { return false; }
+    static get fs() { return null; }
+}
+exports.pfs = pfs;
+
+},{}],36:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SchemaDefinition = void 0;
@@ -6920,15 +7316,14 @@ class SchemaDefinition {
     }
 }
 exports.SchemaDefinition = SchemaDefinition;
-//tsc src/index.ts --target es6 --lib es2017 --module commonjs --outDir . -d --sourceMap
 
-},{}],35:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 const { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils } = require('acebase-core');
 const { compareValues } = Utils;
 const { NodeInfo } = require('./node-info');
 const { NodeLocker } = require('./node-lock');
-const { VALUE_TYPES, getNodeValueType } = require('./node-value-types');
-const { Storage, StorageSettings, NodeNotFoundError } = require('./storage');
+const { VALUE_TYPES } = require('./node-value-types');
+const { Storage, StorageSettings, NodeNotFoundError, NodeRevisionError } = require('./storage');
 
 /** Interface for metadata being stored for nodes */
 class ICustomStorageNodeMetaData {
@@ -6976,20 +7371,23 @@ class CustomStorageTransaction {
      * @param {string} path 
      * @returns {Promise<ICustomStorageNode>}
      */
-    get(path) { throw new Error(`CustomStorageTransaction.get must be overridden by subclass`); }
+    // eslint-disable-next-line no-unused-vars
+    async get(path) { throw new Error(`CustomStorageTransaction.get must be overridden by subclass`); }
     
     /**
      * @param {string} path 
      * @param {ICustomStorageNode} node
      * @returns {Promise<any>}
      */
-    set(path, node) { throw new Error(`CustomStorageTransaction.set must be overridden by subclass`); }
+    // eslint-disable-next-line no-unused-vars
+    async set(path, node) { throw new Error(`CustomStorageTransaction.set must be overridden by subclass`); }
     
     /**
      * @param {string} path
      * @returns {Promise<any>}
      */
-    remove(path) { throw new Error(`CustomStorageTransaction.remove must be overridden by subclass`); }
+    // eslint-disable-next-line no-unused-vars
+    async remove(path) { throw new Error(`CustomStorageTransaction.remove must be overridden by subclass`); }
     
     /**
      * 
@@ -7001,7 +7399,8 @@ class CustomStorageTransaction {
      * @param {(childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean} addCallback callback method that adds the child node. Returns whether or not to keep calling with more children
      * @returns {Promise<any>} Returns a promise that resolves when there are no more children to be streamed
      */
-    childrenOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.childrenOf must be overridden by subclass`); }
+    // eslint-disable-next-line no-unused-vars
+    async childrenOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.childrenOf must be overridden by subclass`); }
 
     /**
      * 
@@ -7009,11 +7408,12 @@ class CustomStorageTransaction {
      * @param {object} include 
      * @param {boolean} include.metadata Whether metadata needs to be loaded
      * @param {boolean} include.value  Whether value needs to be loaded
-     * @param {(childPath: string) => boolean} checkCallback callback method to precheck if descendant needs to be added, perform before loading metadata/value if possible
-     * @param {(childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean} addCallback callback method that adds the descendant node. Returns whether or not to keep calling with more children
+     * @param {(descPath: string, metadata?: ICustomStorageNodeMetaData) => boolean} checkCallback callback method to precheck if descendant needs to be added, perform before loading metadata/value if possible. NOTE: if include.metadata === true, you should load and pass the metadata to the checkCallback if doing so has no or small performance impact
+     * @param {(descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean} addCallback callback method that adds the descendant node. Returns whether or not to keep calling with more children
      * @returns {Promise<any>} Returns a promise that resolves when there are no more descendants to be streamed
      */
-    descendantsOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.descendantsOf must be overridden by subclass`); }
+    // eslint-disable-next-line no-unused-vars
+    async descendantsOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.descendantsOf must be overridden by subclass`); }
 
     /**
      * NOT USED YET
@@ -7021,10 +7421,10 @@ class CustomStorageTransaction {
      * @param {string[]} paths
      * @returns {Promise<Map<string, ICustomStorageNode>>} Returns promise with a Map of paths to nodes
      */
-    getMultiple(paths) {
+    async getMultiple(paths) {
         const map = new Map();
-        return Promise.all(paths.map(path => this.get(path).then(val => map.set(path, val))))
-        .then(done => map);
+        await Promise.all(paths.map(path => this.get(path).then(val => map.set(path, val))));
+        return map;
     }
 
     /**
@@ -7048,12 +7448,13 @@ class CustomStorageTransaction {
      * @param {Error} reason 
      * @returns {Promise<any>}
      */
-    rollback(reason) { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
+    // eslint-disable-next-line no-unused-vars
+    async rollback(reason) { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
 
     /**
      * @returns {Promise<any>}
      */
-    commit() { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
+    async commit() { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
     
     /**
      * Moves the transaction path to the parent node. If node locking is used, it will request a new lock
@@ -7146,7 +7547,7 @@ class CustomStorageSettings extends StorageSettings {
             return transaction;
         }
     }
-};
+}
 
 class CustomStorageNodeAddress {
     constructor(containerPath) {
@@ -7195,7 +7596,7 @@ class CustomStorageHelpers {
      * @returns {RegExp} Returns regular expression to test paths with
      */
     static ChildPathsRegex(path) {
-        return new RegExp(`^${path}(?:/[^/\[]+|\[[0-9]+\])$`);
+        return new RegExp(`^${path}(?:/[^/[]+|\\[[0-9]+\\])$`);
     }
 
     /**
@@ -7216,7 +7617,7 @@ class CustomStorageHelpers {
      * @returns {RegExp} Returns regular expression to test paths with
      */
     static DescendantPathsRegex(path) {
-        return new RegExp(`^${path}(?:/[^/\[]+|\[[0-9]+\])`);
+        return new RegExp(`^${path}(?:/[^/[]+|\\[[0-9]+\\])`);
     }
 
     /**
@@ -7295,7 +7696,7 @@ class CustomStorage extends Storage {
                 return { type: VALUE_TYPES.DATETIME, value: val.getTime() };
             }
             else if (val instanceof PathReference) {
-                return { type: VALUE_TYPES.REFERENCE, value: child.path };
+                return { type: VALUE_TYPES.REFERENCE, value: val.path };
             }
             else if (val instanceof ArrayBuffer) {
                 return { type: VALUE_TYPES.BINARY, value: ascii85.encode(val) };
@@ -7466,7 +7867,7 @@ class CustomStorage extends Storage {
      * @returns {Promise<void>}
      */
     async _writeNode(path, value, options) {
-        if (this.valueFitsInline(value) && path !== '') {
+        if (!options.merge && this.valueFitsInline(value) && path !== '') {
             throw new Error(`invalid value to store in its own node`);
         }
         else if (path === '' && (typeof value !== 'object' || value instanceof Array)) {
@@ -7964,7 +8365,7 @@ class CustomStorage extends Storage {
                 //     : null;
 
                 let checkExecuted = false;
-                const includeDescendantCheck = (descPath) => {
+                const includeDescendantCheck = (descPath, metadata) => {
                     checkExecuted = true;
                     if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
                         // Double check failed
@@ -7983,10 +8384,10 @@ class CustomStorage extends Storage {
                         ? !options.exclude.some(k => checkPathInfo.equals(k) || checkPathInfo.isDescendantOf(k))
                         : true);
 
-                    // Apply child_objects filter
+                    // Apply child_objects filter. If metadata is not loaded, we can only skip deeper descendants here - any child object that does get through will be ignored by addDescendant
                     if (include 
                         && options.child_objects === false 
-                        && (pathInfo.isParentOf(descPath) && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(childNode.type)
+                        && (pathInfo.isParentOf(descPath) && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(metadata ? metadata.type : -1)
                         || PathInfo.getPathKeys(descPath).length > pathInfo.pathKeys.length + 1)
                     ) {
                         include = false;
@@ -8004,7 +8405,11 @@ class CustomStorage extends Storage {
                     if (!checkExecuted) {
                         throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
                     }
-                    
+                    if (options.child_objects === false && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type)) {
+                        // child objects are filtered out, but this one got through because includeDescendantCheck did not have access to its metadata,
+                        // which is ok because doing that might drastically improve performance in client code. Skip it now.
+                        return true;
+                    }
                     // Process the value
                     this._processReadNodeValue(node);
                     
@@ -8286,8 +8691,11 @@ class CustomStorage extends Storage {
      */
     async updateNode(path, updates, options = { suppress_events: false, context: null }) {
 
-        if (typeof updates !== 'object') { //  || Object.keys(updates).length === 0
+        if (typeof updates !== 'object') {
             throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
+        }
+        else if (Object.keys(updates).length === 0) {
+            return; // Nothing to update. Done!
         }
 
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
@@ -8340,13 +8748,14 @@ module.exports = {
     ICustomStorageNodeMetaData,
     ICustomStorageNode
 }
-},{"./node-info":29,"./node-lock":30,"./node-value-types":31,"./storage":36,"acebase-core":12}],36:[function(require,module,exports){
+},{"./node-info":30,"./node-lock":31,"./node-value-types":32,"./storage":38,"acebase-core":12}],38:[function(require,module,exports){
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle } = require('acebase-core');
-const { NodeLocker } = require('./node-lock');
-const { VALUE_TYPES, getNodeValueType } = require('./node-value-types');
+const { VALUE_TYPES } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
-const { cloneObject, compareValues, getChildValues, encodeString, defer } = Utils;
+const { compareValues, getChildValues, encodeString, defer } = Utils;
 const { SchemaDefinition } = require('./schema');
+const { IPCPeer } = require('./ipc');
+const { pfs } = require('./promise-fs');
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
@@ -8360,111 +8769,6 @@ class SchemaValidationError extends Error {
     }
 }
 
-class ClusterSettings {
-
-    /**
-     * 
-     * @param {object} settings 
-     * @param {boolean} [settings.enabled=false]
-     * @param {boolean} [settings.isMaster=false]
-     * @param {NodeJS.Process} [settings.master=null]
-     * @param {NodeJS.Process[]} [settings.workers=null]
-     */
-    constructor(settings) {
-        settings = settings || {};
-        this.enabled = settings.enabled === true;
-        this.isMaster = settings.isMaster === true;
-        this.master = this.isMaster ? null : settings.master;
-        this.workers = this.isMaster ? settings.workers : null;
-    }
-}
-
-class ClusterManager extends SimpleEventEmitter {
-    /**
-     * @param {ClusterSettings} settings 
-     */
-    constructor(settings) {
-        super();
-        this.settings = new ClusterSettings(settings);
-
-        if (!settings.enabled) {
-            // do nothing
-        }
-        else if (settings.isMaster) {
-            // This is the master process, we have to respond to requests
-            settings.workers.forEach(worker => {
-                // Setup communication channel with worker
-                worker.on("message", data => {
-                    // Received message from a worker process
-
-                    const { id, request } = data;
-                    if (typeof request === 'object' && request.type === "ping") {
-                        // Reply pong
-                        worker.send({ id, result: "pong" });
-                    }
-                    else {
-                        // Storage subclass handles this by listening to worker requests:
-                        // this.cluster.on('worker_request', ({ request, reply, broadcast }) => {
-                        //    if (request.type === 'some_request') { (...) reply('ok'); }
-                        // }) 
-                        const reply = result => { 
-                            // Sends reply to worker
-                            worker.send({ id, result }); 
-                        };
-                        const broadcast = msg => {
-                            // Broadcasts message to all other workers
-                            console.assert(!('id' in msg), 'message to broadcast cannot have id property, it will confuse workers because they think it is a reply to their request')
-                            settings.workers.forEach(otherWorker => {
-                                if (otherWorker !== worker) {
-                                    otherWorker.send(msg);
-                                }
-                            });
-                        }
-                        this.emit('worker_request', { request, reply, broadcast });
-                    }
-                });
-            });
-            this.request = msg => {
-                throw new Error(`request can only be called by worker processes!`);
-            }
-        }
-        else {
-            // This is a worker process, setup request/result communication
-            const master = settings.master;
-            const requests = { };
-            this.request = (msg) => {
-                return new Promise((resolve, reject) => {
-                    const id = ID.generate();
-                    requests[id] = resolve;
-                    master.send({ id, request: msg });
-                });
-            };
-            master.on("message", data => {
-                if (typeof data.id !== 'undefined') {
-                    // Reply to a request sent to us
-                    let resolve = requests[data.id];
-                    delete requests[data.id];
-                    resolve(data.result); // if this throw an error, a sent master notification has id property, which it should not have!
-                }
-                else {
-                    this.emit('master_notification', data);
-                }
-            });
-            // Test communication:
-            this.request({ type: "ping" }).then(result => {
-                console.log(`PING master process result: ${result}`);
-            });
-        }
-    }
-
-    get isMaster() {
-        return this.settings.isMaster;
-    }
-    get enabled() {
-        return this.settings.enabled;
-    }
-}
-
 class StorageSettings {
 
     /**
@@ -8472,7 +8776,6 @@ class StorageSettings {
      * @param {object} settings 
      * @param {number} [settings.maxInlineValueSize=50] in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
      * @param {boolean} [settings.removeVoidProperties=false] Instead of throwing errors on undefined values, remove the properties automatically. Default is false
-     * @param {ClusterSettings} [settings.cluster] cluster settings
      * @param {string} [settings.path="."] Target path to store database files in, default is '.'
      * @param {string} [settings.info="realtime database"] optional info to be written to the console output underneith the logo
      */
@@ -8480,7 +8783,6 @@ class StorageSettings {
         settings = settings || {};
         this.maxInlineValueSize = typeof settings.maxInlineValueSize === 'number' ? settings.maxInlineValueSize : 50;
         this.removeVoidProperties = settings.removeVoidProperties === true;
-        this.cluster = new ClusterSettings(settings.cluster); // When running in a cluster, managing node locking must be done by the cluster master
         /** @type {string} */
         this.path = settings.path || '.';
         if (this.path.endsWith('/')) { this.path = this.path.slice(0, -1); }
@@ -8491,6 +8793,10 @@ class StorageSettings {
 }
 
 class Storage extends SimpleEventEmitter {
+
+    createTid() {
+        return ++this._lastTid;
+    }
 
     /**
      * Base class for database storage, must be extended by back-end specific methods.
@@ -8504,11 +8810,25 @@ class Storage extends SimpleEventEmitter {
         this.settings = settings;
         this.debug = new DebugLogger(settings.logLevel, `[${name}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
-        // Setup node locking
-        this.nodeLocker = new NodeLocker();
+        // // Setup node locking
+        // this.nodeLocker = new NodeLocker();
 
-        // Setup cluster functionality
-        this.cluster = new ClusterManager(settings.cluster);
+        // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
+        this.ipc = new IPCPeer(this);
+        this.ipc.on('exit', code => {
+            // We can perform any custom cleanup here:
+            // - storage-acebase should close the db file
+            // - storage-mssql / sqlite should close connection
+            if (this.indexes.supported) {
+                this.indexes.close();
+            }
+        })
+        this.nodeLocker = {
+            lock: (path, tid, write, comment) => {
+                return this.ipc.lock({ path, tid, write, comment });
+            }
+        }; 
+        this._lastTid = 0;
 
         // Setup indexing functionality
         const { DataIndex, ArrayIndex, FullTextIndex, GeoIndex } = require('./data-index'); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
@@ -8528,7 +8848,6 @@ class Storage extends SimpleEventEmitter {
              * TODO: Implement storage specific indexes (eg in SQLite, MySQL, MSSQL, in-memory)
              */
             get supported() {
-                const pfs = require('./promise-fs');
                 return pfs && pfs.hasFileSystem;
             },
 
@@ -8543,7 +8862,17 @@ class Storage extends SimpleEventEmitter {
              * @param {object} [options.config] additional index-specific configuration settings 
              * @returns {Promise<DataIndex>}
              */
-            create(path, key, options = { rebuild: false, type: undefined, include: undefined }) { //, refresh = false) {
+            async create(path, key, options = { rebuild: false, type: undefined, include: undefined }) { //, refresh = false) {
+                if (!storage.ipc.isMaster) {
+                    // Pass create request to master
+                    const result = await storage.ipc.request({ type: 'index.create', path, key, options });
+                    if (result.ok) {
+                        const index = await DataIndex.readFromFile(storage, result.fileName);
+                        _indexes.push(index);
+                        return;
+                    }
+                    throw new Error(result.reason);
+                }
                 path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
                 const rebuild = options && options.rebuild === true;
                 const indexType = (options && options.type) || 'normal';
@@ -8556,7 +8885,7 @@ class Storage extends SimpleEventEmitter {
                 );
                 if (existingIndex && rebuild !== true) {
                     storage.debug.log(`Index on "/${path}/*/${key}" already exists`.colorize(ColorStyle.inverse));
-                    return Promise.resolve(existingIndex);
+                    return existingIndex;
                 }
                 const index = existingIndex || (() => {
                     switch (indexType) {
@@ -8569,10 +8898,7 @@ class Storage extends SimpleEventEmitter {
                 if (!existingIndex) {
                     _indexes.push(index);
                 }
-                return index.build()
-                .then(() => {
-                    return index;
-                })
+                await index.build()
                 .catch(err => {
                     storage.debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.colorize(ColorStyle.red));
                     if (!existingIndex) {
@@ -8581,6 +8907,8 @@ class Storage extends SimpleEventEmitter {
                     }
                     throw err;
                 });
+                storage.ipc.sendNotification({ type: 'index.created', fileName: index.fileName, path, key, options });
+                return index;
             },
 
             /**
@@ -8647,8 +8975,7 @@ class Storage extends SimpleEventEmitter {
              */
             load() {
                 _indexes.splice(0);
-                const pfs = require('./promise-fs');
-                if (!pfs || !pfs.readdir) { 
+                if (!pfs.hasFileSystem) { 
                     // If pfs (fs) is not available, don't try using it
                     return Promise.resolve();
                 }
@@ -8657,13 +8984,7 @@ class Storage extends SimpleEventEmitter {
                     const promises = [];
                     files.forEach(fileName => {
                         if (fileName.endsWith('.idx')) {
-                            const p = DataIndex.readFromFile(storage, fileName)
-                            .then(index => {
-                                _indexes.push(index);
-                            })
-                            .catch(err => {
-                                storage.debug.error(err);
-                            });
+                            const p = this.add(fileName);
                             promises.push(p);
                         }
                     });
@@ -8676,6 +8997,34 @@ class Storage extends SimpleEventEmitter {
                         storage.debug.error(err);
                     }
                 });
+            },
+
+            async add(fileName) {
+                try {
+                    const index = await DataIndex.readFromFile(storage, fileName)
+                    _indexes.push(index);
+                }
+                catch(err) {
+                    storage.debug.error(err);
+                }
+            },
+
+            async delete(index) {
+                await index.delete();
+                storage.ipc.sendNotification({ type: 'index.deleted', fileName: index.fileName, path: index.path, keys: index.key });
+            },
+
+            async remove(fileName) {
+                const index = _indexes.find(index => index.fileName === fileName);
+                if (!index) { throw new Error(`Index ${fileName} not found`); }
+                _indexes.splice(_indexes.indexOf(index), 1);
+            },
+
+            close() {
+                // TODO:
+                // this.list().forEach(index => {
+                //     index.close();
+                // });
             }
         };
 
@@ -8691,7 +9040,7 @@ class Storage extends SimpleEventEmitter {
              * @param {string} type - Type of the subscription
              * @param {(err: Error, path: string, newValue: any, oldValue: any) => void} callback - Subscription callback function
              */
-            add(path, type, callback) {
+            add: (path, type, callback) => {
                 if (_supportedEvents.indexOf(type) < 0) {
                     throw new TypeError(`Invalid event type "${type}"`);
                 }
@@ -8701,6 +9050,7 @@ class Storage extends SimpleEventEmitter {
                 //     storage.debug.warn(`Identical subscription of type ${type} on path "${path}" being added`);
                 // }
                 pathSubs.push({ created: Date.now(), type, callback });
+                this.emit('subscribe', { path, event: type, callback }); // Enables IPC peers to be notified
             },
 
             /**
@@ -8709,16 +9059,16 @@ class Storage extends SimpleEventEmitter {
              * @param {string} type - Type of subscription(s) to remove (optional: if omitted all types will be removed)
              * @param {Function} callback - Callback to remove (optional: if omitted all of the same type will be removed)
              */
-            remove(path, type = undefined, callback = undefined) {
+            remove: (path, type = undefined, callback = undefined) => {
                 let pathSubs = _subs[path];
                 if (!pathSubs) { return; }
-                while(true) {
-                    const i = pathSubs.findIndex(ps => 
-                        (type ? ps.type === type : true) && (callback ? ps.callback === callback : true)
-                    );
-                    if (i < 0) { break; }
+                let i, next = () => pathSubs.findIndex(ps => 
+                    (type ? ps.type === type : true) && (callback ? ps.callback === callback : true)
+                );
+                while ((i = next()) >= 0) {
                     pathSubs.splice(i, 1);
                 }
+                this.emit('unsubscribe', { path, event: type, callback }); // Enables IPC peers to be notified 
             },
 
             /**
@@ -8869,20 +9219,19 @@ class Storage extends SimpleEventEmitter {
      * @param {any} value 
      */
     valueFitsInline(value) {
-        const encoding = 'utf8';
         if (typeof value === "number" || typeof value === "boolean" || value instanceof Date) {
             return true;
         }
         else if (typeof value === "string") {
             if (value.length > this.settings.maxInlineValueSize) { return false; }
             // if the string has unicode chars, its byte size will be bigger than value.length
-            const encoded = encodeString(value); // Buffer.from(value, encoding); //textEncoder.encode(value);
+            const encoded = encodeString(value);
             return encoded.length < this.settings.maxInlineValueSize;
         }
         else if (value instanceof PathReference) {
             if (value.path.length > this.settings.maxInlineValueSize) { return false; }
             // if the path has unicode chars, its byte size will be bigger than value.path.length
-            const encoded = encodeString(value.path); // Buffer.from(value.path, encoding); //textEncoder.encode(value.path);
+            const encoded = encodeString(value.path);
             return encoded.length < this.settings.maxInlineValueSize;
         }
         else if (value instanceof ArrayBuffer) {
@@ -8904,9 +9253,11 @@ class Storage extends SimpleEventEmitter {
      * @param {string} path 
      * @param {any} value 
      * @param {object} [options] 
+     * @param {boolean} [options.merge=false]
      * @returns {Promise<void>}
      */
-    _writeNode(path, value, options = { merge: false }) {
+    // eslint-disable-next-line no-unused-vars
+    _writeNode(path, value, options) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -9180,7 +9531,9 @@ class Storage extends SimpleEventEmitter {
                 if (trailKeys.length === 0) {
                     console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
                     // Index is on updated path
-                    const p = index.handleRecordUpdate(topEventPath, oldValue, newValue);
+                    const p = this.ipc.isMaster
+                        ? index.handleRecordUpdate(topEventPath, oldValue, newValue)
+                        : this.ipc.sendRequest({ type: 'index.update', path: topEventPath, oldValue, newValue });
                     indexUpdates.push(p);
                     return; // next index
                 }
@@ -9231,7 +9584,9 @@ class Storage extends SimpleEventEmitter {
                 };
                 let results = getAllIndexUpdates(topEventPath, oldValue, newValue);
                 results.forEach(result => {
-                    const p = index.handleRecordUpdate(result.path, result.oldValue, result.newValue);
+                    const p = this.ipc.isMaster
+                        ? index.handleRecordUpdate(result.path, result.oldValue, result.newValue)
+                        : this.ipc.sendRequest({ type: 'index.update', path: result.path, oldValue: result.oldValue, newValue: result.newValue });
                     indexUpdates.push(p);
                 });
             });
@@ -9260,7 +9615,7 @@ class Storage extends SimpleEventEmitter {
                 }
 
                 const pathKeys = PathInfo.getPathKeys(sub.dataPath);
-                variables.forEach((variable, i) => {
+                variables.forEach(variable => {
                     // only replaces first occurrence (so multiple *'s will be processed 1 by 1)
                     const index = pathKeys.indexOf(variable.name);
                     console.assert(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
@@ -9457,7 +9812,8 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @returns {{ next(child: NodeInfo) => Promise<void>}} returns a generator object that calls .next for each child until the .next callback returns false
      */
-    getChildren(path, options = { keyFilter: undefined, tid: undefined }) {
+    // eslint-disable-next-line no-unused-vars
+    getChildren(path, options) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -9471,11 +9827,9 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @returns {Promise<any>}
      */
-    getNodeValue(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
-        return this.getNode(path, options)
-        .then(node => {
-            return node.value;
-        });
+    async getNodeValue(path, options) {
+        const node = await this.getNode(path, options);
+        return node.value;
     }
 
     /**
@@ -9488,7 +9842,8 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @returns {Promise<{ revision?: string, value: any}>}
      */
-    getNode(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
+    // eslint-disable-next-line no-unused-vars
+    getNode(path, options) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -9500,7 +9855,8 @@ class Storage extends SimpleEventEmitter {
      * @param {boolean} [options.include_child_count=false] whether to include child count if node is an object or array
      * @returns {Promise<NodeInfo>}
      */
-    getNodeInfo(path, options = { tid: undefined, include_child_count: false }) {
+    // eslint-disable-next-line no-unused-vars
+    getNodeInfo(path, options) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -9527,7 +9883,8 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    setNode(path, value, options = { tid: undefined, context: null }) {
+    // eslint-disable-next-line no-unused-vars
+    setNode(path, value, options) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -9541,7 +9898,8 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    updateNode(path, updates, options = { tid: undefined, context: null }) {
+    // eslint-disable-next-line no-unused-vars
+    updateNode(path, updates, options) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -9560,19 +9918,19 @@ class Storage extends SimpleEventEmitter {
     transactNode(path, callback, options = { no_lock: false, suppress_events: false, context: null }) {
         let checkRevision;
 
-        const tid = this.nodeLocker.createTid(); // ID.generate();
+        const tid = this.createTid(); // ID.generate();
         const lockPromise = options && options.no_lock === true 
             ? Promise.resolve({ tid, release() {} }) // Fake lock, we'll use revision checking & retrying instead
             : this.nodeLocker.lock(path, tid, true, 'transactNode');
 
         return lockPromise
         .then(lock => {
-            let changed = false, changeCallback = (err, path) => {
+            let changed = false, changeCallback = () => {
                 changed = true;
             };
             if (options && options.no_lock) {
                 // Monitor value changes
-                this.subscriptions.add(path, 'notify_value', changeCallback)
+                this.subscriptions.add(path, 'notify_value', changeCallback);
             }
             return this.getNode(path, { tid })
             .then(node => {
@@ -9813,7 +10171,7 @@ class Storage extends SimpleEventEmitter {
                         proceed = (contains && f.op === "contains") || (!contains && f.op === "!contains");
                     }
                     else {
-                        const ret = this.test(child.value, f.op, f.compare);
+                        let ret = this.test(child.value, f.op, f.compare);
                         if (ret instanceof Promise) {
                             promises.push(ret);
                             ret = true;
@@ -10162,7 +10520,7 @@ module.exports = {
     NodeRevisionError,
     SchemaValidationError
 };
-},{"./data-index":33,"./node-info":29,"./node-lock":30,"./node-value-types":31,"./promise-fs":33,"./schema":34,"acebase-core":12}],37:[function(require,module,exports){
+},{"./data-index":34,"./ipc":28,"./node-info":30,"./node-value-types":32,"./promise-fs":35,"./schema":36,"acebase-core":12}],39:[function(require,module,exports){
 
 },{}]},{},[27])(27)
 });
