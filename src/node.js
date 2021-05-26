@@ -206,26 +206,32 @@ class NodeChangeTracker {
     }
 
     addDelete(keyOrIndex, oldValue) {
-        this._changes.push(new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.DELETE, oldValue, null));
+        const change = new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.DELETE, oldValue, null);
+        this._changes.push(change);
+        return change;
     }
     addUpdate(keyOrIndex, oldValue, newValue) {
-        this._changes.push(new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.UPDATE, oldValue, newValue));
+        const change = new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.UPDATE, oldValue, newValue)
+        this._changes.push(change);
+        return change;
     }
     addInsert(keyOrIndex, newValue) {
-        this._changes.push(new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.INSERT, null, newValue));
+        const change = new NodeChange(keyOrIndex, NodeChange.CHANGE_TYPE.INSERT, null, newValue)
+        this._changes.push(change);
+        return change;
     }
     add(keyOrIndex, currentValue, newValue) {
         if (currentValue === null) {
             if (newValue === null) { 
                 throw new Error(`Wrong logic for node change on "${this.nodeInfo.path}/${keyOrIndex}" - both old and new values are null`);
             }
-            this.addInsert(keyOrIndex, newValue);
+            return this.addInsert(keyOrIndex, newValue);
         }
         else if (newValue === null) {
-            this.addDelete(keyOrIndex, currentValue);
+            return this.addDelete(keyOrIndex, currentValue);
         }
         else {
-            this.addUpdate(keyOrIndex, currentValue, newValue);
+            return this.addUpdate(keyOrIndex, currentValue, newValue);
         }            
     }
 
@@ -255,7 +261,7 @@ class NodeChangeTracker {
         if (typeof this._newValue === 'object') { return this._newValue; }
         if (typeof this._oldValue === 'undefined') { throw new TypeError(`oldValue is not set`); }
         let newValue = {};
-        Object.keys(this.oldValue).forEach(key => newValue[key] = oldValue[key]);
+        Object.keys(this.oldValue).forEach(key => newValue[key] = this.oldValue[key]);
         this.deletes.forEach(change => delete newValue[change.key]);
         this.updates.forEach(change => newValue[change.key] = change.newValue);
         this.inserts.forEach(change => newValue[change.key] = change.newValue);
@@ -269,7 +275,7 @@ class NodeChangeTracker {
         if (typeof this._oldValue === 'object') { return this._oldValue; }
         if (typeof this._newValue === 'undefined') { throw new TypeError(`newValue is not set`); }
         let oldValue = {};
-        Object.keys(this.newValue).forEach(key => oldValue[key] = newValue[key]);
+        Object.keys(this.newValue).forEach(key => oldValue[key] = this.newValue[key]);
         this.deletes.forEach(change => oldValue[change.key] = change.oldValue);
         this.updates.forEach(change => oldValue[change.key] = change.oldValue);
         this.inserts.forEach(change => delete oldValue[change.key]);
@@ -309,5 +315,7 @@ class NodeChangeTracker {
 
 module.exports = {
     Node,
-    NodeInfo
+    NodeInfo,
+    NodeChange,
+    NodeChangeTracker
 };
