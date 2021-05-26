@@ -1,8 +1,7 @@
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle } = require('acebase-core');
-const { NodeLocker } = require('./node-lock');
-const { VALUE_TYPES, getNodeValueType } = require('./node-value-types');
+const { VALUE_TYPES } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
-const { cloneObject, compareValues, getChildValues, encodeString, defer } = Utils;
+const { compareValues, getChildValues, encodeString, defer } = Utils;
 const { SchemaDefinition } = require('./schema');
 const { IPCPeer } = require('./ipc');
 const { pfs } = require('./promise-fs');
@@ -312,11 +311,10 @@ class Storage extends SimpleEventEmitter {
             remove: (path, type = undefined, callback = undefined) => {
                 let pathSubs = _subs[path];
                 if (!pathSubs) { return; }
-                while(true) {
-                    const i = pathSubs.findIndex(ps => 
-                        (type ? ps.type === type : true) && (callback ? ps.callback === callback : true)
-                    );
-                    if (i < 0) { break; }
+                let i, next = () => pathSubs.findIndex(ps => 
+                    (type ? ps.type === type : true) && (callback ? ps.callback === callback : true)
+                );
+                while ((i = next()) >= 0) {
                     pathSubs.splice(i, 1);
                 }
                 this.emit('unsubscribe', { path, event: type, callback }); // Enables IPC peers to be notified 
@@ -470,20 +468,19 @@ class Storage extends SimpleEventEmitter {
      * @param {any} value 
      */
     valueFitsInline(value) {
-        const encoding = 'utf8';
         if (typeof value === "number" || typeof value === "boolean" || value instanceof Date) {
             return true;
         }
         else if (typeof value === "string") {
             if (value.length > this.settings.maxInlineValueSize) { return false; }
             // if the string has unicode chars, its byte size will be bigger than value.length
-            const encoded = encodeString(value); // Buffer.from(value, encoding); //textEncoder.encode(value);
+            const encoded = encodeString(value);
             return encoded.length < this.settings.maxInlineValueSize;
         }
         else if (value instanceof PathReference) {
             if (value.path.length > this.settings.maxInlineValueSize) { return false; }
             // if the path has unicode chars, its byte size will be bigger than value.path.length
-            const encoded = encodeString(value.path); // Buffer.from(value.path, encoding); //textEncoder.encode(value.path);
+            const encoded = encodeString(value.path);
             return encoded.length < this.settings.maxInlineValueSize;
         }
         else if (value instanceof ArrayBuffer) {
@@ -505,9 +502,11 @@ class Storage extends SimpleEventEmitter {
      * @param {string} path 
      * @param {any} value 
      * @param {object} [options] 
+     * @param {boolean} [options.merge=false]
      * @returns {Promise<void>}
      */
-    _writeNode(path, value, options = { merge: false }) {
+    // eslint-disable-next-line no-unused-vars
+    _writeNode(path, value, options) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -865,7 +864,7 @@ class Storage extends SimpleEventEmitter {
                 }
 
                 const pathKeys = PathInfo.getPathKeys(sub.dataPath);
-                variables.forEach((variable, i) => {
+                variables.forEach(variable => {
                     // only replaces first occurrence (so multiple *'s will be processed 1 by 1)
                     const index = pathKeys.indexOf(variable.name);
                     console.assert(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
@@ -1062,7 +1061,8 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @returns {{ next(child: NodeInfo) => Promise<void>}} returns a generator object that calls .next for each child until the .next callback returns false
      */
-    getChildren(path, options = { keyFilter: undefined, tid: undefined }) {
+    // eslint-disable-next-line no-unused-vars
+    getChildren(path, options) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -1076,7 +1076,7 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @returns {Promise<any>}
      */
-    async getNodeValue(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
+    async getNodeValue(path, options) {
         const node = await this.getNode(path, options);
         return node.value;
     }
@@ -1091,7 +1091,8 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @returns {Promise<{ revision?: string, value: any}>}
      */
-    getNode(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
+    // eslint-disable-next-line no-unused-vars
+    getNode(path, options) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -1103,7 +1104,8 @@ class Storage extends SimpleEventEmitter {
      * @param {boolean} [options.include_child_count=false] whether to include child count if node is an object or array
      * @returns {Promise<NodeInfo>}
      */
-    getNodeInfo(path, options = { tid: undefined, include_child_count: false }) {
+    // eslint-disable-next-line no-unused-vars
+    getNodeInfo(path, options) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -1130,7 +1132,8 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    setNode(path, value, options = { tid: undefined, context: null }) {
+    // eslint-disable-next-line no-unused-vars
+    setNode(path, value, options) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -1144,7 +1147,8 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    updateNode(path, updates, options = { tid: undefined, context: null }) {
+    // eslint-disable-next-line no-unused-vars
+    updateNode(path, updates, options) {
         throw new Error(`This method must be implemented by subclass`);
     }
 
@@ -1170,12 +1174,12 @@ class Storage extends SimpleEventEmitter {
 
         return lockPromise
         .then(lock => {
-            let changed = false, changeCallback = (err, path) => {
+            let changed = false, changeCallback = () => {
                 changed = true;
             };
             if (options && options.no_lock) {
                 // Monitor value changes
-                this.subscriptions.add(path, 'notify_value', changeCallback)
+                this.subscriptions.add(path, 'notify_value', changeCallback);
             }
             return this.getNode(path, { tid })
             .then(node => {
