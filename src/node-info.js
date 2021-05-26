@@ -1,4 +1,4 @@
-const { VALUE_TYPES, getValueTypeName } = require('./node-value-types');
+const { getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
 
 class NodeInfo {
