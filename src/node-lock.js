@@ -1,4 +1,4 @@
-const { PathInfo } = require('acebase-core');
+const { PathInfo, ID } = require('acebase-core');
 
 const SECOND = 1000;
 const MINUTE = 60000;
@@ -30,7 +30,7 @@ class NodeLocker {
     }
 
     createTid() {
-        return ++this._lastTid;
+        return DEBUG_MODE ? ++this._lastTid : ID.generate();
     }
 
     _allowLock(path, tid, forWriting) {
@@ -49,7 +49,7 @@ class NodeLocker {
          * might change again in the future...
          */
 
-         const conflict = this._locks
+        const conflict = this._locks
             .find(otherLock => {
                 return (
                     otherLock.tid !== tid 
@@ -222,7 +222,7 @@ class NodeLocker {
         }
     }
 
-    async unlock(lockOrId, comment, processQueue = true) {// (path, tid, comment) {
+    unlock(lockOrId, comment, processQueue = true) {
         let lock, i;
         if (lockOrId instanceof NodeLock) {
             lock = lockOrId;
@@ -308,9 +308,9 @@ class NodeLock {
             this.locker.unlock(this, `moveLockToParent: ${this.comment}`, false);
 
             // Lock parent node with priority to jump the queue
-            const newLock = await this.locker.lock(parentPath, this.tid, this.forWriting, this.comment, { withPriority: true }) // `moved to parent (queued): ${this.comment}`
+            const newLock = await this.locker.lock(parentPath, this.tid, this.forWriting, this.comment, { withPriority: true });
             newLock.history = this.history;
-            newLock.history.push({ path: this.path, forWriting: this.forWriting, action: 'moving to parent through queue' });
+            newLock.history.push({ path: this.path, forWriting: this.forWriting, action: 'moving to parent through queue (priority)' });
             return newLock;
         }
     }
