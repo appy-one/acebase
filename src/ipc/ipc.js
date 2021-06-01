@@ -28,7 +28,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         // Setup db event listeners
         storage.on('subscribe', (subscription) => {
             // Subscription was added to db
-            storage.debug.log(`database subscription being added on peer ${this.id}`);
+            storage.debug.verbose(`database subscription being added on peer ${this.id}`);
             const remoteSubscription = this.remoteSubscriptions.find(sub => sub.callback === subscription.callback);
             if (remoteSubscription) {
                 // Send ack
@@ -70,7 +70,8 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
     get isMaster() { return this.masterPeerId === this.id; }
     ;
     /**
-     * Requests the peer to shut down. Resolves once its locks are cleared. Has to be overridden by the IPC implementation to perform an actual process.exit
+     * Requests the peer to shut down. Resolves once its locks are cleared and 'exit' event has been emitted.
+     * Has to be overridden by the IPC implementation to perform custom shutdown tasks
      * @param code optional exit code (eg one provided by SIGINT event)
      */
     async exit(code = 0) {
@@ -80,13 +81,6 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         }
         this._exiting = true;
         this.storage.debug.warn(`Received ${this.isMaster ? 'master' : 'worker ' + this.id} process exit request`);
-        // if (this.isMaster) {
-        //     await this._nodeLocker.quit(); // Denies new lock requests, waits for current locks to be released
-        // }
-        // else if (this._locks.size > 0) {
-        //     // this.storage.debug.warn(`Waiting for worker ${this.id} locks to clear`);
-        //     await this.once('locks-cleared'); // Will be emitted when last lock was removed from list
-        // }
         if (this._locks.length > 0) {
             this.storage.debug.warn(`Waiting for ${this.isMaster ? 'master' : 'worker'} ${this.id} locks to clear`);
             await this.once('locks-cleared');
@@ -395,7 +389,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                     release: async () => {
                         const req = { type: 'unlock-request', id: acebase_core_1.ID.generate(), from: this.id, to: this.masterPeerId, data: { id: lockInfo.lock.id } };
                         const result = await this.request(req);
-                        this.storage.debug.log(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
+                        this.storage.debug.verbose(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
                         removeLock(lockInfo);
                     },
                     moveToParent: async () => {

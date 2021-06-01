@@ -24,7 +24,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
             storage.debug.warn(`BroadCastChannel not available, browser tabs IPC not possible yet`);
             return;
         }
-        this.channel = new BroadcastChannel(`acebase:${storage.name}`); // TODO: polyfill for Safari
+        this.channel = new BroadcastChannel(`acebase:${storage.name}`); // TODO: polyfill for Safari (MessageChannel?)
         // Monitor incoming messages
         this.channel.addEventListener('message', async (event) => {
             const message = event.data;
