@@ -253,6 +253,20 @@ export abstract class pfs {
     static rm(path: string|Buffer|fs.PathLike) { return this.unlink(path); }
 
     /**
+     * Asynchronously removes a file or symbolic link
+     * @param path 
+     * @returns returns a promise that resolves once the file has been removed
+     */
+    static rmdir(path: string|Buffer|fs.PathLike, options?: { maxRetries?: number, recursive?: boolean, retryDelay?: number }): Promise<void> {
+        return new Promise((resolve, reject) => {
+            fs.rmdir(path, options, (err) => {
+                if (err) { reject(err); }
+                else { resolve(); }
+            });
+        });
+    }
+
+    /**
      * Asynchronously rename file at oldPath to the pathname provided as newPath. 
      * In the case that newPath already exists, it will be overwritten. If there is 
      * a directory at newPath, an error will be raised instead
