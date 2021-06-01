@@ -2584,80 +2584,97 @@ exports.setObservable = setObservable;
 },{"rxjs":39}],14:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PathInfo = exports.getChildPath = exports.getPathInfo = exports.getPathKeys = void 0;
+exports.PathInfo = void 0;
 function getPathKeys(path) {
-    path = path.replace(/^\//, ''); // Remove leading slash
+    path = path.replace(/\[/g, '/[').replace(/^\/+/, '').replace(/\/+$/, ''); // Replace [ with /[, remove leading slashes, remove trailing slashes
     if (path.length === 0) {
         return [];
     }
-    let keys = path.replace(/\[/g, '/[').split('/');
+    let keys = path.split('/');
     return keys.map(key => {
         return key.startsWith('[') ? parseInt(key.substr(1, key.length - 2)) : key;
     });
 }
-exports.getPathKeys = getPathKeys;
-function getPathInfo(path) {
-    path = path.replace(/^\//, ''); // Remove leading slash
-    if (path.length === 0) {
-        return { parent: null, key: '' };
-    }
-    const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('['));
-    let parentPath = i < 0 ? '' : path.substr(0, i);
-    let key = i < 0 ? path : path.substr(i);
-    if (key.startsWith('[')) {
-        key = parseInt(key.substr(1, key.length - 2));
-    }
-    else if (key.startsWith('/')) {
-        key = key.substr(1); // Chop off leading slash
-    }
-    if (parentPath === path) {
-        parentPath = null;
-    }
-    return { parent: parentPath, key };
-}
-exports.getPathInfo = getPathInfo;
-function getChildPath(path, key) {
-    path = path.replace(/^\//, ""); // Remove leading slash
-    key = typeof key === "string" ? key.replace(/^\//, "") : key; // Remove leading slash
-    if (path.length === 0) {
-        if (typeof key === "number") {
-            throw new TypeError("Cannot add array index to root path!");
-        }
-        return key;
-    }
-    if (typeof key === "string" && key.length === 0) {
-        return path;
-    }
-    if (typeof key === "number") {
-        return `${path}[${key}]`;
-    }
-    return `${path}/${key}`;
-}
-exports.getChildPath = getChildPath;
+// function getPathInfo(path: string): { parent: string, key: string|number } {
+//     path = path.replace(/^\//, ''); // Remove leading slash
+//     if (path.length === 0) {
+//         return { parent: null, key: '' };
+//     }
+//     const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('['));
+//     let parentPath = i < 0 ? '' : path.substr(0, i);
+//     let key:string|number = i < 0 ? path : path.substr(i);
+//     if (key.startsWith('[')) { 
+//         key = parseInt(key.substr(1, key.length - 2)); 
+//     }
+//     else if (key.startsWith('/')) {
+//         key = key.substr(1); // Chop off leading slash
+//     }
+//     if (parentPath === path) {
+//         parentPath = null;
+//     }
+//     return { parent: parentPath, key };
+// }
+// function getChildPath(path: string, key: string|number): string {
+//     path = path.replace(/^\//, ""); // Remove leading slash
+//     key = typeof key === "string" ? key.replace(/^\//, "") : key; // Remove leading slash
+//     if (path.length === 0) {
+//         if (typeof key === "number") { throw new TypeError("Cannot add array index to root path!"); }
+//         return key;
+//     }
+//     if (typeof key === "string" && key.length === 0) {
+//         return path;
+//     }
+//     if (typeof key === "number") {
+//         return `${path}[${key}]`;
+//     }
+//     return `${path}/${key}`;
+// }
 class PathInfo {
     constructor(path) {
-        this.path = path;
+        if (typeof path === 'string') {
+            // this.path = path.replace(/^\/+/, '').replace(/\/+$/, '');
+            this.keys = getPathKeys(path);
+        }
+        else if (path instanceof Array) {
+            this.keys = path;
+        }
+        this.path = this.keys.reduce((path, key, i) => i === 0 ? `${key}` : typeof key === 'string' ? `${path}/${key}` : `${path}[${key}]`, '');
     }
     static get(path) {
         return new PathInfo(path);
     }
     static getChildPath(path, childKey) {
-        return getChildPath(path, childKey);
+        // return getChildPath(path, childKey);
+        return PathInfo.get(path).child(childKey).path;
     }
     static getPathKeys(path) {
         return getPathKeys(path);
     }
     get key() {
-        return getPathInfo(this.path).key;
+        return this.keys.length === 0 ? null : this.keys.slice(-1)[0]; // getPathInfo(this.path).key;
+    }
+    get parent() {
+        if (this.keys.length == 0) {
+            return null;
+        }
+        const parentKeys = this.keys.slice(0, -1);
+        return new PathInfo(parentKeys);
     }
     get parentPath() {
-        return getPathInfo(this.path).parent;
+        return this.keys.length === 0 ? null : this.parent.path; //getPathInfo(this.path).parent;
+    }
+    child(childKey) {
+        if (typeof childKey === 'string') {
+            const keys = getPathKeys(childKey);
+            return new PathInfo(this.keys.concat(keys));
+        }
+        return new PathInfo(this.keys.concat(childKey));
     }
     childPath(childKey) {
-        return getChildPath(`${this.path}`, childKey);
+        return this.child(childKey).path;
     }
     get pathKeys() {
-        return getPathKeys(this.path);
+        return this.keys; //getPathKeys(this.path);
     }
     /**
      * If varPath contains variables or wildcards, it will return them with the values found in fullPath
@@ -2767,10 +2784,10 @@ class PathInfo {
         let n = 0;
         const targetPath = pathKeys.reduce((path, key) => {
             if (typeof key === 'string' && (key === '*' || key.startsWith('$'))) {
-                return getChildPath(path, vars[n++]);
+                return PathInfo.getChildPath(path, vars[n++]);
             }
             else {
-                return getChildPath(path, key);
+                return PathInfo.getChildPath(path, key);
             }
         }, '');
         return targetPath;
@@ -2779,16 +2796,15 @@ class PathInfo {
      * Checks if a given path matches this path, eg "posts/*\/title" matches "posts/12344/title" and "users/123/name" matches "users/$uid/name"
      */
     equals(otherPath) {
-        if (this.path === otherPath) {
+        const other = otherPath instanceof PathInfo ? otherPath : new PathInfo(otherPath);
+        if (this.path === other.path) {
             return true;
         } // they are identical
-        const keys = this.pathKeys;
-        const otherKeys = getPathKeys(otherPath);
-        if (keys.length !== otherKeys.length) {
+        if (this.keys.length !== other.keys.length) {
             return false;
         }
-        return keys.every((key, index) => {
-            const otherKey = otherKeys[index];
+        return this.keys.every((key, index) => {
+            const otherKey = other.keys[index];
             return otherKey === key
                 || (typeof otherKey === 'string' && (otherKey === "*" || otherKey[0] === '$'))
                 || (typeof key === 'string' && (key === "*" || key[0] === '$'));
@@ -2798,19 +2814,18 @@ class PathInfo {
      * Checks if a given path is an ancestor, eg "posts" is an ancestor of "posts/12344/title"
      */
     isAncestorOf(descendantPath) {
-        if (descendantPath === '' || this.path === descendantPath) {
+        const descendant = descendantPath instanceof PathInfo ? descendantPath : new PathInfo(descendantPath);
+        if (descendant.path === '' || this.path === descendant.path) {
             return false;
         }
         if (this.path === '') {
             return true;
         }
-        const ancestorKeys = this.pathKeys;
-        const descendantKeys = getPathKeys(descendantPath);
-        if (ancestorKeys.length >= descendantKeys.length) {
+        if (this.keys.length >= descendant.keys.length) {
             return false;
         }
-        return ancestorKeys.every((key, index) => {
-            const otherKey = descendantKeys[index];
+        return this.keys.every((key, index) => {
+            const otherKey = descendant.keys[index];
             return otherKey === key
                 || (typeof otherKey === 'string' && (otherKey === "*" || otherKey[0] === '$'))
                 || (typeof key === 'string' && (key === "*" || key[0] === '$'));
@@ -2820,19 +2835,18 @@ class PathInfo {
      * Checks if a given path is a descendant, eg "posts/1234/title" is a descendant of "posts"
      */
     isDescendantOf(ancestorPath) {
-        if (this.path === '' || this.path === ancestorPath) {
+        const ancestor = ancestorPath instanceof PathInfo ? ancestorPath : new PathInfo(ancestorPath);
+        if (this.path === '' || this.path === ancestor.path) {
             return false;
         }
         if (ancestorPath === '') {
             return true;
         }
-        const ancestorKeys = getPathKeys(ancestorPath);
-        const descendantKeys = this.pathKeys;
-        if (ancestorKeys.length >= descendantKeys.length) {
+        if (ancestor.keys.length >= this.keys.length) {
             return false;
         }
-        return ancestorKeys.every((key, index) => {
-            const otherKey = descendantKeys[index];
+        return ancestor.keys.every((key, index) => {
+            const otherKey = this.keys[index];
             return otherKey === key
                 || (typeof otherKey === 'string' && (otherKey === "*" || otherKey[0] === '$'))
                 || (typeof key === 'string' && (key === "*" || key[0] === '$'));
@@ -2843,18 +2857,18 @@ class PathInfo {
      * common ancestor. Eg: "posts" is on the trail of "posts/1234/title" and vice versa.
      */
     isOnTrailOf(otherPath) {
-        if (this.path.length === 0 || otherPath.length === 0) {
+        const other = otherPath instanceof PathInfo ? otherPath : new PathInfo(otherPath);
+        if (this.path.length === 0 || other.path.length === 0) {
             return true;
         }
-        if (this.path === otherPath) {
+        if (this.path === other.path) {
             return true;
         }
-        const otherKeys = getPathKeys(otherPath);
         return this.pathKeys.every((key, index) => {
-            if (index >= otherKeys.length) {
+            if (index >= other.keys.length) {
                 return true;
             }
-            const otherKey = otherKeys[index];
+            const otherKey = other.keys[index];
             return otherKey === key
                 || (typeof otherKey === 'string' && (otherKey === "*" || otherKey[0] === '$'))
                 || (typeof key === 'string' && (key === "*" || key[0] === '$'));
@@ -2864,21 +2878,21 @@ class PathInfo {
      * Checks if a given path is a direct child, eg "posts/1234/title" is a child of "posts/1234"
      */
     isChildOf(otherPath) {
+        const other = otherPath instanceof PathInfo ? otherPath : new PathInfo(otherPath);
         if (this.path === '') {
             return false;
         } // If our path is the root, it's nobody's child...
-        const parentInfo = PathInfo.get(this.parentPath);
-        return parentInfo.equals(otherPath);
+        return this.parent.equals(other);
     }
     /**
      * Checks if a given path is its parent, eg "posts/1234" is the parent of "posts/1234/title"
      */
     isParentOf(otherPath) {
-        if (otherPath === '') {
+        const other = otherPath instanceof PathInfo ? otherPath : new PathInfo(otherPath);
+        if (other.path === '') {
             return false;
-        } // If the other path is the root, this path cannot be its parent...
-        const parentInfo = PathInfo.get(PathInfo.get(otherPath).parentPath);
-        return parentInfo.equals(this.path);
+        } // If the other path is the root, this path cannot be its parent
+        return this.equals(other.parent);
     }
 }
 exports.PathInfo = PathInfo;
@@ -4490,7 +4504,7 @@ class AceBase extends AceBaseBase {
     }
 
     close() {
-        // Closes the database
+        // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.
         return this.api.storage.ipc.exit();
     }
 
@@ -5700,7 +5714,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
             storage.debug.warn(`BroadCastChannel not available, browser tabs IPC not possible yet`);
             return;
         }
-        this.channel = new BroadcastChannel(`acebase:${storage.name}`); // TODO: polyfill for Safari
+        this.channel = new BroadcastChannel(`acebase:${storage.name}`); // TODO: polyfill for Safari (MessageChannel?)
         // Monitor incoming messages
         this.channel.addEventListener('message', async (event) => {
             const message = event.data;
@@ -5794,7 +5808,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         // Setup db event listeners
         storage.on('subscribe', (subscription) => {
             // Subscription was added to db
-            storage.debug.log(`database subscription being added on peer ${this.id}`);
+            storage.debug.verbose(`database subscription being added on peer ${this.id}`);
             const remoteSubscription = this.remoteSubscriptions.find(sub => sub.callback === subscription.callback);
             if (remoteSubscription) {
                 // Send ack
@@ -5836,7 +5850,8 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
     get isMaster() { return this.masterPeerId === this.id; }
     ;
     /**
-     * Requests the peer to shut down. Resolves once its locks are cleared. Has to be overridden by the IPC implementation to perform an actual process.exit
+     * Requests the peer to shut down. Resolves once its locks are cleared and 'exit' event has been emitted.
+     * Has to be overridden by the IPC implementation to perform custom shutdown tasks
      * @param code optional exit code (eg one provided by SIGINT event)
      */
     async exit(code = 0) {
@@ -5846,13 +5861,6 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         }
         this._exiting = true;
         this.storage.debug.warn(`Received ${this.isMaster ? 'master' : 'worker ' + this.id} process exit request`);
-        // if (this.isMaster) {
-        //     await this._nodeLocker.quit(); // Denies new lock requests, waits for current locks to be released
-        // }
-        // else if (this._locks.size > 0) {
-        //     // this.storage.debug.warn(`Waiting for worker ${this.id} locks to clear`);
-        //     await this.once('locks-cleared'); // Will be emitted when last lock was removed from list
-        // }
         if (this._locks.length > 0) {
             this.storage.debug.warn(`Waiting for ${this.isMaster ? 'master' : 'worker'} ${this.id} locks to clear`);
             await this.once('locks-cleared');
@@ -6161,7 +6169,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                     release: async () => {
                         const req = { type: 'unlock-request', id: acebase_core_1.ID.generate(), from: this.id, to: this.masterPeerId, data: { id: lockInfo.lock.id } };
                         const result = await this.request(req);
-                        this.storage.debug.log(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
+                        this.storage.debug.verbose(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
                         removeLock(lockInfo);
                     },
                     moveToParent: async () => {
@@ -6318,7 +6326,7 @@ class NodeInfo {
 
 module.exports = { NodeInfo };
 },{"./node-value-types":32,"acebase-core":12}],31:[function(require,module,exports){
-const { PathInfo } = require('acebase-core');
+const { PathInfo, ID } = require('acebase-core');
 
 const SECOND = 1000;
 const MINUTE = 60000;
@@ -6350,7 +6358,7 @@ class NodeLocker {
     }
 
     createTid() {
-        return ++this._lastTid;
+        return DEBUG_MODE ? ++this._lastTid : ID.generate();
     }
 
     _allowLock(path, tid, forWriting) {
@@ -6369,7 +6377,7 @@ class NodeLocker {
          * might change again in the future...
          */
 
-         const conflict = this._locks
+        const conflict = this._locks
             .find(otherLock => {
                 return (
                     otherLock.tid !== tid 
@@ -6542,7 +6550,7 @@ class NodeLocker {
         }
     }
 
-    async unlock(lockOrId, comment, processQueue = true) {// (path, tid, comment) {
+    unlock(lockOrId, comment, processQueue = true) {
         let lock, i;
         if (lockOrId instanceof NodeLock) {
             lock = lockOrId;
@@ -6628,9 +6636,9 @@ class NodeLock {
             this.locker.unlock(this, `moveLockToParent: ${this.comment}`, false);
 
             // Lock parent node with priority to jump the queue
-            const newLock = await this.locker.lock(parentPath, this.tid, this.forWriting, this.comment, { withPriority: true }) // `moved to parent (queued): ${this.comment}`
+            const newLock = await this.locker.lock(parentPath, this.tid, this.forWriting, this.comment, { withPriority: true });
             newLock.history = this.history;
-            newLock.history.push({ path: this.path, forWriting: this.forWriting, action: 'moving to parent through queue' });
+            newLock.history.push({ path: this.path, forWriting: this.forWriting, action: 'moving to parent through queue (priority)' });
             return newLock;
         }
     }
@@ -8815,14 +8823,14 @@ class Storage extends SimpleEventEmitter {
 
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         this.ipc = new IPCPeer(this);
-        this.ipc.on('exit', code => {
+        this.ipc.once('exit', code => {
             // We can perform any custom cleanup here:
             // - storage-acebase should close the db file
             // - storage-mssql / sqlite should close connection
             if (this.indexes.supported) {
                 this.indexes.close();
             }
-        })
+        });
         this.nodeLocker = {
             lock: (path, tid, write, comment) => {
                 return this.ipc.lock({ path, tid, write, comment });
@@ -9262,36 +9270,20 @@ class Storage extends SimpleEventEmitter {
     }
 
     /**
-     * Wrapper for _writeNode, handles triggering change events, index updating.
+     * 
      * @param {string} path 
-     * @param {any} value 
-     * @param {object} [options] 
-     * @returns {Promise<void>}
+     * @param {boolean} suppressEvents 
+     * @returns 
      */
-    _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true, suppress_events: false, context: null }) {
-        options = options || {};
-        if (!options.tid && !options.transaction) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid OR transaction!`); }
-        options.merge = options.merge === true;
-
-        // Does the value meet schema requirements?
-        const validation = this.validateSchema(path, value, { updates: options.merge });
-        if (!validation.ok) {
-            throw new SchemaValidationError(validation.reason);
-        }
-
-        const tid = options.tid;
-        const transaction = options.transaction;
-
-        // Is anyone interested in the values changing on this path?
-        let topEventData = null;
+    getUpdateImpact(path, suppressEvents) {
         let topEventPath = path;
         let hasValueSubscribers = false;
         
         // Get all subscriptions that should execute on the data (includes events on child nodes as well)
-        let eventSubscriptions = options.suppress_events ? [] : this.subscriptions.getAllSubscribersForPath(path);
+        let eventSubscriptions = suppressEvents ? [] : this.subscriptions.getAllSubscribersForPath(path);
 
         // Get all subscriptions for data on this or ancestor nodes, determines what data to load before processing
-        const valueSubscribers = options.suppress_events ? [] : this.subscriptions.getValueSubscribersForPath(path);
+        const valueSubscribers = suppressEvents ? [] : this.subscriptions.getValueSubscribersForPath(path);
         if (valueSubscribers.length > 0) {
             hasValueSubscribers = true;
             let eventPaths = valueSubscribers
@@ -9310,32 +9302,6 @@ class Storage extends SimpleEventEmitter {
             topEventPath = PathInfo.fillVariables(topEventPath, path); // fill in any wildcards in the subscription path 
         }
 
-        const writeNode = () => {
-            if (typeof options._customWriteFunction === 'function') {
-                return options._customWriteFunction();
-            }
-            if (topEventData) {
-                // Pass loaded data to _writeNode, speeds up recursive calls
-                // This prevents reloading and/or overwriting of unchanged child nodes                
-                const pathKeys = PathInfo.getPathKeys(path);
-                const eventPathKeys = PathInfo.getPathKeys(topEventPath);
-                const trailKeys = pathKeys.slice(eventPathKeys.length);
-                let currentValue = topEventData;
-                while (trailKeys.length > 0 && currentValue !== null) {
-                    const childKey = trailKeys.shift();
-                    currentValue = typeof currentValue === 'object' && childKey in currentValue ? currentValue[childKey] : null;
-                }
-                options.currentValue = currentValue;
-            }
-            return this._writeNode(path, value, options);            
-        }
-
-        // FIXED: indexes on higher path not being updated. 
-        // Previously, updates on an indexed property did not update the index
-        // example: 
-        // a geo index on path 'restaurants', key 'location'
-        // updates on 'restaurant/1' would update the index,
-        // but updates on 'restaurent/1/location' would not
         const indexes = this.indexes.getAll(path, { childPaths: true, parentPaths: true })
             .map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
             .sort((a, b) => {
@@ -9344,10 +9310,7 @@ class Storage extends SimpleEventEmitter {
                 return 0;
             })
             .map(obj => obj.index);
-        if (eventSubscriptions.length === 0 && indexes.length === 0) {
-            // Nobody's interested in value changes. Write node without tracking
-            return writeNode();
-        }
+
         let keysFilter = [];
         if (indexes.length > 0) {
             indexes.sort((a,b) => {
@@ -9373,15 +9336,135 @@ class Storage extends SimpleEventEmitter {
                     let keys = [index.key].concat(index.includeKeys);
                     keys.forEach(key => !keysFilter.includes(key) && keysFilter.push(key));
                 });
-                // following will never add any keys to the filter, right?!!
-                // let topKeys = topIndex.path;  
-                // eventSubscriptions.forEach(sub => {
-                //     let keys = PathInfo.getPathKeys(sub.dataPath);
-                //     let targetKey = keys[topKeys.length];
-                //     !keysFilter.includes(targetKey) && keysFilter.push(targetKey);
-                // })
             }
         }
+        return { topEventPath, eventSubscriptions, valueSubscribers, hasValueSubscribers, indexes, keysFilter };
+    }
+
+    /**
+     * Wrapper for _writeNode, handles triggering change events, index updating.
+     * @param {string} path 
+     * @param {any} value 
+     * @param {object} [options] 
+     * @returns {Promise<void>}
+     */
+    async _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true, suppress_events: false, context: null, impact: null }) {
+        options = options || {};
+        if (!options.tid && !options.transaction) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid OR transaction!`); }
+        options.merge = options.merge === true;
+
+        // Does the value meet schema requirements?
+        const validation = this.validateSchema(path, value, { updates: options.merge });
+        if (!validation.ok) {
+            throw new SchemaValidationError(validation.reason);
+        }
+
+        const tid = options.tid;
+        const transaction = options.transaction;
+
+        // Is anyone interested in the values changing on this path?
+        let topEventData = null;
+
+        let { topEventPath, eventSubscriptions, hasValueSubscribers, indexes, keysFilter } = options.impact ? options.impact : this.getUpdateImpact(path, options.suppress_events);
+
+        // let topEventPath = path;
+        // let hasValueSubscribers = false;
+        
+        // // Get all subscriptions that should execute on the data (includes events on child nodes as well)
+        // let eventSubscriptions = options.suppress_events ? [] : this.subscriptions.getAllSubscribersForPath(path);
+
+        // // Get all subscriptions for data on this or ancestor nodes, determines what data to load before processing
+        // const valueSubscribers = options.suppress_events ? [] : this.subscriptions.getValueSubscribersForPath(path);
+        // if (valueSubscribers.length > 0) {
+        //     hasValueSubscribers = true;
+        //     let eventPaths = valueSubscribers
+        //         .map(sub => { return { path: sub.dataPath, keys: PathInfo.getPathKeys(sub.dataPath) }; })
+        //         .sort((a,b) => {
+        //             if (a.keys.length < b.keys.length) return -1;
+        //             else if (a.keys.length > b.keys.length) return 1;
+        //             return 0;
+        //         });
+        //     let first = eventPaths[0];
+        //     topEventPath = first.path;
+        //     if (valueSubscribers.filter(sub => sub.dataPath === topEventPath).every(sub => sub.type === 'mutated' || sub.type.startsWith('notify_'))) {
+        //         // Prevent loading of all data on path, so it'll only load changing properties
+        //         hasValueSubscribers = false;
+        //     }
+        //     topEventPath = PathInfo.fillVariables(topEventPath, path); // fill in any wildcards in the subscription path 
+        // }
+
+        const writeNode = () => {
+            if (typeof options._customWriteFunction === 'function') {
+                return options._customWriteFunction();
+            }
+            if (topEventData) {
+                // Pass loaded data to _writeNode, speeds up recursive calls
+                // This prevents reloading and/or overwriting of unchanged child nodes                
+                const pathKeys = PathInfo.getPathKeys(path);
+                const eventPathKeys = PathInfo.getPathKeys(topEventPath);
+                const trailKeys = pathKeys.slice(eventPathKeys.length);
+                let currentValue = topEventData;
+                while (trailKeys.length > 0 && currentValue !== null) {
+                    const childKey = trailKeys.shift();
+                    currentValue = typeof currentValue === 'object' && childKey in currentValue ? currentValue[childKey] : null;
+                }
+                options.currentValue = currentValue;
+            }
+            return this._writeNode(path, value, options);            
+        }
+
+        // // FIXED: indexes on higher path not being updated. 
+        // // Previously, updates on an indexed property did not update the index
+        // // example: 
+        // // a geo index on path 'restaurants', key 'location'
+        // // updates on 'restaurant/1' would update the index,
+        // // but updates on 'restaurent/1/location' would not
+        // const indexes = this.indexes.getAll(path, { childPaths: true, parentPaths: true })
+        //     .map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
+        //     .sort((a, b) => {
+        //         if (a.keys.length < b.keys.length) { return -1; }
+        //         else if (a.keys.length > b.keys.length) { return 1; }
+        //         return 0;
+        //     })
+        //     .map(obj => obj.index);
+        if (eventSubscriptions.length === 0 && indexes.length === 0) {
+            // Nobody's interested in value changes. Write node without tracking
+            return writeNode();
+        }
+        // let keysFilter = [];
+        // if (indexes.length > 0) {
+        //     indexes.sort((a,b) => {
+        //         if (typeof a._pathKeys === 'undefined') { a._pathKeys = PathInfo.getPathKeys(a.path); }
+        //         if (typeof b._pathKeys === 'undefined') { b._pathKeys = PathInfo.getPathKeys(b.path); }
+        //         if (a._pathKeys.length < b._pathKeys.length) return -1;
+        //         else if (a._pathKeys.length > b._pathKeys.length) return 1;
+        //         return 0;
+        //     });
+        //     const topIndex = indexes[0];
+        //     let topIndexPath = topIndex.path === path ? path : PathInfo.fillVariables(`${topIndex.path}/*`, path);
+        //     if (topIndexPath.length < topEventPath.length) {
+        //         // index is on a higher path than any value subscriber.
+        //         // eg: 
+        //         //      path = 'restaurants/1/rating'
+        //         //      topEventPath = 'restaurants/1/rating' (because of 'value' event on 'restaurants/*/rating')
+        //         //      topIndexPath = 'restaurants/1' (because of index on 'restaurants(/*)', key 'name', included key 'rating')
+        //         // set topEventPath to topIndexPath, but include only:
+        //         // - indexed keys on that path,
+        //         // - any additional child keys for all value event subscriptions in that path (they can never be different though?)
+        //         topEventPath = topIndexPath;
+        //         indexes.filter(index => index.path === topIndex.path).forEach(index => {
+        //             let keys = [index.key].concat(index.includeKeys);
+        //             keys.forEach(key => !keysFilter.includes(key) && keysFilter.push(key));
+        //         });
+        //         // following will never add any keys to the filter, right?!!
+        //         // let topKeys = topIndex.path;  
+        //         // eventSubscriptions.forEach(sub => {
+        //         //     let keys = PathInfo.getPathKeys(sub.dataPath);
+        //         //     let targetKey = keys[topKeys.length];
+        //         //     !keysFilter.includes(targetKey) && keysFilter.push(targetKey);
+        //         // })
+        //     }
+        // }
 
         if (!hasValueSubscribers && options.merge === true && keysFilter.length === 0) {
             // only load properties being updated
@@ -9392,415 +9475,397 @@ class Storage extends SimpleEventEmitter {
             }
         }
 
-        return this.getNodeInfo(topEventPath, { transaction, tid })
-        .then(eventNodeInfo => {
-            if (!eventNodeInfo.exists) {
-                // Node doesn't exist
-                return null;
-            }
+        const eventNodeInfo = await this.getNodeInfo(topEventPath, { transaction, tid });
+        let currentValue = null;
+        if (eventNodeInfo.exists) {
             let valueOptions = { transaction, tid };
-            // if (!hasValueSubscribers && options.merge === true) {
-            //     // Only load current value for properties being updated
-            //     valueOptions.include = Object.keys(value);
-            //     // Make sure the keys for any indexes on this path are also loaded
-            //     this.indexes.getAll(path, false).forEach(index => {
-            //         const keys = [index.key].concat(index.includeKeys);
-            //         keys.forEach(key => !valueOptions.include.includes(key) && valueOptions.include.push(key));
-            //     });
-            // }
             if (keysFilter.length > 0) {
                 valueOptions.include = keysFilter;
             }
             if (topEventPath === '' && typeof valueOptions.include === 'undefined') {
-                this.debug.warn(`WARNING: One or more value event listeners on the root node are causing the entire database value to be read to facilitate change tracking. Using "value", "notify_value", "child_changed" and "notify_child_changed" events on the root node are a bad practice because of the significant performance impact`);
+                this.debug.warn(`WARNING: One or more value event listeners on the root node are causing the entire database value to be read to facilitate change tracking. Using "value", "notify_value", "child_changed" and "notify_child_changed" events on the root node are a bad practice because of the significant performance impact. Use "mutated" or "mutations" events instead`);
             }
-            return this.getNodeValue(topEventPath, valueOptions);
-        })
-        .then(currentValue => {
-            topEventData = currentValue;
+            currentValue = await this.getNodeValue(topEventPath, valueOptions);
+        }
 
-            // Now proceed with node updating
-            return writeNode();
-        })
-        .then(result => {
+        topEventData = currentValue;
 
-            // Build data for old/new comparison
+        // Now proceed with node updating
+        const result = await writeNode();
 
-            let newTopEventData, modifiedData;
-            if (path === topEventPath) {
-                if (options.merge) {
-                    if (topEventData === null) {
-                        newTopEventData = value instanceof Array ? [] : {};
-                    }
-                    else {
-                        // Create shallow copy of previous object value
-                        newTopEventData = topEventData instanceof Array ? [] : {};
-                        Object.keys(topEventData).forEach(key => {
-                            newTopEventData[key] = topEventData[key];
-                        });
-                    }
-                }
-                else {
-                    newTopEventData = value;
-                }
-                modifiedData = newTopEventData;
-            }
-            else {
-                // topEventPath is on a higher path, so we have to adjust the value deeper down
-                const trailPath = path.slice(topEventPath.length).replace(/^\//, '');
-                const trailKeys = PathInfo.getPathKeys(trailPath);
-                // Create shallow copy of the original object (let unchanged properties reference existing objects)
+        // Build data for old/new comparison
+        let newTopEventData, modifiedData;
+        if (path === topEventPath) {
+            if (options.merge) {
                 if (topEventData === null) {
-                    // the node didn't exist prior to the update (or was not loaded)
-                    newTopEventData = typeof trailKeys[0] === 'number' ? [] : {};
+                    newTopEventData = value instanceof Array ? [] : {};
                 }
                 else {
+                    // Create shallow copy of previous object value
                     newTopEventData = topEventData instanceof Array ? [] : {};
                     Object.keys(topEventData).forEach(key => {
                         newTopEventData[key] = topEventData[key];
                     });
                 }
-                modifiedData = newTopEventData;
+            }
+            else {
+                newTopEventData = value;
+            }
+            modifiedData = newTopEventData;
+        }
+        else {
+            // topEventPath is on a higher path, so we have to adjust the value deeper down
+            const trailPath = path.slice(topEventPath.length).replace(/^\//, '');
+            const trailKeys = PathInfo.getPathKeys(trailPath);
+            // Create shallow copy of the original object (let unchanged properties reference existing objects)
+            if (topEventData === null) {
+                // the node didn't exist prior to the update (or was not loaded)
+                newTopEventData = typeof trailKeys[0] === 'number' ? [] : {};
+            }
+            else {
+                newTopEventData = topEventData instanceof Array ? [] : {};
+                Object.keys(topEventData).forEach(key => {
+                    newTopEventData[key] = topEventData[key];
+                });
+            }
+            modifiedData = newTopEventData;
+            while (trailKeys.length > 0) {
+                let childKey = trailKeys.shift();
+                // Create shallow copy of object at target
+                if (!options.merge && trailKeys.length === 0) {
+                    modifiedData[childKey] = value;
+                }
+                else {
+                    const original = modifiedData[childKey];
+                    const shallowCopy = typeof childKey === 'number' ? [] : {};
+                    Object.keys(original).forEach(key => {
+                        shallowCopy[key] = original[key];
+                    })
+                    modifiedData[childKey] = shallowCopy;
+                }
+                modifiedData = modifiedData[childKey];
+            }
+        }
+
+        if (options.merge) {
+            // Update target value with updates
+            Object.keys(value).forEach(key => {
+                modifiedData[key] = value[key];
+            });
+        }
+
+        // console.assert(topEventData !== newTopEventData, 'shallow copy must have been made!');
+
+        const dataChanges = compareValues(topEventData, newTopEventData);
+        if (dataChanges === 'identical') {
+            return result;
+        }
+
+        // Fix: remove null property values (https://github.com/appy-one/acebase/issues/2)
+        function removeNulls(obj) {
+            if (obj === null || typeof obj !== 'object') { return obj; } // Nothing to do
+            Object.keys(obj).forEach(prop => {
+                const val = obj[prop];
+                if (val === null) { delete obj[prop]; }
+                if (typeof val === 'object') { removeNulls(val); }
+            });
+        }
+        removeNulls(newTopEventData);
+        
+        // Trigger all index updates
+        const indexUpdates = [];
+        indexes.map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
+        .sort((a, b) => {
+            // Deepest paths should fire first, then bubble up the tree
+            if (a.keys.length < b.keys.length) { return 1; }
+            else if (a.keys.length > b.keys.length) { return -1; }
+            return 0;
+        })
+        .forEach(({ index }) => {
+            // Index is either on the top event path, or on a child path
+
+            // Example situation:
+            // path = "users/ewout/posts/1" (a post was added)
+            // topEventPath = "users/ewout" (a "child_changed" event was on "users")
+            // index.path is "users/*/posts"
+            // index must be called with data of "users/ewout/posts/1" 
+
+            let pathKeys = PathInfo.getPathKeys(topEventPath); 
+            let indexPathKeys = PathInfo.getPathKeys(index.path + '/*');
+            let trailKeys = indexPathKeys.slice(pathKeys.length);
+            // let { oldValue, newValue } = updatedData;
+            let oldValue = topEventData;
+            let newValue = newTopEventData;
+            if (trailKeys.length === 0) {
+                console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
+                // Index is on updated path
+                const p = this.ipc.isMaster
+                    ? index.handleRecordUpdate(topEventPath, oldValue, newValue)
+                    : this.ipc.sendRequest({ type: 'index.update', path: topEventPath, oldValue, newValue });
+                indexUpdates.push(p);
+                return; // next index
+            }
+            const getAllIndexUpdates = (path, oldValue, newValue) => {
+                if (oldValue === null && newValue === null) {
+                    return [];
+                }
+                let pathKeys = PathInfo.getPathKeys(path);
+                let indexPathKeys = PathInfo.getPathKeys(index.path + '/*');
+                let trailKeys = indexPathKeys.slice(pathKeys.length);
+                if (trailKeys.length === 0) {
+                    console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
+                    return [{ path, oldValue, newValue }];
+                }
+
+                let results = [];
+                let trailPath = '';
                 while (trailKeys.length > 0) {
-                    let childKey = trailKeys.shift();
-                    // Create shallow copy of object at target
-                    if (!options.merge && trailKeys.length === 0) {
-                        modifiedData[childKey] = value;
+                    let subKey = trailKeys.shift();
+                    if (subKey === '*') {
+                        // Recursion needed
+                        let allKeys = oldValue === null ? [] : Object.keys(oldValue);
+                        newValue !== null && Object.keys(newValue).forEach(key => {
+                            if (allKeys.indexOf(key) < 0) {
+                                allKeys.push(key);
+                            }
+                        });
+                        allKeys.forEach(key => {
+                            let childPath = PathInfo.getChildPath(trailPath, key);
+                            let childValues = getChildValues(key, oldValue, newValue);
+                            let subTrailPath = PathInfo.getChildPath(path, childPath);
+                            let childResults = getAllIndexUpdates(subTrailPath, childValues.oldValue, childValues.newValue);
+                            results = results.concat(childResults);
+                        });
+                        break;
                     }
                     else {
-                        const original = modifiedData[childKey];
-                        const shallowCopy = typeof childKey === 'number' ? [] : {};
-                        Object.keys(original).forEach(key => {
-                            shallowCopy[key] = original[key];
-                        })
-                        modifiedData[childKey] = shallowCopy;
+                        let values = getChildValues(subKey, oldValue, newValue);
+                        oldValue = values.oldValue;
+                        newValue = values.newValue;
+                        if (oldValue === null && newValue === null) {
+                            break;
+                        }
+                        trailPath = PathInfo.getChildPath(trailPath, subKey);
                     }
-                    modifiedData = modifiedData[childKey];
                 }
+                return results;
+            };
+            let results = getAllIndexUpdates(topEventPath, oldValue, newValue);
+            results.forEach(result => {
+                const p = this.ipc.isMaster
+                    ? index.handleRecordUpdate(result.path, result.oldValue, result.newValue)
+                    : this.ipc.sendRequest({ type: 'index.update', path: result.path, oldValue: result.oldValue, newValue: result.newValue });
+                indexUpdates.push(p);
+            });
+        });
+
+        const callSubscriberWithValues = (sub, oldValue, newValue, variables = []) => {
+            let trigger = true;
+            let type = sub.type;
+            if (type.startsWith('notify_')) {
+                type = type.slice('notify_'.length);
+            }
+            if (type === "mutated") {
+                return; // Ignore here, requires different logic
+            }
+            else if (type === "child_changed" && (oldValue === null || newValue === null)) {
+                trigger = false;
+            }
+            else if (type === "value" || type === "child_changed") {
+                let changes = compareValues(oldValue, newValue);
+                trigger = changes !== 'identical';
+            }
+            else if (type === "child_added") {
+                trigger = oldValue === null && newValue !== null;
+            }
+            else if (type === "child_removed") {
+                trigger = oldValue !== null && newValue === null;
             }
 
-            if (options.merge) {
-                // Update target value with updates
-                Object.keys(value).forEach(key => {
-                    modifiedData[key] = value[key];
-                });
-            }
+            const pathKeys = PathInfo.getPathKeys(sub.dataPath);
+            variables.forEach(variable => {
+                // only replaces first occurrence (so multiple *'s will be processed 1 by 1)
+                const index = pathKeys.indexOf(variable.name);
+                console.assert(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
+                pathKeys[index] = variable.value;
+            });
+            const dataPath = pathKeys.reduce((path, key) => PathInfo.getChildPath(path, key), '');
+            trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
+        };
 
-            // console.assert(topEventData !== newTopEventData, 'shallow copy must have been made!');
-
-            const dataChanges = compareValues(topEventData, newTopEventData);
-            if (dataChanges === 'identical') {
-                return result;
-            }
-
-            // Fix: remove null property values (https://github.com/appy-one/acebase/issues/2)
-            function removeNulls(obj) {
-                if (obj === null || typeof obj !== 'object') { return obj; } // Nothing to do
-                Object.keys(obj).forEach(prop => {
-                    const val = obj[prop];
-                    if (val === null) { delete obj[prop]; }
-                    if (typeof val === 'object') { removeNulls(val); }
-                });
-            }
-            removeNulls(newTopEventData);
-            
-            // Trigger all index updates
-            const indexUpdates = [];
-            indexes.map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
+        const triggerAllEvents = () => {
+            // Notify all event subscriptions, should be executed with a delay
+            // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
+            eventSubscriptions
+            .filter(sub => !['mutated','mutations','notify_mutated','notify_mutations'].includes(sub.type))
+            .map(sub => {
+                const keys = PathInfo.getPathKeys(sub.dataPath);
+                return {
+                    sub,
+                    keys
+                };
+            })
             .sort((a, b) => {
                 // Deepest paths should fire first, then bubble up the tree
                 if (a.keys.length < b.keys.length) { return 1; }
                 else if (a.keys.length > b.keys.length) { return -1; }
                 return 0;
             })
-            .forEach(({ index }) => {
-                // Index is either on the top event path, or on a child path
-
-                // Example situation:
-                // path = "users/ewout/posts/1" (a post was added)
-                // topEventPath = "users/ewout" (a "child_changed" event was on "users")
-                // index.path is "users/*/posts"
-                // index must be called with data of "users/ewout/posts/1" 
-
-                let pathKeys = PathInfo.getPathKeys(topEventPath); 
-                let indexPathKeys = PathInfo.getPathKeys(index.path + '/*');
-                let trailKeys = indexPathKeys.slice(pathKeys.length);
-                // let { oldValue, newValue } = updatedData;
-                let oldValue = topEventData;
-                let newValue = newTopEventData;
-                if (trailKeys.length === 0) {
-                    console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
-                    // Index is on updated path
-                    const p = this.ipc.isMaster
-                        ? index.handleRecordUpdate(topEventPath, oldValue, newValue)
-                        : this.ipc.sendRequest({ type: 'index.update', path: topEventPath, oldValue, newValue });
-                    indexUpdates.push(p);
-                    return; // next index
-                }
-                const getAllIndexUpdates = (path, oldValue, newValue) => {
-                    if (oldValue === null && newValue === null) {
-                        return [];
-                    }
-                    let pathKeys = PathInfo.getPathKeys(path);
-                    let indexPathKeys = PathInfo.getPathKeys(index.path + '/*');
-                    let trailKeys = indexPathKeys.slice(pathKeys.length);
-                    if (trailKeys.length === 0) {
-                        console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
-                        return [{ path, oldValue, newValue }];
-                    }
-
-                    let results = [];
-                    let trailPath = '';
+            .forEach(({ sub }) => {
+                const process = (currentPath, oldValue, newValue, variables = []) => {
+                    let trailPath = sub.dataPath.slice(currentPath.length).replace(/^\//, '');
+                    let trailKeys = PathInfo.getPathKeys(trailPath);
                     while (trailKeys.length > 0) {
                         let subKey = trailKeys.shift();
-                        if (subKey === '*') {
-                            // Recursion needed
-                            let allKeys = oldValue === null ? [] : Object.keys(oldValue);
+                        if (typeof subKey === 'string' && (subKey === '*' || subKey[0] === '$')) {
+                            // Fire on all relevant child keys
+                            let allKeys = oldValue === null ? [] : Object.keys(oldValue).map(key =>
+                                oldValue instanceof Array ? parseInt(key) : key
+                            );
                             newValue !== null && Object.keys(newValue).forEach(key => {
+                                if (newValue instanceof Array) {
+                                    key = parseInt(key);
+                                }
                                 if (allKeys.indexOf(key) < 0) {
                                     allKeys.push(key);
                                 }
                             });
                             allKeys.forEach(key => {
-                                let childPath = PathInfo.getChildPath(trailPath, key);
-                                let childValues = getChildValues(key, oldValue, newValue);
-                                let subTrailPath = PathInfo.getChildPath(path, childPath);
-                                let childResults = getAllIndexUpdates(subTrailPath, childValues.oldValue, childValues.newValue);
-                                results = results.concat(childResults);
+                                const childValues = getChildValues(key, oldValue, newValue);
+                                const vars = variables.concat({ name: subKey, value: key });
+                                if (trailKeys.length === 0) {
+                                    callSubscriberWithValues(sub, childValues.oldValue, childValues.newValue, vars);
+                                }
+                                else {
+                                    process(PathInfo.getChildPath(currentPath, subKey), childValues.oldValue, childValues.newValue, vars);
+                                }
                             });
-                            break;
+                            return; // We can stop processing
                         }
                         else {
-                            let values = getChildValues(subKey, oldValue, newValue);
-                            oldValue = values.oldValue;
-                            newValue = values.newValue;
-                            if (oldValue === null && newValue === null) {
-                                break;
-                            }
-                            trailPath = PathInfo.getChildPath(trailPath, subKey);
+                            currentPath = PathInfo.getChildPath(currentPath, subKey);
+                            let childValues = getChildValues(subKey, oldValue, newValue);
+                            oldValue = childValues.oldValue;
+                            newValue = childValues.newValue;
                         }
                     }
-                    return results;
+                    callSubscriberWithValues(sub, oldValue, newValue, variables);
                 };
-                let results = getAllIndexUpdates(topEventPath, oldValue, newValue);
-                results.forEach(result => {
-                    const p = this.ipc.isMaster
-                        ? index.handleRecordUpdate(result.path, result.oldValue, result.newValue)
-                        : this.ipc.sendRequest({ type: 'index.update', path: result.path, oldValue: result.oldValue, newValue: result.newValue });
-                    indexUpdates.push(p);
-                });
+
+                if (sub.type.startsWith('notify_') && PathInfo.get(sub.eventPath).isAncestorOf(topEventPath)) {
+                    // Notify event on a higher path than we have loaded data on
+                    // We can trigger the notify event on the subscribed path
+                    // Eg: 
+                    // path === 'users/ewout', updates === { name: 'Ewout Stortenbeker' }
+                    // sub.path === 'users' or '', sub.type === 'notify_child_changed'
+                    // => OK to trigger if dataChanges !== 'removed' and 'added'
+                    const isOnParentPath = PathInfo.get(sub.eventPath).isParentOf(topEventPath);
+                    const trigger = 
+                        (sub.type === 'notify_value')
+                        || (sub.type === 'notify_child_changed' && (!isOnParentPath || !['added','removed'].includes(dataChanges)))
+                        || (sub.type === 'notify_child_removed' && dataChanges === 'removed' && isOnParentPath)
+                        || (sub.type === 'notify_child_added' && dataChanges === 'added' && isOnParentPath)
+                    trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, sub.dataPath, null, null, options.context);
+                }
+                else {
+                    // Subscription is on current or deeper path
+                    process(topEventPath, topEventData, newTopEventData);
+                }
             });
 
-            const callSubscriberWithValues = (sub, oldValue, newValue, variables = []) => {
-                let trigger = true;
-                let type = sub.type;
-                if (type.startsWith('notify_')) {
-                    type = type.slice('notify_'.length);
+            // The only events we haven't processed now are 'mutated' events.
+            // They require different logic: we'll call them for all nested properties of the updated path, that 
+            // actually did change. They do not bubble up like 'child_changed' does.
+            const prepareMutationEvents = (sub, currentPath, oldValue, newValue, compareResult) => {
+                const batch = [];
+                const result = compareResult || compareValues(oldValue, newValue);
+                if (result === 'identical') {
+                    return batch; // no changes on subscribed path
                 }
-                if (type === "mutated") {
-                    return; // Ignore here, requires different logic
+                else if (typeof result === 'string') {
+                    // We are on a path that has an actual change
+                    batch.push({ path: currentPath, oldValue, newValue });
+                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
                 }
-                else if (type === "child_changed" && (oldValue === null || newValue === null)) {
-                    trigger = false;
+                else if (oldValue instanceof Array || newValue instanceof Array) {
+                    // Trigger mutated event on the array itself instead of on individual indexes
+                    batch.push({ path: currentPath, oldValue, newValue });
+                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
                 }
-                else if (type === "value" || type === "child_changed") {
-                    let changes = compareValues(oldValue, newValue);
-                    trigger = changes !== 'identical';
+                else {
+                    // DISABLED array handling here, because if a client is using a cache db this will cause problems
+                    // because individual array entries should never be modified.
+                    // if (oldValue instanceof Array && newValue instanceof Array) {
+                    //     // Make sure any removed events on arrays will be triggered from last to first
+                    //     result.removed.sort((a,b) => a < b ? 1 : -1);
+                    // }
+                    result.changed.forEach(info => {
+                        const childPath = PathInfo.getChildPath(currentPath, info.key);
+                        let childValues = getChildValues(info.key, oldValue, newValue);
+                        const childBatch = prepareMutationEvents(sub, childPath, childValues.oldValue, childValues.newValue, info.change);
+                        batch.push(...childBatch);
+                    });
+                    result.added.forEach(key => {
+                        const childPath = PathInfo.getChildPath(currentPath, key);
+                        batch.push({ path: childPath, oldValue: null, newValue: newValue[key] });
+                        // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, null, newValue[key], options.context);
+                    });
+                    result.removed.forEach(key => {
+                        const childPath = PathInfo.getChildPath(currentPath, key);
+                        batch.push({ path: childPath, oldValue: oldValue[key], newValue: null });
+                        // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, oldValue[key], null, options.context);
+                    });
                 }
-                else if (type === "child_added") {
-                    trigger = oldValue === null && newValue !== null;
-                }
-                else if (type === "child_removed") {
-                    trigger = oldValue !== null && newValue === null;
-                }
-
-                const pathKeys = PathInfo.getPathKeys(sub.dataPath);
-                variables.forEach(variable => {
-                    // only replaces first occurrence (so multiple *'s will be processed 1 by 1)
-                    const index = pathKeys.indexOf(variable.name);
-                    console.assert(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
-                    pathKeys[index] = variable.value;
-                });
-                const dataPath = pathKeys.reduce((path, key) => PathInfo.getChildPath(path, key), '');
-                trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
+                return batch;
             };
 
-            const triggerAllEvents = () => {
-                // Notify all event subscriptions, should be executed with a delay
-                // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
-                eventSubscriptions
-                .filter(sub => !['mutated','mutations','notify_mutated','notify_mutations'].includes(sub.type))
-                .map(sub => {
-                    const keys = PathInfo.getPathKeys(sub.dataPath);
-                    return {
-                        sub,
-                        keys
-                    };
-                })
-                .sort((a, b) => {
-                    // Deepest paths should fire first, then bubble up the tree
-                    if (a.keys.length < b.keys.length) { return 1; }
-                    else if (a.keys.length > b.keys.length) { return -1; }
-                    return 0;
-                })
-                .forEach(({ sub }) => {
-                    const process = (currentPath, oldValue, newValue, variables = []) => {
-                        let trailPath = sub.dataPath.slice(currentPath.length).replace(/^\//, '');
-                        let trailKeys = PathInfo.getPathKeys(trailPath);
-                        while (trailKeys.length > 0) {
-                            let subKey = trailKeys.shift();
-                            if (typeof subKey === 'string' && (subKey === '*' || subKey[0] === '$')) {
-                                // Fire on all relevant child keys
-                                let allKeys = oldValue === null ? [] : Object.keys(oldValue).map(key =>
-                                    oldValue instanceof Array ? parseInt(key) : key
-                                );
-                                newValue !== null && Object.keys(newValue).forEach(key => {
-                                    if (newValue instanceof Array) {
-                                        key = parseInt(key);
-                                    }
-                                    if (allKeys.indexOf(key) < 0) {
-                                        allKeys.push(key);
-                                    }
-                                });
-                                allKeys.forEach(key => {
-                                    const childValues = getChildValues(key, oldValue, newValue);
-                                    const vars = variables.concat({ name: subKey, value: key });
-                                    if (trailKeys.length === 0) {
-                                        callSubscriberWithValues(sub, childValues.oldValue, childValues.newValue, vars);
-                                    }
-                                    else {
-                                        process(PathInfo.getChildPath(currentPath, subKey), childValues.oldValue, childValues.newValue, vars);
-                                    }
-                                });
-                                return; // We can stop processing
-                            }
-                            else {
-                                currentPath = PathInfo.getChildPath(currentPath, subKey);
-                                let childValues = getChildValues(subKey, oldValue, newValue);
-                                oldValue = childValues.oldValue;
-                                newValue = childValues.newValue;
-                            }
-                        }
-                        callSubscriberWithValues(sub, oldValue, newValue, variables);
-                    };
+            eventSubscriptions.filter(sub => ['mutated', 'mutations', 'notify_mutated', 'notify_mutations'].includes(sub.type))
+            .forEach(sub => {
+                // Get the target data this subscription is interested in
+                let currentPath = path;
+                let trailPath = sub.eventPath.slice(currentPath.length).replace(/^\//, '');
+                let trailKeys = PathInfo.getPathKeys(trailPath);
+                let oldValue = topEventData, newValue = newTopEventData;
+                while (trailKeys.length > 0) {
+                    let subKey = trailKeys.shift();
+                    currentPath = PathInfo.getChildPath(currentPath, subKey);
+                    let childValues = getChildValues(subKey, oldValue, newValue);
+                    oldValue = childValues.oldValue;
+                    newValue = childValues.newValue;
+                }
 
-                    if (sub.type.startsWith('notify_') && PathInfo.get(sub.eventPath).isAncestorOf(topEventPath)) {
-                        // Notify event on a higher path than we have loaded data on
-                        // We can trigger the notify event on the subscribed path
-                        // Eg: 
-                        // path === 'users/ewout', updates === { name: 'Ewout Stortenbeker' }
-                        // sub.path === 'users' or '', sub.type === 'notify_child_changed'
-                        // => OK to trigger if dataChanges !== 'removed' and 'added'
-                        const isOnParentPath = PathInfo.get(sub.eventPath).isParentOf(topEventPath);
-                        const trigger = 
-                            (sub.type === 'notify_value')
-                            || (sub.type === 'notify_child_changed' && (!isOnParentPath || !['added','removed'].includes(dataChanges)))
-                            || (sub.type === 'notify_child_removed' && dataChanges === 'removed' && isOnParentPath)
-                            || (sub.type === 'notify_child_added' && dataChanges === 'added' && isOnParentPath)
-                        trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, sub.dataPath, null, null, options.context);
-                    }
-                    else {
-                        // Subscription is on current or deeper path
-                        process(topEventPath, topEventData, newTopEventData);
-                    }
-                });
+                const batch = prepareMutationEvents(sub, currentPath, oldValue, newValue);
+                if (batch.length === 0) {
+                    return;
+                }
+                const isNotifyEvent = sub.type.startsWith('notify_');
+                if (['mutated','notify_mutated'].includes(sub.type)) {
+                    // Send all mutations 1 by 1
+                    batch.forEach((mutation, index) => {
+                        const context = options.context; // const context = cloneObject(options.context);
+                        // context.acebase_mutated_event = { nr: index + 1, total: batch.length }; // Add context info about number of mutations
+                        const prevVal = isNotifyEvent ? null : mutation.oldValue;
+                        const newVal = isNotifyEvent ? null : mutation.newValue;
+                        this.subscriptions.trigger(sub.type, sub.subscriptionPath, mutation.path, prevVal, newVal, context);
+                    });
+                }
+                else if (['mutations','notify_mutations'].includes(sub.type)) {
+                    // Send 1 batch with all mutations
+                    // const oldValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.oldValue })); // batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.oldValue, obj), {});
+                    // const newValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.newValue })) //batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.newValue, obj), {});
+                    const values = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(m.path.slice(sub.subscriptionPath.length)), prev: m.oldValue, val: m.newValue }));
+                    this.subscriptions.trigger(sub.type, sub.subscriptionPath, sub.subscriptionPath, null, values, options.context);
+                }
+            });
+        };
 
-                // The only events we haven't processed now are 'mutated' events.
-                // They require different logic: we'll call them for all nested properties of the updated path, that 
-                // actually did change. They do not bubble up like 'child_changed' does.
-                const prepareMutationEvents = (sub, currentPath, oldValue, newValue, compareResult) => {
-                    const batch = [];
-                    const result = compareResult || compareValues(oldValue, newValue);
-                    if (result === 'identical') {
-                        return batch; // no changes on subscribed path
-                    }
-                    else if (typeof result === 'string') {
-                        // We are on a path that has an actual change
-                        batch.push({ path: currentPath, oldValue, newValue });
-                        // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
-                    }
-                    else if (oldValue instanceof Array || newValue instanceof Array) {
-                        // Trigger mutated event on the array itself instead of on individual indexes
-                        batch.push({ path: currentPath, oldValue, newValue });
-                        // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
-                    }
-                    else {
-                        // DISABLED array handling here, because if a client is using a cache db this will cause problems
-                        // because individual array entries should never be modified.
-                        // if (oldValue instanceof Array && newValue instanceof Array) {
-                        //     // Make sure any removed events on arrays will be triggered from last to first
-                        //     result.removed.sort((a,b) => a < b ? 1 : -1);
-                        // }
-                        result.changed.forEach(info => {
-                            const childPath = PathInfo.getChildPath(currentPath, info.key);
-                            let childValues = getChildValues(info.key, oldValue, newValue);
-                            const childBatch = prepareMutationEvents(sub, childPath, childValues.oldValue, childValues.newValue, info.change);
-                            batch.push(...childBatch);
-                        });
-                        result.added.forEach(key => {
-                            const childPath = PathInfo.getChildPath(currentPath, key);
-                            batch.push({ path: childPath, oldValue: null, newValue: newValue[key] });
-                            // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, null, newValue[key], options.context);
-                        });
-                        result.removed.forEach(key => {
-                            const childPath = PathInfo.getChildPath(currentPath, key);
-                            batch.push({ path: childPath, oldValue: oldValue[key], newValue: null });
-                            // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, oldValue[key], null, options.context);
-                        });
-                    }
-                    return batch;
-                };
-
-                eventSubscriptions.filter(sub => ['mutated', 'mutations', 'notify_mutated', 'notify_mutations'].includes(sub.type))
-                .forEach(sub => {
-                    // Get the target data this subscription is interested in
-                    let currentPath = path;
-                    let trailPath = sub.eventPath.slice(currentPath.length).replace(/^\//, '');
-                    let trailKeys = PathInfo.getPathKeys(trailPath);
-                    let oldValue = topEventData, newValue = newTopEventData;
-                    while (trailKeys.length > 0) {
-                        let subKey = trailKeys.shift();
-                        currentPath = PathInfo.getChildPath(currentPath, subKey);
-                        let childValues = getChildValues(subKey, oldValue, newValue);
-                        oldValue = childValues.oldValue;
-                        newValue = childValues.newValue;
-                    }
-
-                    const batch = prepareMutationEvents(sub, currentPath, oldValue, newValue);
-                    if (batch.length === 0) {
-                        return;
-                    }
-                    const isNotifyEvent = sub.type.startsWith('notify_');
-                    if (['mutated','notify_mutated'].includes(sub.type)) {
-                        // Send all mutations 1 by 1
-                        batch.forEach((mutation, index) => {
-                            const context = options.context; // const context = cloneObject(options.context);
-                            // context.acebase_mutated_event = { nr: index + 1, total: batch.length }; // Add context info about number of mutations
-                            const prevVal = isNotifyEvent ? null : mutation.oldValue;
-                            const newVal = isNotifyEvent ? null : mutation.newValue;
-                            this.subscriptions.trigger(sub.type, sub.subscriptionPath, mutation.path, prevVal, newVal, context);
-                        });
-                    }
-                    else if (['mutations','notify_mutations'].includes(sub.type)) {
-                        // Send 1 batch with all mutations
-                        // const oldValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.oldValue })); // batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.oldValue, obj), {});
-                        // const newValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.newValue })) //batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.newValue, obj), {});
-                        const values = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(m.path.slice(sub.subscriptionPath.length)), prev: m.oldValue, val: m.newValue }));
-                        this.subscriptions.trigger(sub.type, sub.subscriptionPath, sub.subscriptionPath, null, values, options.context);
-                    }
-                });
-            };
-
-            // Wait for all index updates to complete
-            if (options.waitForIndexUpdates === false) {
-                indexUpdates.splice(0); // Remove all index update promises, so we don't wait for them to resolve
-            }
-            return Promise.all(indexUpdates)
-            .then(() => {
-                defer(triggerAllEvents); // Delayed execution
-                return result;
-            })
-        });
+        // Wait for all index updates to complete
+        if (options.waitForIndexUpdates === false) {
+            indexUpdates.splice(0); // Remove all index update promises, so we don't wait for them to resolve
+        }
+        await Promise.all(indexUpdates);
+        defer(triggerAllEvents); // Delayed execution
+        return result;
     }
 
 
