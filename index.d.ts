@@ -15,6 +15,11 @@ export class AceBase extends acebasecore.AceBaseBase {
      */
     ready(callback?: () => void): Promise<void>;
 
+    /**
+     * Closes the database 
+     */
+    close(): Promise<void>;
+
     /** 
      * Only available in browser context - Creates an AceBase database instance using IndexedDB as storage engine. Creates a dedicated IndexedDB instance.
      * @param dbname Name of the database
