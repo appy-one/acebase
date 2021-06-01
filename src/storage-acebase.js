@@ -807,6 +807,14 @@ class AceBaseStorage extends Storage {
                 this.emit("ready");
             }
         });
+
+        this.ipc.once('exit', code => {
+            // Close database file
+            this.debug.log(`Closing db`);
+            pfs.close(this.file).catch(err => {
+                this.debug.error(`Could not close database:`, err);
+            });
+        });
     }
 
     get pageByteSize() {
@@ -850,7 +858,7 @@ class AceBaseStorage extends Storage {
         const start = async (callback, isAsync = false) => {
             const tid = this.createTid(); //ID.generate();
             let canceled = false;
-            const lock = await this.nodeLocker.lock(path, tid, false, `Node.getChildren "/${path}"`)
+            const lock = await this.nodeLocker.lock(path, tid, false, `Node.getChildren "/${path}"`);
             try {
                 const nodeInfo = await this.getNodeInfo(path, { tid });
                 if (!nodeInfo.exists) {
@@ -889,7 +897,7 @@ class AceBaseStorage extends Storage {
      */
     async getNode(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
         const tid = options.tid || this.createTid(); // ID.generate();
-        const lock = await this.nodeLocker.lock(path, tid, false, `Node.getValue "/${path}"`)
+        const lock = await this.nodeLocker.lock(path, tid, false, `Node.getValue "/${path}"`);
         try {
             const nodeInfo = await this.getNodeInfo(path, { tid });
             let value = nodeInfo.value;
@@ -998,7 +1006,7 @@ class AceBaseStorage extends Storage {
                 }
                 else {
                     // Get number of children
-                    lock = await this.nodeLocker.lock(path, tid, false, `Node.getInfo "/${path}"`)
+                    lock = await this.nodeLocker.lock(path, tid, false, `Node.getInfo "/${path}"`);
                     const childReader = new NodeReader(this, childInfo.address, lock, true);
                     childInfo.childCount = await childReader.getChildCount();
                     // lock.release(`Node.getInfo: done with path "/${path}"`);
@@ -1088,20 +1096,24 @@ class AceBaseStorage extends Storage {
             return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
         }
 
-        let lock;
+        // const impact = super.getUpdateImpact(path, options.suppress_events);
+        // const topLock = impact.topEventPath !== path 
+        //     ? await this.nodeLocker.lock(impact.topEventPath, tid, true, '_updateNode:topLock') 
+        //     : null;
+
+        let lock = await this.nodeLocker.lock(path, tid, true, '_updateNode');
         try {
-            lock = await this.nodeLocker.lock(path, tid, true, '_updateNode');
+
             const nodeInfo = await this.getNodeInfo(path, { tid });
             if (!nodeInfo.exists && path !== "") {
                 // Node doesn't exist, update parent instead
                 lock = await lock.moveToParent();
-                await this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
-                return lock.release();
+                return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
             }
 
             // Exists, or root record
             const merge = nodeInfo.exists && nodeInfo.address && options.merge;
-            const write = () => {
+            const write = async () => {
                 if (merge) {
                     // Node exists already, is stored in its own record, and it must be updated (merged)
                     return _mergeNode(this, nodeInfo, value, lock);
@@ -1122,7 +1134,8 @@ class AceBaseStorage extends Storage {
                     merge,
                     suppress_events: options.suppress_events,
                     context: options.context,
-                    _customWriteFunction: write // Will use this function instead of this._writeNode
+                    _customWriteFunction: write, // Will use this function instead of this._writeNode
+                    // impact
                 });
             }
 
@@ -1146,9 +1159,6 @@ class AceBaseStorage extends Storage {
                 console.assert(this.nodeCache._cache.has(pathInfo.parentPath), 'Not cached?!!');
             }
 
-            // release lock on current target (path or parent)
-            lock.release();
-
             if (deallocate && deallocate.totalAddresses > 0) {
                 // Release record allocation marked for deallocation
                 deallocate.normalize();
@@ -1166,8 +1176,6 @@ class AceBaseStorage extends Storage {
 
                 this.FST.release(deallocate.ranges);
             }
-
-            // return true;
         }
         catch(err) {
             // if (err instanceof SchemaValidationError) {
@@ -1176,8 +1184,11 @@ class AceBaseStorage extends Storage {
             if (!(err instanceof SchemaValidationError)) {
                 this.debug.error(`Node.update ERROR: `, err);
             }
-            lock && lock.release(`Node.update: error`);
             throw err; //return false;
+        }
+        finally {
+            lock.release();
+            // topLock && topLock.release();
         }
     }
 }
@@ -2626,7 +2637,7 @@ async function _createNode(storage, nodeInfo, newValue, lock, invalidateCache = 
  * @returns {Promise<RecordInfo>}
  */
 async function _lockAndWriteNode(storage, path, value, parentTid) {
-    const lock = await storage.nodeLocker.lock(path, parentTid, true, `_lockAndWrite "${path}"`)
+    const lock = await storage.nodeLocker.lock(path, parentTid, true, `_lockAndWrite "${path}"`);
     const recordInfo = await _writeNode(storage, path, value, lock);
     lock.release();
     return recordInfo;
