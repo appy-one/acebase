@@ -37,7 +37,7 @@ class AceBase extends AceBaseBase {
     }
 
     close() {
-        // Closes the database
+        // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.
         return this.api.storage.ipc.exit();
     }
 
