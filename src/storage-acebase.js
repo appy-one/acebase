@@ -10,6 +10,7 @@ const { NodeLock } = require('./node-lock');
 const { Storage, StorageSettings, NodeNotFoundError, SchemaValidationError } = require('./storage');
 const { VALUE_TYPES } = require('./node-value-types');
 const { BinaryBPlusTree, BPlusTreeBuilder, BinaryWriter } = require('./btree');
+const { Uint8ArrayBuilder } = require('./binary');
 
 const REMOVED_CHILD_DATA_IMPLEMENTED = false; // not used yet - allows marking of deleted children without having to rewrite the whole node
 
@@ -245,7 +246,13 @@ class AceBaseStorage extends Storage {
                     return index;
                 }
                 try {
-                    this.write();
+                    this.write().catch(err => {
+                        // Not being able to save the new KIT to file would be a serious issue.
+                        // Because getOrAdd is not async, there is no way we can tell caller there is a problem with the key they are using.
+                        // On the other hand, if writing the KIT data failed (IO error), the calling code will most likely also have 
+                        // issues writing the data they needed the new key for.
+                        storage.debug.error(`CRITICAL: Unable to write KIT to database file: ${err.message}`);
+                    });
                 }
                 catch(err) {
                     this.keys.pop(); // Remove the key
@@ -264,24 +271,29 @@ class AceBaseStorage extends Storage {
                 let index = 0;
                 for(let i = 0; i < this.keys.length; i++) {
                     const key = this.keys[i];
-                    // Add 1-byte key length
-                    view.setUint8(index, key.length);
-                    index++;
-                    
-                    for (let i = 0; i < key.length; i++) {
-                        if (index > this.length) {
-                            throw new Error(`Too many keys to store in KIT, size limit of ${this.length} has been reached; current amount of keys is ${this.keys.length}`);
-                        }
-                        let charCode = key.charCodeAt(i);
-                        if (charCode > 255) { throw new Error(`Invalid character in key ${key} at char ${i+1}`); }
-                        view.setUint8(index, charCode);
-                        index++;
+
+                    // Now supports storage of keys with Unicode characters
+
+                    /** @type {Uint8Array} */
+                    const binary = encodeString(key);
+                    const keyLength = binary.byteLength;
+
+                    if (index + keyLength >= this.length) {
+                        throw new Error(`Too many keys to store in KIT, size limit of ${this.length} has been reached; current amount of keys is ${this.keys.length}`);
                     }
+
+                    // Add 1-byte key length
+                    view.setUint8(index, keyLength);
+                    index++;
+
+                    // Add key
+                    data.set(binary, index);
+                    index += keyLength;
                 }
                 const bytesToWrite = Math.max(this.bytesUsed, index);    // Determine how many bytes should be written to overwrite current KIT
                 this.bytesUsed = index;
 
-                writeData(this.fileIndex, data, 0, bytesToWrite)
+                return writeData(this.fileIndex, data, 0, bytesToWrite)
                 // .then(bytesWritten => {
                 //     storage.debug.log(`KIT saved, ${bytesWritten} bytes written`);
                 // })
@@ -304,10 +316,9 @@ class AceBaseStorage extends Storage {
                 let keyLength = 0;
                 while((keyLength = view.getUint8(index)) > 0) {
                     index++;
-                    let key = "";
-                    for(let i = 0; i < keyLength; i++) {
-                        key += String.fromCharCode(view.getUint8(index + i));
-                    }
+                    // Now supports Unicode keys
+                    const buffer = new Uint8Array(data.buffer, index, keyLength);
+                    const key = decodeString(buffer);
                     keys.push(key);
                     index += keyLength;
                 }
@@ -358,9 +369,9 @@ class AceBaseStorage extends Storage {
                     const recordsPerPage = storage.settings.pageSize;
                     let allocation = [];
                     let pageAdded = false;
-                    const ret = (comment) => {
+                    const ret = async (comment) => {
                         // console.error(`ALLOCATED ${comment}: ${allocation.map(a => `${a.pageNr},${a.recordNr}+${a.length-1}`).join('; ')}`);
-                        this.write(pageAdded);
+                        await this.write(pageAdded);
                         return allocation;
                     };
 
@@ -522,7 +533,7 @@ class AceBaseStorage extends Storage {
                     });
                 },
 
-                write(updatedPageCount = false) {
+                async write(updatedPageCount = false) {
                     // Free Space Table starts at index 2^16 (65536), and is 2^16 (65536) bytes long
                     const data = Buffer.alloc(this.length);
                     // data.fill(0); //new Uint8Array(buffer).fill(0); // Initialize with all zeroes
@@ -549,18 +560,18 @@ class AceBaseStorage extends Storage {
                         throw new Error(`FST grew too big to store in the database file. Fix this!`);
                     }
 
-                    return writeData(this.fileIndex, data, 0, bytesToWrite)
-                    .then(bytesWritten => {
-                        //storage.debug.log(`FST saved, ${this.bytesUsed} bytes used for ${this.ranges.length} ranges`);
-                        if (updatedPageCount === true) {
-                            // Update the file size
-                            const newFileSize = storage.rootRecord.fileIndex + (this.pages * settings.pageSize * settings.recordSize);
-                            fs.ftruncateSync(fd, newFileSize);
-                        }
-                    })
-                    .catch(err => {
+                    const promise = writeData(this.fileIndex, data, 0, bytesToWrite).catch(err => {
                         storage.debug.error(`Error writing FST: `, err);
                     });
+                    const writes = [promise];
+                    if (updatedPageCount === true) {
+                        // Update the file size
+                        const newFileSize = storage.rootRecord.fileIndex + (this.pages * settings.pageSize * settings.recordSize);
+                        const promise = pfs.ftruncate(fd, newFileSize);
+                        writes.push(promise);
+                    }
+                    await Promise.all(writes);
+                    //storage.debug.log(`FST saved, ${this.bytesUsed} bytes used for ${this.ranges.length} ranges`);
                 },
 
                 async load() {
@@ -1108,7 +1119,7 @@ class AceBaseStorage extends Storage {
             if (!nodeInfo.exists && path !== "") {
                 // Node doesn't exist, update parent instead
                 lock = await lock.moveToParent();
-                return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
+                return await this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
             }
 
             // Exists, or root record
@@ -1116,11 +1127,11 @@ class AceBaseStorage extends Storage {
             const write = async () => {
                 if (merge) {
                     // Node exists already, is stored in its own record, and it must be updated (merged)
-                    return _mergeNode(this, nodeInfo, value, lock);
+                    return await _mergeNode(this, nodeInfo, value, lock);
                 }
                 else {
                     // Node doesn't exist, isn't stored in its own record, or must be overwritten
-                    return _createNode(this, nodeInfo, value, lock, !options._internal);
+                    return await _createNode(this, nodeInfo, value, lock, !options._internal);
                 }
             };
 
@@ -1177,15 +1188,15 @@ class AceBaseStorage extends Storage {
                 this.FST.release(deallocate.ranges);
             }
         }
-        catch(err) {
-            // if (err instanceof SchemaValidationError) {
-            //     !recursive && this.debug.error(`Schema validation error ${options.merge ? 'updating' : 'setting'} path "${path}": `, err.reason);
-            // }
-            if (!(err instanceof SchemaValidationError)) {
-                this.debug.error(`Node.update ERROR: `, err);
-            }
-            throw err; //return false;
-        }
+        // catch(err) {
+        //     // if (err instanceof SchemaValidationError) {
+        //     //     !recursive && this.debug.error(`Schema validation error ${options.merge ? 'updating' : 'setting'} path "${path}": `, err.reason);
+        //     // }
+        //     if (!(err instanceof SchemaValidationError)) {
+        //         this.debug.error(`Node.update ERROR: `, err.message);
+        //     }
+        //     throw err; //return false;
+        // }
         finally {
             lock.release();
             // topLock && topLock.release();
@@ -2218,7 +2229,7 @@ class NodeReader {
         let data = new Uint8Array(bytesPerRecord);
 
         const bytesRead = await this.storage.readData(fileIndex, data.buffer);
-        if (bytesRead < bytesPerRecord) { throw new Error(`Not enough bytes read from file, expected ${bytesPerRecord} but got ${bytesRead}`); }
+        if (bytesRead < bytesPerRecord) { throw new Error(`Not enough bytes read from file at index ${fileIndex}, expected ${bytesPerRecord} but got ${bytesRead}`); }
 
         const hasKeyIndex = (data[0] & FLAG_KEY_TREE) === FLAG_KEY_TREE;
         const valueType = data[0] & FLAG_VALUE_TYPE; // Last 4-bits of first byte of read data has value type
@@ -2331,7 +2342,6 @@ class NodeReader {
     const affectedKeys = Object.keys(updates);
     const changes = new NodeChangeTracker(nodeInfo.path);
 
-    const newKeys = affectedKeys.slice();
     const discardAllocation = new NodeAllocation([]);
     let isArray = false;
     let isInternalUpdate = false;
@@ -2361,6 +2371,8 @@ class NodeReader {
             affectedKeys[i] = +affectedKeys[i]; // Now an index
         }
     }
+
+    const newKeys = affectedKeys.slice();
 
     await nodeReader.getChildStream({ keyFilter: affectedKeys })
     .next(child => {
@@ -2589,7 +2601,7 @@ class NodeReader {
         });
 
         if (isArray) {
-            const isExhaustive = mergedValue.filter(val => typeof val !== 'undefined').length === mergedValue.length;
+            const isExhaustive = Object.keys(mergedValue).every((key, i) => +key === i); // test if there are gaps in the array (eg misses value at index 3)
             if (!isExhaustive) {
                 throw new Error(`Elements cannot be inserted beyond, or removed before the end of an array. Rewrite the whole array at path "${nodeInfo.path}" or change your schema to use an object collection instead`);
             }
@@ -2638,9 +2650,13 @@ async function _createNode(storage, nodeInfo, newValue, lock, invalidateCache = 
  */
 async function _lockAndWriteNode(storage, path, value, parentTid) {
     const lock = await storage.nodeLocker.lock(path, parentTid, true, `_lockAndWrite "${path}"`);
-    const recordInfo = await _writeNode(storage, path, value, lock);
-    lock.release();
-    return recordInfo;
+    try {
+        const recordInfo = await _writeNode(storage, path, value, lock);
+        return recordInfo;
+    }
+    finally {
+        lock.release();
+    }
 }
 
 /**
@@ -2687,7 +2703,7 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
     
     if (isArray) {
         // Store array
-        const isExhaustive = value.filter(val => typeof val !== 'undefined' && val !== null).length === value.length;
+        const isExhaustive = Object.keys(value).every((key, i) => +key === i && value[i] !== null); // Test if there are no gaps in the array
         if (!isExhaustive) {
             throw new Error(`Cannot store arrays with missing entries`);
         }
@@ -2712,6 +2728,12 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
     else {
         // Store object
         Object.keys(value).forEach(key => {
+            // eslint-disable-next-line no-control-regex
+            if (/[\x00-\x08\x0b\x0c\x0e-\x1f/[\]\\]/.test(key)) { 
+                throw new Error(`Key ${key} cannot contain control characters or any of the following characters: \\ / [ ]`); 
+            }
+            if (key.length > 128) { throw new Error(`Key ${key} is too long to store. Max length=128`); }
+
             const childPath = PathInfo.getChildPath(path, key); // `${path}/${key}`;
             let val = value[key];
             if (typeof val === "function" || val === null) {
@@ -2757,53 +2779,48 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
                 ? BINARY_TREE_FILL_FACTOR_50
                 : BINARY_TREE_FILL_FACTOR_95;
 
-        const builder = new BPlusTreeBuilder(true, fillFactor);
+        const treeBuilder = new BPlusTreeBuilder(true, fillFactor);
         serialized.forEach(kvp => {
             let binaryValue = _getValueBytes(kvp);
-            builder.add(isArray ? kvp.index : kvp.key, binaryValue);
+            treeBuilder.add(isArray ? kvp.index : kvp.key, binaryValue);
         });
 
-        // TODO: switch from array to Uint8ArrayBuilder:
-        // Investigate how often this happens - 
-        // does this happen only once when the node becomes big enough for tree creation?
-
-        let bytes = [];
-        await builder.create().toBinary(true, BinaryWriter.forArray(bytes));
+        const builder = new Uint8ArrayBuilder();
+        await treeBuilder.create().toBinary(true, BinaryWriter.forUint8ArrayBuilder(builder));
         // // Test tree
         // await BinaryBPlusTree.test(bytes)
-        result = { keyTree: true, data: Uint8Array.from(bytes) };
+        result = { keyTree: true, data: builder.data };
     }
     else {
-        const data = serialized.reduce((binary, kvp) => {
-            // For binary key/value layout, see _write function
-            let bytes = [];
+        const builder = new Uint8ArrayBuilder();
+        serialized.forEach(kvp => {
             if (!isArray) {
-                if (kvp.key.length > 128) { throw new Error(`Key ${kvp.key} is too long to store. Max length=128`); }
                 let keyIndex = storage.KIT.getOrAdd(kvp.key); // Gets KIT index for this key
 
                 // key_info:
                 if (keyIndex >= 0) {
                     // Cached key name
-                    bytes[0] = 128;                       // key_indexed = 1
-                    bytes[0] |= (keyIndex >> 8) & 127;    // key_nr (first 7 bits)
-                    bytes[1] = keyIndex & 255;            // key_nr (last 8 bits)
+                    builder.writeByte(
+                        128                         // key_indexed = 1
+                        | ((keyIndex >> 8) & 127)   // key_nr (first 7 bits)
+                    );
+                    builder.writeByte(
+                        keyIndex & 255              // key_nr (last 8 bits)
+                    );
                 }
                 else {
                     // Inline key name
-                    bytes[0] = kvp.key.length - 1;        // key_length
+                    builder.writeByte(kvp.key.length - 1); // key_length
                     // key_name:
-                    for (let i = 0; i < kvp.key.length; i++) {
-                        let charCode = kvp.key.charCodeAt(i);
-                        if (charCode > 255) { throw new Error(`Invalid character in key ${kvp.key} at char ${i+1}`); }
-                        bytes.push(charCode);
-                    }
+                    const keyBytes = encodeString(kvp.key);
+                    builder.append(keyBytes);
                 }
             }
-            const binaryValue = _getValueBytes(kvp);
-            binaryValue.forEach(val => bytes.push(val));//bytes.push(...binaryValue);
-            return concatTypedArrays(binary, new Uint8Array(bytes));
-        }, new Uint8Array());
-        result = { keyTree: false, data };
+            // const binaryValue = _getValueBytes(kvp);
+            // builder.append(binaryValue);
+            _writeBinaryValue(kvp, builder);
+        });
+        result = { keyTree: false, data: builder.data };
     }
     // Now write the record
     return write(isArray ? VALUE_TYPES.ARRAY : VALUE_TYPES.OBJECT, result.data, result.keyTree);
@@ -2829,12 +2846,23 @@ class SerializedKeyValue {
 /**
  * 
  * @param {SerializedKeyValue} kvp 
+ * @returns {Uint8Array}
  */
 function _getValueBytes(kvp) {
+    return _writeBinaryValue(kvp).data;
+}
+
+/**
+ * 
+ * @param {SerializedKeyValue} kvp 
+ * @param {Uint8ArrayBuilder} [builder] optional builder to append data to
+ * @returns {Uint8ArrayBuilder} returns the used builder
+ */
+ function _writeBinaryValue(kvp, builder = new Uint8ArrayBuilder(null, 64)) {
+    const startIndex = builder.length;
     // value_type:
-    let bytes = [];
-    let index = 0;
-    bytes[index] = kvp.type << 4;
+    builder.push(kvp.type << 4);    // tttt0000
+
     // tiny_value?:
     let tinyValue = -1;
     if (kvp.type === VALUE_TYPES.BOOLEAN) { tinyValue = kvp.bool ? 1 : 0; }
@@ -2845,41 +2873,35 @@ function _getValueBytes(kvp) {
     else if (kvp.type === VALUE_TYPES.BINARY && kvp.ref.byteLength === 0) { tinyValue = 0; }
     if (tinyValue >= 0) {
         // Tiny value
-        bytes[index] |= tinyValue;
-        bytes.push(64); // 01000000 --> tiny value
+        builder.data[startIndex] |= tinyValue;
+        builder.push(64); // 01000000 --> tiny value
         // The end
     }
     else if (kvp.record) {
         // External record
-        //recordsToWrite.push(kvp.record);
-        index = bytes.length;
-        bytes[index] = 192; // 11000000 --> record value
-        let address = kvp.record;
-        
+        builder.push(192); // 11000000 --> record value
+
         // Set the 6 byte record address (page_nr,record_nr)
-        let bin = new Uint8Array(6);
-        let view = new DataView(bin.buffer);
-        view.setUint32(0, address.pageNr);
-        view.setUint16(4, address.recordNr);
-        bin.forEach(val => bytes.push(val)); //bytes.push(...bin);
-        
-        // End
+        builder.writeUint32(kvp.record.pageNr);
+        builder.writeUint16(kvp.record.recordNr);
     }
     else {
         // Inline value
         let data = kvp.bytes || kvp.binary;
         let length = 'byteLength' in data ? data.byteLength : data.length;
-        index = bytes.length;
-        bytes[index] = 128; // 10000000 --> inline value
-        bytes[index] |= length - 1; // inline_length
+
+        builder.push(
+            128             // 10000000 --> inline value
+            | (length - 1)  // inline_length (last 6 bits)
+        );
         if (data instanceof ArrayBuffer) {
             data = new Uint8Array(data);
         }
-        data.forEach(val => bytes.push(val)); //bytes.push(...data);
+        builder.append(data);
         
         // End
     }
-    return bytes;
+    return builder;
 }
 
 /**
