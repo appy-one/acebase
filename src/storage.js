@@ -5,6 +5,9 @@ const { compareValues, getChildValues, encodeString, defer } = Utils;
 const { SchemaDefinition } = require('./schema');
 const { IPCPeer } = require('./ipc');
 const { pfs } = require('./promise-fs');
+// const { IPCTransactionManager } = require('./node-transaction');
+
+const DEBUG_MODE = false;
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
@@ -44,7 +47,7 @@ class StorageSettings {
 class Storage extends SimpleEventEmitter {
 
     createTid() {
-        return ++this._lastTid;
+        return DEBUG_MODE ? ++this._lastTid : ID.generate();
     }
 
     /**
@@ -76,7 +79,8 @@ class Storage extends SimpleEventEmitter {
             lock: (path, tid, write, comment) => {
                 return this.ipc.lock({ path, tid, write, comment });
             }
-        }; 
+        };
+        // this.transactionManager = new IPCTransactionManager(this.ipc);
         this._lastTid = 0;
 
         // Setup indexing functionality
@@ -1146,74 +1150,61 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    transactNode(path, callback, options = { no_lock: false, suppress_events: false, context: null }) {
-        let checkRevision;
+    async transactNode(path, callback, options = { no_lock: false, suppress_events: false, context: null }) {
+        const useFakeLock = options && options.no_lock === true;
+        const tid = this.createTid();
+        const lock = useFakeLock
+            ? { tid, release() {} } // Fake lock, we'll use revision checking & retrying instead
+            : await this.nodeLocker.lock(path, tid, true, 'transactNode');
 
-        const tid = this.createTid(); // ID.generate();
-        const lockPromise = options && options.no_lock === true 
-            ? Promise.resolve({ tid, release() {} }) // Fake lock, we'll use revision checking & retrying instead
-            : this.nodeLocker.lock(path, tid, true, 'transactNode');
-
-        return lockPromise
-        .then(lock => {
-            let changed = false, changeCallback = () => {
-                changed = true;
-            };
-            if (options && options.no_lock) {
+        try {
+            let changed = false, changeCallback = () => { changed = true; };
+            if (useFakeLock) {
                 // Monitor value changes
                 this.subscriptions.add(path, 'notify_value', changeCallback);
             }
-            return this.getNode(path, { tid })
-            .then(node => {
-                checkRevision = node.revision;
-                let newValue;
-                try {
-                    newValue = callback(node.value);
-                }
-                catch (err) {
-                    this.debug.error(`Error in transaction callback: ${err.message}`);
-                }
+            const node = await this.getNode(path, { tid });
+            const checkRevision = node.revision;
+            let newValue;
+            try {
+                newValue = callback(node.value);
                 if (newValue instanceof Promise) {
-                    return newValue.catch(err => {
+                    newValue = await newValue.catch(err => {
                         this.debug.error(`Error in transaction callback: ${err.message}`);
                     });
                 }
-                return newValue;
-            })
-            .then(newValue => {
-                if (typeof newValue === 'undefined') {
-                    // Callback did not return value. Cancel transaction
-                    return;
-                }
-                // asserting revision is only needed when no_lock option was specified
-                if (options && options.no_lock) {
-                    this.subscriptions.remove(path, 'notify_value', changeCallback)
-                }
-                if (changed) {
-                    return Promise.reject(new NodeRevisionError(`Node changed`));
-                }
-                return this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid, suppress_events: options.suppress_events, context: options.context });
-            })
-            .then(result => {
-                lock.release();
-                return result;
-            })
-            .catch(err => {
-                lock.release();
-                // do it again
-                if (err instanceof NodeRevisionError) {
-                    console.warn(`node value changed, running again. Error: ${err.message}`);
-                    return this.transactNode(path, callback, options);
-                }
-                else {
-                    throw err;
-                }
-            })
-        });
+            }
+            catch (err) {
+                this.debug.error(`Error in transaction callback: ${err.message}`);
+            }
+            if (typeof newValue === 'undefined') {
+                // Callback did not return value. Cancel transaction
+                return;
+            }
+            // asserting revision is only needed when no_lock option was specified
+            if (useFakeLock) {
+                this.subscriptions.remove(path, 'notify_value', changeCallback)
+            }
+            if (changed) {
+                throw new NodeRevisionError(`Node changed`);
+            }
+            const result = await this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid, suppress_events: options.suppress_events, context: options.context });
+            return result;
+        }
+        catch (err) {
+            if (err instanceof NodeRevisionError) {
+                // try again
+                console.warn(`node value changed, running again. Error: ${err.message}`);
+                return this.transactNode(path, callback, options);
+            }
+            else {
+                throw err;
+            }
+        }
+        finally {
+            lock.release();
+        }
     }
-    // transactNode(path, callback, options = { tid: undefined }) {
-    //     throw new Error(`This method must be implemented by subclass`);
-    // }
 
     /**
      * Checks if a node's value matches the passed criteria
