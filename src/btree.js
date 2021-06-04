@@ -3,7 +3,8 @@ const { numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
 const ThreadSafe = require('./thread-safe');
 const { DetailedError } = require('./detailed-error');
 const { pfs } = require('./promise-fs');
-require('./promise-try-shim');
+const { Uint8ArrayBuilder } = require('./binary');
+// require('./promise-try-shim');
 
 const KEY_TYPE = {
     UNDEFINED: 0,
@@ -713,7 +714,7 @@ class BPlusTreeLeaf {
      * @param {boolean} keepFreeSpace 
      * @param {BinaryWriter} writer
      */
-    toBinary(keepFreeSpace = false, writer) {
+    async toBinary(keepFreeSpace = false, writer) {
         // See BPlusTreeNode.toBinary() for data layout
 
         console.assert(this.entries.every((entry, index, arr) => index === 0 || _isMore(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
@@ -916,10 +917,8 @@ class BPlusTreeLeaf {
             for (let i = 0; i < extFreeByteLength; i++) { bytes.push(0); }
         }
 
-        return writer.append(bytes)
-        .then(() => {
-            return { references };
-        });
+        await writer.append(bytes);
+        return { references };
     }
 }
 
@@ -5246,7 +5245,7 @@ class BinaryWriter {
     /**
      * 
      * @param {fs.WriteStream} stream 
-     * @param {((data: number[]|Uint8Array, position: number) => Promise<void>)} writeFn
+     * @param {((data: Uint8Array, position: number) => Promise<void>)} writeFn
      */
     constructor(stream, writeFn) {
         this._stream = stream;
@@ -5254,6 +5253,11 @@ class BinaryWriter {
         this._written = 0;
     }
 
+    /**
+     * 
+     * @param {number[]} bytes 
+     * @returns 
+     */
     static forArray(bytes) {
         let stream = {
             write(data) {
@@ -5276,6 +5280,26 @@ class BinaryWriter {
             return Promise.resolve();
         });  
         return writer;      
+    }
+
+    /**
+     * 
+     * @param {Uint8ArrayBuilder} builder 
+     */
+    static forUint8ArrayBuilder(builder) {
+        let stream = {
+            write(data) {
+                builder.append(data);
+                return true; // let caller know its ok to continue writing
+            },
+            end(callback) {
+                callback();
+            }
+        };
+        const writer = new BinaryWriter(stream, (data, position) => {
+            builder.write(data, position);
+        });  
+        return writer;  
     }
 
     static forFunction(writeFn) {
@@ -6311,105 +6335,6 @@ class TX {
         
         console.error(`Critical: could not rollback transaction. Errors:`, err.rollbackErrors)
         throw err;
-    }
-}
-
-class Uint8ArrayBuilder {
-    static get blockSize() { 
-        return 4096; 
-    }
-    constructor(bytes = null) {
-        /** @type {Uint8Array} */
-        this._data = new Uint8Array();
-        this._length = 0;
-        bytes && this.append(bytes);
-    }
-    reserve(byteCount) {
-        const addBytes = Uint8ArrayBuilder.blockSize * Math.ceil(byteCount / Uint8ArrayBuilder.blockSize);
-        const newLength = this._data.byteLength + addBytes;
-        // this._data = new Uint8Array(this._data.buffer, 0, newLength);
-        const newData = new Uint8Array(newLength);
-        newData.set(this._data, 0);
-        this._data = newData;
-    }
-    append(bytes) {
-        if (bytes instanceof Uint8ArrayBuilder) {
-            bytes = bytes.data;
-        }
-        const freeBytes = this._data.byteLength - this._length;
-        if (freeBytes < bytes.length) {
-            // Won't fit
-            const bytesShort = bytes.length - freeBytes;
-            const addBytes = Uint8ArrayBuilder.blockSize * Math.ceil((bytesShort * 1.1) / Uint8ArrayBuilder.blockSize);
-            const newLength = this._data.byteLength + addBytes;
-            // this._data = new Uint8Array(this._data.buffer, 0, newLength);
-            const newData = new Uint8Array(newLength);
-            newData.set(this._data, 0);
-            this._data = newData;
-        }
-        // Add bytes
-        this._data.set(bytes, this._length);
-        this._length += bytes.length;
-        return this;        
-    }
-    push(...bytes) {
-        if (bytes.length === 0) {
-            console.warn('WARNING: pushing 0 bytes to Uint8ArrayBuilder!');
-        }
-        return this.append(bytes);
-    }
-    writeUint32(positiveNumber, index = undefined) {
-        let bytes = _writeByteLength([], 0, positiveNumber);
-        if (index >= 0) {
-            this._data.set(bytes, index);
-            return this;
-        }
-        return this.append(bytes);
-    }
-    writeInt32(signedNumber, index = undefined) {
-        let bytes = _writeSignedNumber([], 0, signedNumber);
-        if (index >= 0) {
-            this._data.set(bytes, index);
-            return this;
-        }
-        return this.append(bytes);
-    }
-    writeInt48(signedNumber, index = undefined) {
-        let bytes = _writeSignedOffset([], 0, signedNumber, true);
-        if (index >= 0) {
-            this._data.set(bytes, index);
-            return this;
-        }
-        return this.append(bytes);
-    }
-    /** @type {Uint8Array} */
-    get data() {
-        return this._data.subarray(0, this._length);
-    }
-    get length() {
-        return this._length;
-    }
-    slice(begin, end) {
-        if (begin < 0) { 
-            return this._data.subarray(this._length + begin, this._length); 
-        }
-        else { 
-            return this._data.subarray(begin, end || this._length);
-        }
-    }
-    splice(index, remove) {
-        if (typeof remove !== 'number') { 
-            remove = this.length - index; 
-        }
-        let removed = this._data.slice(index, index + remove);
-        if (index + remove >= this.length) {
-            this._length = index;
-        }
-        else {
-            this._data.copyWithin(index, index + remove, this._length);
-            this._length -= remove;
-        }
-        return removed;
     }
 }
 
