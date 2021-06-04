@@ -1,3 +1,4 @@
+/// <reference types="@types/jasmine" />
 const { BPlusTree, BinaryWriter, BinaryBPlusTree, BlacklistingSearchOperator } = require('../src/btree');
 const { ID } = require('acebase-core');
 // require('jasmine');

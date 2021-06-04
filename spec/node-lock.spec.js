@@ -1,8 +1,5 @@
-const { AceBase, ID } = require("..");
-const { Utils } = require('acebase-core');
-const { compareValues } = Utils;
-const { pfs } = require('../src/promise-fs');
-const { NodeLock } = require('../src/node-lock');
+/// <reference types="@types/jasmine" />
+const { createTempDB } = require("./tempdb");
 
 describe('node locking', () => {
     it('should not cause deadlocks', async () => {
@@ -17,9 +14,8 @@ describe('node locking', () => {
         //
         // To enable concurrent writes again, code will have to be refactored so that any higher event path is read locked before acquiring a write lock on the descendant node
 
-        const dbname = ID.generate();
-        const db = new AceBase(dbname, { storage: { path: __dirname }});
-        await db.ready();
+        // Create temp db
+        const { db, removeDB } = await createTempDB();
 
         // Add event listener on "some/path/to" node
         db.ref('some/path/to').on('value', snap => {
@@ -45,16 +41,10 @@ describe('node locking', () => {
             expect(snap.exists()).toBeTrue();
 
             const val = snap.val();
-            const compareResult = compareValues(val, { some: { child: { text: 'Update 1' } }, another: { child: { text: 'Update 2' } } });
-            expect(compareResult).toEqual('identical');
- 
+            expect(val).toEqual({ some: { child: { text: 'Update 1' } }, another: { child: { text: 'Update 2' } } });
         }
 
-        // Close database
-        await db.close(); // TODO: add type
-
-        // Remove database
-        const dbdir = `${__dirname}/${dbname}.acebase`;
-        await pfs.rmdir(dbdir, { recursive: true });
+        // Remove temp db
+        await removeDB();
     });
 })

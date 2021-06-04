@@ -1,4 +1,5 @@
 // Test the new NodeTransaction class being developed
+/// <reference types="@types/jasmine" />
 const { TransactionManager, NodeLockIntention, NodeLockInfo } = require('../src/node-transaction')
 
 describe('NodeTransaction (beta)', () => {
