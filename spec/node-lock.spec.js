@@ -47,4 +47,149 @@ describe('node locking', () => {
         // Remove temp db
         await removeDB();
     });
+
+    it('should not cause deadlocks - part2', async () => {
+        // Simulate high load
+  
+        const { db, removeDB } = await createTempDB();
+        const mem = {};
+        const actions = [
+            async () => { 
+                const product = { name: 'My product', added: new Date() };
+                await db.ref('products/abc').set(product); 
+                if (!mem.products) { mem.products = {}; }
+                mem.products.abc = product;
+            },
+            async () => { 
+                const product = { name: 'Another product', added: new Date() }
+                await db.ref('products/def').set(product); 
+                if (!mem.products) { mem.products = {}; }
+                mem.products.def = product;
+            },
+            async () => { 
+                const description = 'Changed description' + Math.random();
+                await db.ref('products/abc').update({ description }); 
+                if (!mem.products) { mem.products = {}; }
+                if (!mem.products.abc) { mem.products.abc = {}; }
+                mem.products.abc.description = description;
+            },
+            async () => { 
+                const changed = new Date();
+                await db.ref('products/abc').update({ changed }); 
+                if (!mem.products) { mem.products = {}; }
+                if (!mem.products.abc) { mem.products.abc = {}; }
+                mem.products.abc.changed = changed;                
+            },
+            async () => { 
+                const product = { name: 'Product nr ' + Math.round(Math.random() * 100000), added: new Date() };
+                const ref = await db.ref('products').push(product);
+                if (!mem.products) { mem.products = {}; }
+                mem.products[ref.key] = product;                
+            },
+            async () => { 
+                const description = 'Changed description: ' + Math.random();
+                await db.ref('products/def').update({ description });
+                if (!mem.products) { mem.products = {}; }
+                if (!mem.products.def) { mem.products.def = {}; }
+                mem.products.def.description = description;                
+            },
+            async () => { 
+                const changed = new Date();
+                await db.ref('products/def').update({ changed });
+                if (!mem.products) { mem.products = {}; }
+                if (!mem.products.def) { mem.products.def = {}; }
+                mem.products.def.changed = changed;
+            },
+            async () => {
+                const users = ['ewout','john','pete','jack','kenny','jimi'];
+                const lorem = "At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati cupiditate non provident, similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et dolorum fuga. Et harum quidem rerum facilis est et expedita distinctio. Nam libero tempore, cum soluta nobis est eligendi optio cumque nihil impedit quo minus id quod maxime placeat facere possimus, omnis voluptas assumenda est, omnis dolor repellendus. Temporibus autem quibusdam et aut officiis debitis aut rerum necessitatibus saepe eveniet ut et voluptates repudiandae sint et molestiae non recusandae. Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatibus maiores alias consequatur aut perferendis doloribus asperiores repellat.";
+                const words = lorem.replace(/\./g, '').split(' ');
+                const randomUser = () => {
+                    return users[Math.floor(Math.random() * users.length)];
+                }
+                const randomText = (nrWords) => {
+                    const arr = [];
+                    for (let i = 0; i < nrWords; i++) {
+                        let word = words[Math.floor(Math.random() * words.length)];
+                        arr.push(word);
+                    }
+                    return arr.join(' ');
+                }
+                const post = {
+                    posted: new Date(),
+                    author: randomUser(),
+                    title: randomText(5),
+                    text: randomText(50)
+                };
+                const ref = await db.ref('posts').push(post);
+                if (!mem.posts) { mem.posts = {}; }
+                mem.posts[ref.key] = post;
+            },
+            async () => { 
+                await db.ref('products').get();
+            },
+            // async () => { 
+            //     await db.ref('').get(); 
+            // },
+            async () => { 
+                const pulse = new Date();
+                await db.ref('').update({ pulse });
+                mem.pulse = pulse;
+            },
+            async () => {
+                // Remove random product (but make sure the first 50 are not removed)
+                const skip = 50 + Math.round(Math.random() * 50);
+                const info = await db.ref('products').reflect('children', { limit: 1, skip });
+                if (info.list.length === 0) { return; }
+                const key = info.list[0].key;
+                await db.ref('products').child(key).remove();
+                delete mem.products[key];
+            },
+            async () => {
+                const products = await db.ref('products').count();
+                expect(products).toBeGreaterThanOrEqual(0);
+            },
+            async () => {
+                const posts = await db.ref('posts').count();
+                expect(posts).toBeGreaterThanOrEqual(0);
+            },
+            async () => {
+                // Transaction on 'stats'
+                const now = new Date();
+                await db.ref('stats').transaction(snap => {
+                    const stats = snap.val() || { transactions: 0 };
+                    stats.last_transaction = now;
+                    stats.transactions++;
+                    return stats;
+                });
+                if (!mem.stats) { mem.stats = { transactions: 0 }; }
+                mem.stats.last_transaction = now;
+                mem.stats.transactions++;
+            }
+        ];
+
+        const testEquality = async () => {
+            const snap = await db.root.get();
+            expect(snap.val()).toEqual(mem);            
+        };
+
+        const promises = [];
+        for (let i = 0; i < 10000; i++) {
+            if (i % 100 === 0) {
+                await testEquality();
+            }
+            const actionIndex = Math.floor(Math.random() * actions.length);
+            promises.push(actions[actionIndex]());
+            const ms = Math.round(50 * Math.random());
+            if (ms > 10) {
+                await new Promise(resolve => setTimeout(resolve, ms));
+            }
+        }
+
+        await Promise.all(promises);
+
+        await testEquality();
+
+        await removeDB();
+    }, 2147483647);
 })
