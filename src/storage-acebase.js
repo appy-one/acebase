@@ -964,63 +964,64 @@ class AceBaseStorage extends Storage {
             }
         }
 
-        // Cache miss, announce the lookup
-        this.nodeCache.announce(path);
-
-        // Try again on the parent node, enable others to bind to our lookup result
-        const pathInfo = PathInfo.get(path); // getPathInfo(path);
-        const parentPath = pathInfo.parentPath; //pathInfo.parent;
-        const tid = options.tid || this.createTid(); //ID.generate();
-
-        // Performance issue: 250 requests for different children of a single parent.
-        // They will all wait until 1 figures out the parent's address, and then
-        // ALL start reading it together to look for their child keys.
-        // solution: synthesize requests that must read from the same parent, and
-        // handle them in 1 read. Use RxJS Observable?
+        // Cache miss. Find it by reading parent node
+        const pathInfo = PathInfo.get(path);
+        const parentPath = pathInfo.parentPath;
+        const tid = options.tid || this.createTid();
 
         // Achieve a read lock on the parent node and read it
         let lock = await this.nodeLocker.lock(parentPath, tid, false, `Node.getInfo "/${parentPath}"`);
         try {
-            let parentInfo = await this.getNodeInfo(parentPath, { tid, no_cache: options.no_cache });
-            let childInfo;
+            // We have a lock, check if the lookup has been cached by another "thread" in the meantime. 
+            let childInfo = this.nodeCache.find(path, true);
+            if (childInfo && !options.include_child_count) {
+                // Return cached info, or promise thereof (announced)
+                return childInfo;
+            }
+            if (!childInfo) {
+                // announce the lookup now
+                this.nodeCache.announce(path);
 
-            if (parentInfo.exists && parentInfo.valueType === VALUE_TYPES.REFERENCE && options.allow_expand) {
-                // NEW (but not used yet): This is a path reference. Expand to get new parentInfo.
-                let pathReference;
-                if (parentInfo.address) {
-                    // Must read target address to get target path
+                let parentInfo = await this.getNodeInfo(parentPath, { tid, no_cache: options.no_cache });
+                if (parentInfo.exists && parentInfo.valueType === VALUE_TYPES.REFERENCE && options.allow_expand) {
+                    // NEW (but not used yet): This is a path reference. Expand to get new parentInfo.
+                    let pathReference;
+                    if (parentInfo.address) {
+                        // Must read target address to get target path
+                        const reader = new NodeReader(this, parentInfo.address, lock, true);
+                        pathReference = await reader.getValue();
+                    }
+                    else {
+                        // We have the path already
+                        pathReference = parentInfo.value;
+                    }
+                    // TODO: implement relative path references: '../users/ewout'
+                    const childPath = PathInfo.getChildPath(pathReference.path, pathInfo.key);
+                    childInfo = await this.getNodeInfo(childPath, { tid, no_cache: options.no_cache });
+                }
+                else if (!parentInfo.exists || ![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentInfo.valueType) || !parentInfo.address) {
+                    // Parent does not exist, is not an object or array, or has no children (object not stored in own address)
+                    // so child doesn't exist
+                    childInfo = new NodeInfo({ path, exists: false });
+                }
+                else {
                     const reader = new NodeReader(this, parentInfo.address, lock, true);
-                    pathReference = await reader.getValue();
+                    childInfo = await reader.getChildInfo(pathInfo.key);
                 }
-                else {
-                    // We have the path already
-                    pathReference = parentInfo.value;
-                }
-                // TODO: implement relative path references: '../users/ewout'
-                const childPath = PathInfo.getChildPath(pathReference.path, pathInfo.key);
-                childInfo = await this.getNodeInfo(childPath);
-            }
-            else if (!parentInfo.exists || ![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentInfo.valueType) || !parentInfo.address) {
-                // Parent does not exist, is not an object or array, or has no children (object not stored in own address)
-                // so child doesn't exist
-                childInfo = new NodeInfo({ path, exists: false });
-            }
-            else {
-                const reader = new NodeReader(this, parentInfo.address, lock, true);
-                childInfo = await reader.getChildInfo(pathInfo.key);
             }
 
-            if (options.include_child_count && [VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(childInfo.valueType)) {
-                if (!childInfo.address) {
-                    // value is stored inline, empty object or array: value === {} or []
-                    childInfo.childCount = 0;
-                }
-                else {
+            if (options.include_child_count) {
+                childInfo.childCount = 0;
+                if ([VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(childInfo.valueType) && childInfo.address) {
                     // Get number of children
-                    lock = await this.nodeLocker.lock(path, tid, false, `Node.getInfo "/${path}"`);
-                    const childReader = new NodeReader(this, childInfo.address, lock, true);
-                    childInfo.childCount = await childReader.getChildCount();
-                    // lock.release(`Node.getInfo: done with path "/${path}"`);
+                    const childLock = await this.nodeLocker.lock(path, tid, false, `Node.getInfo "/${path}"`);
+                    try {
+                        const childReader = new NodeReader(this, childInfo.address, childLock, true);
+                        childInfo.childCount = await childReader.getChildCount();
+                    }
+                    finally {
+                        childLock.release(`Node.getInfo: done with path "/${path}"`);
+                    }
                 }
             }
             // lock.release(`Node.getInfo: done with path "/${parentPath}"`);
