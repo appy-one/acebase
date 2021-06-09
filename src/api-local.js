@@ -944,7 +944,7 @@ class LocalApi extends Api {
                 }
                 else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
                     if (isObjectOrArray) {
-                        info.children = await getChildren(path, args.child_limit, args.child_skip, args.child_from)
+                        info.children = await getChildren(path, args.child_limit, args.child_skip, args.child_from);
                     }
                 }
                 return info;
