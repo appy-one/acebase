@@ -147,11 +147,11 @@ describe('node locking', () => {
             },
             async () => {
                 const products = await db.ref('products').count();
-                expect(products).toBeGreaterThanOrEqual(0);
+                expect(products).toBe(Object.keys(mem.products || {}).length);
             },
             async () => {
                 const posts = await db.ref('posts').count();
-                expect(posts).toBeGreaterThanOrEqual(0);
+                expect(posts).toBe(Object.keys(mem.posts || {}).length);
             },
             async () => {
                 // Transaction on 'stats'
