@@ -1862,7 +1862,7 @@ To export data from any node to json, you can use the export API. Simply pass an
 
 ```javascript
 let json = '';
-let stream = {
+const stream = {
     write(str) {
         json += str;
     }
@@ -1872,6 +1872,21 @@ db.ref('posts').export(stream)
     console.log('All posts have been exported:');
     console.log(json);
 })
+```
+
+To export to a file in node.js, you could use a filestream:
+```js
+const fstream = fs.createWriteStream('export.json', { flags: 'w+' });
+const stream = {
+    write: chunk => {
+        const ok = fstream.write(chunk);
+        if (!ok) {
+            return new Promise(resolve => fstream.once('drain', resolve));
+        }
+    }
+};
+await db.root.export(stream); // Export all data
+fstream.close(); 
 ```
 
 ## Upgrade notices
