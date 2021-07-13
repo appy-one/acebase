@@ -12,10 +12,11 @@ exports.AceBaseIPCPeerExitingError = AceBaseIPCPeerExitingError;
  * These processes will have to communicate with eachother because they are reading and writing to the same database file
  */
 class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
-    constructor(storage, id) {
+    constructor(storage, id, dbname = storage.name) {
         super();
         this.storage = storage;
         this.id = id;
+        this.dbname = dbname;
         this.ipcType = 'ipc';
         this.ourSubscriptions = [];
         this.remoteSubscriptions = [];

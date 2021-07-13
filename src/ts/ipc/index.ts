@@ -20,9 +20,9 @@ interface INodeIPCMessage extends IMessage {
  */
 export class IPCPeer extends AceBaseIPCPeer {
 
-    constructor(storage: Storage) {
+    constructor(storage: Storage, dbname: string) {
         const peerId = cluster.isMaster ? masterPeerId : cluster.worker.id.toString();
-        super(storage, peerId);
+        super(storage, peerId, dbname);
 
         this.masterPeerId = masterPeerId;
         this.ipcType = 'node.cluster';
@@ -55,7 +55,7 @@ export class IPCPeer extends AceBaseIPCPeer {
         }
 
         const handleMessage = (message:INodeIPCMessage) => {
-            if (message.dbname !== this.storage.name) {
+            if (message.dbname !== this.dbname) {
                 // Ignore, message not meant for this database
                 return;
             }
@@ -90,7 +90,7 @@ export class IPCPeer extends AceBaseIPCPeer {
 
     public sendMessage(msg: IMessage) {
         const message = msg as INodeIPCMessage;
-        message.dbname = this.storage.name;
+        message.dbname = this.dbname;
 
         if (cluster.isMaster) {
             // If we are the master, send the message to the target worker(s)

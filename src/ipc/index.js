@@ -11,9 +11,9 @@ const masterPeerId = '[master]';
  * the election of a single locking master: the one with the lowest id.
  */
 class IPCPeer extends ipc_1.AceBaseIPCPeer {
-    constructor(storage) {
+    constructor(storage, dbname) {
         const peerId = cluster.isMaster ? masterPeerId : cluster.worker.id.toString();
-        super(storage, peerId);
+        super(storage, peerId, dbname);
         this.masterPeerId = masterPeerId;
         this.ipcType = 'node.cluster';
         // Setup process exit handler
@@ -40,7 +40,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
             });
         }
         const handleMessage = (message) => {
-            if (message.dbname !== this.storage.name) {
+            if (message.dbname !== this.dbname) {
                 // Ignore, message not meant for this database
                 return;
             }
@@ -70,7 +70,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
     }
     sendMessage(msg) {
         const message = msg;
-        message.dbname = this.storage.name;
+        message.dbname = this.dbname;
         if (cluster.isMaster) {
             // If we are the master, send the message to the target worker(s)
             this.peers
