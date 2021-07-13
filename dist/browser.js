@@ -367,7 +367,7 @@ exports.default = pad;
 },{}],7:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.proxyAccess = exports.LiveDataProxy = void 0;
+exports.OrderedCollectionProxy = exports.proxyAccess = exports.LiveDataProxy = void 0;
 const utils_1 = require("./utils");
 const data_reference_1 = require("./data-reference");
 const data_snapshot_1 = require("./data-snapshot");
@@ -1065,6 +1065,11 @@ function createProxy(context) {
                         return context.flag('observe', context.target);
                     };
                 }
+                if (prop === 'getOrderedCollection') {
+                    return function getOrderedCollection(orderProperty, orderIncrement) {
+                        return new OrderedCollectionProxy(this, orderProperty, orderIncrement);
+                    };
+                }
                 if (prop === 'startTransaction') {
                     return function startTransaction() {
                         return context.flag('transaction', context.target);
@@ -1154,10 +1159,10 @@ function createProxy(context) {
                         };
                     }
                     if (['reduce', 'reduceRight'].includes(prop)) {
-                        return function reduce(callback) {
+                        return function reduce(callback, initialValue) {
                             return target[prop]((prev, value, i) => {
                                 return callback(prev, proxifyChildValue(i), i, proxy); //, value
-                            });
+                            }, initialValue);
                         };
                     }
                     if (['find', 'findIndex'].includes(prop)) {
@@ -1217,13 +1222,16 @@ function createProxy(context) {
                 prop = parseInt(prop);
             }
             if (value !== null) {
-                if (typeof value === 'object' && value[isProxy]) {
-                    // Assigning one proxied value to another
-                    value = value.getTarget(false);
-                }
-                else if (typeof value === 'object' && Object.isFrozen(value)) {
-                    // Create a copy to unfreeze it
-                    value = utils_1.cloneObject(value);
+                if (typeof value === 'object') {
+                    if (value[isProxy]) {
+                        // Assigning one proxied value to another
+                        value = value.valueOf();
+                    }
+                    // else if (Object.isFrozen(value)) {
+                    //     // Create a copy to unfreeze it
+                    //     value = cloneObject(value);
+                    // }
+                    value = utils_1.cloneObject(value); // Fix #10, always clone objects so changes made through the proxy won't change the original object (and vice versa)
                 }
                 if (typeof value !== 'object' && target[prop] === value) {
                     // not changing the actual value, ignore
@@ -1314,6 +1322,179 @@ function proxyAccess(proxiedValue) {
     return proxiedValue;
 }
 exports.proxyAccess = proxyAccess;
+/**
+ * Provides functionality to work with ordered collections through a live data proxy. Eliminates
+ * the need for arrays to handle ordered data by adding a 'sort' properties to child objects in a
+ * collection, and provides functionality to sort and reorder items with a minimal amount of database
+ * updates.
+ */
+class OrderedCollectionProxy {
+    constructor(collection, orderProperty = 'order', orderIncrement = 10) {
+        this.collection = collection;
+        this.orderProperty = orderProperty;
+        this.orderIncrement = orderIncrement;
+        if (typeof collection !== 'object' || !collection[isProxy]) {
+            throw new Error(`Collection is not proxied`);
+        }
+        if (collection.valueOf() instanceof Array) {
+            throw new Error(`Collection is an array, not an object collection`);
+        }
+        if (!Object.keys(collection).every(key => typeof collection[key] === 'object')) {
+            throw new Error(`Collection has non-object children`);
+        }
+        // Check if the collection has order properties. If not, assign them now
+        const ok = Object.keys(collection).every(key => typeof collection[key][orderProperty] === 'number');
+        if (!ok) {
+            // Assign order properties now. Database will be updated automatically
+            const keys = Object.keys(collection);
+            for (let i = 0; i < keys.length; i++) {
+                const item = collection[keys[i]];
+                item[orderProperty] = i * orderIncrement; // 0, 10, 20, 30 etc
+            }
+        }
+    }
+    /**
+     * Gets an observable for the target object collection. Same as calling `collection.getObservable()`
+     * @returns
+     */
+    getObservable() {
+        return proxyAccess(this.collection).getObservable();
+    }
+    /**
+     * Gets an observable that emits a new ordered array representation of the object collection each time
+     * the unlaying data is changed. Same as calling `getArray()` in a `getObservable().subscribe` callback
+     * @returns
+     */
+    getArrayObservable() {
+        const Observable = optional_observable_1.getObservable();
+        return new Observable(subscriber => {
+            const subscription = this.getObservable().subscribe(value => {
+                const newArray = this.getArray();
+                subscriber.next(newArray);
+            });
+            return function unsubscribe() {
+                subscription.unsubscribe();
+            };
+        });
+    }
+    /**
+     * Gets an ordered array representation of the items in your object collection. The items in the array
+     * are proxied values, changes will be in sync with the database. Note that the array itself
+     * is not mutable: adding or removing items to it will NOT update the collection in the
+     * the database and vice versa. Use `add`, `delete`, `sort` and `move` methods to make changes
+     * that impact the collection's sorting order
+     * @returns order array
+     */
+    getArray() {
+        const arr = proxyAccess(this.collection).toArray((a, b) => a[this.orderProperty] - b[this.orderProperty]);
+        // arr.push = (...items: T[]) => {
+        //     items.forEach(item => this.add(item));
+        //     return arr.length;
+        // };
+        return arr;
+    }
+    add(item, index, from) {
+        let arr = this.getArray();
+        let minOrder = Number.POSITIVE_INFINITY, maxOrder = Number.NEGATIVE_INFINITY;
+        for (let i = 0; i < arr.length; i++) {
+            const order = arr[i][this.orderProperty];
+            minOrder = Math.min(order, minOrder);
+            maxOrder = Math.max(order, maxOrder);
+        }
+        let fromKey;
+        if (typeof from === 'number') {
+            // Moving existing item
+            fromKey = Object.keys(this.collection).find(key => this.collection[key] === item);
+            if (!fromKey) {
+                throw new Error(`item not found in collection`);
+            }
+            if (from === index) {
+                return { key: fromKey, index };
+            }
+            if (Math.abs(from - index) === 1) {
+                // Position being swapped, swap their order property values
+                const otherItem = arr[index];
+                const otherOrder = otherItem[this.orderProperty];
+                otherItem[this.orderProperty] = item[this.orderProperty];
+                item[this.orderProperty] = otherOrder;
+                return { key: fromKey, index };
+            }
+            else {
+                // Remove from array, code below will add again
+                arr.splice(from, 1);
+            }
+        }
+        if (typeof index !== 'number' || index >= arr.length) {
+            // append at the end
+            index = arr.length;
+            item[this.orderProperty] = arr.length == 0 ? 0 : maxOrder + this.orderIncrement;
+        }
+        else if (index === 0) {
+            // insert before all others
+            item[this.orderProperty] = arr.length == 0 ? 0 : minOrder - this.orderIncrement;
+        }
+        else {
+            // insert between 2 others
+            const orders = arr.map(item => item[this.orderProperty]);
+            const gap = orders[index] - orders[index - 1];
+            if (gap > 1) {
+                item[this.orderProperty] = orders[index] - Math.floor(gap / 2);
+            }
+            else {
+                // TODO: Can this gap be enlarged by moving one of both orders?
+                // For now, change all other orders
+                arr.splice(index, 0, item);
+                for (let i = 0; i < arr.length; i++) {
+                    arr[i][this.orderProperty] = i * this.orderIncrement;
+                }
+            }
+        }
+        const key = typeof fromKey === 'string'
+            ? fromKey // Moved item, don't add it
+            : proxyAccess(this.collection).push(item);
+        return { key, index };
+    }
+    /**
+     * Deletes an item from the object collection using the their index in the sorted array representation
+     * @param index
+     * @returns the key of the collection's child that was deleted
+     */
+    delete(index) {
+        const arr = this.getArray();
+        const item = arr[index];
+        if (!item) {
+            throw new Error(`Item at index ${index} not found`);
+        }
+        const key = Object.keys(this.collection).find(key => this.collection[key] === item);
+        if (!key) {
+            throw new Error(`Cannot find target object to delete`);
+        }
+        this.collection[key] = null; // Deletes it from db
+        return { key, index };
+    }
+    /**
+     * Moves an item in the object collection by reordering it
+     * @param fromIndex Current index in the array (the ordered representation of the object collection)
+     * @param toIndex Target index in the array
+     * @returns
+     */
+    move(fromIndex, toIndex) {
+        const arr = this.getArray();
+        return this.add(arr[fromIndex], toIndex, fromIndex);
+    }
+    /**
+     * Reorders the object collection using given sort function. Allows quick reordering of the collection which is persisted in the database
+     * @param sortFn
+     */
+    sort(sortFn) {
+        const arr = this.getArray();
+        arr.sort(sortFn);
+        for (let i = 0; i < arr.length; i++) {
+            arr[i][this.orderProperty] = i * this.orderIncrement;
+        }
+    }
+}
+exports.OrderedCollectionProxy = OrderedCollectionProxy;
 
 },{"./data-reference":8,"./data-snapshot":9,"./id":11,"./optional-observable":13,"./path-reference":15,"./process":16,"./utils":23}],8:[function(require,module,exports){
 "use strict";
@@ -1458,8 +1639,32 @@ class DataReference {
      * @param onComplete completion callback to use instead of returning promise
      * @returns promise that resolves with this reference when completed (when not using onComplete callback)
      */
-    set(value, onComplete) {
-        const handleError = err => {
+    async set(value, onComplete) {
+        try {
+            if (this.isWildcardPath) {
+                throw new Error(`Cannot set the value of wildcard path "/${this.path}"`);
+            }
+            if (this.parent === null) {
+                throw new Error(`Cannot set the root object. Use update, or set individual child properties`);
+            }
+            if (typeof value === 'undefined') {
+                throw new TypeError(`Cannot store undefined value in "/${this.path}"`);
+            }
+            if (!this.db.isReady) {
+                await this.db.ready();
+            }
+            value = this.db.types.serialize(this.path, value);
+            await this.db.api.set(this.path, value, { context: this[_private].context });
+            if (typeof onComplete === 'function') {
+                try {
+                    onComplete(null, this);
+                }
+                catch (err) {
+                    console.error(`Error in onComplete callback:`, err);
+                }
+            }
+        }
+        catch (err) {
             if (typeof onComplete === 'function') {
                 try {
                     onComplete(err, this);
@@ -1470,39 +1675,10 @@ class DataReference {
             }
             else {
                 // throw again
-                return Promise.reject(err);
+                throw err;
             }
-        };
-        if (this.isWildcardPath) {
-            return handleError(new Error(`Cannot set the value of wildcard path "/${this.path}"`));
         }
-        if (this.parent === null) {
-            return handleError(new Error(`Cannot set the root object. Use update, or set individual child properties`));
-        }
-        if (typeof value === 'undefined') {
-            return handleError(new TypeError(`Cannot store undefined value in "/${this.path}"`));
-        }
-        if (!this.db.isReady) {
-            return this.db.ready().then(() => this.set(value, onComplete));
-        }
-        value = this.db.types.serialize(this.path, value);
-        return this.db.api.set(this.path, value, { context: this[_private].context })
-            .then(res => {
-            if (typeof onComplete === 'function') {
-                try {
-                    onComplete(null, this);
-                }
-                catch (err) {
-                    console.error(`Error in onComplete callback:`, err);
-                }
-            }
-        })
-            .catch(err => {
-            return handleError(err);
-        })
-            .then(() => {
-            return this;
-        });
+        return this;
     }
     /**
      * Updates properties of the referenced node
@@ -1510,8 +1686,34 @@ class DataReference {
      * @param onComplete completion callback to use instead of returning promise
      * @return returns promise that resolves with this reference once completed (when not using onComplete callback)
      */
-    update(updates, onComplete) {
-        const handleError = err => {
+    async update(updates, onComplete) {
+        try {
+            if (this.isWildcardPath) {
+                throw new Error(`Cannot update the value of wildcard path "/${this.path}"`);
+            }
+            if (!this.db.isReady) {
+                await this.db.ready();
+            }
+            if (typeof updates !== "object" || updates instanceof Array || updates instanceof ArrayBuffer || updates instanceof Date) {
+                await this.set(updates);
+            }
+            else if (Object.keys(updates).length === 0) {
+                console.warn(`update called on path "/${this.path}", but there is nothing to update`);
+            }
+            else {
+                updates = this.db.types.serialize(this.path, updates);
+                await this.db.api.update(this.path, updates, { context: this[_private].context });
+            }
+            if (typeof onComplete === 'function') {
+                try {
+                    onComplete(null, this);
+                }
+                catch (err) {
+                    console.error(`Error in onComplete callback:`, err);
+                }
+            }
+        }
+        catch (err) {
             if (typeof onComplete === 'function') {
                 try {
                     onComplete(err, this);
@@ -1522,43 +1724,10 @@ class DataReference {
             }
             else {
                 // throw again
-                return Promise.reject(err);
+                throw err;
             }
-        };
-        if (this.isWildcardPath) {
-            return handleError(new Error(`Cannot update the value of wildcard path "/${this.path}"`));
         }
-        let promise;
-        if (typeof updates !== "object" || updates instanceof Array || updates instanceof ArrayBuffer || updates instanceof Date) {
-            promise = this.set(updates);
-        }
-        else if (Object.keys(updates).length === 0) {
-            console.warn(`update called on path "/${this.path}", but there is nothing to update`);
-            promise = Promise.resolve();
-        }
-        else if (!this.db.isReady) {
-            return this.db.ready().then(() => this.update(updates, onComplete));
-        }
-        else {
-            updates = this.db.types.serialize(this.path, updates);
-            promise = this.db.api.update(this.path, updates, { context: this[_private].context });
-        }
-        return promise.then(() => {
-            if (typeof onComplete === 'function') {
-                try {
-                    onComplete(null, this);
-                }
-                catch (err) {
-                    console.error(`Error in onComplete callback:`, err);
-                }
-            }
-        })
-            .catch(err => {
-            return handleError(err);
-        })
-            .then(() => {
-            return this;
-        });
+        return this;
     }
     /**
      * Sets the value a node using a transaction: it runs your callback function with the current value, uses its return value as the new value to store.
@@ -1566,12 +1735,12 @@ class DataReference {
      * @param callback - callback function that performs the transaction on the node's current value. It must return the new value to store (or promise with new value), undefined to cancel the transaction, or null to remove the node.
      * @returns returns a promise that resolves with the DataReference once the transaction has been processed
      */
-    transaction(callback) {
+    async transaction(callback) {
         if (this.isWildcardPath) {
-            return Promise.reject(new Error(`Cannot start a transaction on wildcard path "/${this.path}"`));
+            throw new Error(`Cannot start a transaction on wildcard path "/${this.path}"`);
         }
         if (!this.db.isReady) {
-            return this.db.ready().then(() => this.transaction(callback));
+            await this.db.ready();
         }
         let throwError;
         let cb = (currentValue) => {
@@ -1600,14 +1769,12 @@ class DataReference {
                 return this.db.types.serialize(this.path, newValue);
             }
         };
-        return this.db.api.transaction(this.path, cb, { context: this[_private].context })
-            .then(result => {
-            if (throwError) {
-                // Rethrow error from callback code
-                throw throwError;
-            }
-            return this;
-        });
+        const result = await this.db.api.transaction(this.path, cb, { context: this[_private].context });
+        if (throwError) {
+            // Rethrow error from callback code
+            throw throwError;
+        }
+        return this;
     }
     /**
      * Subscribes to an event. Supported events are "value", "child_added", "child_changed", "child_removed",
@@ -1844,7 +2011,7 @@ class DataReference {
             }
             return Promise.reject(error);
         }
-        const id = id_1.ID.generate(); //uuid62.v1({ node: [0x61, 0x63, 0x65, 0x62, 0x61, 0x73] });
+        const id = id_1.ID.generate();
         const ref = this.child(id);
         ref[_private].pushed = true;
         if (typeof value !== 'undefined') {
@@ -1857,12 +2024,12 @@ class DataReference {
     /**
      * Removes this node and all children
      */
-    remove() {
+    async remove() {
         if (this.isWildcardPath) {
-            return Promise.reject(new Error(`Cannot remove wildcard path "/${this.path}". Use query().remove instead`));
+            throw new Error(`Cannot remove wildcard path "/${this.path}". Use query().remove instead`);
         }
         if (this.parent === null) {
-            throw Promise.reject(new Error(`Cannot remove the root node`));
+            throw new Error(`Cannot remove the root node`);
         }
         return this.set(null);
     }
@@ -1870,12 +2037,12 @@ class DataReference {
      * Quickly checks if this reference has a value in the database, without returning its data
      * @returns {Promise<boolean>} | returns a promise that resolves with a boolean value
      */
-    exists() {
+    async exists() {
         if (this.isWildcardPath) {
-            return Promise.reject(new Error(`Cannot check wildcard path "/${this.path}" existence`));
+            throw new Error(`Cannot check wildcard path "/${this.path}" existence`);
         }
-        else if (!this.db.isReady) {
-            return this.db.ready().then(() => this.exists());
+        if (!this.db.isReady) {
+            await this.db.ready();
         }
         return this.db.api.exists(this.path);
     }
@@ -1885,43 +2052,41 @@ class DataReference {
     query() {
         return new DataReferenceQuery(this);
     }
-    count() {
-        return this.reflect("info", { child_count: true })
-            .then(info => {
-            return info.children.count;
-        });
+    async count() {
+        const info = await this.reflect("info", { child_count: true });
+        return info.children.count;
     }
-    reflect(type, args) {
+    async reflect(type, args) {
         if (this.isWildcardPath) {
-            return Promise.reject(new Error(`Cannot reflect on wildcard path "/${this.path}"`));
+            throw new Error(`Cannot reflect on wildcard path "/${this.path}"`);
         }
-        else if (!this.db.isReady) {
-            return this.db.ready().then(() => this.reflect(type, args));
+        if (!this.db.isReady) {
+            await this.db.ready();
         }
         return this.db.api.reflect(this.path, type, args);
     }
-    export(stream, options = { format: 'json' }) {
+    async export(stream, options = { format: 'json' }) {
         if (this.isWildcardPath) {
-            return Promise.reject(new Error(`Cannot export wildcard path "/${this.path}"`));
+            throw new Error(`Cannot export wildcard path "/${this.path}"`);
         }
-        else if (!this.db.isReady) {
-            return this.db.ready().then(() => this.export(stream, options));
+        if (!this.db.isReady) {
+            await this.db.ready();
         }
         return this.db.api.export(this.path, stream, options);
     }
     proxy(defaultValue) {
         return data_proxy_1.LiveDataProxy.create(this, defaultValue);
     }
-    observe(options) {
+    async observe(options) {
         // options should not be used yet - we can't prevent/filter mutation events on excluded paths atm 
         if (options) {
             throw new Error('observe does not support data retrieval options yet');
         }
         if (this.isWildcardPath) {
-            return Promise.reject(new Error(`Cannot observe wildcard path "/${this.path}"`));
+            throw new Error(`Cannot observe wildcard path "/${this.path}"`);
         }
-        else if (!this.db.isReady) {
-            return this.db.ready().then(() => this.observe(options));
+        if (!this.db.isReady) {
+            await this.db.ready();
         }
         const Observable = optional_observable_1.getObservable();
         return new Observable(observer => {
@@ -4505,7 +4670,7 @@ class AceBase extends AceBaseBase {
 
     close() {
         // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.
-        return this.api.storage.ipc.exit();
+        return this.api.storage.close();
     }
 
     get settings() {
@@ -5611,7 +5776,7 @@ class LocalApi extends Api {
                 }
                 else if (typeof args.child_limit === 'number' && args.child_limit > 0) {
                     if (isObjectOrArray) {
-                        info.children = await getChildren(path, args.child_limit, args.child_skip, args.child_from)
+                        info.children = await getChildren(path, args.child_limit, args.child_skip, args.child_from);
                     }
                 }
                 return info;
@@ -5792,10 +5957,11 @@ exports.AceBaseIPCPeerExitingError = AceBaseIPCPeerExitingError;
  * These processes will have to communicate with eachother because they are reading and writing to the same database file
  */
 class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
-    constructor(storage, id) {
+    constructor(storage, id, dbname = storage.name) {
         super();
         this.storage = storage;
         this.id = id;
+        this.dbname = dbname;
         this.ipcType = 'ipc';
         this.ourSubscriptions = [];
         this.remoteSubscriptions = [];
@@ -6438,7 +6604,7 @@ class NodeLocker {
                 // else if (a.forWriting) { return -1; }
                 if (a.priority && !b.priority) { return -1; }
                 else if (!a.priority && b.priority) { return 1; }
-                return a.requested < b.requested;
+                return a.requested - b.requested;
             });
         pending.forEach(lock => {
             const check = this._allowLock(lock.path, lock.tid, lock.forWriting);
@@ -6462,7 +6628,7 @@ class NodeLocker {
         let lock, proceed;
         if (path instanceof NodeLock) {
             lock = path;
-            lock.comment = `(retry: ${lock.comment})`;
+            //lock.comment = `(retry: ${lock.comment})`;
             proceed = true;
         }
         else if (this._locks.findIndex((l => l.tid === tid && l.state === LOCK_STATE.EXPIRED)) >= 0) {
@@ -6472,7 +6638,7 @@ class NodeLocker {
             throw new Error(`Quitting`);
         }
         else {
-            DEBUG_MODE && console.error(`${forWriting ? "write" : "read"} lock requested on "${path}" by tid ${tid}`);
+            DEBUG_MODE && console.error(`${forWriting ? "write" : "read"} lock requested on "${path}" by tid ${tid} (${comment})`);
 
             // // Test the requested lock path
             // let duplicateKeys = getPathKeys(path)
@@ -6497,7 +6663,7 @@ class NodeLocker {
         }
 
         if (proceed) {
-            DEBUG_MODE && console.error(`${lock.forWriting ? "write" : "read"} lock ALLOWED on "${lock.path}" by tid ${lock.tid}`);
+            DEBUG_MODE && console.error(`${lock.forWriting ? "write" : "read"} lock ALLOWED on "${lock.path}" by tid ${lock.tid} (${lock.comment})`);
             lock.state = LOCK_STATE.LOCKED;
             if (typeof lock.granted === "number") {
                 //debug.warn(`lock :: ALLOWING ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
@@ -6625,6 +6791,7 @@ class NodeLock {
         const parentPath = PathInfo.get(this.path).parentPath; //getPathInfo(this.path).parent;
         const allowed = this.locker.isAllowed(parentPath, this.tid, this.forWriting); //_allowLock(parentPath, this.tid, this.forWriting);
         if (allowed) {
+            DEBUG_MODE && console.error(`moveToParent ALLOWED for ${this.forWriting ? 'write' : 'read'} lock on "${this.path}" by tid ${this.tid} (${this.comment})`);
             this.history.push({ path: this.path, forWriting: this.forWriting, action: 'moving to parent' });
             this.waitingFor = null;
             this.path = parentPath;
@@ -6633,10 +6800,12 @@ class NodeLock {
         }
         else {
             // Unlock without processing the queue
+            DEBUG_MODE && console.error(`moveToParent QUEUED for ${this.forWriting ? 'write' : 'read'} lock on "${this.path}" by tid ${this.tid} (${this.comment})`);
             this.locker.unlock(this, `moveLockToParent: ${this.comment}`, false);
 
             // Lock parent node with priority to jump the queue
             const newLock = await this.locker.lock(parentPath, this.tid, this.forWriting, this.comment, { withPriority: true });
+            DEBUG_MODE && console.error(`QUEUED moveToParent ALLOWED for ${this.forWriting ? 'write' : 'read'} lock on "${this.path}" by tid ${this.tid} (${this.comment})`);
             newLock.history = this.history;
             newLock.history.push({ path: this.path, forWriting: this.forWriting, action: 'moving to parent through queue (priority)' });
             return newLock;
@@ -7280,6 +7449,16 @@ function checkType(path, type, value, partial) {
     }
     return { ok: true };
 }
+function getConstructorType(val) {
+    switch (val) {
+        case String: return 'string';
+        case Number: return 'number';
+        case Boolean: return 'boolean';
+        case Date: return 'Date';
+        case Array: throw new Error(`Schema error: Array cannot be used without a type. Use string[] or Array<string> instead`);
+        default: throw new Error(`Schema error: unknown type used: ${val.name}`);
+    }
+}
 class SchemaDefinition {
     constructor(definition) {
         this.source = definition;
@@ -7287,11 +7466,11 @@ class SchemaDefinition {
             // Turn object into typescript definitions
             // eg:
             // const example = {
-            //     "name": "string",
-            //     "born": "Date",
-            //     "instrument": "'guitar'|'piano'",
+            //     name: String,
+            //     born: Date,
+            //     instrument: "'guitar'|'piano'",
             //     "address?": {
-            //         "street": "string"
+            //         street: String
             //     }
             // };
             // Resulting ts: "{name:string,born:Date,instrument:'guitar'|'piano',address?:{street:string}"
@@ -7299,11 +7478,17 @@ class SchemaDefinition {
                 return '{' + Object.keys(obj)
                     .map(key => {
                     let val = obj[key];
+                    if (val === undefined) {
+                        val = 'undefined';
+                    }
                     if (typeof val === 'object') {
                         val = toTS(val);
                     }
+                    else if (typeof val === 'function') {
+                        val = getConstructorType(val);
+                    }
                     else if (typeof val !== 'string') {
-                        throw new Error(`Type definition for ${key} must be a string or object`);
+                        throw new Error(`Type definition for ${key} must be a string, object, or constructor function (String,Number,Boolean,Date)`);
                     }
                     return `${key}:${val}`;
                 })
@@ -8764,6 +8949,9 @@ const { compareValues, getChildValues, encodeString, defer } = Utils;
 const { SchemaDefinition } = require('./schema');
 const { IPCPeer } = require('./ipc');
 const { pfs } = require('./promise-fs');
+// const { IPCTransactionManager } = require('./node-transaction');
+
+const DEBUG_MODE = false;
 
 class NodeNotFoundError extends Error {}
 class NodeRevisionError extends Error {}
@@ -8786,6 +8974,7 @@ class StorageSettings {
      * @param {boolean} [settings.removeVoidProperties=false] Instead of throwing errors on undefined values, remove the properties automatically. Default is false
      * @param {string} [settings.path="."] Target path to store database files in, default is '.'
      * @param {string} [settings.info="realtime database"] optional info to be written to the console output underneith the logo
+     * @param {string} [settings.type] optional type of storage class - will be used by AceBaseStorage to create different db files in the future (data, mutation, auth etc)
      */
     constructor(settings) {
         settings = settings || {};
@@ -8797,13 +8986,14 @@ class StorageSettings {
         /** @type {string} */
         this.logLevel = settings.logLevel || 'log';
         this.info = settings.info || 'realtime database';
+        this.type = settings.type;
     }
 }
 
 class Storage extends SimpleEventEmitter {
 
     createTid() {
-        return ++this._lastTid;
+        return DEBUG_MODE ? ++this._lastTid : ID.generate();
     }
 
     /**
@@ -8822,7 +9012,7 @@ class Storage extends SimpleEventEmitter {
         // this.nodeLocker = new NodeLocker();
 
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
-        this.ipc = new IPCPeer(this);
+        this.ipc = new IPCPeer(this, name + (typeof settings.type === 'string' ? `_${settings.type}` : ''));
         this.ipc.once('exit', code => {
             // We can perform any custom cleanup here:
             // - storage-acebase should close the db file
@@ -8835,7 +9025,8 @@ class Storage extends SimpleEventEmitter {
             lock: (path, tid, write, comment) => {
                 return this.ipc.lock({ path, tid, write, comment });
             }
-        }; 
+        };
+        // this.transactionManager = new IPCTransactionManager(this.ipc);
         this._lastTid = 0;
 
         // Setup indexing functionality
@@ -9217,6 +9408,11 @@ class Storage extends SimpleEventEmitter {
        
     } // end of constructor
 
+    async close() {
+        // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.
+        await this.ipc.exit();
+    }
+
     get path() {
         return `${this.settings.path}/${this.name}.acebase`;
     }
@@ -9364,34 +9560,7 @@ class Storage extends SimpleEventEmitter {
 
         // Is anyone interested in the values changing on this path?
         let topEventData = null;
-
         let { topEventPath, eventSubscriptions, hasValueSubscribers, indexes, keysFilter } = options.impact ? options.impact : this.getUpdateImpact(path, options.suppress_events);
-
-        // let topEventPath = path;
-        // let hasValueSubscribers = false;
-        
-        // // Get all subscriptions that should execute on the data (includes events on child nodes as well)
-        // let eventSubscriptions = options.suppress_events ? [] : this.subscriptions.getAllSubscribersForPath(path);
-
-        // // Get all subscriptions for data on this or ancestor nodes, determines what data to load before processing
-        // const valueSubscribers = options.suppress_events ? [] : this.subscriptions.getValueSubscribersForPath(path);
-        // if (valueSubscribers.length > 0) {
-        //     hasValueSubscribers = true;
-        //     let eventPaths = valueSubscribers
-        //         .map(sub => { return { path: sub.dataPath, keys: PathInfo.getPathKeys(sub.dataPath) }; })
-        //         .sort((a,b) => {
-        //             if (a.keys.length < b.keys.length) return -1;
-        //             else if (a.keys.length > b.keys.length) return 1;
-        //             return 0;
-        //         });
-        //     let first = eventPaths[0];
-        //     topEventPath = first.path;
-        //     if (valueSubscribers.filter(sub => sub.dataPath === topEventPath).every(sub => sub.type === 'mutated' || sub.type.startsWith('notify_'))) {
-        //         // Prevent loading of all data on path, so it'll only load changing properties
-        //         hasValueSubscribers = false;
-        //     }
-        //     topEventPath = PathInfo.fillVariables(topEventPath, path); // fill in any wildcards in the subscription path 
-        // }
 
         const writeNode = () => {
             if (typeof options._customWriteFunction === 'function') {
@@ -9413,58 +9582,10 @@ class Storage extends SimpleEventEmitter {
             return this._writeNode(path, value, options);            
         }
 
-        // // FIXED: indexes on higher path not being updated. 
-        // // Previously, updates on an indexed property did not update the index
-        // // example: 
-        // // a geo index on path 'restaurants', key 'location'
-        // // updates on 'restaurant/1' would update the index,
-        // // but updates on 'restaurent/1/location' would not
-        // const indexes = this.indexes.getAll(path, { childPaths: true, parentPaths: true })
-        //     .map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
-        //     .sort((a, b) => {
-        //         if (a.keys.length < b.keys.length) { return -1; }
-        //         else if (a.keys.length > b.keys.length) { return 1; }
-        //         return 0;
-        //     })
-        //     .map(obj => obj.index);
         if (eventSubscriptions.length === 0 && indexes.length === 0) {
             // Nobody's interested in value changes. Write node without tracking
             return writeNode();
         }
-        // let keysFilter = [];
-        // if (indexes.length > 0) {
-        //     indexes.sort((a,b) => {
-        //         if (typeof a._pathKeys === 'undefined') { a._pathKeys = PathInfo.getPathKeys(a.path); }
-        //         if (typeof b._pathKeys === 'undefined') { b._pathKeys = PathInfo.getPathKeys(b.path); }
-        //         if (a._pathKeys.length < b._pathKeys.length) return -1;
-        //         else if (a._pathKeys.length > b._pathKeys.length) return 1;
-        //         return 0;
-        //     });
-        //     const topIndex = indexes[0];
-        //     let topIndexPath = topIndex.path === path ? path : PathInfo.fillVariables(`${topIndex.path}/*`, path);
-        //     if (topIndexPath.length < topEventPath.length) {
-        //         // index is on a higher path than any value subscriber.
-        //         // eg: 
-        //         //      path = 'restaurants/1/rating'
-        //         //      topEventPath = 'restaurants/1/rating' (because of 'value' event on 'restaurants/*/rating')
-        //         //      topIndexPath = 'restaurants/1' (because of index on 'restaurants(/*)', key 'name', included key 'rating')
-        //         // set topEventPath to topIndexPath, but include only:
-        //         // - indexed keys on that path,
-        //         // - any additional child keys for all value event subscriptions in that path (they can never be different though?)
-        //         topEventPath = topIndexPath;
-        //         indexes.filter(index => index.path === topIndex.path).forEach(index => {
-        //             let keys = [index.key].concat(index.includeKeys);
-        //             keys.forEach(key => !keysFilter.includes(key) && keysFilter.push(key));
-        //         });
-        //         // following will never add any keys to the filter, right?!!
-        //         // let topKeys = topIndex.path;  
-        //         // eventSubscriptions.forEach(sub => {
-        //         //     let keys = PathInfo.getPathKeys(sub.dataPath);
-        //         //     let targetKey = keys[topKeys.length];
-        //         //     !keysFilter.includes(targetKey) && keysFilter.push(targetKey);
-        //         // })
-        //     }
-        // }
 
         if (!hasValueSubscribers && options.merge === true && keysFilter.length === 0) {
             // only load properties being updated
@@ -9980,74 +10101,61 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
-    transactNode(path, callback, options = { no_lock: false, suppress_events: false, context: null }) {
-        let checkRevision;
+    async transactNode(path, callback, options = { no_lock: false, suppress_events: false, context: null }) {
+        const useFakeLock = options && options.no_lock === true;
+        const tid = this.createTid();
+        const lock = useFakeLock
+            ? { tid, release() {} } // Fake lock, we'll use revision checking & retrying instead
+            : await this.nodeLocker.lock(path, tid, true, 'transactNode');
 
-        const tid = this.createTid(); // ID.generate();
-        const lockPromise = options && options.no_lock === true 
-            ? Promise.resolve({ tid, release() {} }) // Fake lock, we'll use revision checking & retrying instead
-            : this.nodeLocker.lock(path, tid, true, 'transactNode');
-
-        return lockPromise
-        .then(lock => {
-            let changed = false, changeCallback = () => {
-                changed = true;
-            };
-            if (options && options.no_lock) {
+        try {
+            let changed = false, changeCallback = () => { changed = true; };
+            if (useFakeLock) {
                 // Monitor value changes
                 this.subscriptions.add(path, 'notify_value', changeCallback);
             }
-            return this.getNode(path, { tid })
-            .then(node => {
-                checkRevision = node.revision;
-                let newValue;
-                try {
-                    newValue = callback(node.value);
-                }
-                catch (err) {
-                    this.debug.error(`Error in transaction callback: ${err.message}`);
-                }
+            const node = await this.getNode(path, { tid });
+            const checkRevision = node.revision;
+            let newValue;
+            try {
+                newValue = callback(node.value);
                 if (newValue instanceof Promise) {
-                    return newValue.catch(err => {
+                    newValue = await newValue.catch(err => {
                         this.debug.error(`Error in transaction callback: ${err.message}`);
                     });
                 }
-                return newValue;
-            })
-            .then(newValue => {
-                if (typeof newValue === 'undefined') {
-                    // Callback did not return value. Cancel transaction
-                    return;
-                }
-                // asserting revision is only needed when no_lock option was specified
-                if (options && options.no_lock) {
-                    this.subscriptions.remove(path, 'notify_value', changeCallback)
-                }
-                if (changed) {
-                    return Promise.reject(new NodeRevisionError(`Node changed`));
-                }
-                return this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid, suppress_events: options.suppress_events, context: options.context });
-            })
-            .then(result => {
-                lock.release();
-                return result;
-            })
-            .catch(err => {
-                lock.release();
-                // do it again
-                if (err instanceof NodeRevisionError) {
-                    console.warn(`node value changed, running again. Error: ${err.message}`);
-                    return this.transactNode(path, callback, options);
-                }
-                else {
-                    throw err;
-                }
-            })
-        });
+            }
+            catch (err) {
+                this.debug.error(`Error in transaction callback: ${err.message}`);
+            }
+            if (typeof newValue === 'undefined') {
+                // Callback did not return value. Cancel transaction
+                return;
+            }
+            // asserting revision is only needed when no_lock option was specified
+            if (useFakeLock) {
+                this.subscriptions.remove(path, 'notify_value', changeCallback)
+            }
+            if (changed) {
+                throw new NodeRevisionError(`Node changed`);
+            }
+            const result = await this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid, suppress_events: options.suppress_events, context: options.context });
+            return result;
+        }
+        catch (err) {
+            if (err instanceof NodeRevisionError) {
+                // try again
+                console.warn(`node value changed, running again. Error: ${err.message}`);
+                return this.transactNode(path, callback, options);
+            }
+            else {
+                throw err;
+            }
+        }
+        finally {
+            lock.release();
+        }
     }
-    // transactNode(path, callback, options = { tid: undefined }) {
-    //     throw new Error(`This method must be implemented by subclass`);
-    // }
 
     /**
      * Checks if a node's value matches the passed criteria
@@ -10298,15 +10406,18 @@ class Storage extends SimpleEventEmitter {
      * @param {{ write(str: string) => void|Promise<void>}} stream stream object that has a write method that (optionally) returns a promise the export needs to wait for before continuing
      * @returns {Promise<void>} returns a promise that resolves once all data is exported
      */
-    exportNode(path, stream, options = { format: 'json' }) {
+    async exportNode(path, stream, options = { format: 'json', type_safe: true }) {
         if (options && options.format !== 'json') {
             throw new Error(`Only json output is currently supported`);
         }
 
         const stringifyValue = (type, val) => {
-            const escape = str => str.replace(/\\/i, "\\\\").replace(/"/g, '\\"');
+            const escape = str => str.replace(/\\/i, "\\\\").replace(/"/g, '\\"').replace(/\n/g, '\\n');
             if (type === VALUE_TYPES.DATETIME) {
                 val = `"${val.toISOString()}"`;
+                if (options.type_safe) {
+                    val = `{".type":"Date",".val":${val}}`;
+                }
             }
             else if (type === VALUE_TYPES.STRING) {
                 val = `"${escape(val)}"`;
@@ -10319,123 +10430,73 @@ class Storage extends SimpleEventEmitter {
             }
             else if (type === VALUE_TYPES.BINARY) {
                 val = `"${escape(ascii85.encode(val))}"`; // TODO: use base64 instead, no escaping needed
+                if (options.type_safe) {
+                    val = `{".type":"Buffer",".val":${val}}`;
+                }
             }
             else if (type === VALUE_TYPES.REFERENCE) {
                 val = `"${val.path}"`;
+                if (options.type_safe) {
+                    val = `{".type":"PathReference",".val":${val}}`;
+                }
             }
             return val;
         };
 
-        const queue = [];
-        let outputCount = 0;
         let objStart = '', objEnd = '';
-        const buffer = {
-            output: '',
-            enable: false,
-            promise: null
+        const nodeInfo = await this.getNodeInfo(path);
+        if (!nodeInfo.exists) {
+            return stream.write('null');
+        }
+        else if (nodeInfo.type === VALUE_TYPES.OBJECT) { objStart = '{'; objEnd = '}'; }
+        else if (nodeInfo.type === VALUE_TYPES.ARRAY) { objStart = '['; objEnd = ']'; }
+        else {
+            // Node has no children, get and export its value
+            const value = await this.getNodeValue(path);
+            const val = stringifyValue(nodeInfo.type, value);
+            return stream.write(val);
         }
 
-        return this.getNodeInfo(path)
-        .then(nodeInfo => {
-            if (!nodeInfo.exists) {
-                stream.write('null');
+        if (objStart) {
+            const p = stream.write(objStart);
+            if (p instanceof Promise) { await p; }
+        }
+
+        let output = '', outputCount = 0;
+        const pending = [];
+        await this.getChildren(path)
+        .next(childInfo => {
+            if (childInfo.address) {
+                // Export child recursively
+                pending.push(childInfo);
             }
-            else if (nodeInfo.type === VALUE_TYPES.OBJECT) { objStart = '{'; objEnd = '}'; }
-            else if (nodeInfo.type === VALUE_TYPES.ARRAY) { objStart = '{'; objEnd = '}'; } // TODO: export as arrays, and guarantee the right order!!!
             else {
-                // Node has no children, get and export its value
-                return this.getNodeValue(path)
-                .then(value => {
-                    const val = stringifyValue(nodeInfo.type, value);
-                    return stream.write(val);
-                });
-            }
-
-            let p = Promise.resolve();
-            if (objStart) {
-                p = stream.write(objStart);
-                if (!(p instanceof Promise)) { p = Promise.resolve(); }
-            }
-            return p
-            .then(() => {
-                return this.getChildren(path)
-                .next(childInfo => {
-                    // if child is stored in the parent record, we can output it right now. 
-                    // If a child needs value fetching, queue it for output
-                    if (childInfo.address) {
-                        queue.push(childInfo);
-                    }
-                    else {
-                        const val = stringifyValue(childInfo.type, childInfo.value);
-                        const comma = outputCount > 0 ? ',' : '';
-                        const key = typeof childInfo.index === 'number' ? `"${childInfo.index}"` : `"${childInfo.key}"`;
-                        const output = `${comma}${key}:${val}`;
-                        outputCount++;
-                        if (buffer.enable) {
-                            // Output must be buffered. Doing this will probably not cost a lot of memory because these 
-                            // values are only the smaller (inline) ones being flushed. Larger ones will have been queued above
-                            buffer.output += output;
-                        }
-                        else {
-                            // Output can be flushed to the stream. If the write function resturns a promise, we need to buffer
-                            // further output before flushing again.
-                            const flush = output => {
-                                const p = stream.write(output);
-                                if (p instanceof Promise) {
-                                    // buffer all output until write promise resolves
-                                    buffer.enable = true;
-                                    buffer.promise = p.then(() => {
-                                        // We can flush now
-                                        const buffered = buffer.output;
-                                        buffer.enable = false;
-                                        buffer.output = '';
-                                        buffer.promise = null;
-                                        if (buffered.length > 0) {
-                                            return flush(buffered);
-                                        }
-                                    });
-                                    return buffer.promise;
-                                }
-                            }
-                            flush(output);
-                        }
-                    }
-                });
-            });
-        })
-        .then(() => {
-            return buffer.promise; // Wait for any buffered output to be flushed before continuing
-        })
-        .then(() => {
-            // process queueu
-            const next = () => {
-                if (queue.length === 0) { 
-                    // Done
-                    return; 
-                }
-                const childInfo = queue.shift();
-
-                const comma = outputCount > 0 ? ',' : '';
-                const key = typeof childInfo.index === 'number' ? `"${childInfo.index}"` : `"${childInfo.key}"`;
-                let p = stream.write(`${comma}${key}:`);
-                outputCount++;
-                if (!(p instanceof Promise)) {
-                    p = Promise.resolve(p);
-                }
-                return p.then(() => {
-                    return this.exportNode(childInfo.address.path, stream);
-                })
-                .then(() => {
-                    return next();
-                });
-            };
-            return next();
-        })
-        .then(() => {
-            if (objEnd) {
-                return stream.write(objEnd);
+                if (outputCount++ > 0) { output += ','; }
+                if (typeof childInfo.key === 'string') { output += `"${childInfo.key}":`; }
+                output += stringifyValue(childInfo.type, childInfo.value);
             }
         });
+        if (output) {
+            const p = stream.write(output);
+            if (p instanceof Promise) { await p; }
+        }
+
+        while (pending.length > 0) {
+            const childInfo = pending.shift();
+            let output = outputCount++ > 0 ? ',' : '';
+            const key = typeof childInfo.index === 'number' ? childInfo.index : childInfo.key;
+            if (typeof key === 'string') { output += `"${key}":`; }
+            if (output) {
+                const p = stream.write(output);
+                if (p instanceof Promise) { await p; }
+            }
+            await this.exportNode(PathInfo.getChildPath(path, key), stream, options);
+        }
+
+        if (objEnd) {
+            const p = stream.write(objEnd);
+            if (p instanceof Promise) { await p; }
+        }
     }
 
     /**
