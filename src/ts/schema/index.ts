@@ -250,6 +250,17 @@ function checkType(path: string, type: IType, value: any, partial: boolean) : IS
     return { ok: true };
 }
 
+function getConstructorType(val: Function) {
+    switch (val) {
+        case String: return 'string';
+        case Number: return 'number';
+        case Boolean: return 'boolean';
+        case Date: return 'Date';
+        case Array: throw new Error(`Schema error: Array cannot be used without a type. Use string[] or Array<string> instead`);
+        default: throw new Error(`Schema error: unknown type used: ${val.name}`);
+    }
+}
+
 export class SchemaDefinition {
     readonly source: string|Object
     readonly text: string
@@ -260,11 +271,11 @@ export class SchemaDefinition {
             // Turn object into typescript definitions
             // eg:
             // const example = {
-            //     "name": "string",
-            //     "born": "Date",
-            //     "instrument": "'guitar'|'piano'",
+            //     name: String,
+            //     born: Date,
+            //     instrument: "'guitar'|'piano'",
             //     "address?": {
-            //         "street": "string"
+            //         street: String
             //     }
             // };
             // Resulting ts: "{name:string,born:Date,instrument:'guitar'|'piano',address?:{street:string}"
@@ -272,11 +283,13 @@ export class SchemaDefinition {
                 return '{' + Object.keys(obj)
                 .map(key => {
                     let val = obj[key];
+                    if (val === undefined) { val = 'undefined'; }
                     if (typeof val === 'object') { val = toTS(val); }
-                    else if (typeof val !== 'string') { throw new Error(`Type definition for ${key} must be a string or object`); }
+                    else if (typeof val === 'function') { val = getConstructorType(val); }
+                    else if (typeof val !== 'string') { throw new Error(`Type definition for ${key} must be a string, object, or constructor function (String,Number,Boolean,Date)`); }
                     return `${key}:${val}`;
                 })
-                .join(',') + '}'
+                .join(',') + '}';
             }
             this.text = toTS(definition);
         }
