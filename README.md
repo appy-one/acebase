@@ -1358,14 +1358,16 @@ To define a schema, use `db.schema.set(path, schema)`. This will add a schema de
 
 The following types are supported: 
 * Types returned by `typeof`: `string`, `number`, `boolean`, `object`\*, and `undefined`\*\*
-* Classnames: `Object`* and `Date`
+* Classnames: `Date`, `Object`*, (_v1.8.0+_:) `String`, `Number`, `Boolean`
 * Interface definitions: `{ "prop1": "string", "prop2": "Date" }`
 * Arrays: `string[]`, `number[]`, ``Date[]``, `{ "prop": "string" }[]` etc
 * Arrays (generic): `Array<Date>`, `Array<string | number>`, `Array<{ "prop1": "string" }>` etc
 * Binary: `Binary`, `binary`
 * Any type: `any` or `*`
 * Combinations: `string | number | Date[]`
-* Specific values: `1 | 2 | 3`, or `"car" | "boat" | "airplane"` etc
+* Specific values: `1 | 2 | 3`, `"car" | "boat" | "airplane"`, `true` etc
+* Regular expressions (_v1.8.0+_): `/^[A-Z]{2}$/` (NL, EN, DE, US, etc), `/^[a-z.\-_]+@(?:[a-z\-_]+\.){1,}[a-z]{2,}$/i` (email addresses), etc
+* Optional values: property names suffixed with `?`
 
 \* Types `object` and `Object` are treated the same way: they allow a given value to be *any* object, *except* `Array`, `Date` and binary values. This means that if you are using custom class mappings, you will be able to store a `Pet` object, but not an `Array`.
 
@@ -1375,39 +1377,39 @@ The following types are supported:
 
 ```js
 // Set schema for users:
-await db.schema.set("users/$uid", {
-    "name": "string",
-    "email": "string",
-    "birthdate?": "Date" // optional birthdate
+await db.schema.set('users/$uid', {
+    name: 'string',
+    email: 'string',
+    "birthdate?": 'Date' // optional birthdate
     "address?": { // optional address
-        "street": "string",
-        "nr": "number | string",
-        "building?": "string",
-        "city": "number",
-        "postal_code": "string",
-        "country": "string"
+        street: 'string',
+        nr: 'number | string',
+        "building?": 'string',
+        city: 'number',
+        postal_code: 'string',
+        country: /^[A-Z]{2}$/  // 2 uppercase character strings
     },
-    "posts?": "object", // Optional posts
+    "posts?": 'object', // Optional posts
 });
 
 // Set schema for user posts, using string definitions:
 await db.schema.set(
-    "users/$uid/posts/$postid", 
-    "{ title: string, text: string, posted: Date, edited?: Date, tags: string[] }"
+    'users/$uid/posts/$postid', 
+    '{ title: string, text: string, posted: Date, edited?: Date, tags: string[] }'
 );
 
 // Set schema for user AND posts in 1 schema definition:
-await db.schema.set("users/$uid", {
-    "name": "string", 
+await db.schema.set('users/$uid', {
+    name: 'string', 
     // ...
     "posts?": {
         // use wildcard "*", or "$postid" for each child:
         "*": { 
-            "title": "string",
-            "text": "string",
-            "posted": "Date",
-            "edited?": "Date",
-            "tags": "string[]",
+            title: 'string',
+            text: 'string',
+            posted: 'Date',
+            "edited?": 'Date',
+            tags: 'string[]',
         }
     }
 });
