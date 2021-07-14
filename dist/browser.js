@@ -168,7 +168,7 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
 }
 exports.AceBaseBase = AceBaseBase;
 
-},{"./data-reference":8,"./debug":10,"./optional-observable":13,"./simple-colors":18,"./simple-event-emitter":19,"./type-mappings":22}],2:[function(require,module,exports){
+},{"./data-reference":8,"./debug":10,"./optional-observable":13,"./simple-colors":19,"./simple-event-emitter":20,"./type-mappings":23}],2:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Api = void 0;
@@ -1496,7 +1496,7 @@ class OrderedCollectionProxy {
 }
 exports.OrderedCollectionProxy = OrderedCollectionProxy;
 
-},{"./data-reference":8,"./data-snapshot":9,"./id":11,"./optional-observable":13,"./path-reference":15,"./process":16,"./utils":23}],8:[function(require,module,exports){
+},{"./data-reference":8,"./data-snapshot":9,"./id":11,"./optional-observable":13,"./path-reference":15,"./process":16,"./utils":24}],8:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DataReferencesArray = exports.DataSnapshotsArray = exports.DataReferenceQuery = exports.DataReference = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = void 0;
@@ -2466,7 +2466,7 @@ class DataReferencesArray extends Array {
 }
 exports.DataReferencesArray = DataReferencesArray;
 
-},{"./data-proxy":7,"./data-snapshot":9,"./id":11,"./optional-observable":13,"./path-info":14,"./subscription":20}],9:[function(require,module,exports){
+},{"./data-proxy":7,"./data-snapshot":9,"./id":11,"./optional-observable":13,"./path-info":14,"./subscription":21}],9:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MutationsDataSnapshot = exports.DataSnapshot = void 0;
@@ -2672,7 +2672,7 @@ exports.ID = ID;
 },{"./cuid":5}],12:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.proxyAccess = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
+exports.SchemaDefinition = exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.proxyAccess = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
 var acebase_base_1 = require("./acebase-base");
 Object.defineProperty(exports, "AceBaseBase", { enumerable: true, get: function () { return acebase_base_1.AceBaseBase; } });
 Object.defineProperty(exports, "AceBaseBaseSettings", { enumerable: true, get: function () { return acebase_base_1.AceBaseBaseSettings; } });
@@ -2714,8 +2714,10 @@ Object.defineProperty(exports, "SimpleEventEmitter", { enumerable: true, get: fu
 var simple_colors_1 = require("./simple-colors");
 Object.defineProperty(exports, "ColorStyle", { enumerable: true, get: function () { return simple_colors_1.ColorStyle; } });
 Object.defineProperty(exports, "Colorize", { enumerable: true, get: function () { return simple_colors_1.Colorize; } });
+var schema_1 = require("./schema");
+Object.defineProperty(exports, "SchemaDefinition", { enumerable: true, get: function () { return schema_1.SchemaDefinition; } });
 
-},{"./acebase-base":1,"./api":2,"./ascii85":3,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./path-info":14,"./path-reference":15,"./simple-cache":17,"./simple-colors":18,"./simple-event-emitter":19,"./subscription":20,"./transport":21,"./type-mappings":22,"./utils":23}],13:[function(require,module,exports){
+},{"./acebase-base":1,"./api":2,"./ascii85":3,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./path-info":14,"./path-reference":15,"./schema":17,"./simple-cache":18,"./simple-colors":19,"./simple-event-emitter":20,"./subscription":21,"./transport":22,"./type-mappings":23,"./utils":24}],13:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.setObservable = exports.getObservable = void 0;
@@ -3089,6 +3091,341 @@ exports.default = {
 },{}],17:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.SchemaDefinition = void 0;
+// parses a typestring, creates checker functions 
+function parse(definition) {
+    // tokenize
+    let pos = 0;
+    function consumeSpaces() {
+        let c;
+        while (c = definition[pos], [' ', '\r', '\n', '\t'].includes(c)) {
+            pos++;
+        }
+    }
+    function consumeCharacter(c) {
+        if (definition[pos] !== c) {
+            throw new Error(`Unexpected character at position ${pos}. Expected: '${c}', found '${definition[pos]}'`);
+        }
+        pos++;
+    }
+    function readProperty() {
+        consumeSpaces();
+        let prop = { name: '', optional: false, wildcard: false }, c;
+        while (c = definition[pos], c === '_' || c === '$' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (prop.name.length > 0 && c >= '0' && c <= '9') || (prop.name.length === 0 && c === '*')) {
+            prop.name += c;
+            pos++;
+        }
+        if (prop.name.length === 0) {
+            throw new Error(`Property name expected at position ${pos}`);
+        }
+        if (definition[pos] === '?') {
+            prop.optional = true;
+            pos++;
+        }
+        if (prop.name === '*' || prop.name[0] === '$') {
+            prop.optional = true;
+            prop.wildcard = true;
+        }
+        consumeSpaces();
+        consumeCharacter(':');
+        return prop;
+    }
+    function readType() {
+        consumeSpaces();
+        let type = { typeOf: 'any' }, c;
+        // try reading simple type first: (string,number,boolean,Date etc)
+        let name = '';
+        while (c = definition[pos], (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+            name += c;
+            pos++;
+        }
+        if (name.length === 0) {
+            if (definition[pos] === '*') {
+                // any value
+                consumeCharacter('*');
+                type.typeOf = 'any';
+            }
+            else if ([`'`, `"`, '`'].includes(definition[pos])) {
+                // Read string value
+                type.typeOf = 'string';
+                type.value = '';
+                const quote = definition[pos];
+                consumeCharacter(quote);
+                while (c = definition[pos], c && c !== quote) {
+                    type.value += c;
+                    pos++;
+                }
+                consumeCharacter(quote);
+            }
+            else if (definition[pos] >= '0' && definition[pos] <= '9') {
+                // read numeric value
+                type.typeOf = 'number';
+                let nr = '';
+                while (c = definition[pos], c === '.' || (c >= '0' && c <= '9')) {
+                    nr += c;
+                    pos++;
+                }
+                type.value = nr.includes('.') ? parseFloat(nr) : parseInt(nr);
+            }
+            else if (definition[pos] === '{') {
+                // Read object (interface) definition 
+                consumeCharacter('{');
+                type.typeOf = 'object';
+                type.instanceOf = Object;
+                // Read children:
+                type.children = [];
+                while (true) {
+                    const prop = readProperty();
+                    const types = readTypes();
+                    type.children.push({ name: prop.name, optional: prop.optional, wildcard: prop.wildcard, types });
+                    consumeSpaces();
+                    if (definition[pos] === '}') {
+                        break;
+                    }
+                    consumeCharacter(',');
+                }
+                consumeCharacter('}');
+            }
+            else if (definition[pos] === '/') {
+                // Read regular expression defintion
+                consumeCharacter('/');
+                let pattern = '', flags = '';
+                while (c = definition[pos], c !== '/' || pattern.endsWith('\\')) {
+                    pattern += c;
+                    pos++;
+                }
+                consumeCharacter('/');
+                while (c = definition[pos], ['g', 'i', 'm', 's', 'u', 'y', 'd'].includes(c)) {
+                    flags += c;
+                    pos++;
+                }
+                type.typeOf = 'string';
+                type.matches = new RegExp(pattern, flags);
+            }
+            else {
+                throw new Error(`Expected a type definition at position ${pos}, found character '${definition[pos]}'`);
+            }
+        }
+        else if (['string', 'number', 'boolean', 'undefined', 'String', 'Number', 'Boolean'].includes(name)) {
+            type.typeOf = name.toLowerCase();
+        }
+        else if (name === 'Object' || name === 'object') {
+            type.typeOf = 'object';
+            type.instanceOf = Object;
+        }
+        else if (name === 'Date') {
+            type.typeOf = 'object';
+            type.instanceOf = Date;
+        }
+        else if (name === 'Binary' || name === 'binary') {
+            type.typeOf = 'object';
+            type.instanceOf = ArrayBuffer;
+        }
+        else if (name === 'any') {
+            type.typeOf = 'any';
+        }
+        else if (name === 'null') {
+            // This is ignored, null values are not stored in the db (null indicates deletion)
+            type.typeOf = 'object';
+            type.value = null;
+        }
+        else if (name === 'Array') {
+            // Read generic Array defintion
+            consumeCharacter('<');
+            type.typeOf = 'object';
+            type.instanceOf = Array; //name;
+            type.genericTypes = readTypes();
+            consumeCharacter('>');
+        }
+        else if (['true', 'false'].includes(name)) {
+            type.typeOf = 'boolean';
+            type.value = name === 'true';
+        }
+        else {
+            throw new Error(`Unknown type at position ${pos}: "${type}"`);
+        }
+        // Check if it's an Array of given type (eg: string[] or string[][])
+        // Also converts to generics, string[] becomes Array<string>, string[][] becomes Array<Array<string>>
+        consumeSpaces();
+        while (definition[pos] === '[') {
+            consumeCharacter('[');
+            consumeCharacter(']');
+            type = { typeOf: 'object', instanceOf: Array, genericTypes: [type] };
+        }
+        return type;
+    }
+    function readTypes() {
+        consumeSpaces();
+        const types = [readType()];
+        while (definition[pos] === '|') {
+            consumeCharacter('|');
+            types.push(readType());
+            consumeSpaces();
+        }
+        return types;
+    }
+    return readType();
+}
+function checkObject(path, properties, obj, partial) {
+    // Are there any properties that should not be in there?
+    const invalidProperties = properties.find(prop => prop.name === '*' || prop.name[0] === '$') // Only if no wildcard properties are allowed
+        ? []
+        : Object.keys(obj).filter(key => ![null, undefined].includes(obj[key]) // Ignore null or undefined values
+            && !properties.find(prop => prop.name === key));
+    if (invalidProperties.length > 0) {
+        return { ok: false, reason: `Object at path "${path}" cannot have properties ${invalidProperties.map(p => `"${p}"`).join(', ')}` };
+    }
+    // Loop through properties that should be present
+    function checkProperty(property) {
+        const hasValue = ![null, undefined].includes(obj[property.name]);
+        if (!property.optional && (partial ? obj[property.name] === null : !hasValue)) {
+            return { ok: false, reason: `Property at path "${path}/${property.name}" is not optional` };
+        }
+        if (hasValue && property.types.length === 1) {
+            return checkType(`${path}/${property.name}`, property.types[0], obj[property.name], false);
+        }
+        if (hasValue && !property.types.some(type => checkType(`${path}/${property.name}`, type, obj[property.name], false).ok)) {
+            return { ok: false, reason: `Property at path "${path}/${property.name}" is of the wrong type` };
+        }
+        return { ok: true };
+    }
+    const namedProperties = properties.filter(prop => !prop.wildcard);
+    const failedProperty = namedProperties.find(prop => !checkProperty(prop).ok);
+    if (failedProperty) {
+        const reason = checkProperty(failedProperty).reason;
+        return { ok: false, reason };
+    }
+    const wildcardProperty = properties.find(prop => prop.wildcard);
+    if (!wildcardProperty) {
+        return { ok: true };
+    }
+    const wildcardChildKeys = Object.keys(obj).filter(key => !namedProperties.find(prop => prop.name === key));
+    let result = { ok: true };
+    for (let i = 0; i < wildcardChildKeys.length && result.ok; i++) {
+        const childKey = wildcardChildKeys[i];
+        result = checkProperty({ name: childKey, types: wildcardProperty.types, optional: true, wildcard: true });
+    }
+    return result;
+}
+function checkType(path, type, value, partial, trailKeys) {
+    if (trailKeys instanceof Array && trailKeys.length > 0) {
+        // The value to check resides in a descendant path of given type definition. 
+        // Recursivly check child type definitions to find a match
+        if (type.typeOf !== 'object') {
+            return { ok: false, reason: `path "${path}" must be typeof ${type.typeOf}` }; // given value resides in a child path, but parent is not allowed be an object.
+        }
+        const childKey = trailKeys[0];
+        let property = type.children.find(prop => prop.name === childKey);
+        if (!property) {
+            property = type.children.find(prop => prop.name === '*' || prop.name[0] === '$');
+        }
+        if (!property) {
+            return { ok: false, reason: `Object at path "${path}" cannot have property "${childKey}"` };
+        }
+        if (property.optional && value === null && trailKeys.length === 1) {
+            return { ok: true };
+        }
+        let result;
+        property.types.some(type => {
+            const childPath = typeof childKey === 'number' ? `${path}[${childKey}]` : `${path}/${childKey}`;
+            result = checkType(childPath, type, value, partial, trailKeys.slice(1));
+            return result.ok;
+        });
+        return result;
+    }
+    if (value === null) {
+        return { ok: true };
+    }
+    if (type.typeOf !== 'any' && typeof value !== type.typeOf) {
+        return { ok: false, reason: `path "${path}" must be typeof ${type.typeOf}` };
+    }
+    if (type.instanceOf === Object && (typeof value !== 'object' || value instanceof Array || value instanceof Date)) {
+        return { ok: false, reason: `path "${path}" must be an object collection` };
+    }
+    if (type.instanceOf && (typeof value !== 'object' || value.constructor !== type.instanceOf)) { // !(value instanceof type.instanceOf) // value.constructor.name !== type.instanceOf
+        return { ok: false, reason: `path "${path}" must be an instance of ${type.instanceOf.name}` };
+    }
+    if ('value' in type && value !== type.value) {
+        return { ok: false, reason: `path "${path}" must be value: ${type.value}` };
+    }
+    if (type.instanceOf === Array && type.genericTypes && !value.every(v => type.genericTypes.some(t => checkType(path, t, v, false).ok))) {
+        return { ok: false, reason: `every array value of path "${path}" must match one of the specified types` };
+    }
+    if (type.typeOf === 'object' && type.children) {
+        return checkObject(path, type.children, value, partial);
+    }
+    if (type.matches && !type.matches.test(value)) {
+        return { ok: false, reason: `path "${path}" must match regular expression /${type.matches.source}/${type.matches.flags}` };
+    }
+    return { ok: true };
+}
+function getConstructorType(val) {
+    switch (val) {
+        case String: return 'string';
+        case Number: return 'number';
+        case Boolean: return 'boolean';
+        case Date: return 'Date';
+        case Array: throw new Error(`Schema error: Array cannot be used without a type. Use string[] or Array<string> instead`);
+        default: throw new Error(`Schema error: unknown type used: ${val.name}`);
+    }
+}
+class SchemaDefinition {
+    constructor(definition) {
+        this.source = definition;
+        if (typeof definition === 'object') {
+            // Turn object into typescript definitions
+            // eg:
+            // const example = {
+            //     name: String,
+            //     born: Date,
+            //     instrument: "'guitar'|'piano'",
+            //     "address?": {
+            //         street: String
+            //     }
+            // };
+            // Resulting ts: "{name:string,born:Date,instrument:'guitar'|'piano',address?:{street:string}"
+            const toTS = obj => {
+                return '{' + Object.keys(obj)
+                    .map(key => {
+                    let val = obj[key];
+                    if (val === undefined) {
+                        val = 'undefined';
+                    }
+                    else if (val instanceof RegExp) {
+                        val = `/${val.source}/${val.flags}`;
+                    }
+                    else if (typeof val === 'object') {
+                        val = toTS(val);
+                    }
+                    else if (typeof val === 'function') {
+                        val = getConstructorType(val);
+                    }
+                    else if (!['string', 'number', 'boolean'].includes(typeof val)) {
+                        throw new Error(`Type definition for key "${key}" must be a string, number, boolean, object, regular expression, or one of these classes: String, Number, Boolean, Date`);
+                    }
+                    return `${key}:${val}`;
+                })
+                    .join(',') + '}';
+            };
+            this.text = toTS(definition);
+        }
+        else if (typeof definition === 'string') {
+            this.text = definition;
+        }
+        else {
+            throw new Error(`Type definiton must be a string or an object`);
+        }
+        this.type = parse(this.text);
+    }
+    check(path, value, partial, trailKeys) {
+        return checkType(path, this.type, value, partial, trailKeys);
+    }
+}
+exports.SchemaDefinition = SchemaDefinition;
+
+},{}],18:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleCache = void 0;
 class SimpleCache {
     constructor(expirySeconds) {
@@ -3120,7 +3457,7 @@ class SimpleCache {
 }
 exports.SimpleCache = SimpleCache;
 
-},{}],18:[function(require,module,exports){
+},{}],19:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Colorize = exports.SetColorsEnabled = exports.ColorsSupported = exports.ColorStyle = void 0;
@@ -3272,7 +3609,7 @@ String.prototype.colorize = function (style) {
     return Colorize(this, style);
 };
 
-},{"./process":16}],19:[function(require,module,exports){
+},{"./process":16}],20:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleEventEmitter = void 0;
@@ -3357,7 +3694,7 @@ class SimpleEventEmitter {
 }
 exports.SimpleEventEmitter = SimpleEventEmitter;
 
-},{}],20:[function(require,module,exports){
+},{}],21:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EventStream = exports.EventPublisher = exports.EventSubscription = void 0;
@@ -3545,7 +3882,7 @@ class EventStream {
 }
 exports.EventStream = EventStream;
 
-},{}],21:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Transport = void 0;
@@ -3642,7 +3979,7 @@ exports.Transport = {
     }
 };
 
-},{"./ascii85":3,"./path-info":14,"./path-reference":15,"./utils":23}],22:[function(require,module,exports){
+},{"./ascii85":3,"./path-info":14,"./path-reference":15,"./utils":24}],23:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TypeMappings = void 0;
@@ -3946,7 +4283,7 @@ class TypeMappings {
 }
 exports.TypeMappings = TypeMappings;
 
-},{"./data-reference":8,"./data-snapshot":9,"./path-info":14,"./utils":23}],23:[function(require,module,exports){
+},{"./data-reference":8,"./data-snapshot":9,"./path-info":14,"./utils":24}],24:[function(require,module,exports){
 (function (Buffer){(function (){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -4288,7 +4625,7 @@ function defer(fn) {
 exports.defer = defer;
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"./data-snapshot":9,"./path-reference":15,"./process":16,"buffer":39}],24:[function(require,module,exports){
+},{"./data-snapshot":9,"./path-reference":15,"./process":16,"buffer":39}],25:[function(require,module,exports){
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
@@ -4629,7 +4966,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { BrowserAceBase };
-},{"./acebase-local":25,"./storage-custom":37}],25:[function(require,module,exports){
+},{"./acebase-local":26,"./storage-custom":37}],26:[function(require,module,exports){
 const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
 const { StorageSettings } = require('./storage');
 const { LocalApi } = require('./api-local');
@@ -4829,7 +5166,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":26,"./storage":38,"./storage-custom":37,"acebase-core":12}],26:[function(require,module,exports){
+},{"./api-local":27,"./storage":38,"./storage-custom":37,"acebase-core":12}],27:[function(require,module,exports){
 const { Api } = require('acebase-core');
 const { StorageSettings, NodeNotFoundError } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
@@ -5806,7 +6143,7 @@ class LocalApi extends Api {
 }
 
 module.exports = { LocalApi };
-},{"./data-index":34,"./node":33,"./storage":38,"./storage-acebase":34,"./storage-custom":37,"./storage-mssql":34,"./storage-sqlite":34,"acebase-core":12}],27:[function(require,module,exports){
+},{"./data-index":35,"./node":34,"./storage":38,"./storage-acebase":35,"./storage-custom":37,"./storage-mssql":35,"./storage-sqlite":35,"acebase-core":12}],28:[function(require,module,exports){
 /**
    ________________________________________________________________________________
    
@@ -5852,7 +6189,7 @@ window.acebase = acebase;
 window.AceBase = BrowserAceBase;
 // Expose classes for module imports:
 module.exports = acebase;
-},{"./acebase-browser":24,"./acebase-local":25,"./storage-custom":37,"acebase-core":12}],28:[function(require,module,exports){
+},{"./acebase-browser":25,"./acebase-local":26,"./storage-custom":37,"acebase-core":12}],29:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IPCPeer = void 0;
@@ -5942,7 +6279,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
 }
 exports.IPCPeer = IPCPeer;
 
-},{"./ipc":29,"acebase-core":12}],29:[function(require,module,exports){
+},{"./ipc":30,"acebase-core":12}],30:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
@@ -6429,7 +6766,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock":31,"acebase-core":12}],30:[function(require,module,exports){
+},{"../node-lock":32,"acebase-core":12}],31:[function(require,module,exports){
 const { getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
 
@@ -6491,7 +6828,7 @@ class NodeInfo {
 }
 
 module.exports = { NodeInfo };
-},{"./node-value-types":32,"acebase-core":12}],31:[function(require,module,exports){
+},{"./node-value-types":33,"acebase-core":12}],32:[function(require,module,exports){
 const { PathInfo, ID } = require('acebase-core');
 
 const SECOND = 1000;
@@ -6843,7 +7180,7 @@ class NodeLock {
 }
 
 module.exports = { NodeLocker, NodeLock };
-},{"acebase-core":12}],32:[function(require,module,exports){
+},{"acebase-core":12}],33:[function(require,module,exports){
 const { PathReference } = require('acebase-core');
 
 const VALUE_TYPES = {
@@ -6884,7 +7221,7 @@ function getNodeValueType(value) {
 }
 
 module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType };
-},{"acebase-core":12}],33:[function(require,module,exports){
+},{"acebase-core":12}],34:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
@@ -7206,9 +7543,9 @@ module.exports = {
     NodeChange,
     NodeChangeTracker
 };
-},{"./node-info":30,"./node-value-types":32,"./storage":38}],34:[function(require,module,exports){
+},{"./node-info":31,"./node-value-types":33,"./storage":38}],35:[function(require,module,exports){
 // Not supported in current environment
-},{}],35:[function(require,module,exports){
+},{}],36:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pfs = void 0;
@@ -7217,298 +7554,6 @@ class pfs {
     static get fs() { return null; }
 }
 exports.pfs = pfs;
-
-},{}],36:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.SchemaDefinition = void 0;
-// parses a typestring, creates checker functions 
-function parse(definition) {
-    // tokenize
-    let pos = 0;
-    function consumeSpaces() {
-        let c;
-        while (c = definition[pos], [' ', '\r', '\n', '\t'].includes(c)) {
-            pos++;
-        }
-    }
-    function consumeCharacter(c) {
-        if (definition[pos] !== c) {
-            throw new Error(`Unexpected character at position ${pos}. Expected: '${c}', found '${definition[pos]}'`);
-        }
-        pos++;
-    }
-    function readProperty() {
-        consumeSpaces();
-        let prop = { name: '', optional: false, wildcard: false }, c;
-        while (c = definition[pos], c === '_' || c === '$' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (prop.name.length > 0 && c >= '0' && c <= '9') || (prop.name.length === 0 && c === '*')) {
-            prop.name += c;
-            pos++;
-        }
-        if (prop.name.length === 0) {
-            throw new Error(`Property name expected at position ${pos}`);
-        }
-        if (definition[pos] === '?') {
-            prop.optional = true;
-            pos++;
-        }
-        if (prop.name === '*' || prop.name[0] === '$') {
-            prop.optional = true;
-            prop.wildcard = true;
-        }
-        consumeSpaces();
-        consumeCharacter(':');
-        return prop;
-    }
-    function readType() {
-        consumeSpaces();
-        let type = { typeOf: 'any' }, c;
-        // try reading simple type first: (string,number,boolean,Date etc)
-        let name = '';
-        while (c = definition[pos], (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
-            name += c;
-            pos++;
-        }
-        if (name.length === 0) {
-            if (definition[pos] === '*') {
-                // any value
-                consumeCharacter('*');
-                type.typeOf = 'any';
-            }
-            else if ([`'`, `"`, '`'].includes(definition[pos])) {
-                // Read string value
-                type.typeOf = 'string';
-                type.value = '';
-                const quote = definition[pos];
-                consumeCharacter(quote);
-                while (c = definition[pos], c && c !== quote) {
-                    type.value += c;
-                    pos++;
-                }
-                consumeCharacter(quote);
-            }
-            else if (definition[pos] >= '0' && definition[pos] <= '9') {
-                // read numeric value
-                type.typeOf = 'number';
-                let nr = '';
-                while (c = definition[pos], c === '.' || (c >= '0' && c <= '9')) {
-                    nr += c;
-                    pos++;
-                }
-                type.value = nr.includes('.') ? parseFloat(nr) : parseInt(nr);
-            }
-            else if (definition[pos] === '{') {
-                // Read object (interface) definition 
-                consumeCharacter('{');
-                type.typeOf = 'object';
-                type.instanceOf = Object;
-                // Read children:
-                type.children = [];
-                while (true) {
-                    const prop = readProperty();
-                    const types = readTypes();
-                    type.children.push({ name: prop.name, optional: prop.optional, wildcard: prop.wildcard, types });
-                    consumeSpaces();
-                    if (definition[pos] === '}') {
-                        break;
-                    }
-                    consumeCharacter(',');
-                }
-                consumeCharacter('}');
-            }
-            else {
-                throw new Error(`Expected a type definition at position ${pos}, found character '${definition[pos]}'`);
-            }
-        }
-        else if (['string', 'number', 'boolean', 'undefined'].includes(name)) {
-            type.typeOf = name;
-        }
-        else if (name === 'Object' || name === 'object') {
-            type.typeOf = 'object';
-            type.instanceOf = Object;
-        }
-        else if (name === 'Date') {
-            type.typeOf = 'object';
-            type.instanceOf = Date;
-        }
-        else if (name === 'Binary' || name === 'binary') {
-            type.typeOf = 'object';
-            type.instanceOf = ArrayBuffer;
-        }
-        else if (name === 'any') {
-            type.typeOf = 'any';
-        }
-        else if (name === 'null') {
-            // This is ignored, null values are not stored in the db (null indicates deletion)
-            type.typeOf = 'object';
-            type.value = null;
-        }
-        else if (name === 'Array') {
-            // Read generic Array defintion
-            consumeCharacter('<');
-            type.typeOf = 'object';
-            type.instanceOf = Array; //name;
-            type.genericTypes = readTypes();
-            consumeCharacter('>');
-        }
-        else if ([`'`, `"`, '`'].includes(name[0]) && name.slice(-1) === name[0]) {
-            type.typeOf = 'string';
-            type.value = name.slice(1, -1);
-        }
-        else if (['true', 'false'].includes(name)) {
-            type.typeOf = 'boolean';
-            type.value = name === 'true';
-        }
-        else {
-            throw new Error(`Unknown type at position ${pos}: "${type}"`);
-        }
-        // Check if it's an Array of given type (eg: string[] or string[][])
-        // Also converts to generics, string[] becomes Array<string>, string[][] becomes Array<Array<string>>
-        consumeSpaces();
-        while (definition[pos] === '[') {
-            consumeCharacter('[');
-            consumeCharacter(']');
-            type = { typeOf: 'object', instanceOf: Array, genericTypes: [type] };
-        }
-        return type;
-    }
-    function readTypes() {
-        consumeSpaces();
-        const types = [readType()];
-        while (definition[pos] === '|') {
-            consumeCharacter('|');
-            types.push(readType());
-            consumeSpaces();
-        }
-        return types;
-    }
-    return readType();
-}
-function checkObject(path, properties, obj, partial) {
-    // Are there any properties that should not be in there?
-    const invalidProperties = properties.find(prop => prop.name === '*' || prop.name[0] === '$') // Only if no wildcard properties are allowed
-        ? []
-        : Object.keys(obj).filter(key => [null, undefined].includes(obj[key]) // Ignore null or undefined values
-            || !properties.find(prop => prop.name === key));
-    if (invalidProperties.length > 0) {
-        return { ok: false, reason: `Object at path "${path}" cannot have properties ${invalidProperties.map(p => `"${p}"`).join(', ')}` };
-    }
-    // Loop through properties that should be present
-    function checkProperty(property) {
-        const hasValue = ![null, undefined].includes(obj[property.name]);
-        if (!property.optional && !hasValue && !partial) {
-            return { ok: false, reason: `Property at path "${path}/${property.name}" is not optional` };
-        }
-        if (hasValue && property.types.length === 1) {
-            return checkType(`${path}/${property.name}`, property.types[0], obj[property.name], false);
-        }
-        if (hasValue && !property.types.some(type => checkType(`${path}/${property.name}`, type, obj[property.name], false).ok)) {
-            return { ok: false, reason: `Property at path "${path}/${property.name}" is of the wrong type` };
-        }
-        return { ok: true };
-    }
-    const namedProperties = properties.filter(prop => !prop.wildcard);
-    const failedProperty = namedProperties.find(prop => !checkProperty(prop).ok);
-    if (failedProperty) {
-        const reason = checkProperty(failedProperty).reason;
-        return { ok: false, reason };
-    }
-    const wildcardProperty = properties.find(prop => prop.wildcard);
-    if (!wildcardProperty) {
-        return { ok: true };
-    }
-    const wildcardChildKeys = Object.keys(obj).filter(key => !namedProperties.find(prop => prop.name === key));
-    let result = { ok: true };
-    for (let i = 0; i < wildcardChildKeys.length && result.ok; i++) {
-        const childKey = wildcardChildKeys[i];
-        result = checkProperty({ name: childKey, types: wildcardProperty.types, optional: true, wildcard: true });
-    }
-    return result;
-}
-function checkType(path, type, value, partial) {
-    if (value === null) {
-        return { ok: true };
-    }
-    if (type.typeOf !== 'any' && typeof value !== type.typeOf) {
-        return { ok: false, reason: `"${path}" must be typeof ${type.typeOf}` };
-    }
-    if (type.instanceOf === Object && (typeof value !== 'object' || value instanceof Array || value instanceof Date)) {
-        return { ok: false, reason: `"${path}" must be an object collection` };
-    }
-    if (type.instanceOf && (typeof value !== 'object' || value.constructor !== type.instanceOf)) { // !(value instanceof type.instanceOf) // value.constructor.name !== type.instanceOf
-        return { ok: false, reason: `"${path}" must be an instance of ${type.instanceOf.name}` };
-    }
-    if ('value' in type && value !== type.value) {
-        return { ok: false, reason: `"${path}" must be value: ${type.value}` };
-    }
-    if (type.instanceOf === Array && type.genericTypes && !value.every(v => type.genericTypes.some(t => checkType(path, t, v, false).ok))) {
-        return { ok: false, reason: `every array value of "${path}" must match one of the specified types` };
-    }
-    if (type.typeOf === 'object' && type.children) {
-        return checkObject(path, type.children, value, partial);
-    }
-    return { ok: true };
-}
-function getConstructorType(val) {
-    switch (val) {
-        case String: return 'string';
-        case Number: return 'number';
-        case Boolean: return 'boolean';
-        case Date: return 'Date';
-        case Array: throw new Error(`Schema error: Array cannot be used without a type. Use string[] or Array<string> instead`);
-        default: throw new Error(`Schema error: unknown type used: ${val.name}`);
-    }
-}
-class SchemaDefinition {
-    constructor(definition) {
-        this.source = definition;
-        if (typeof definition === 'object') {
-            // Turn object into typescript definitions
-            // eg:
-            // const example = {
-            //     name: String,
-            //     born: Date,
-            //     instrument: "'guitar'|'piano'",
-            //     "address?": {
-            //         street: String
-            //     }
-            // };
-            // Resulting ts: "{name:string,born:Date,instrument:'guitar'|'piano',address?:{street:string}"
-            const toTS = obj => {
-                return '{' + Object.keys(obj)
-                    .map(key => {
-                    let val = obj[key];
-                    if (val === undefined) {
-                        val = 'undefined';
-                    }
-                    if (typeof val === 'object') {
-                        val = toTS(val);
-                    }
-                    else if (typeof val === 'function') {
-                        val = getConstructorType(val);
-                    }
-                    else if (typeof val !== 'string') {
-                        throw new Error(`Type definition for ${key} must be a string, object, or constructor function (String,Number,Boolean,Date)`);
-                    }
-                    return `${key}:${val}`;
-                })
-                    .join(',') + '}';
-            };
-            this.text = toTS(definition);
-        }
-        else if (typeof definition === 'string') {
-            this.text = definition;
-        }
-        else {
-            throw new Error(`Type definiton must be a string or an object`);
-        }
-        this.type = parse(this.text);
-    }
-    check(path, value, partial) {
-        return checkType(path, this.type, value, partial);
-    }
-}
-exports.SchemaDefinition = SchemaDefinition;
 
 },{}],37:[function(require,module,exports){
 const { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils } = require('acebase-core');
@@ -8941,12 +8986,11 @@ module.exports = {
     ICustomStorageNodeMetaData,
     ICustomStorageNode
 }
-},{"./node-info":30,"./node-lock":31,"./node-value-types":32,"./storage":38,"acebase-core":12}],38:[function(require,module,exports){
-const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle } = require('acebase-core');
+},{"./node-info":31,"./node-lock":32,"./node-value-types":33,"./storage":38,"acebase-core":12}],38:[function(require,module,exports){
+const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle, SchemaDefinition } = require('acebase-core');
 const { VALUE_TYPES } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
 const { compareValues, getChildValues, encodeString, defer } = Utils;
-const { SchemaDefinition } = require('./schema');
 const { IPCPeer } = require('./ipc');
 const { pfs } = require('./promise-fs');
 // const { IPCTransactionManager } = require('./node-transaction');
@@ -10509,19 +10553,19 @@ class Storage extends SimpleEventEmitter {
             throw new TypeError(`schema argument must be given`);
         }
         if (schema === null) {
-            // Remove previously set schema
+            // Remove previously set schema on path
             const i = this._schemas.findIndex(s => s.path === path);
             i >= 0 && this._schemas.splice(i, 1);
             return;
         }
         // Parse schema, add or update it
-        const checker = new SchemaDefinition(schema);
+        const definition = new SchemaDefinition(schema);        
         let item = this._schemas.find(s => s.path === path);
         if (item) {
-            item.schema = checker;
+            item.schema = definition;
         }
         else {
-            this._schemas.push({ path, schema: checker });
+            this._schemas.push({ path, schema: definition });
             this._schemas.sort((a, b) => {
                 const ka = PathInfo.getPathKeys(a.path), kb = PathInfo.getPathKeys(b.path);
                 if (ka.length === kb.length) { return 0; }
@@ -10588,10 +10632,19 @@ class Storage extends SimpleEventEmitter {
         const pathInfo = PathInfo.get(path);
         
         this._schemas.filter(s => 
-            pathInfo.equals(s.path) || pathInfo.isAncestorOf(s.path)
+            pathInfo.isOnTrailOf(s.path) //pathInfo.equals(s.path) || pathInfo.isAncestorOf(s.path)
         )
         .every(s => {
-            const trailKeys = PathInfo.getPathKeys(s.path).slice(pathInfo.pathKeys.length);
+            if (pathInfo.isDescendantOf(s.path)) {
+                // Given check path is a descendant of this schema definition's path
+                const ancestorPath = PathInfo.fillVariables(s.path, path);
+                const trailKeys = pathInfo.keys.slice(PathInfo.getPathKeys(s.path).length);
+                result = s.schema.check(ancestorPath, value, options.updates, trailKeys);
+                return result.ok;
+            }
+            
+            // Given check path is on schema definition's path or on a higher path
+            const trailKeys = PathInfo.getPathKeys(s.path).slice(pathInfo.keys.length);
             const partial = options.updates === true && trailKeys.length === 0;
             /**
              * @param {string} path
@@ -10646,7 +10699,7 @@ module.exports = {
     NodeRevisionError,
     SchemaValidationError
 };
-},{"./data-index":34,"./ipc":28,"./node-info":30,"./node-value-types":32,"./promise-fs":35,"./schema":36,"acebase-core":12}],39:[function(require,module,exports){
+},{"./data-index":35,"./ipc":29,"./node-info":31,"./node-value-types":33,"./promise-fs":36,"acebase-core":12}],39:[function(require,module,exports){
 
-},{}]},{},[27])(27)
+},{}]},{},[28])(28)
 });
