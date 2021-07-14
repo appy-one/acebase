@@ -1,8 +1,7 @@
-const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle } = require('acebase-core');
+const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle, SchemaDefinition } = require('acebase-core');
 const { VALUE_TYPES } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
 const { compareValues, getChildValues, encodeString, defer } = Utils;
-const { SchemaDefinition } = require('./schema');
 const { IPCPeer } = require('./ipc');
 const { pfs } = require('./promise-fs');
 // const { IPCTransactionManager } = require('./node-transaction');
@@ -1565,19 +1564,19 @@ class Storage extends SimpleEventEmitter {
             throw new TypeError(`schema argument must be given`);
         }
         if (schema === null) {
-            // Remove previously set schema
+            // Remove previously set schema on path
             const i = this._schemas.findIndex(s => s.path === path);
             i >= 0 && this._schemas.splice(i, 1);
             return;
         }
         // Parse schema, add or update it
-        const checker = new SchemaDefinition(schema);
+        const definition = new SchemaDefinition(schema);        
         let item = this._schemas.find(s => s.path === path);
         if (item) {
-            item.schema = checker;
+            item.schema = definition;
         }
         else {
-            this._schemas.push({ path, schema: checker });
+            this._schemas.push({ path, schema: definition });
             this._schemas.sort((a, b) => {
                 const ka = PathInfo.getPathKeys(a.path), kb = PathInfo.getPathKeys(b.path);
                 if (ka.length === kb.length) { return 0; }
@@ -1644,10 +1643,19 @@ class Storage extends SimpleEventEmitter {
         const pathInfo = PathInfo.get(path);
         
         this._schemas.filter(s => 
-            pathInfo.equals(s.path) || pathInfo.isAncestorOf(s.path)
+            pathInfo.isOnTrailOf(s.path) //pathInfo.equals(s.path) || pathInfo.isAncestorOf(s.path)
         )
         .every(s => {
-            const trailKeys = PathInfo.getPathKeys(s.path).slice(pathInfo.pathKeys.length);
+            if (pathInfo.isDescendantOf(s.path)) {
+                // Given check path is a descendant of this schema definition's path
+                const ancestorPath = PathInfo.fillVariables(s.path, path);
+                const trailKeys = pathInfo.keys.slice(PathInfo.getPathKeys(s.path).length);
+                result = s.schema.check(ancestorPath, value, options.updates, trailKeys);
+                return result.ok;
+            }
+            
+            // Given check path is on schema definition's path or on a higher path
+            const trailKeys = PathInfo.getPathKeys(s.path).slice(pathInfo.keys.length);
             const partial = options.updates === true && trailKeys.length === 0;
             /**
              * @param {string} path
