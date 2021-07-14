@@ -2077,16 +2077,13 @@ class DataReference {
     proxy(defaultValue) {
         return data_proxy_1.LiveDataProxy.create(this, defaultValue);
     }
-    async observe(options) {
+    observe(options) {
         // options should not be used yet - we can't prevent/filter mutation events on excluded paths atm 
         if (options) {
             throw new Error('observe does not support data retrieval options yet');
         }
         if (this.isWildcardPath) {
             throw new Error(`Cannot observe wildcard path "/${this.path}"`);
-        }
-        if (!this.db.isReady) {
-            await this.db.ready();
         }
         const Observable = optional_observable_1.getObservable();
         return new Observable(observer => {
@@ -2102,8 +2099,11 @@ class DataReference {
                     return;
                 }
                 const mutatedPath = snap.ref.path;
-                const trailPath = mutatedPath.slice(this.path.length + 1);
-                const trailKeys = path_info_1.PathInfo.getPathKeys(trailPath);
+                if (mutatedPath === this.path) {
+                    cache = snap.val();
+                    return observer.next(cache);
+                }
+                const trailKeys = path_info_1.PathInfo.getPathKeys(mutatedPath).slice(path_info_1.PathInfo.getPathKeys(this.path).length);
                 let target = cache;
                 while (trailKeys.length > 1) {
                     const key = trailKeys.shift();
