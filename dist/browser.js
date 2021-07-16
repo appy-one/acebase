@@ -2720,7 +2720,7 @@ Object.defineProperty(exports, "SchemaDefinition", { enumerable: true, get: func
 },{"./acebase-base":1,"./api":2,"./ascii85":3,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./path-info":14,"./path-reference":15,"./schema":17,"./simple-cache":18,"./simple-colors":19,"./simple-event-emitter":20,"./subscription":21,"./transport":22,"./type-mappings":23,"./utils":24}],13:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.setObservable = exports.getObservable = void 0;
+exports.ObservableShim = exports.setObservable = exports.getObservable = void 0;
 let _observable;
 function getObservable() {
     if (_observable) {
@@ -2744,9 +2744,58 @@ function getObservable() {
 }
 exports.getObservable = getObservable;
 function setObservable(Observable) {
+    if (Observable === 'shim') {
+        console.warn(`Using AceBase's simple Observable shim. Only use this if you know what you're doing.`);
+        Observable = ObservableShim;
+    }
     _observable = Observable;
 }
 exports.setObservable = setObservable;
+;
+;
+/**
+ * rxjs is an optional dependency that only needs installing when any of AceBase's observe methods are used.
+ * In this test suite Observables are therefore not available, so we have to provide a shim
+ */
+class ObservableShim {
+    constructor(create) {
+        // private _emit() {}
+        this._active = false;
+        this._subscribers = [];
+        this._create = create;
+    }
+    subscribe(subscriber) {
+        if (!this._active) {
+            const next = (value) => {
+                // emit value to all subscribers
+                this._subscribers.forEach(s => {
+                    try {
+                        s(value);
+                    }
+                    catch (err) {
+                        console.error(`Error in subscriber callback:`, err);
+                    }
+                });
+            };
+            const observer = { next };
+            this._cleanup = this._create(observer);
+            this._active = true;
+        }
+        this._subscribers.push(subscriber);
+        const unsubscribe = () => {
+            this._subscribers.splice(this._subscribers.indexOf(subscriber), 1);
+            if (this._subscribers.length === 0) {
+                this._active = false;
+                this._cleanup();
+            }
+        };
+        const subscription = {
+            unsubscribe
+        };
+        return subscription;
+    }
+}
+exports.ObservableShim = ObservableShim;
 
 },{"rxjs":39}],14:[function(require,module,exports){
 "use strict";
@@ -3308,11 +3357,18 @@ function checkObject(path, properties, obj, partial) {
     return result;
 }
 function checkType(path, type, value, partial, trailKeys) {
+    const ok = { ok: true };
+    if (type.typeOf === 'any') {
+        return ok;
+    }
     if (trailKeys instanceof Array && trailKeys.length > 0) {
         // The value to check resides in a descendant path of given type definition. 
         // Recursivly check child type definitions to find a match
         if (type.typeOf !== 'object') {
             return { ok: false, reason: `path "${path}" must be typeof ${type.typeOf}` }; // given value resides in a child path, but parent is not allowed be an object.
+        }
+        if (!type.children) {
+            return ok;
         }
         const childKey = trailKeys[0];
         let property = type.children.find(prop => prop.name === childKey);
@@ -3323,7 +3379,7 @@ function checkType(path, type, value, partial, trailKeys) {
             return { ok: false, reason: `Object at path "${path}" cannot have property "${childKey}"` };
         }
         if (property.optional && value === null && trailKeys.length === 1) {
-            return { ok: true };
+            return ok;
         }
         let result;
         property.types.some(type => {
@@ -3334,9 +3390,9 @@ function checkType(path, type, value, partial, trailKeys) {
         return result;
     }
     if (value === null) {
-        return { ok: true };
+        return ok;
     }
-    if (type.typeOf !== 'any' && typeof value !== type.typeOf) {
+    if (typeof value !== type.typeOf) {
         return { ok: false, reason: `path "${path}" must be typeof ${type.typeOf}` };
     }
     if (type.instanceOf === Object && (typeof value !== 'object' || value instanceof Array || value instanceof Date)) {
@@ -3357,7 +3413,7 @@ function checkType(path, type, value, partial, trailKeys) {
     if (type.matches && !type.matches.test(value)) {
         return { ok: false, reason: `path "${path}" must match regular expression /${type.matches.source}/${type.matches.flags}` };
     }
-    return { ok: true };
+    return ok;
 }
 function getConstructorType(val) {
     switch (val) {
