@@ -1,6 +1,7 @@
 /// <reference types="@types/jasmine" />
 const { createTempDB } = require("./tempdb");
 let db, removeDB;
+const ok = { ok: true };
 
 describe('schema', () => {
     beforeAll(async () => {
@@ -202,6 +203,19 @@ describe('schema', () => {
 
     });
 
+    it('type Object must allow any property', async() => {
+        const schema = 'Object';
+        expect(() => db.schema.set('generic-object', schema)).not.toThrow();
+
+        let result = await db.schema.check('generic-object', { custom: 'allowed' });
+        expect(result).toEqual(ok);
+
+        result = await db.schema.check('generic-object/custom','allowed');
+        expect(result).toEqual(ok);
+
+        result = await db.schema.check('generic-object', 'NOT allowed');
+        expect(result.ok).toBeFalse();
+    })
     afterAll(async () => {
         await removeDB();
     });
