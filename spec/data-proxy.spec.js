@@ -1,10 +1,13 @@
 /// <reference types="@types/jasmine" />
 const { createTempDB } = require("./tempdb");
-const { proxyAccess } = require('acebase-core');
+const { proxyAccess, IObservableLike } = require('acebase-core');
 
 describe('DataProxy', () => {
     it('OrderedCollectionProxy', async () => {
         const { db, removeDB } = await createTempDB();
+
+        // Use AceBase's own basic Observable shim because rxjs is not installed
+        db.setObservable('shim');
 
         const proxy = await db.ref('todo').proxy({});
         const todo = proxyAccess(proxy.value);
