@@ -29,7 +29,7 @@ describe('string index', () => {
             };
         });
         await db.ref('meteorites').set(meteorites);
-    }, 10000);
+    }, 30000);
 
     it('without included columns', async () => {
         // Build
@@ -76,7 +76,7 @@ describe('string index', () => {
         expect(snaps.length).toEqual(952);
         expect(stats.length).toEqual(1);
         expect(stats[0].stats.result).toEqual(snaps.length);
-    }, 10000);
+    }, 30000);
 
     afterAll(async () => {
         await removeDB();
