@@ -1241,12 +1241,13 @@ class CustomStorage extends Storage {
      * @param {string} path 
      * @param {object} [options]
      * @param {CustomStorageTransaction} [options.transaction]
+     * @param {boolean} [options.include_child_count=false] whether to include child count if node is an object or array
      * @returns {Promise<CustomStorageNodeInfo>}
      */
     async getNodeInfo(path, options) {
         options = options || {};
         const pathInfo = PathInfo.get(path);
-        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
+        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
         try {
             const node = await this._readNode(path, { transaction });
             const info = new CustomStorageNodeInfo({ 
@@ -1282,6 +1283,14 @@ class CustomStorage extends Storage {
                 else {
                     // Parent doesn't exist, so the node we're looking for cannot exist either
                     info.address = null;
+                }
+            }
+
+            if (options.include_child_count) {
+                info.childCount = 0;
+                if ([VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(info.valueType) && info.address) {
+                    // Get number of children
+                    await transaction.childrenOf(path, { metadata: false, value: false }, () => { info.childCount++; return false; })
                 }
             }
 
