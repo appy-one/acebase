@@ -6268,11 +6268,57 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
         });
         // Create BroadcastChannel to allow multi-tab communication
         // This allows other tabs to make changes to the database, notifying us of those changes.
-        if (typeof window.BroadcastChannel === 'undefined') {
-            storage.debug.warn(`BroadCastChannel not available, browser tabs IPC not possible yet`);
-            return;
+        if (typeof window.BroadcastChannel !== 'undefined') {
+            this.channel = new BroadcastChannel(`acebase:${storage.name}`);
         }
-        this.channel = new BroadcastChannel(`acebase:${storage.name}`); // TODO: polyfill for Safari (MessageChannel?)
+        else {
+            // Use localStorage as polyfill for Safari & iOS WebKit
+            const listeners = [null]; // first callback reserved for onmessage handler
+            const notImplemented = () => { throw new Error('Not implemented'); };
+            this.channel = {
+                name: `acebase:${storage.name}`,
+                postMessage: (message) => {
+                    const messageId = acebase_core_1.ID.generate(), key = `acebase:${storage.name}:${this.id}:${messageId}`, payload = JSON.stringify(acebase_core_1.Transport.serialize(message));
+                    // Store message, triggers 'storage' event in other tabs
+                    localStorage.setItem(key, payload);
+                    // Remove after 10ms
+                    setTimeout(() => localStorage.removeItem(key), 10);
+                },
+                set onmessage(handler) { listeners[0] = handler; },
+                set onmessageerror(handler) { notImplemented(); },
+                close() { notImplemented(); },
+                addEventListener(event, callback) {
+                    if (event !== 'message') {
+                        notImplemented();
+                    }
+                    listeners.push(callback);
+                },
+                removeEventListener(event, callback) {
+                    const i = listeners.indexOf(callback);
+                    i >= 1 && listeners.splice(i, 1);
+                },
+                dispatchEvent(event) {
+                    listeners.forEach(callback => {
+                        try {
+                            callback && callback(event);
+                        }
+                        catch (err) {
+                            console.error(err);
+                        }
+                    });
+                    return true;
+                }
+            };
+            // Listen for storage events to intercept possible messages
+            window.addEventListener('storage', event => {
+                const [acebase, dbname, peerId, messageId] = event.key.split(':');
+                if (acebase !== 'acebase' || dbname !== storage.name || peerId === this.id || event.newValue === null) {
+                    return;
+                }
+                const message = acebase_core_1.Transport.deserialize(JSON.parse(event.newValue));
+                this.channel.dispatchEvent({ data: message });
+            });
+        }
         // Monitor incoming messages
         this.channel.addEventListener('message', async (event) => {
             const message = event.data;
