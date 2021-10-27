@@ -870,17 +870,12 @@ class CustomStorage extends Storage {
             }
         };
         const start = async () => {
-            // let lock;
             const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
-            // return this.nodeLocker.lock(path, transaction.id, false, 'getChildren')
-            // .then(async l => {
-            //     lock = l;
             try {
                 let canceled = false;
                 await (async () => {
                     let node = await this._readNode(path, { transaction });
                     if (!node) { throw new NodeNotFoundError(`Node "/${path}" does not exist`); }
-                    // node = JSON.parse(node);
 
                     if (![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type)) {
                         // No children
