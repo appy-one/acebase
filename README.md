@@ -6,32 +6,7 @@ Inspired by (and largely compatible with) the Firebase realtime database, with a
 
 AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, the [browser](#running-acebase-in-the-browser), wherever you want.
 
-🔥 Check out the new [live data proxy](#realtime-synchronization-with-a-live-data-proxy) feature, or skip to [table of contents](#table-of-contents)
-```javascript
-// Connect to remote database (works on local AceBase instances too!)
-const { AceBaseClient } = require('acebase-client');
-const db = new AceBaseClient({ /* connection settings */ });
-
-// Create a live data proxy for a chat
-const chatProxy = await db.ref('chats/chat1').proxy({});
-const liveChat = chatProxy.value;
-
-// --- No more database coding from this point on! ---
-
-// Simply setting liveChat's properties updates the database:
-liveChat.title = 'Live Data Proxies Rock! 🚀';
-liveChat.members = ['ewout','john','pete','jack'];
-liveChat.messages = {};
-liveChat.messages.push({ 
-    from: 'ewout', 
-    text: 'Updating a database was never this easy' 
-});
-
-// Remote db updates will also change liveChat's properties
-```
-Using live data proxies, you won't have to worry about data storage and synchronization, just focus on your business logic. All changes are **automatically synchronized** with others, and it can even work while **offline** (use an ```AceBaseClient``` with local cache database)
-
-Excited? Read more about live data proxies [here](#realtime-synchronization-with-a-live-data-proxy) 🔥
+🔥 Check out the new [live data proxy](#realtime-synchronization-with-a-live-data-proxy) feature!
 
 ## Table of contents
 
@@ -91,6 +66,8 @@ Excited? Read more about live data proxies [here](#realtime-synchronization-with
     * [Get children of a node](#get-children-of-a-node)
 * Export API
     * [Usage](#export-api)
+* Transaction Logging
+    * [Introduction](#transaction-logging)
 * [Upgrade notices](#upgrade-notices)
 * [Known issues](#known-issues)
 * [Authors](#authors)
@@ -463,7 +440,7 @@ db.ref('users')
 // To be able to unsubscribe later:
 function userAdded(userSnapshot) { /* ... */ }
 db.ref('users').on('child_added', userAdded);
-// Unsubscibe later with .off:
+// Unsubscribe later with .off:
 db.ref('users').off('child_added', userAdded);
 ```
 
@@ -931,27 +908,28 @@ Once ```tx.commit()``` is called, all pending updates will be processed and save
 
 In TypeScript some additional typecasting is needed to access proxy methods shown above. You can use the ```proxyAccess``` function to get help with that. This function typecasts and also checks if your passed value is indeed a proxy.
 ```typescript
-type IChatMessages = IObjectCollection<IChatMessage>;
+type ChatMessage = { from: string, text: string, sent: Date, received: Date, read: Date };
+type MessageCollection = IObjectCollection<ChatMessage>;
 
 // Easy & safe typecasting:
-proxyAccess<IChatMessages>(chat.messages)
+proxyAccess<MessageCollection>(chat.messages)
     .getObservable()
     .subscribe(messages => {
-        // messages: IChatMessages
+        // No need to define type of messages, TS knows it is a MessageCollection
     });
 
 // Instead of:
-(chat.messages as any as ILiveDataProxyValue<IChatMessages>)
+(chat.messages as any as ILiveDataProxyValue<MessageCollection>)
     .getObservable()
     .subscribe(messages => {
-        // messages: IChatMessages
+        // messages: MessageCollection
     });
 
 // Or, with unsafe typecasting (discouraged!)
 (chat.messages as any)
     .getObservable()
-    .subscribe((messages: IChatMessages) => {
-        // messages: IChatMessages, but only because we've prevented typescript
+    .subscribe((messages: MessageCollection) => {
+        // messages: MessageCollection, but only because we've prevented typescript
         // from checking if the taken route to get here was ok.
         // If getObservable or subscribe method signatures change in the 
         // future, code will break without typescript knowing it!
@@ -1448,17 +1426,13 @@ You can now do the following:
 let user = new User();
 user.name = 'Ewout';
 
-// Store the user in the database
-db.ref('users')
-.push(user)
-.then(userRef => {
-    // The object returned by user.serialize() was stored in the database
-    return userRef.get();
-})
-.then(userSnapshot => {
-    let user = userSnapshot.val();
-    // user is an instance of class User!
-})
+// Store the user in the database (will be serialized automatically)
+const userRef = await db.ref('users').push(user);
+
+// Load user from the db again (will be instantiated with the User constructor)
+const userSnapshot = await userRef.get();
+let savedUser = userSnapshot.val();
+// savedUser is an instance of class User
 ```
 
 
@@ -1489,6 +1463,7 @@ class Pet {
     serialize() {
         // manually serialize
         return {
+            animal: this.animal,
             name: this.name
         }
     }
@@ -1497,12 +1472,13 @@ class Pet {
 db.types.bind("users/*/pets", Pet); 
 ```
 
-If you want to use other methods for instantiation and/or serialization than the defaults, you can manually specify them in the ```bind``` call:
+If you want to use other methods for instantiation and/or serialization than the defaults explained above, you can manually specify them in the ```bind``` call:
 ```javascript
 class Pet {
     // ...
     toDatabase(ref) {
         return {
+            animal: this.animal,
             name: this.name
         }
     }
@@ -1515,7 +1491,7 @@ class Pet {
 db.types.bind("users/*/pets", Pet, { creator: Pet.fromDatabase, serializer: Pet.prototype.toDatabase }); 
 ```
 
-If you want to store native or 3rd party classes and don't want to extend them with (de)serialization functions:
+If you want to store native or 3rd party classes, or don't want to extend the classes with (de)serialization methods:
 ```javascript
 // Storing native RegExp objects
 db.types.bind(
@@ -1526,7 +1502,7 @@ db.types.bind(
             return new RegExp(obj.pattern, obj.flags);
         }, 
         serializer: (ref, regex) => {
-            // NOTE the regex param, we need it because we can't use `this` as reference to the object
+            // NOTE the regex param, it's provided because we can't use `this` to reference the object
             return { pattern: regex.source, flags: regex.flags };
         } 
     }
@@ -1891,6 +1867,18 @@ await db.root.export(stream); // Export all data
 fstream.close(); 
 ```
 
+## Transaction Logging
+(NEW v1.8.0, BETA, AceBase binary databases only)
+
+AceBase now supports transaction logging to facilitate sophisticated synchronization options and custom data recovery. Using cursors that indicate certain points in time, this allows for fast and easy synchronization of data between an AceBase server and multiple clients, or other server instances. This functionality is currently in BETA stage and will be tested extensively in the coming weeks. 
+
+To enable transaction logging on your database, add the `transactions` setting to the AceBase constructor:
+```js
+const db = new AceBase('mydb', { transactions: { log: true, maxAge: 30, noWait: false } });
+```
+
+More documentation will follow soon, see `transaction-logs.spec.js` unit tests for more info for now.
+
 ## Upgrade notices
 
 * v0.9.68 - To get the used updating context in data event handlers, read from `snap.context()` instead of `snap.ref.context()`. This is to prevent further updates on `snap.ref` to use the same context. If you need to reuse the event context for new updates, you will have to manually set it: `snap.ref.context(snap.context()).update(...)`
@@ -1929,12 +1917,13 @@ What can you help me with?
 * Enhancements - if you've got code to make AceBase even faster or better, you're welcome to contribute!
 * Ports - If you would like to port ```AceBaseClient``` to other languages (Java, Swift, C#, etc) that would be awesome!
 * Ideas - I love new ideas, share them!
-* Money - I am an independant developer and many (MANY) months were put into developing this. I also have a family to feed so if you like AceBase, feel free to send me a donation 👌
+* Money - I am an independant developer and many (MANY) months were put into developing this. I also have a family to feed so if you like AceBase, feel free to send me a donation ♥
 
-## Buy me a coffee
+## Sponsoring
 
-If you use AceBase, let me know! Also, please consider supporting its development by buying me a coffee or sending a donation.
+If you use AceBase, let me know! Also, please consider supporting its development by sponsoring the project, buying me a coffee or sending a donation.
 
+* [Sponsor](https://github.com/sponsors/appy-one)
 * [Buy me a coffee](https://www.buymeacoffee.com/appyone)
 * [Donate with PayPal](https://paypal.me/theappyone)
 * BTC address: 3EgetGDnG9vvfJzjLYdKwWvZpHwePKNJYc
