@@ -69,7 +69,6 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         });
     }
     get isMaster() { return this.masterPeerId === this.id; }
-    ;
     /**
      * Requests the peer to shut down. Resolves once its locks are cleared and 'exit' event has been emitted.
      * Has to be overridden by the IPC implementation to perform custom shutdown tasks

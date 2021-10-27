@@ -13,7 +13,7 @@ export class AceBaseIPCPeerExitingError extends Error {
 export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
     protected masterPeerId: string;
     protected ipcType: string = 'ipc';
-    public get isMaster() { return this.masterPeerId === this.id };
+    public get isMaster() { return this.masterPeerId === this.id }
 
     protected ourSubscriptions: Array<{ path: string, event: AceBaseEventType, callback: AceBaseSubscribeCallback }> = [];
     protected remoteSubscriptions: Array<{ for?: string, path: string, event: AceBaseEventType, callback: AceBaseSubscribeCallback }> = [];
