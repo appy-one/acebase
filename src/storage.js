@@ -20,6 +20,12 @@ class SchemaValidationError extends Error {
     }
 }
 
+/**
+ * @property {Array<{ target: Array<string|number>, prev: any, val: any }>} mutations
+ * @interface 
+ */
+class IWriteNodeResult {}
+
 class StorageSettings {
 
     /**
@@ -29,7 +35,7 @@ class StorageSettings {
      * @param {boolean} [settings.removeVoidProperties=false] Instead of throwing errors on undefined values, remove the properties automatically. Default is false
      * @param {string} [settings.path="."] Target path to store database files in, default is '.'
      * @param {string} [settings.info="realtime database"] optional info to be written to the console output underneith the logo
-     * @param {string} [settings.type] optional type of storage class - will be used by AceBaseStorage to create different db files in the future (data, mutation, auth etc)
+     * @param {string} [settings.type] optional type of storage class - will be used by AceBaseStorage to create different db files in the future (data, transaction, auth etc)
      */
     constructor(settings) {
         settings = settings || {};
@@ -227,30 +233,34 @@ class Storage extends SimpleEventEmitter {
             /**
              * Discovers and populates all created indexes
              */
-            load() {
+            async load() {
                 _indexes.splice(0);
                 if (!pfs.hasFileSystem) { 
                     // If pfs (fs) is not available, don't try using it
-                    return Promise.resolve();
+                    return;
                 }
-                return pfs.readdir(`${storage.settings.path}/${storage.name}.acebase`)
-                .then(files => {
-                    const promises = [];
-                    files.forEach(fileName => {
-                        if (fileName.endsWith('.idx')) {
-                            const p = this.add(fileName);
-                            promises.push(p);
-                        }
-                    });
-                    return Promise.all(promises);
-                })
-                .catch(err => {
+                let files = [];
+                try {
+                    files = await pfs.readdir(`${storage.settings.path}/${storage.name}.acebase`);
+                }
+                catch(err) {
                     if (err.code !== 'ENOENT') {
                         // If the directory is not found, there are no file indexes. (probably not supported by used storage class)
                         // Only complain if error is something else
                         storage.debug.error(err);
                     }
+                }
+                const promises = [];
+                files.forEach(fileName => {
+                    if (!fileName.endsWith('.idx')) { return; }
+                    const needsStoragePrefix = settings.type !== 'data'; // auth indexes need to start with "[auth]-" and have to be ignored by other storage types
+                    const hasStoragePrefix = /^\[[a-z]+\]-/.test(fileName);
+                    if ((!needsStoragePrefix && !hasStoragePrefix) || needsStoragePrefix && fileName.startsWith(`[${settings.type}]-`)) {
+                        const p = this.add(fileName);
+                        promises.push(p);
+                    }
                 });
+                await Promise.all(promises);
             },
 
             async add(fileName) {
@@ -513,7 +523,7 @@ class Storage extends SimpleEventEmitter {
      * @param {any} value 
      * @param {object} [options] 
      * @param {boolean} [options.merge=false]
-     * @returns {Promise<void>}
+     * @returns {Promise<any>}
      */
     // eslint-disable-next-line no-unused-vars
     _writeNode(path, value, options) {
@@ -597,7 +607,7 @@ class Storage extends SimpleEventEmitter {
      * @param {string} path 
      * @param {any} value 
      * @param {object} [options] 
-     * @returns {Promise<void>}
+     * @returns {Promise<IWriteNodeResult>} Returns a promise that resolves with an object that contains storage specific details, plus the applied mutations if transaction logging is enabled
      */
     async _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true, suppress_events: false, context: null, impact: null }) {
         options = options || {};
@@ -637,7 +647,8 @@ class Storage extends SimpleEventEmitter {
             return this._writeNode(path, value, options);            
         }
 
-        if (eventSubscriptions.length === 0 && indexes.length === 0) {
+        const transactionLoggingEnabled = this.settings.transactions && this.settings.transactions.log === true;
+        if (eventSubscriptions.length === 0 && indexes.length === 0 && !transactionLoggingEnabled) {
             // Nobody's interested in value changes. Write node without tracking
             return writeNode();
         }
@@ -667,7 +678,7 @@ class Storage extends SimpleEventEmitter {
         topEventData = currentValue;
 
         // Now proceed with node updating
-        const result = await writeNode();
+        const result = (await writeNode()) || {};
 
         // Build data for old/new comparison
         let newTopEventData, modifiedData;
@@ -734,6 +745,7 @@ class Storage extends SimpleEventEmitter {
 
         const dataChanges = compareValues(topEventData, newTopEventData);
         if (dataChanges === 'identical') {
+            result.mutations = [];
             return result;
         }
 
@@ -869,6 +881,65 @@ class Storage extends SimpleEventEmitter {
             trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
         };
 
+        const prepareMutationEvents = (sub, currentPath, oldValue, newValue, compareResult) => {
+            const batch = [];
+            const result = compareResult || compareValues(oldValue, newValue);
+            if (result === 'identical') {
+                return batch; // no changes on subscribed path
+            }
+            else if (typeof result === 'string') {
+                // We are on a path that has an actual change
+                batch.push({ path: currentPath, oldValue, newValue });
+                // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
+            }
+            else if (oldValue instanceof Array || newValue instanceof Array) {
+                // Trigger mutated event on the array itself instead of on individual indexes
+                batch.push({ path: currentPath, oldValue, newValue });
+                // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
+            }
+            else {
+                // DISABLED array handling here, because if a client is using a cache db this will cause problems
+                // because individual array entries should never be modified.
+                // if (oldValue instanceof Array && newValue instanceof Array) {
+                //     // Make sure any removed events on arrays will be triggered from last to first
+                //     result.removed.sort((a,b) => a < b ? 1 : -1);
+                // }
+                result.changed.forEach(info => {
+                    const childPath = PathInfo.getChildPath(currentPath, info.key);
+                    let childValues = getChildValues(info.key, oldValue, newValue);
+                    const childBatch = prepareMutationEvents(sub, childPath, childValues.oldValue, childValues.newValue, info.change);
+                    batch.push(...childBatch);
+                });
+                result.added.forEach(key => {
+                    const childPath = PathInfo.getChildPath(currentPath, key);
+                    batch.push({ path: childPath, oldValue: null, newValue: newValue[key] });
+                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, null, newValue[key], options.context);
+                });
+                result.removed.forEach(key => {
+                    const childPath = PathInfo.getChildPath(currentPath, key);
+                    batch.push({ path: childPath, oldValue: oldValue[key], newValue: null });
+                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, oldValue[key], null, options.context);
+                });
+            }
+            return batch;
+        };
+
+        // Add mutations to result
+        result.mutations = (() => {
+            const trailPath = path.slice(topEventPath.length).replace(/^\//, '');
+            const trailKeys = PathInfo.getPathKeys(trailPath);
+            let oldValue = topEventData, newValue = newTopEventData;
+            while (trailKeys.length > 0) {
+                const key = trailKeys.shift();
+                ({ oldValue, newValue } = getChildValues(key, oldValue, newValue));
+            }
+            const compareResults = compareValues(oldValue, newValue);
+            const fakeSub = { event: 'mutations', path };
+            const batch = prepareMutationEvents(fakeSub, path, oldValue, newValue, compareResults);
+            const mutations = batch.map(m => ({ target: PathInfo.getPathKeys(m.path.slice(path.length)), prev: m.oldValue, val: m.newValue })); // key: PathInfo.get(m.path).key
+            return mutations;
+        })();
+
         const triggerAllEvents = () => {
             // Notify all event subscriptions, should be executed with a delay
             // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
@@ -952,49 +1023,6 @@ class Storage extends SimpleEventEmitter {
             // The only events we haven't processed now are 'mutated' events.
             // They require different logic: we'll call them for all nested properties of the updated path, that 
             // actually did change. They do not bubble up like 'child_changed' does.
-            const prepareMutationEvents = (sub, currentPath, oldValue, newValue, compareResult) => {
-                const batch = [];
-                const result = compareResult || compareValues(oldValue, newValue);
-                if (result === 'identical') {
-                    return batch; // no changes on subscribed path
-                }
-                else if (typeof result === 'string') {
-                    // We are on a path that has an actual change
-                    batch.push({ path: currentPath, oldValue, newValue });
-                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
-                }
-                else if (oldValue instanceof Array || newValue instanceof Array) {
-                    // Trigger mutated event on the array itself instead of on individual indexes
-                    batch.push({ path: currentPath, oldValue, newValue });
-                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
-                }
-                else {
-                    // DISABLED array handling here, because if a client is using a cache db this will cause problems
-                    // because individual array entries should never be modified.
-                    // if (oldValue instanceof Array && newValue instanceof Array) {
-                    //     // Make sure any removed events on arrays will be triggered from last to first
-                    //     result.removed.sort((a,b) => a < b ? 1 : -1);
-                    // }
-                    result.changed.forEach(info => {
-                        const childPath = PathInfo.getChildPath(currentPath, info.key);
-                        let childValues = getChildValues(info.key, oldValue, newValue);
-                        const childBatch = prepareMutationEvents(sub, childPath, childValues.oldValue, childValues.newValue, info.change);
-                        batch.push(...childBatch);
-                    });
-                    result.added.forEach(key => {
-                        const childPath = PathInfo.getChildPath(currentPath, key);
-                        batch.push({ path: childPath, oldValue: null, newValue: newValue[key] });
-                        // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, null, newValue[key], options.context);
-                    });
-                    result.removed.forEach(key => {
-                        const childPath = PathInfo.getChildPath(currentPath, key);
-                        batch.push({ path: childPath, oldValue: oldValue[key], newValue: null });
-                        // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, oldValue[key], null, options.context);
-                    });
-                }
-                return batch;
-            };
-
             eventSubscriptions.filter(sub => ['mutated', 'mutations', 'notify_mutated', 'notify_mutations'].includes(sub.type))
             .forEach(sub => {
                 // Get the target data this subscription is interested in
@@ -1708,5 +1736,6 @@ module.exports = {
     StorageSettings,
     NodeNotFoundError,
     NodeRevisionError,
-    SchemaValidationError
+    SchemaValidationError,
+    IWriteNodeResult
 };

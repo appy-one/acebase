@@ -14,6 +14,13 @@ const { Uint8ArrayBuilder } = require('./binary');
 
 const REMOVED_CHILD_DATA_IMPLEMENTED = false; // not used yet - allows marking of deleted children without having to rewrite the whole node
 
+/**
+ * @property {string} path
+ * @property {Array<{ key:string|number, prev: any, val: any }>} list
+ * @interface
+ */
+class IAppliedMutations {}
+
 class AceBaseStorageSettings extends StorageSettings {
     /**
      * 
@@ -21,7 +28,7 @@ class AceBaseStorageSettings extends StorageSettings {
      * @param {number} [settings.recordSize=128] record size in bytes, defaults to 128 (recommended)
      * @param {number} [settings.pageSize=1024] page size in records, defaults to 1024 (recommended). Max is 65536
      * @param {'data'|'transaction'|'auth'} [settings.type='data'] type of database content. Determines the name of the file within the .acebase directory
-     * @param {AceBaseTransactionLogSettings} [settings.transactions] for type 'data': settings to use for transaction logging
+     * @param {AceBaseTransactionLogSettings} [settings.transactions] ssettings to use for transaction logging
      */
     constructor(settings) {
         super(settings);
@@ -29,9 +36,7 @@ class AceBaseStorageSettings extends StorageSettings {
         this.recordSize = settings.recordSize || 128;
         this.pageSize = settings.pageSize || 1024;
         this.type = settings.type || 'data';
-        if (this.type === 'data') {
-            this.transactions = new AceBaseTransactionLogSettings(settings.transactions);
-        }
+        this.transactions = new AceBaseTransactionLogSettings(settings.transactions);
     }
 }
 
@@ -40,7 +45,7 @@ class AceBaseTransactionLogSettings {
      * ALPHA functionality - logs mutations made to a separate database file so they can be retrieved later
      * for database syncing / replication. Implementing this into acebase itself will allow the current 
      * sync implementation in acebase-client to become better: it can simply request a mutations stream from
-     * the server after disconnects by passing a cursor or timestamp, instead of download whole nodes before
+     * the server after disconnects by passing a cursor or timestamp, instead of downloading whole nodes before
      * applying local changes. This will also enable horizontal scaling: replication with remote db instances
      * becomes possible.
      * 
@@ -87,11 +92,9 @@ class AceBaseStorage extends Storage {
         this.stats = stats;
 
         this.type = settings.type;
-        if (this.type === 'data' && settings.transactions.log) {
+        if (this.type === 'data' && settings.transactions.log === true) {
             // Get/create storage for mutations logging
-            const txSettings = new AceBaseStorageSettings(settings);
-            txSettings.type = 'transaction';
-            txSettings.logLevel = 'error';
+            const txSettings = new AceBaseStorageSettings({ type: 'transaction', logLevel: 'error', path: settings.path, removeVoidProperties: true, transactions: settings.transactions });
             this.txStorage = new AceBaseStorage(name, txSettings);
         }
 
@@ -687,13 +690,13 @@ class AceBaseStorage extends Storage {
                     view.setUint32(0, address.pageNr);
                     view.setUint16(4, address.recordNr);
                     
-                    const bytesWritten = await writeData(HEADER_INDEXES.ROOT_RECORD_ADDRESS, bytes, 0, bytes.length)
+                    const bytesWritten = await writeData(HEADER_INDEXES.ROOT_RECORD_ADDRESS, bytes, 0, bytes.length);
                     storage.debug.log(`Root record address updated to ${address.pageNr}, ${address.recordNr}`.colorize(ColorStyle.bold));
                 }
             }
         }
 
-        const descriptor = encodeString("AceBase⚡"); // textEncoder.encode("AceBase⚡");
+        const descriptor = encodeString('AceBase⚡');
         const baseIndex = descriptor.length;
         const HEADER_INDEXES = {
             VERSION_NR: baseIndex,
@@ -717,7 +720,7 @@ class AceBaseStorage extends Storage {
                 throw err;
             };
 
-            this.file = fd = await pfs.open(filename, "r+", 0).catch(err => {
+            this.file = fd = await pfs.open(filename, 'r+', 0).catch(err => {
                 handleError(err, `Failed to open database file`);
             });
 
@@ -785,7 +788,7 @@ class AceBaseStorage extends Storage {
             await this.KIT.load();  // Read Key Index Table
             await this.FST.load();  // Read Free Space Table
             await this.indexes.load(); // Load indexes
-            !justCreated && this.emit("ready");
+            !justCreated && this.emit('ready');
             return fd;
         };
 
@@ -859,9 +862,9 @@ class AceBaseStorage extends Storage {
                 await pfs.writeFile(filename, Buffer.from(uint8.buffer)); 
                 await openDatabaseFile(true);
                 // Now create the root record
-                await Node.set(this, "", {});
+                await Node.set(this, '', {});
                 this.rootRecord.exists = true;
-                this.emit("ready");
+                this.emit('ready');
             }
         });
 
@@ -897,82 +900,143 @@ class AceBaseStorage extends Storage {
         return index;
     }
 
+    logMutation(type, path, value, context, mutations) {
+        // Add to transaction log
+        if (!['set','update'].includes(type)) { throw new TypeError('op must be either "set" or "update"'); }
+        if (!this.settings.transactions || this.settings.transactions.log !== true) { throw new Error('transaction logging is not enabled on database'); }
+        if (!context.acebase_cursor) { throw new Error('context.acebase_cursor must have been set'); }
+
+        if (value === null) {
+            // Target path was deleted. Log the mutation on parent node: prevents 2 different delete flows and allows for uniform getMutations logic
+            const pathInfo = PathInfo.get(path);
+            type = 'update';
+            path = pathInfo.parentPath;
+            value = { [pathInfo.key]: null };
+        }
+
+        const updatedKeys = mutations.path === path
+            ? mutations.list.filter(ch => ch.target.length > 0 && ch.val !== null).map(ch => ch.target[0]) 
+            : value instanceof Array ? Object.keys(value).map(key => +key) : Object.keys(value).filter(key => value[key] !== null);
+        const deletedKeys = mutations.path === path 
+            ? mutations.list.filter(ch => ch.target.length === 1 && ch.val === null).map(ch => ch.target[0]) 
+            : [];
+        const item = { 
+            path, 
+            updated: updatedKeys,
+            deleted: deletedKeys,
+            timestamp: Date.now(), 
+            type, 
+            value,
+            context,
+            mutations
+        };
+        const cursor = context.acebase_cursor; // ID.generate();
+        const promise = this.txStorage._updateNode(`history/${cursor}`, item).catch(err => {
+            this.debug.error(`Failed to add to transaction log: `, err);
+        });
+        if (!this.settings.transactions.noWait) {
+            return promise.then(() => cursor);
+        }
+        return cursor;
+    }
+
     /**
      * 
      * @param {object} filter 
      * @param {string} [filter.cursor] cursor is a generated key (ID.generate) that represents a point of time
      * @param {number} [filter.timestamp] earliest transaction to include, will be converted to a cursor
-     * @param {string} [filter.path] top-most path to include. Can include wildcards to facilitate wildcard event listeners
-     * @param {boolean} [filter.compressed=false] whether to merge mutations to get effective changes only, instead of each individual change. NOTE this will remove original updating contexts and might change the order of some mutations
+     * @param {string} [filter.path] top-most paths to include. Can include wildcards to facilitate wildcard event listeners. Only used if `for` filter is not used, equivalent to `for: { path, events: ['value] }
+     * @param {Array<{ path: string, events:string[] }>} [filter.for] Specifies which paths and events to get all relevant mutations for
+     * @param {boolean} [filter.compressed=true] whether to merge mutations to get effective changes only, instead of each individual change. NOTE this will remove original updating contexts and might change the order of some mutations
      * @returns 
      */
-    async getHistory(filter) {
+    async getMutations(filter) {
         if (this.type === 'data') {
-            return this.txStorage.getHistory(filter);
+            return this.txStorage.getMutations(filter);
         }
         else if (this.type !== 'transaction') {
             throw new Error(`Wrong database type`);
         }
         const cursor = // Use given cursor, timestamp or nothing to filter on
             (filter.cursor && filter.cursor.slice(0, 8)) // .slice(0, 12)
-            || (filter.timestamp && (new Date(filter.timestamp).getTime()).toString(36)) //  + '0000'
-            || '';
+            || (filter.timestamp && (new Date(filter.timestamp).getTime()).toString(36).padStart(8, '0')) //  + '0000'
+            || '00000000';
         const since = 
             (typeof filter.timestamp === 'number' && filter.timestamp)
             || (cursor && parseInt(cursor, 36))
             || 0;
 
-        // TODO: Create indexes to query them instead of manually ploughing through all children
-        // indexes = await this.indexes.get('history');
+        // Check if cursor is not too old
+        if (since !== 0 && cursor < this.oldestValidCursor) {
+            throw new Error(`Cursor too old`);
+        }
+
+        if (!filter.for || filter.for.length === 0) {
+            filter.for = [{ path: typeof filter.path === 'string' ? filter.path : '', events: ['value'] }]; // Use filter.path, or root node as single path
+        }
+
+        // Get filter paths, filter out paths that are descendants of another path
+        const filterPaths = filter.for.filter(t1 => {
+            const pathInfo = PathInfo.get(t1.path);
+            return !filter.for.some(t2 => pathInfo.isDescendantOf(t2.path));
+        }).map(item => item.path);
 
         const tid = this.createTid(); //ID.generate();
-        const lock = await this.nodeLocker.lock('history', tid, false, `getHistory`);
+        const lock = await this.nodeLocker.lock('history', tid, false, `getMutations`);
         try {
             const checkQueue = [];
             let mutations = [];
-            let count = 0, done, donePromise = new Promise(resolve => done = resolve);
+            let done, donePromise = new Promise(resolve => done = resolve);
             let allEnumerated = false;
 
-            const filterPathInfo = PathInfo.get(filter.path || '');
+            // const filterPathInfo = PathInfo.get(filter.path || '');
             const check = async key => {
-                count++;
                 checkQueue.push(key);
-                const mutation = await this.getNodeValue(`history/${key}`, { tid, include: ['path', 'updated', 'deleted', 'op', 'timestamp'] }); // Not including 'value' 
+                const mutation = await this.getNodeValue(`history/${key}`, { tid, include: ['path', 'updated', 'deleted', 'type', 'timestamp'] }); // Not including 'value' 
                 mutation.keys = mutation.updated.concat(mutation.deleted);
                 const mutationPathInfo = PathInfo.get(mutation.path);
                 
-                /**
-                 * When to include a mutation & what data to include.
-                 * - filter.path is undefined 
-                 *      - use "" as filter.path
-                 * - filter.path is not on the same trail as mutation.path (not equals, no ancestor, no descendant)
-                 *      - eg: filter.path === "books/book1", mutation.path === "books/book2"
-                 *      - ignore
-                 * - filter.path equals mutation.path
-                 *      - eg: filter.path === mutation.path === "books/book1"
-                 *      - use entire mutation
-                 * - filter.path is an ancestor of mutation.path
-                 *      - eg: filter.path === "books", mutation.path === "books/book1"
-                 *      - use entire mutation
-                 * - filter.path is a descendant of mutation.path
-                 *      - eg: filter.path === "books/book1/title", mutation.path === "books"
-                 *      - ignore if mutation.op === 'update' and mutation.keys does NOT include first trailing key of filter.path (eg only book2 is updated)
-                 *      - if filter.path has wildcard (*, $var) keys, repeat following step recursively:
-                 *      - use target (trailing) data in mutation value (value/books/book1/title) or null
-                 */
-                const load = mutation.timestamp < since || !filterPathInfo.isOnTrailOf(mutationPathInfo)
-                    ? 'none'
-                    : !filterPathInfo.isDescendantOf(mutationPathInfo)
-                        ? 'all'
-                        : mutation.op === 'set' || mutation.keys.concat('*').includes(filterPathInfo.keys[mutationPathInfo.keys.length]) || filterPathInfo.keys[mutationPathInfo.keys.length].toString().startsWith('$') 
-                            ? 'target' 
-                            : 'none';
+                // Find the path in filter.paths on this trail, there can only be 1 (descendants were filtered out above)
+                const filterPath = (() => {
+                    const path = filterPaths.find(path => mutationPathInfo.isOnTrailOf(path));
+                    return typeof path === 'string' ? path : null;
+                })();
+                const filterPathInfo = filterPath === null ? null : PathInfo.get(filterPath);
+                const load = (() => {
+                    /**
+                     * When to include a mutation & what data to include.
+                     * - filterPath === null if no filter paths were on the same trail as mutation.path
+                     *      - eg: filterPaths on ["books/book1", "books/book2"], mutation.path === "books/book3"
+                     *      - ignore
+                     * - filterPath equals mutation.path
+                     *      - eg: filterPath === mutation.path === "books/book1"
+                     *      - use entire mutation
+                     * - filterPath is an ancestor of mutation.path
+                     *      - eg: filterPath === "books", mutation.path === "books/book1"
+                     *      - use entire mutation
+                     * - filterPath is a descendant of mutation.path
+                     *      - eg: filterPath === "books/book1/title", mutation.path === "books"
+                     *      - ignore if mutation.type === 'update' and mutation.keys does NOT include first trailing key of filterPath (eg only book2 is updated)
+                     *      - if filterPath has wildcard (*, $var) keys, repeat following step recursively:
+                     *      - use target (trailing) data in mutation value (value/books/book1/title) or null
+                     */
+                    if (mutation.timestamp < since || filterPath === null) {
+                        return 'none';
+                    }
+                    if (!filterPathInfo.isDescendantOf(mutationPathInfo)) {
+                        return 'all';
+                    }
+                    if (mutation.type === 'set' || mutation.keys.concat('*').includes(filterPathInfo.keys[mutationPathInfo.keys.length]) || filterPathInfo.keys[mutationPathInfo.keys.length].toString().startsWith('$')) {
+                        return 'target';
+                    }
+                    return 'none';
+                })();
 
                 if (load !== 'none') {
-                    const valueKey = 'value' + (load === 'target' ? (mutation.path.length === 0 ? '/' : '') + filter.path.slice(mutation.path.length) : '');
-                    const tx = await this.getNodeValue(`history/${key}`, { tid, include: ['context', valueKey] }); // , ...loadKeys
+                    const valueKey = 'value' + (load === 'target' ? (mutation.path.length === 0 ? '/' : '') + filterPath.slice(mutation.path.length) : '');
+                    const tx = await this.getNodeValue(`history/${key}`, { tid, include: ['context', 'mutations', valueKey] }); // , ...loadKeys
 
-                    let targetPath = mutation.path, targetValue = tx.value, targetOp = mutation.op;
+                    let targetPath = mutation.path, targetValue = tx.value, targetOp = mutation.type;
                     if (typeof targetValue === 'undefined') {
                         targetValue = null;
                     }
@@ -995,7 +1059,7 @@ class AceBaseStorage extends Storage {
                             targetValue = targetValue !== null && childKey in targetValue ? targetValue[childKey] : null;
                             if (trailKeys.length === 0) {
                                 // console.log(`Adding mutation on "${targetPath}" to history of "${filterPathInfo.path}"`)
-                                mutations.push({ id: key, path: targetPath, op: targetOp, timestamp: mutation.timestamp, value: targetValue, context: tx.context, mutation }); // TODO remove mutation
+                                mutations.push({ id: key, path: targetPath, type: targetOp, timestamp: mutation.timestamp, value: targetValue, context: tx.context, mutations: tx.mutations }); // TODO remove __mutation__: mutation
                             }
                             else {
                                 process(targetPath, targetValue, trailKeys); // Deeper
@@ -1005,7 +1069,7 @@ class AceBaseStorage extends Storage {
                     }
                     else {
                         // console.log(`Adding mutation on "${targetPath}" to history of "${filterPathInfo.path}"`)
-                        mutations.push({ id: key, path: targetPath, op: targetOp, timestamp: mutation.timestamp, value: targetValue, context: tx.context, mutation }); // TODO remove mutation
+                        mutations.push({ id: key, path: targetPath, type: targetOp, timestamp: mutation.timestamp, value: targetValue, context: tx.context, mutations: tx.mutations }); // TODO remove __mutation__: mutation
                     }
                 }
 
@@ -1015,9 +1079,14 @@ class AceBaseStorage extends Storage {
                 }
             };
 
+            let count = 0;
+            const oldestValidCursor = this.oldestValidCursor, expiredTransactions = [];
             await this.getChildren('history', { tid })
             .next(childInfo => {
-                if (childInfo.key.slice(0, cursor.length) < cursor) { return; }
+                const txCursor = childInfo.key.slice(0, cursor.length);
+                if (txCursor < oldestValidCursor) { expiredTransactions.push(childInfo.key); }
+                if (txCursor < cursor) { return; }
+                count++;
                 check(childInfo.key);
             });
 
@@ -1026,79 +1095,213 @@ class AceBaseStorage extends Storage {
                 await donePromise;
             }
 
-            // Make sure they are sorted (they probably mostly be)
+            if (expiredTransactions.length > 0) {
+                // Remove expired transactions
+                const expiredUpdate = expiredTransactions.reduce((updates, key) => {
+                    updates[key] = null;
+                    return updates;
+                }, {});
+                this.updateNode('history', expiredUpdate); // No need to await this, will be processed once we've released our read lock
+            }
+
+            // Make sure they are sorted
             mutations.sort((a, b) => a.timestamp - b.timestamp);
 
-            if (filter.compressed) {
-                // Get effective changes to the target path. Steps:
-                // - 1. convert all 'update' mutations to 'set' and 'remove' mutations on child paths. (what acebase-client does in update)
-                // - 2. while adding them in chronological order, remove previous mutations that became obsolete (what acebase-client does in addSetMutation)
-                // - 3. merge successive 'set' and 'remove' mutations on the same parent to single 'update's 
-                //   to prevent updates from failing because of schema restrictions (what acebase-client does in sync)
-                mutations = mutations.reduce((all, m) => {
-                    const add = mutation => {
-                        // 2. Remove all previous mutations on this exact path, and descendants
-                        const pathInfo = PathInfo.get(mutation.path);
-                        all = all.filter(prev => !pathInfo.equals(prev.path) && !pathInfo.isAncestorOf(prev.path));
-                        all.push(mutation);
-                    };
-                    if (m.op === 'update') {
-                        // 1. Convert 'update' mutations to 'set' and 'remove' mutations on child paths
-                        const pathInfo = PathInfo.get(m.path);
-                        Object.keys(m.value).forEach(prop => {
-                            if (m.value instanceof Array) { prop = +prop; }
-                            // const remove = updates[prop] === null;
-                            const value = m.value[prop];
-                            add({
-                                id: m.id,
-                                op: value === null ? 'remove' : 'set',
-                                path: pathInfo.childPath(prop),
-                                value,
-                                timestamp: m.timestamp,
-                                context: m.context
-                            });
+            if (filter.compressed !== false) {
+                // Get effective changes to the target paths
+                const hasValue = val => ![undefined,null].includes(val);
+                const hasPropertyValue = (val, prop) => hasValue(val) && typeof val === 'object' && hasValue(val[prop]);
+
+                mutations = mutations.reduce((all, item) => {
+                    // 1. Add all effective mutations as 'set' operations on their target paths, removing previous 'set's on the same or descendant paths
+                    const basePathInfo = PathInfo.get(item.mutations.path);
+                    if (basePathInfo.isAncestorOf(item.path)) {
+                        // Mutation has been recorded on higher path. Modify mutations to be on target path
+                        for (let i = 0; i < item.mutations.list.length; i++) {
+                            const m = item.mutations.list[i];
+                            // item.path === 'library/books/book1'
+                            // item.mutations.path === 'library/books'
+                            // m.target === ['book1']
+                            // m.value === { ... }
+                            const trailKeys = PathInfo.get(item.path).keys.slice(basePathInfo.keys.length);
+                            
+                            // If target is not a trail, remove mutation from list because it is not relevant                            
+                            const onTarget = m.target.every((key, index) => key === trailKeys[index]);
+                            if (!onTarget) {
+                                item.mutations.list.splice(i, 1); 
+                                i--; continue;
+                            }
+
+                            // Remove target keys from trail
+                            trailKeys.splice(0, m.target.length);
+
+                            const val = !hasValue(m.val) ? null : trailKeys.reduce((val, key) => hasPropertyValue(val, key) ? val[key] : null, m.val);
+                            const prev = !hasValue(m.prev) ? null : trailKeys.reduce((prev, key) => hasPropertyValue(prev, key) ? prev[key] : null, m.prev);
+                            if (val === prev) {
+                                // This mutation has no changes on target path
+                                item.mutations.list.splice(i, 1); 
+                                i--; continue;
+                            }
+                            m.val = val;
+                            m.prev = prev;
+                            m.target.push(...trailKeys); // Adjust target
+                        }
+                        if (item.mutations.list.length === 0) {
+                            // Skip, no mutations on target path
+                            return all;
+                        }
+                        // item.mutations.path = item.path;
+                    }
+                    item.mutations.list.forEach(m => {
+                        const targetPathInfo = m.target.length === 0 ? basePathInfo : basePathInfo.child(m.target);
+                        
+                        // Remove previous 'set's on the same and descendant paths
+                        all = all.filter(prev => !prev.pathInfo.equals(targetPathInfo) && !prev.pathInfo.isDescendantOf(targetPathInfo));
+                        
+                        // Add new 'set' item
+                        all.push({
+                            id: item.id,
+                            type: 'set',
+                            path: targetPathInfo.path,
+                            pathInfo: targetPathInfo, 
+                            timestamp: item.timestamp,
+                            context: item.context,
+                            prev: hasValue(m.prev) ? m.prev : null,
+                            val: hasValue(m.val) ? m.val : null
                         });
-                    }
-                    else {
-                        add(m); // use original "set" mutation
-                    }
+                    });
                     return all;
                 }, [])
-                .reduce((all, m) => { // (all, m)
-                    // 3. merge successive 'set' and 'remove' mutations on the same parent to single 'update's
-                    if (m.path === '') {
+                .reduce((all, item) => {
+                    // 2. Merge successive 'set' mutations on the same parent to single parent 'update's, using last used context
+                    if (item.path === '') {
                         // 'set' on the root path. Don't change
-                        const rootUpdate = all.find(u => u.path === '');
-                        if (rootUpdate) { 
-                            // eslint-disable-next-line no-debugger
-                            debugger; 
-                            throw new Error(`Duplicate sets on the same path should have been filtered out`) 
-                        }
-                        all.push(m);
+                        all.push(item);
                     }
                     else {
-                        const pathInfo = PathInfo.get(m.path);
+                        const pathInfo = item.pathInfo;
                         const parentPath = pathInfo.parentPath;
                         const parentUpdate = all.find(u => u.path === parentPath);
-                        const value =  m.type === 'remove' || m.value === null || typeof m.value === 'undefined' ? null : m.value;
                         if (!parentUpdate) {
                             // Create new parent update
-                            const update = { 
-                                id: m.id, 
-                                type: 'update', 
+                            all.push({ 
+                                id: item.id, 
+                                type: 'update',
                                 path: parentPath, 
-                                value: { [pathInfo.key]: value }, 
-                                context: m.context 
-                            };
-                            all.push(update);
+                                pathInfo: pathInfo.parent,
+                                val: { [pathInfo.key]: item.val }, 
+                                prev: { [pathInfo.key]: item.prev },
+                                context: item.context
+                            });
                         }
                         else {
                             // Add this change to parent update
-                            parentUpdate.value[pathInfo.key] = value;
+                            parentUpdate.val[pathInfo.key] = item.val;
+                            if (parentUpdate.prev !== null) { // previous === null on very first root 'set' only
+                                parentUpdate.prev[pathInfo.key] = item.prev;
+                            }
+                            parentUpdate.context = item.context;                            
                         }
                     }
                     return all;
                 }, []);
+
+                // Toss all mutations that caller is not interested in using "raise your hand if you need this" logic
+                const hasNewKeys = (val, prev) => Object.keys(val || {}).some(key => !(key in (prev || {})));
+                const hasRemovedKeys = (val, prev) => Object.keys(prev || {}).some(key => !(key in (val || {})));
+                const allEventsFor = (...events) => events.concat(...events.map(e => `notify_${e}`));
+                const hasEvent = (events, check) => allEventsFor(...check).some(e => events.includes(e));
+                mutations = mutations.filter(item => {
+                    return filter.for.some(target => {
+
+                        if (!item.pathInfo.isOnTrailOf(target.path)) {
+                            return false; 
+                        }
+
+                        // && target.events.some(event => ['value','child_changed','mutated','mutations'].includes(event))) {
+                        if ((item.pathInfo.equals(target.path) || item.pathInfo.isDescendantOf(target.path)) 
+                            && hasEvent(target.events, ['value','child_changed','mutated','mutations'])) {
+                            return true;
+                        }
+
+                        // For simplicity, use 'set' operations on targets
+                        const setMutations = item.type === 'update' 
+                            ? Object.keys(item.val).map(key => {
+                                const pathInfo = item.pathInfo.child(key);
+                                return { 
+                                    path: pathInfo.path, 
+                                    pathInfo,
+                                    val: item.val[key],
+                                    prev: item.prev[key]
+                                };
+                            })
+                            : [item];
+
+                        return setMutations.some(set => {
+                            if (!set.pathInfo.isOnTrailOf(target.path)) {
+                                return false; 
+                            }
+                            else if (set.pathInfo.equals(target.path)) {
+                                // mutation on target: value is being overwritten.
+                                // Events [child_changed, value, mutated, mutations] will already have returned true above
+                                if (hasEvent(target.events, ['child_added']) && hasNewKeys(set.val, set.prev)) {
+                                    return true;
+                                }
+                                if (hasEvent(target.events, ['child_removed']) && hasRemovedKeys(set.val, set.prev)) {
+                                    return true;
+                                }
+                            }
+                            else if (set.pathInfo.isDescendantOf(target.path)) {
+                                // mutation on deeper than target path
+                                // eg: mutation on path 'books/book1/title', child_added target on 'books'
+                                // Events [child_changed, value, mutated, mutations] will already have returned true above
+                                if(hasEvent(target.events, ['child_added','child_removed'])) {
+                                    if (!set.pathInfo.isChildOf(target.path)) { return false; }
+                                    if (hasEvent(target.events, ['child_added']) && set.prev === null) { return true; }
+                                    if (hasEvent(target.events, ['child_removed']) && set.val === null) { return true; }
+                                }
+                            }
+                            else {
+                                // Mutation on higher than target path.
+                                // eg mutation on path 'books/book1', child_changed on target 'books/book1/authors'
+                                // Get values at target path
+                                const trailKeys = PathInfo.getPathKeys(target.path).slice(set.pathInfo.keys.length);
+                                const prev = trailKeys.reduce((prev, key) => hasValue(prev) && hasPropertyValue(prev, key) ? prev[key] : null, set.prev);
+                                const val = trailKeys.reduce((val, key) => hasValue(val) && hasPropertyValue(val, key) ? val[key] : null, set.val);
+                                if (prev === val) { return false; }
+                                if (hasEvent(target.events, ['value','mutated','mutations'])) { 
+                                    return true; 
+                                }
+                                if (hasEvent(target.events, ['child_added']) && hasNewKeys(val, prev)) {
+                                    return true;
+                                }
+                                if (hasEvent(target.events, ['child_removed']) && hasRemovedKeys(val, prev)) {
+                                    return true;
+                                }
+                            }
+                            return false;
+                        });
+                    });
+                });
+
+                // Transform output to match uncompressed output
+                mutations.forEach(item => {
+                    // Remove tmp pathInfo
+                    delete item.pathInfo;
+
+                    // Replace context
+                    // delete item.context; // TODO: maybe include the last acebase_cursor?
+                    item.context = { acebase_cursor: item.context.acebase_cursor };
+
+                    // Rename val property
+                    item.value = item.val;
+                    delete item.val;
+
+                    // Rename prev property
+                    item.previous = item.prev;
+                    delete item.prev;
+                });
+
             }
 
             return mutations;
@@ -1106,6 +1309,17 @@ class AceBaseStorage extends Storage {
         finally {
             lock.release();
         }
+    }
+
+    get oldestValidCursor() {
+        if (this.settings.transactions.maxAge <= 0) {
+            return '';
+        }
+        const msPerDay = 86400000, // 24 * 60 * 60 * 1000
+            maxAgeMs = this.settings.transactions.maxAge * msPerDay, 
+            limit = Date.now() - maxAgeMs,
+            cursor = limit.toString(36);
+        return cursor;
     }
 
     /**
@@ -1137,6 +1351,10 @@ class AceBaseStorage extends Storage {
                 const nodeInfo = await this.getNodeInfo(path, { tid });
                 if (!nodeInfo.exists) {
                     throw new NodeNotFoundError(`Node "/${path}" does not exist`);
+                }
+                else if (!nodeInfo.address) {
+                    // Node does not have its own record, so it has no children
+                    return;
                 }
                 let reader = new NodeReader(this, nodeInfo.address, lock, true);
                 const nextCallback = isAsync 
@@ -1301,37 +1519,25 @@ class AceBaseStorage extends Storage {
         }
     }
 
-    // /**
-    //  * Removes a node by delegating to updateNode on the parent with null value.
-    //  * Throws an Error if path is root ('')
-    //  * @param {string} path
-    //  * @param {object} [options] optional options used by implementation for recursive calls
-    //  * @param {string} [options.tid] optional transaction id for node locking purposes
-    //  * @returns {Promise<void>}
-    //  */
-    // removeNode(path, options = { tid: undefined }) {
-    //     throw new Error(`This method must be implemented by subclass`);
-    // }
-
-    addHistory(op, path, value, context) {
-        // Add to transaction log
-        if (!['set','update'].includes(op)) { throw new TypeError('op must be either "set" or "update"'); }
-        if (this.txStorage) { // (this.settings.transactionLogging && this.settings.transactionLogging.enabled) {
-            const mutations = { 
-                path, 
-                updated: value instanceof Array ? Object.keys(value).map(key => +key) : Object.keys(value).filter(key => value[key] !== null),
-                deleted: Object.keys(value).filter(key => value[key] === null),
-                timestamp: Date.now(), 
-                op, 
-                value,
-                context
-            };
-            const promise = this.txStorage._updateNode(`history/${ID.generate()}`, mutations).catch(err => {
-                this.debug.error(`Failed to add to transaction log: `, err);
-            });
-            if (!this.settings.transactions.noWait) {
-                return promise;
-            }
+    /**
+     * Delegates to legacy update method that handles everything
+     * @param {string} path
+     * @param {any} value
+     * @param {object} [options] optional options used by implementation for recursive calls
+     * @param {string} [options.tid] optional transaction id for node locking purposes
+     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
+     * @param {any} [options.context=null]
+     * @returns {Promise<void>}
+     */
+    async setNode(path, value, options = { tid: undefined, suppress_events: false, context: null }) {
+        if (this.txStorage) {
+            if (!options.context) { options.context = {}; }
+            options.context.acebase_cursor = ID.generate();
+        }
+        const mutations = await this._updateNode(path, value, { merge: false, tid: options.tid, suppress_events: options.suppress_events, context: options.context });
+        if (this.txStorage && mutations) {
+            const p = this.logMutation('set', path, value, options.context, mutations);
+            if (p instanceof Promise) { await p; }
         }
     }
 
@@ -1345,26 +1551,16 @@ class AceBaseStorage extends Storage {
      * @param {any} [options.context=null]
      * @returns {Promise<void>}
      */
-    async setNode(path, value, options = { tid: undefined, suppress_events: false, context: null }) {
-        await this._updateNode(path, value, { merge: false, tid: options.tid, suppress_events: options.suppress_events, context: options.context });
-        const p = this.addHistory('set', path, value, options.context);
-        if (p instanceof Promise) { await p; }
-    }
-
-    /**
-     * Delegates to legacy update method that handles everything
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
-     * @param {any} [options.context=null]
-     * @returns {Promise<void>}
-     */
     async updateNode(path, updates, options = { tid: undefined, suppress_events: false, context: null }) {
-        await this._updateNode(path, updates, { merge: true, tid: options.tid, suppress_events: options.suppress_events, context: options.context });
-        const p = this.addHistory('update', path, updates, options.context);
-        if (p instanceof Promise) { await p; }
+        if (this.txStorage) {
+            if (!options.context) { options.context = {}; }
+            options.context.acebase_cursor = ID.generate();
+        }
+        const mutations = await this._updateNode(path, updates, { merge: true, tid: options.tid, suppress_events: options.suppress_events, context: options.context });
+        if (this.txStorage && mutations) {
+            const p = this.logMutation('update', path, updates, options.context, mutations);
+            if (p instanceof Promise) { await p; }
+        }
     }
 
     /**
@@ -1379,7 +1575,7 @@ class AceBaseStorage extends Storage {
      * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
      * @param {any} [options.context=null]
      * @param {boolean} [options.merge=true]
-     * @returns {Promise<void>}
+     * @returns {Promise<IAppliedMutations>} If transaction logging is enabled, returns a promise that resolves with the applied mutations
      */
     async _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false, suppress_events: false, context: null }) {
         // this.debug.log(`Update request for node "/${path}"`);
@@ -1440,7 +1636,7 @@ class AceBaseStorage extends Storage {
                 });
             }
 
-            const { recordMoved, recordInfo, deallocate } = result;
+            const { recordMoved, recordInfo, deallocate, mutations } = result;
 
             // Update parent if the record moved
             let parentUpdated = false;
@@ -1472,6 +1668,11 @@ class AceBaseStorage extends Storage {
 
                 this.FST.release(deallocate.ranges);
             }
+
+            return {
+                path,
+                list: mutations
+            };
         }
         // catch(err) {
         //     // if (err instanceof SchemaValidationError) {
@@ -2616,7 +2817,7 @@ class NodeReader {
  * @param {NodeInfo} nodeInfo 
  * @param {object} newValue 
  * @param {NodeLock} lock
- * @returns {Promise<RecordInfo>}
+ * @returns {Promise<{ recordMoved: boolean, recordInfo: RecordInfo, deallocate: NodeAllocation }>}
  */
  async function _mergeNode(storage, nodeInfo, updates, lock) {
     if (typeof updates !== "object") {
@@ -2677,7 +2878,7 @@ class NodeReader {
                 const oldAddress = child.address; //child.storedAddress || child.address;
                 const currentValue = new InternalNodeReference(child.type, oldAddress);
                 changes.add(keyOrIndex, currentValue, newValue);
-                return true; // Proceed with next (there is no next, right? - this update must has have been triggered by child node that moved, the parent node only needs to update the referennce to the child node)
+                return true; // Proceed with next (there is no next, right? - this update must has have been triggered by child node that moved, the parent node only needs to update the reference to the child node)
             }
 
             // Child is stored in own record, and it is updated or deleted so we need to get
@@ -2904,7 +3105,7 @@ class NodeReader {
  * @param {NodeInfo} nodeInfo 
  * @param {object} newValue 
  * @param {NodeLock} lock
- * @returns {Promise<RecordInfo>}
+ * @returns {Promise<{ recordMoved: boolean, recordInfo: RecordInfo, deallocate: NodeAllocation }>}
  */
 async function _createNode(storage, nodeInfo, newValue, lock, invalidateCache = true) {
     storage.debug.log(`Node "/${nodeInfo.path}" is being ${nodeInfo.exists ? 'overwritten' : 'created'}`.colorize(ColorStyle.cyan));
