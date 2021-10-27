@@ -399,14 +399,18 @@ class DataIndex {
     }
 
     get fileName() {
-        if (this._fileName) { return this._fileName; }
+        if (this._fileName) { 
+            // Set by readFromFile
+            return this._fileName; 
+        }
         const dir = `${this.storage.settings.path}/${this.storage.name}.acebase`;
+        const storagePrefix = this.storage.settings.type !== 'data' ? `[${this.storage.settings.type}]-` : '';
         const escapedPath = this.path.replace(/\//g, '-').replace(/\*/g, '#');
         const includes = this.includeKeys.length > 0 
             ? ',' + this.includeKeys.join(',')
             : '';
         const extension = (this.type !== 'normal' ? `${this.type}.` : '') + 'idx';
-        return `${dir}/${escapedPath}-${this.key}${includes}.${extension}`;        
+        return `${dir}/${storagePrefix}${escapedPath}-${this.key}${includes}.${extension}`;        
     }
 
     get description() {
