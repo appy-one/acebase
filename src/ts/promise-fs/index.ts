@@ -299,4 +299,31 @@ export abstract class pfs {
         })
     }
 
+    /**
+     * Asynchronous fsync(2) - synchronize a file's in-core state with the underlying storage device.
+     * @param fd A file descriptor
+     * @returns {Promise<void>} returns a promise that resolves when all data is flushed
+     */
+    static fsync(fd): Promise<void> {
+        return new Promise((resolve, reject) => {
+            fs.fsync(fd, (err) => {
+                if (err) { reject(err); }
+                else { resolve(); }
+            });
+        });
+    }
+    
+    /**
+     * Asynchronous fdatasync(2) - synchronize a file's in-core state with storage device.
+     * @param fd A file descriptor
+     * @returns {Promise<void>} returns a promise that resolves when all data is flushed
+     */
+    static fdatasync(fd) {
+        return new Promise((resolve, reject) => {
+            fs.fdatasync(fd, (err, stats?) => {
+                if (err) { reject(err); }
+                else { resolve(stats); }
+            });
+        });
+    }
 }
