@@ -63,8 +63,9 @@ class LocalApi extends Api {
         return Node.update(this.storage, path, updates, { merge: true, suppress_events: options.suppress_events, context: options.context });
     }
 
-    get(path, options) {
-        return Node.getValue(this.storage, path, options);
+    async get(path, options) {
+        const value = await Node.getValue(this.storage, path, options);
+        return { value, context: {} };
     }
 
     transaction(path, callback, options = { suppress_events: false, context: null }) {
@@ -970,6 +971,19 @@ class LocalApi extends Api {
 
     async validateSchema(path, value, isUpdate) {
         return this.storage.validateSchema(path, value, { updates: isUpdate });
+    }
+
+    /**
+     * Gets all relevant mutations for specific events on a path and since specified cursor
+     * @param {object} filter
+     * @param {string} [filter.path] path to get all mutations for, only used if `for` property isn't used
+     * @param {Array<{ path: string, events: string[] }>} [filter.for] paths and events to get relevant mutations for
+     * @param {string} filter.cursor cursor to use
+     */
+    async getMutations(filter) {
+        if (typeof filter !== 'object') { throw new Error('No filter specified'); }
+        if (typeof filter.cursor !== 'string') { throw new Error('No cursor given'); }
+        return this.storage.getMutations(filter);
     }
 }
 
