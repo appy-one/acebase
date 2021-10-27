@@ -187,7 +187,7 @@ class Api {
      * @param event event to subscribe to ("value", "child_added" etc)
      * @param callback callback function
      */
-    subscribe(path, event, callback) { throw new NotImplementedError('subscribe'); }
+    subscribe(path, event, callback, settings) { throw new NotImplementedError('subscribe'); }
     unsubscribe(path, event, callback) { throw new NotImplementedError('unsubscribe'); }
     update(path, updates, options) { throw new NotImplementedError('update'); }
     set(path, value, options) { throw new NotImplementedError('set'); }
@@ -390,7 +390,7 @@ const isProxy = Symbol('isProxy');
 class LiveDataProxy {
     /**
      * Creates a live data proxy for the given reference. The data of the reference's path will be loaded, and kept in-sync
-     * with live data by listening for 'mutated' events. Any changes made to the value by the client will be synced back
+     * with live data by listening for 'mutations' events. Any changes made to the value by the client will be synced back
      * to the database.
      * @param ref DataReference to create proxy for.
      * @param defaultValue Default value to use for the proxy if the database path does not exist yet. This value will also
@@ -434,7 +434,10 @@ class LiveDataProxy {
             return true;
         };
         // Subscribe to mutations events on the target path
-        const subscription = ref.on('mutations').subscribe(async (snap) => {
+        const syncFallback = async () => {
+            await reload();
+        };
+        const subscription = ref.on('mutations', { syncFallback }).subscribe(async (snap) => {
             var _a;
             if (!loaded) {
                 return;
@@ -451,7 +454,7 @@ class LiveDataProxy {
                 }
                 if (onMutationCallback) {
                     const changeRef = mutation.target.reduce((ref, key) => ref.child(key), ref);
-                    const changeSnap = new data_snapshot_1.DataSnapshot(changeRef, mutation.val, false, mutation.prev);
+                    const changeSnap = new data_snapshot_1.DataSnapshot(changeRef, mutation.val, false, mutation.prev, snap.context());
                     onMutationCallback(changeSnap, isRemote);
                 }
                 return true;
@@ -764,6 +767,10 @@ class LiveDataProxy {
             // }
         };
         const snap = await ref.get({ allow_cache: true });
+        const gotOfflineStartValue = snap.context().acebase_origin === 'cache';
+        if (gotOfflineStartValue) {
+            console.warn(`Started data proxy with cached value of "${ref.path}", check if its value is reloaded on next connection!`);
+        }
         loaded = true;
         cache = snap.val();
         if (cache === null && typeof defaultValue !== 'undefined') {
@@ -785,34 +792,44 @@ class LiveDataProxy {
             // there should be no need to call this method.
             assertProxyAvailable();
             mutationQueue.splice(0); // Remove pending mutations. Will be empty in production, but might not be while debugging, leading to weird behaviour.
-            const newSnap = await ref.get();
-            cache = newSnap.val();
-            newSnap.ref.context({ acebase_proxy: { id: proxyId, source: 'reload' } });
-            onMutationCallback && onMutationCallback(newSnap, true);
+            const snap = await ref.get({ allow_cache: false });
+            cache = snap.val();
+            if (onMutationCallback) {
+                const context = snap.context();
+                context.acebase_proxy = { id: proxyId, source: 'reload' };
+                const newSnap = new data_snapshot_1.DataSnapshot(ref, snap.val(), false, snap.previous(), context);
+                onMutationCallback(newSnap, true);
+            }
             // TODO: run all other subscriptions
         };
-        let waitingForReconnectSync = false; // Prevent quick connect/disconnect pulses to stack sync_done event handlers
-        ref.db.on('disconnect', () => {
-            // Handle disconnect, can only happen when connected to a remote server with an AceBaseClient
-            // Wait for server to connect again
-            ref.db.once('connect', () => {
-                // We're connected again
-                // Now wait for sync_end event, so any proxy changes will have been pushed to the server
-                if (waitingForReconnectSync || proxy === null) {
-                    return;
-                }
-                waitingForReconnectSync = true;
-                ref.db.once('sync_done', () => {
-                    // Reload proxy value now
-                    waitingForReconnectSync = false;
-                    if (proxy === null) {
-                        return;
-                    }
-                    console.log(`Reloading proxy value after connect & sync`);
-                    reload();
-                });
-            });
-        });
+        // let waitingForReconnectSync = false; // Prevent quick connect/disconnect pulses to stack sync_done event handlers
+        // const waitForConnection = async () => {
+        //     // Wait for server to connect again
+        //     await ref.db.once('connect');
+        //     // We're connected again
+        //     if (waitingForReconnectSync || proxy === null) { return; }
+        //     // Now wait for sync_end event, so any local proxy changes will have been pushed to the server
+        //     waitingForReconnectSync = true;
+        //     const info:{ local: number, remote: number, method: string, cursor?: string } = await ref.db.once('sync_done');
+        //     waitingForReconnectSync = false;
+        //     if (proxy === null) { return; }
+        //     if (info.method === 'cursor') {
+        //         // Synchronized with a cursor: we've received all missed remote mutations so we don't have to reload the value.
+        //         console.log(`Proxy value for "/${ref.path}" was synced with cursor ${info.cursor}`);
+        //     }
+        //     else {
+        //         // Reload proxy value now
+        //         console.log(`Reloading proxy value for "/${ref.path}" after reconnect`);
+        //         reload();
+        //     }
+        // }
+        // ref.db.on('disconnect', () => {
+        //     // Handle disconnect, can only happen when connected to a remote server with an AceBaseClient
+        //     waitForConnection();
+        // });
+        // if (gotOfflineStartValue) {
+        //     waitForConnection();
+        // }
         return {
             async destroy() {
                 await processPromise;
@@ -844,6 +861,9 @@ class LiveDataProxy {
                 }
                 flagOverwritten([]);
                 cache = val;
+            },
+            get ref() {
+                return ref;
             },
             reload,
             onMutation(callback) {
@@ -1784,7 +1804,7 @@ class DataReference {
      * data. This enables you to manually retreive data upon changes (eg if you want to exclude certain child
      * data from loading)
      * @param event Name of the event to subscribe to
-     * @param callback Callback function or whether or not to run callbacks on current values when using "value" or "child_added" events
+     * @param callback Callback function, event settings, or whether or not to run callbacks on current values when using "value" or "child_added" events
      * @param cancelCallback Function to call when the subscription is not allowed, or denied access later on
      * @returns returns an EventStream
      */
@@ -1802,6 +1822,7 @@ class DataReference {
             userCallback: typeof callback === 'function' && callback,
             ourCallback: (err, path, newValue, oldValue, eventContext) => {
                 if (err) {
+                    // TODO: Investigate if this ever happens?
                     this.db.debug.error(`Error getting data for event ${event} on path "${path}"`, err);
                     return;
                 }
@@ -1842,7 +1863,25 @@ class DataReference {
                     }
                 });
             }
-            let authorized = this.db.api.subscribe(this.path, event, cb.ourCallback);
+            const advancedOptions = typeof callback === 'object'
+                ? callback
+                : { newOnly: !callback }; // newOnly: if callback is not 'truthy', could change this to (typeof callback !== 'function' && callback !== true) but that would break client code that uses a truthy argument.
+            if (typeof advancedOptions.newOnly !== 'boolean') {
+                advancedOptions.newOnly = false;
+            }
+            if (this.isWildcardPath) {
+                advancedOptions.newOnly = true;
+            }
+            const cancelSubscription = (err) => {
+                // Access denied?
+                // Cancel subscription
+                let callbacks = this[_private].callbacks;
+                callbacks.splice(callbacks.indexOf(cb), 1);
+                this.db.api.unsubscribe(this.path, event, cb.ourCallback);
+                // Call cancelCallbacks
+                eventPublisher.cancel(err.message);
+            };
+            let authorized = this.db.api.subscribe(this.path, event, cb.ourCallback, { newOnly: advancedOptions.newOnly, cancelCallback: cancelSubscription, syncFallback: advancedOptions.syncFallback });
             const allSubscriptionsStoppedCallback = () => {
                 let callbacks = this[_private].callbacks;
                 callbacks.splice(callbacks.indexOf(cb), 1);
@@ -1855,23 +1894,13 @@ class DataReference {
                     // Access granted
                     eventPublisher.start(allSubscriptionsStoppedCallback);
                 })
-                    .catch(err => {
-                    // Access denied?
-                    // Cancel subscription
-                    let callbacks = this[_private].callbacks;
-                    callbacks.splice(callbacks.indexOf(cb), 1);
-                    this.db.api.unsubscribe(this.path, event, cb.ourCallback);
-                    // Call cancelCallbacks
-                    eventPublisher.cancel(err.message);
-                    // No need to call cancelCallback, original callbacks are now added to event stream
-                    // cancelCallback && cancelCallback(err.message);
-                });
+                    .catch(cancelSubscription);
             }
             else {
                 // Local API, always authorized
                 eventPublisher.start(allSubscriptionsStoppedCallback);
             }
-            if (callback && !this.isWildcardPath) {
+            if (!advancedOptions.newOnly) {
                 // If callback param is supplied (either a callback function or true or something else truthy),
                 // it will fire events for current values right now.
                 // Otherwise, it expects the .subscribe methode to be used, which will then
@@ -1966,9 +1995,15 @@ class DataReference {
         if (typeof options.allow_cache === 'undefined') {
             options.allow_cache = true;
         }
-        const promise = this.db.api.get(this.path, options).then(value => {
-            value = this.db.types.deserialize(this.path, value);
-            const snapshot = new data_snapshot_1.DataSnapshot(this, value);
+        const promise = this.db.api.get(this.path, options).then(result => {
+            const isNewApiResult = ('context' in result && 'value' in result);
+            if (!isNewApiResult) {
+                // Should not happen
+                throw new Error(`AceBase api.get method returned old response value. Update your acebase or acebase-client package`);
+            }
+            const context = result.context || {};
+            const value = this.db.types.deserialize(this.path, result.value);
+            const snapshot = new data_snapshot_1.DataSnapshot(this, value, undefined, undefined, context);
             return snapshot;
         });
         if (callback) {
@@ -2751,15 +2786,13 @@ function setObservable(Observable) {
     _observable = Observable;
 }
 exports.setObservable = setObservable;
-;
-;
 /**
  * rxjs is an optional dependency that only needs installing when any of AceBase's observe methods are used.
- * In this test suite Observables are therefore not available, so we have to provide a shim
+ * If for some reason rxjs is not available (eg in test suite), we can provide a shim. This class is used when
+ * `db.setObservable("shim")` is called
  */
 class ObservableShim {
     constructor(create) {
-        // private _emit() {}
         this._active = false;
         this._subscribers = [];
         this._create = create;
@@ -2811,40 +2844,6 @@ function getPathKeys(path) {
         return key.startsWith('[') ? parseInt(key.substr(1, key.length - 2)) : key;
     });
 }
-// function getPathInfo(path: string): { parent: string, key: string|number } {
-//     path = path.replace(/^\//, ''); // Remove leading slash
-//     if (path.length === 0) {
-//         return { parent: null, key: '' };
-//     }
-//     const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('['));
-//     let parentPath = i < 0 ? '' : path.substr(0, i);
-//     let key:string|number = i < 0 ? path : path.substr(i);
-//     if (key.startsWith('[')) { 
-//         key = parseInt(key.substr(1, key.length - 2)); 
-//     }
-//     else if (key.startsWith('/')) {
-//         key = key.substr(1); // Chop off leading slash
-//     }
-//     if (parentPath === path) {
-//         parentPath = null;
-//     }
-//     return { parent: parentPath, key };
-// }
-// function getChildPath(path: string, key: string|number): string {
-//     path = path.replace(/^\//, ""); // Remove leading slash
-//     key = typeof key === "string" ? key.replace(/^\//, "") : key; // Remove leading slash
-//     if (path.length === 0) {
-//         if (typeof key === "number") { throw new TypeError("Cannot add array index to root path!"); }
-//         return key;
-//     }
-//     if (typeof key === "string" && key.length === 0) {
-//         return path;
-//     }
-//     if (typeof key === "number") {
-//         return `${path}[${key}]`;
-//     }
-//     return `${path}/${key}`;
-// }
 class PathInfo {
     constructor(path) {
         if (typeof path === 'string') {
@@ -2881,8 +2880,7 @@ class PathInfo {
     }
     child(childKey) {
         if (typeof childKey === 'string') {
-            const keys = getPathKeys(childKey);
-            return new PathInfo(this.keys.concat(keys));
+            childKey = getPathKeys(childKey);
         }
         return new PathInfo(this.keys.concat(childKey));
     }
@@ -4065,7 +4063,6 @@ function get(mappings, path) {
     const mapping = mappings[mappedPath];
     return mapping;
 }
-;
 /**
  * (for internal use) - gets the mapping set for a specific path's parent
  */
@@ -4077,7 +4074,6 @@ function map(mappings, path) {
     }
     return get(mappings, targetPath);
 }
-;
 /**
  * (for internal use) - gets all mappings set for a specific path and all subnodes
  * @returns returns array of all matched mappings in path
@@ -4127,7 +4123,6 @@ function mapDeep(mappings, entryPath) {
     }, []);
     return matches;
 }
-;
 /**
  * (for internal use) - serializes or deserializes an object using type mappings
  * @returns returns the (de)serialized value
@@ -4221,7 +4216,6 @@ function process(db, mappings, path, obj, action) {
     }
     return obj;
 }
-;
 const _mappings = Symbol("mappings");
 class TypeMappings {
     /**
@@ -4682,6 +4676,7 @@ exports.defer = defer;
 
 }).call(this)}).call(this,require("buffer").Buffer)
 },{"./data-snapshot":9,"./path-reference":15,"./process":16,"buffer":39}],25:[function(require,module,exports){
+const { cloneObject } = require('acebase-core').Utils;
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
@@ -4829,8 +4824,9 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 
     async commit() {
         // console.log(`*** COMMIT ${this._pending.length} operations ****`);
-        if (this._pending.length === 0) { return Promise.resolve(); }
+        if (this._pending.length === 0) { return; }
         const batch = this._pending.splice(0);
+        delete this._cache;
 
         /** @type {IDBTransaction} */
         const tx = this._createTransaction(true);
@@ -4880,55 +4876,58 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         }
     }
     
-    rollback(err) {
+    async rollback(err) {
         // Nothing has committed yet, so we'll leave it like that
         this._pending = [];
-        return Promise.resolve();
     }
 
-    get(path) {
+    async get(path) {
+        if (!this._cache) { this._cache = new Map(); }
+        else if (this._cache.has(path)) { 
+            const cache = this._cache.get(path);
+            return cloneObject(cache); // cloneValue(cache);
+        }
         const tx = this._createTransaction(false);
         const r1 = _requestToPromise(tx.objectStore('nodes').get(path)); // Get metadata from "nodes" object store
         const r2 = _requestToPromise(tx.objectStore('content').get(path)); // Get content from "content" object store
-        return Promise.all([r1, r2])
-        .then(results => {
+        try {
+            const results = await Promise.all([r1, r2]);
             tx.commit && tx.commit();
             /** @type {IIndexedDBNodeData} */
             const info = results[0];
             if (!info) {
                 // Node doesn't exist
+                this._cache.set(path, null);
                 return null; 
             }
             /** @type {ICustomStorageNode} */
             const node = info.metadata;
             node.value = results[1];
+            this._cache.set(path, cloneObject(node));
             return node;
-        })
-        .catch(err => {
-            tx.abort && tx.abort();
+        }
+        catch(err) {
             console.error(`IndexedDB get error`, err);
+            tx.abort && tx.abort();
             throw err;
-        });
+        }
     }
 
-    set(path, node) {
+    async set(path, node) {
         // Queue the operation until commit
         this._pending.push({ action: 'set', path, node });
-        return Promise.resolve();
     }
 
-    remove(path) {
+    async remove(path) {
         // Queue the operation until commit
         this._pending.push({ action: 'remove', path });
-        return Promise.resolve();
     }
 
-    removeMultiple(paths) {
+    async removeMultiple(paths) {
         // Queues multiple items at once, dramatically improves performance for large datasets
         paths.forEach(path => {
             this._pending.push({ action: 'remove', path });
         });
-        return Promise.resolve();
     }
 
     childrenOf(path, include, checkCallback, addCallback) {
@@ -5022,7 +5021,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { BrowserAceBase };
-},{"./acebase-local":26,"./storage-custom":37}],26:[function(require,module,exports){
+},{"./acebase-local":26,"./storage-custom":37,"acebase-core":12}],26:[function(require,module,exports){
 const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
 const { StorageSettings } = require('./storage');
 const { LocalApi } = require('./api-local');
@@ -5288,8 +5287,9 @@ class LocalApi extends Api {
         return Node.update(this.storage, path, updates, { merge: true, suppress_events: options.suppress_events, context: options.context });
     }
 
-    get(path, options) {
-        return Node.getValue(this.storage, path, options);
+    async get(path, options) {
+        const value = await Node.getValue(this.storage, path, options);
+        return { value, context: {} };
     }
 
     transaction(path, callback, options = { suppress_events: false, context: null }) {
@@ -6196,6 +6196,19 @@ class LocalApi extends Api {
     async validateSchema(path, value, isUpdate) {
         return this.storage.validateSchema(path, value, { updates: isUpdate });
     }
+
+    /**
+     * Gets all relevant mutations for specific events on a path and since specified cursor
+     * @param {object} filter
+     * @param {string} [filter.path] path to get all mutations for, only used if `for` property isn't used
+     * @param {Array<{ path: string, events: string[] }>} [filter.for] paths and events to get relevant mutations for
+     * @param {string} filter.cursor cursor to use
+     */
+    async getMutations(filter) {
+        if (typeof filter !== 'object') { throw new Error('No filter specified'); }
+        if (typeof filter.cursor !== 'string') { throw new Error('No cursor given'); }
+        return this.storage.getMutations(filter);
+    }
 }
 
 module.exports = { LocalApi };
@@ -6453,7 +6466,6 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         });
     }
     get isMaster() { return this.masterPeerId === this.id; }
-    ;
     /**
      * Requests the peer to shut down. Resolves once its locks are cleared and 'exit' event has been emitted.
      * Has to be overridden by the IPC implementation to perform custom shutdown tasks
@@ -8530,17 +8542,12 @@ class CustomStorage extends Storage {
             }
         };
         const start = async () => {
-            // let lock;
             const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
-            // return this.nodeLocker.lock(path, transaction.id, false, 'getChildren')
-            // .then(async l => {
-            //     lock = l;
             try {
                 let canceled = false;
                 await (async () => {
                     let node = await this._readNode(path, { transaction });
                     if (!node) { throw new NodeNotFoundError(`Node "/${path}" does not exist`); }
-                    // node = JSON.parse(node);
 
                     if (![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type)) {
                         // No children
@@ -9120,6 +9127,12 @@ class SchemaValidationError extends Error {
     }
 }
 
+/**
+ * @property {Array<{ target: Array<string|number>, prev: any, val: any }>} mutations
+ * @interface 
+ */
+class IWriteNodeResult {}
+
 class StorageSettings {
 
     /**
@@ -9129,7 +9142,7 @@ class StorageSettings {
      * @param {boolean} [settings.removeVoidProperties=false] Instead of throwing errors on undefined values, remove the properties automatically. Default is false
      * @param {string} [settings.path="."] Target path to store database files in, default is '.'
      * @param {string} [settings.info="realtime database"] optional info to be written to the console output underneith the logo
-     * @param {string} [settings.type] optional type of storage class - will be used by AceBaseStorage to create different db files in the future (data, mutation, auth etc)
+     * @param {string} [settings.type] optional type of storage class - will be used by AceBaseStorage to create different db files in the future (data, transaction, auth etc)
      */
     constructor(settings) {
         settings = settings || {};
@@ -9327,30 +9340,34 @@ class Storage extends SimpleEventEmitter {
             /**
              * Discovers and populates all created indexes
              */
-            load() {
+            async load() {
                 _indexes.splice(0);
                 if (!pfs.hasFileSystem) { 
                     // If pfs (fs) is not available, don't try using it
-                    return Promise.resolve();
+                    return;
                 }
-                return pfs.readdir(`${storage.settings.path}/${storage.name}.acebase`)
-                .then(files => {
-                    const promises = [];
-                    files.forEach(fileName => {
-                        if (fileName.endsWith('.idx')) {
-                            const p = this.add(fileName);
-                            promises.push(p);
-                        }
-                    });
-                    return Promise.all(promises);
-                })
-                .catch(err => {
+                let files = [];
+                try {
+                    files = await pfs.readdir(`${storage.settings.path}/${storage.name}.acebase`);
+                }
+                catch(err) {
                     if (err.code !== 'ENOENT') {
                         // If the directory is not found, there are no file indexes. (probably not supported by used storage class)
                         // Only complain if error is something else
                         storage.debug.error(err);
                     }
+                }
+                const promises = [];
+                files.forEach(fileName => {
+                    if (!fileName.endsWith('.idx')) { return; }
+                    const needsStoragePrefix = settings.type !== 'data'; // auth indexes need to start with "[auth]-" and have to be ignored by other storage types
+                    const hasStoragePrefix = /^\[[a-z]+\]-/.test(fileName);
+                    if ((!needsStoragePrefix && !hasStoragePrefix) || needsStoragePrefix && fileName.startsWith(`[${settings.type}]-`)) {
+                        const p = this.add(fileName);
+                        promises.push(p);
+                    }
                 });
+                await Promise.all(promises);
             },
 
             async add(fileName) {
@@ -9613,7 +9630,7 @@ class Storage extends SimpleEventEmitter {
      * @param {any} value 
      * @param {object} [options] 
      * @param {boolean} [options.merge=false]
-     * @returns {Promise<void>}
+     * @returns {Promise<any>}
      */
     // eslint-disable-next-line no-unused-vars
     _writeNode(path, value, options) {
@@ -9697,7 +9714,7 @@ class Storage extends SimpleEventEmitter {
      * @param {string} path 
      * @param {any} value 
      * @param {object} [options] 
-     * @returns {Promise<void>}
+     * @returns {Promise<IWriteNodeResult>} Returns a promise that resolves with an object that contains storage specific details, plus the applied mutations if transaction logging is enabled
      */
     async _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true, suppress_events: false, context: null, impact: null }) {
         options = options || {};
@@ -9737,7 +9754,8 @@ class Storage extends SimpleEventEmitter {
             return this._writeNode(path, value, options);            
         }
 
-        if (eventSubscriptions.length === 0 && indexes.length === 0) {
+        const transactionLoggingEnabled = this.settings.transactions && this.settings.transactions.log === true;
+        if (eventSubscriptions.length === 0 && indexes.length === 0 && !transactionLoggingEnabled) {
             // Nobody's interested in value changes. Write node without tracking
             return writeNode();
         }
@@ -9767,7 +9785,7 @@ class Storage extends SimpleEventEmitter {
         topEventData = currentValue;
 
         // Now proceed with node updating
-        const result = await writeNode();
+        const result = (await writeNode()) || {};
 
         // Build data for old/new comparison
         let newTopEventData, modifiedData;
@@ -9834,6 +9852,7 @@ class Storage extends SimpleEventEmitter {
 
         const dataChanges = compareValues(topEventData, newTopEventData);
         if (dataChanges === 'identical') {
+            result.mutations = [];
             return result;
         }
 
@@ -9969,6 +9988,65 @@ class Storage extends SimpleEventEmitter {
             trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
         };
 
+        const prepareMutationEvents = (sub, currentPath, oldValue, newValue, compareResult) => {
+            const batch = [];
+            const result = compareResult || compareValues(oldValue, newValue);
+            if (result === 'identical') {
+                return batch; // no changes on subscribed path
+            }
+            else if (typeof result === 'string') {
+                // We are on a path that has an actual change
+                batch.push({ path: currentPath, oldValue, newValue });
+                // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
+            }
+            else if (oldValue instanceof Array || newValue instanceof Array) {
+                // Trigger mutated event on the array itself instead of on individual indexes
+                batch.push({ path: currentPath, oldValue, newValue });
+                // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
+            }
+            else {
+                // DISABLED array handling here, because if a client is using a cache db this will cause problems
+                // because individual array entries should never be modified.
+                // if (oldValue instanceof Array && newValue instanceof Array) {
+                //     // Make sure any removed events on arrays will be triggered from last to first
+                //     result.removed.sort((a,b) => a < b ? 1 : -1);
+                // }
+                result.changed.forEach(info => {
+                    const childPath = PathInfo.getChildPath(currentPath, info.key);
+                    let childValues = getChildValues(info.key, oldValue, newValue);
+                    const childBatch = prepareMutationEvents(sub, childPath, childValues.oldValue, childValues.newValue, info.change);
+                    batch.push(...childBatch);
+                });
+                result.added.forEach(key => {
+                    const childPath = PathInfo.getChildPath(currentPath, key);
+                    batch.push({ path: childPath, oldValue: null, newValue: newValue[key] });
+                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, null, newValue[key], options.context);
+                });
+                result.removed.forEach(key => {
+                    const childPath = PathInfo.getChildPath(currentPath, key);
+                    batch.push({ path: childPath, oldValue: oldValue[key], newValue: null });
+                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, oldValue[key], null, options.context);
+                });
+            }
+            return batch;
+        };
+
+        // Add mutations to result
+        result.mutations = (() => {
+            const trailPath = path.slice(topEventPath.length).replace(/^\//, '');
+            const trailKeys = PathInfo.getPathKeys(trailPath);
+            let oldValue = topEventData, newValue = newTopEventData;
+            while (trailKeys.length > 0) {
+                const key = trailKeys.shift();
+                ({ oldValue, newValue } = getChildValues(key, oldValue, newValue));
+            }
+            const compareResults = compareValues(oldValue, newValue);
+            const fakeSub = { event: 'mutations', path };
+            const batch = prepareMutationEvents(fakeSub, path, oldValue, newValue, compareResults);
+            const mutations = batch.map(m => ({ target: PathInfo.getPathKeys(m.path.slice(path.length)), prev: m.oldValue, val: m.newValue })); // key: PathInfo.get(m.path).key
+            return mutations;
+        })();
+
         const triggerAllEvents = () => {
             // Notify all event subscriptions, should be executed with a delay
             // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
@@ -10052,49 +10130,6 @@ class Storage extends SimpleEventEmitter {
             // The only events we haven't processed now are 'mutated' events.
             // They require different logic: we'll call them for all nested properties of the updated path, that 
             // actually did change. They do not bubble up like 'child_changed' does.
-            const prepareMutationEvents = (sub, currentPath, oldValue, newValue, compareResult) => {
-                const batch = [];
-                const result = compareResult || compareValues(oldValue, newValue);
-                if (result === 'identical') {
-                    return batch; // no changes on subscribed path
-                }
-                else if (typeof result === 'string') {
-                    // We are on a path that has an actual change
-                    batch.push({ path: currentPath, oldValue, newValue });
-                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
-                }
-                else if (oldValue instanceof Array || newValue instanceof Array) {
-                    // Trigger mutated event on the array itself instead of on individual indexes
-                    batch.push({ path: currentPath, oldValue, newValue });
-                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
-                }
-                else {
-                    // DISABLED array handling here, because if a client is using a cache db this will cause problems
-                    // because individual array entries should never be modified.
-                    // if (oldValue instanceof Array && newValue instanceof Array) {
-                    //     // Make sure any removed events on arrays will be triggered from last to first
-                    //     result.removed.sort((a,b) => a < b ? 1 : -1);
-                    // }
-                    result.changed.forEach(info => {
-                        const childPath = PathInfo.getChildPath(currentPath, info.key);
-                        let childValues = getChildValues(info.key, oldValue, newValue);
-                        const childBatch = prepareMutationEvents(sub, childPath, childValues.oldValue, childValues.newValue, info.change);
-                        batch.push(...childBatch);
-                    });
-                    result.added.forEach(key => {
-                        const childPath = PathInfo.getChildPath(currentPath, key);
-                        batch.push({ path: childPath, oldValue: null, newValue: newValue[key] });
-                        // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, null, newValue[key], options.context);
-                    });
-                    result.removed.forEach(key => {
-                        const childPath = PathInfo.getChildPath(currentPath, key);
-                        batch.push({ path: childPath, oldValue: oldValue[key], newValue: null });
-                        // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, oldValue[key], null, options.context);
-                    });
-                }
-                return batch;
-            };
-
             eventSubscriptions.filter(sub => ['mutated', 'mutations', 'notify_mutated', 'notify_mutations'].includes(sub.type))
             .forEach(sub => {
                 // Get the target data this subscription is interested in
@@ -10808,7 +10843,8 @@ module.exports = {
     StorageSettings,
     NodeNotFoundError,
     NodeRevisionError,
-    SchemaValidationError
+    SchemaValidationError,
+    IWriteNodeResult
 };
 },{"./data-index":35,"./ipc":29,"./node-info":31,"./node-value-types":33,"./promise-fs":36,"acebase-core":12}],39:[function(require,module,exports){
 
