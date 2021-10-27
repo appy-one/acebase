@@ -146,7 +146,7 @@ export class TransactionManager implements ITransactionManager {
         const grantLock = () => {
             lock.state = NodeLockState.locked;
             lock.granted = Date.now();
-            lock.expires = lock.granted + LOCK_TIMEOUT_MS
+            lock.expires = lock.granted + LOCK_TIMEOUT_MS;
             this.locks.push(lock);
         }
 
