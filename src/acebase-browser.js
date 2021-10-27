@@ -1,3 +1,4 @@
+const { cloneObject } = require('acebase-core').Utils;
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
@@ -145,8 +146,9 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 
     async commit() {
         // console.log(`*** COMMIT ${this._pending.length} operations ****`);
-        if (this._pending.length === 0) { return Promise.resolve(); }
+        if (this._pending.length === 0) { return; }
         const batch = this._pending.splice(0);
+        delete this._cache;
 
         /** @type {IDBTransaction} */
         const tx = this._createTransaction(true);
@@ -196,55 +198,58 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         }
     }
     
-    rollback(err) {
+    async rollback(err) {
         // Nothing has committed yet, so we'll leave it like that
         this._pending = [];
-        return Promise.resolve();
     }
 
-    get(path) {
+    async get(path) {
+        if (!this._cache) { this._cache = new Map(); }
+        else if (this._cache.has(path)) { 
+            const cache = this._cache.get(path);
+            return cloneObject(cache); // cloneValue(cache);
+        }
         const tx = this._createTransaction(false);
         const r1 = _requestToPromise(tx.objectStore('nodes').get(path)); // Get metadata from "nodes" object store
         const r2 = _requestToPromise(tx.objectStore('content').get(path)); // Get content from "content" object store
-        return Promise.all([r1, r2])
-        .then(results => {
+        try {
+            const results = await Promise.all([r1, r2]);
             tx.commit && tx.commit();
             /** @type {IIndexedDBNodeData} */
             const info = results[0];
             if (!info) {
                 // Node doesn't exist
+                this._cache.set(path, null);
                 return null; 
             }
             /** @type {ICustomStorageNode} */
             const node = info.metadata;
             node.value = results[1];
+            this._cache.set(path, cloneObject(node));
             return node;
-        })
-        .catch(err => {
-            tx.abort && tx.abort();
+        }
+        catch(err) {
             console.error(`IndexedDB get error`, err);
+            tx.abort && tx.abort();
             throw err;
-        });
+        }
     }
 
-    set(path, node) {
+    async set(path, node) {
         // Queue the operation until commit
         this._pending.push({ action: 'set', path, node });
-        return Promise.resolve();
     }
 
-    remove(path) {
+    async remove(path) {
         // Queue the operation until commit
         this._pending.push({ action: 'remove', path });
-        return Promise.resolve();
     }
 
-    removeMultiple(paths) {
+    async removeMultiple(paths) {
         // Queues multiple items at once, dramatically improves performance for large datasets
         paths.forEach(path => {
             this._pending.push({ action: 'remove', path });
         });
-        return Promise.resolve();
     }
 
     childrenOf(path, include, checkCallback, addCallback) {
