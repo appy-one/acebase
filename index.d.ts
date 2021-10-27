@@ -49,12 +49,19 @@ export class AceBase extends acebasecore.AceBaseBase {
 export interface AceBaseLocalSettings {
     logLevel?: 'verbose'|'log'|'warn'|'error';
     storage?: StorageSettings;
+    transactions?: TransactionLogSettings;
 }
 
 export abstract class StorageSettings {
     maxInlineValueSize?: number;
     removeVoidProperties?: boolean;
     path?: string;
+}
+
+export abstract class TransactionLogSettings {
+    log?: boolean;
+    maxAge?: number;
+    noWait?: boolean;
 }
 
 export class AceBaseStorageSettings extends StorageSettings {
