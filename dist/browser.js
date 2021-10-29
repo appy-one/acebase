@@ -168,7 +168,7 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
 }
 exports.AceBaseBase = AceBaseBase;
 
-},{"./data-reference":8,"./debug":10,"./optional-observable":13,"./simple-colors":19,"./simple-event-emitter":20,"./type-mappings":23}],2:[function(require,module,exports){
+},{"./data-reference":8,"./debug":10,"./optional-observable":14,"./simple-colors":20,"./simple-event-emitter":21,"./type-mappings":24}],2:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Api = void 0;
@@ -1516,7 +1516,7 @@ class OrderedCollectionProxy {
 }
 exports.OrderedCollectionProxy = OrderedCollectionProxy;
 
-},{"./data-reference":8,"./data-snapshot":9,"./id":11,"./optional-observable":13,"./path-reference":15,"./process":16,"./utils":24}],8:[function(require,module,exports){
+},{"./data-reference":8,"./data-snapshot":9,"./id":11,"./optional-observable":14,"./path-reference":16,"./process":17,"./utils":25}],8:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DataReferencesArray = exports.DataSnapshotsArray = exports.DataReferenceQuery = exports.DataReference = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = void 0;
@@ -1998,12 +1998,12 @@ class DataReference {
         const promise = this.db.api.get(this.path, options).then(result => {
             const isNewApiResult = ('context' in result && 'value' in result);
             if (!isNewApiResult) {
-                // Should not happen
-                throw new Error(`AceBase api.get method returned old response value. Update your acebase or acebase-client package`);
+                // acebase-core version package was updated but acebase or acebase-client package was not? Warn, but don't throw an error.
+                console.warn(`AceBase api.get method returned an old response value. Update your acebase or acebase-client package`);
+                result = { value: result, context: {} };
             }
-            const context = result.context || {};
             const value = this.db.types.deserialize(this.path, result.value);
-            const snapshot = new data_snapshot_1.DataSnapshot(this, value, undefined, undefined, context);
+            const snapshot = new data_snapshot_1.DataSnapshot(this, value, undefined, undefined, result.context);
             return snapshot;
         });
         if (callback) {
@@ -2368,12 +2368,31 @@ class DataReferenceQuery {
         });
     }
     /**
-     * Executes the query and returns references. Short for .get({ snapshots: false })
+     * Executes the query and returns references. Short for `.get({ snapshots: false })`
      * @param callback callback to use instead of returning a promise
      * @returns returns an Promise that resolves with an array of DataReferences, or void when using a callback
+     * @deprecated Use `find` instead
      */
     getRefs(callback) {
         return this.get({ snapshots: false }, callback);
+    }
+    /**
+     * Executes the query and returns an array of references. Short for `.get({ snapshots: false })`
+     */
+    find() {
+        return this.get({ snapshots: false });
+    }
+    /**
+     * Executes the query and returns the number of results
+     */
+    count() {
+        return this.get({ snapshots: false }).then(refs => refs.length);
+    }
+    /**
+     * Executes the query and returns if there are any results
+     */
+    exists() {
+        return this.count().then(count => count > 1);
     }
     /**
      * Executes the query, removes all matches from the database
@@ -2501,7 +2520,7 @@ class DataReferencesArray extends Array {
 }
 exports.DataReferencesArray = DataReferencesArray;
 
-},{"./data-proxy":7,"./data-snapshot":9,"./id":11,"./optional-observable":13,"./path-info":14,"./subscription":21}],9:[function(require,module,exports){
+},{"./data-proxy":7,"./data-snapshot":9,"./id":11,"./optional-observable":14,"./path-info":15,"./subscription":22}],9:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MutationsDataSnapshot = exports.DataSnapshot = void 0;
@@ -2652,7 +2671,7 @@ class MutationsDataSnapshot extends DataSnapshot {
 }
 exports.MutationsDataSnapshot = MutationsDataSnapshot;
 
-},{"./path-info":14}],10:[function(require,module,exports){
+},{"./path-info":15}],10:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DebugLogger = void 0;
@@ -2682,7 +2701,7 @@ class DebugLogger {
 }
 exports.DebugLogger = DebugLogger;
 
-},{"./process":16}],11:[function(require,module,exports){
+},{"./process":17}],11:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ID = void 0;
@@ -2707,7 +2726,7 @@ exports.ID = ID;
 },{"./cuid":5}],12:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SchemaDefinition = exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.proxyAccess = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
+exports.ObjectCollection = exports.SchemaDefinition = exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.proxyAccess = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.DataReferencesArray = exports.DataSnapshotsArray = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
 var acebase_base_1 = require("./acebase-base");
 Object.defineProperty(exports, "AceBaseBase", { enumerable: true, get: function () { return acebase_base_1.AceBaseBase; } });
 Object.defineProperty(exports, "AceBaseBaseSettings", { enumerable: true, get: function () { return acebase_base_1.AceBaseBaseSettings; } });
@@ -2718,6 +2737,8 @@ Object.defineProperty(exports, "DataReference", { enumerable: true, get: functio
 Object.defineProperty(exports, "DataReferenceQuery", { enumerable: true, get: function () { return data_reference_1.DataReferenceQuery; } });
 Object.defineProperty(exports, "DataRetrievalOptions", { enumerable: true, get: function () { return data_reference_1.DataRetrievalOptions; } });
 Object.defineProperty(exports, "QueryDataRetrievalOptions", { enumerable: true, get: function () { return data_reference_1.QueryDataRetrievalOptions; } });
+Object.defineProperty(exports, "DataSnapshotsArray", { enumerable: true, get: function () { return data_reference_1.DataSnapshotsArray; } });
+Object.defineProperty(exports, "DataReferencesArray", { enumerable: true, get: function () { return data_reference_1.DataReferencesArray; } });
 var data_snapshot_1 = require("./data-snapshot");
 Object.defineProperty(exports, "DataSnapshot", { enumerable: true, get: function () { return data_snapshot_1.DataSnapshot; } });
 Object.defineProperty(exports, "MutationsDataSnapshot", { enumerable: true, get: function () { return data_snapshot_1.MutationsDataSnapshot; } });
@@ -2751,8 +2772,26 @@ Object.defineProperty(exports, "ColorStyle", { enumerable: true, get: function (
 Object.defineProperty(exports, "Colorize", { enumerable: true, get: function () { return simple_colors_1.Colorize; } });
 var schema_1 = require("./schema");
 Object.defineProperty(exports, "SchemaDefinition", { enumerable: true, get: function () { return schema_1.SchemaDefinition; } });
+var object_collection_1 = require("./object-collection");
+Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return object_collection_1.ObjectCollection; } });
 
-},{"./acebase-base":1,"./api":2,"./ascii85":3,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./path-info":14,"./path-reference":15,"./schema":17,"./simple-cache":18,"./simple-colors":19,"./simple-event-emitter":20,"./subscription":21,"./transport":22,"./type-mappings":23,"./utils":24}],13:[function(require,module,exports){
+},{"./acebase-base":1,"./api":2,"./ascii85":3,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./object-collection":13,"./path-info":15,"./path-reference":16,"./schema":18,"./simple-cache":19,"./simple-colors":20,"./simple-event-emitter":21,"./subscription":22,"./transport":23,"./type-mappings":24,"./utils":25}],13:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ObjectCollection = void 0;
+const id_1 = require("./id");
+class ObjectCollection {
+    static from(array) {
+        const collection = {};
+        array.forEach(child => {
+            collection[id_1.ID.generate()] = child;
+        });
+        return collection;
+    }
+}
+exports.ObjectCollection = ObjectCollection;
+
+},{"./id":11}],14:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ObservableShim = exports.setObservable = exports.getObservable = void 0;
@@ -2830,7 +2869,7 @@ class ObservableShim {
 }
 exports.ObservableShim = ObservableShim;
 
-},{"rxjs":39}],14:[function(require,module,exports){
+},{"rxjs":40}],15:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathInfo = void 0;
@@ -3111,7 +3150,7 @@ class PathInfo {
 }
 exports.PathInfo = PathInfo;
 
-},{}],15:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathReference = void 0;
@@ -3126,7 +3165,7 @@ class PathReference {
 }
 exports.PathReference = PathReference;
 
-},{}],16:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = {
@@ -3135,7 +3174,7 @@ exports.default = {
     }
 };
 
-},{}],17:[function(require,module,exports){
+},{}],18:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SchemaDefinition = void 0;
@@ -3477,7 +3516,7 @@ class SchemaDefinition {
 }
 exports.SchemaDefinition = SchemaDefinition;
 
-},{}],18:[function(require,module,exports){
+},{}],19:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleCache = void 0;
@@ -3511,7 +3550,7 @@ class SimpleCache {
 }
 exports.SimpleCache = SimpleCache;
 
-},{}],19:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Colorize = exports.SetColorsEnabled = exports.ColorsSupported = exports.ColorStyle = void 0;
@@ -3663,7 +3702,7 @@ String.prototype.colorize = function (style) {
     return Colorize(this, style);
 };
 
-},{"./process":16}],20:[function(require,module,exports){
+},{"./process":17}],21:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleEventEmitter = void 0;
@@ -3748,7 +3787,7 @@ class SimpleEventEmitter {
 }
 exports.SimpleEventEmitter = SimpleEventEmitter;
 
-},{}],21:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EventStream = exports.EventPublisher = exports.EventSubscription = void 0;
@@ -3936,7 +3975,7 @@ class EventStream {
 }
 exports.EventStream = EventStream;
 
-},{}],22:[function(require,module,exports){
+},{}],23:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Transport = void 0;
@@ -4033,7 +4072,7 @@ exports.Transport = {
     }
 };
 
-},{"./ascii85":3,"./path-info":14,"./path-reference":15,"./utils":24}],23:[function(require,module,exports){
+},{"./ascii85":3,"./path-info":15,"./path-reference":16,"./utils":25}],24:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TypeMappings = void 0;
@@ -4333,7 +4372,7 @@ class TypeMappings {
 }
 exports.TypeMappings = TypeMappings;
 
-},{"./data-reference":8,"./data-snapshot":9,"./path-info":14,"./utils":24}],24:[function(require,module,exports){
+},{"./data-reference":8,"./data-snapshot":9,"./path-info":15,"./utils":25}],25:[function(require,module,exports){
 (function (Buffer){(function (){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -4675,7 +4714,7 @@ function defer(fn) {
 exports.defer = defer;
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"./data-snapshot":9,"./path-reference":15,"./process":16,"buffer":39}],25:[function(require,module,exports){
+},{"./data-snapshot":9,"./path-reference":16,"./process":17,"buffer":40}],26:[function(require,module,exports){
 const { cloneObject } = require('acebase-core').Utils;
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
@@ -5021,7 +5060,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { BrowserAceBase };
-},{"./acebase-local":26,"./storage-custom":37,"acebase-core":12}],26:[function(require,module,exports){
+},{"./acebase-local":27,"./storage-custom":38,"acebase-core":12}],27:[function(require,module,exports){
 const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
 const { StorageSettings } = require('./storage');
 const { LocalApi } = require('./api-local');
@@ -5221,7 +5260,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":27,"./storage":38,"./storage-custom":37,"acebase-core":12}],27:[function(require,module,exports){
+},{"./api-local":28,"./storage":39,"./storage-custom":38,"acebase-core":12}],28:[function(require,module,exports){
 const { Api } = require('acebase-core');
 const { StorageSettings, NodeNotFoundError } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
@@ -6212,7 +6251,7 @@ class LocalApi extends Api {
 }
 
 module.exports = { LocalApi };
-},{"./data-index":35,"./node":34,"./storage":38,"./storage-acebase":35,"./storage-custom":37,"./storage-mssql":35,"./storage-sqlite":35,"acebase-core":12}],28:[function(require,module,exports){
+},{"./data-index":36,"./node":35,"./storage":39,"./storage-acebase":36,"./storage-custom":38,"./storage-mssql":36,"./storage-sqlite":36,"acebase-core":12}],29:[function(require,module,exports){
 /**
    ________________________________________________________________________________
    
@@ -6258,7 +6297,7 @@ window.acebase = acebase;
 window.AceBase = BrowserAceBase;
 // Expose classes for module imports:
 module.exports = acebase;
-},{"./acebase-browser":25,"./acebase-local":26,"./storage-custom":37,"acebase-core":12}],29:[function(require,module,exports){
+},{"./acebase-browser":26,"./acebase-local":27,"./storage-custom":38,"acebase-core":12}],30:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IPCPeer = void 0;
@@ -6394,7 +6433,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
 }
 exports.IPCPeer = IPCPeer;
 
-},{"./ipc":30,"acebase-core":12}],30:[function(require,module,exports){
+},{"./ipc":31,"acebase-core":12}],31:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
@@ -6880,7 +6919,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock":32,"acebase-core":12}],31:[function(require,module,exports){
+},{"../node-lock":33,"acebase-core":12}],32:[function(require,module,exports){
 const { getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
 
@@ -6942,7 +6981,7 @@ class NodeInfo {
 }
 
 module.exports = { NodeInfo };
-},{"./node-value-types":33,"acebase-core":12}],32:[function(require,module,exports){
+},{"./node-value-types":34,"acebase-core":12}],33:[function(require,module,exports){
 const { PathInfo, ID } = require('acebase-core');
 
 const SECOND = 1000;
@@ -7294,7 +7333,7 @@ class NodeLock {
 }
 
 module.exports = { NodeLocker, NodeLock };
-},{"acebase-core":12}],33:[function(require,module,exports){
+},{"acebase-core":12}],34:[function(require,module,exports){
 const { PathReference } = require('acebase-core');
 
 const VALUE_TYPES = {
@@ -7335,7 +7374,7 @@ function getNodeValueType(value) {
 }
 
 module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType };
-},{"acebase-core":12}],34:[function(require,module,exports){
+},{"acebase-core":12}],35:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
@@ -7657,9 +7696,9 @@ module.exports = {
     NodeChange,
     NodeChangeTracker
 };
-},{"./node-info":31,"./node-value-types":33,"./storage":38}],35:[function(require,module,exports){
+},{"./node-info":32,"./node-value-types":34,"./storage":39}],36:[function(require,module,exports){
 // Not supported in current environment
-},{}],36:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pfs = void 0;
@@ -7669,7 +7708,7 @@ class pfs {
 }
 exports.pfs = pfs;
 
-},{}],37:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 const { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils } = require('acebase-core');
 const { compareValues } = Utils;
 const { NodeInfo } = require('./node-info');
@@ -9104,7 +9143,7 @@ module.exports = {
     ICustomStorageNodeMetaData,
     ICustomStorageNode
 }
-},{"./node-info":31,"./node-lock":32,"./node-value-types":33,"./storage":38,"acebase-core":12}],38:[function(require,module,exports){
+},{"./node-info":32,"./node-lock":33,"./node-value-types":34,"./storage":39,"acebase-core":12}],39:[function(require,module,exports){
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle, SchemaDefinition } = require('acebase-core');
 const { VALUE_TYPES } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
@@ -10846,7 +10885,7 @@ module.exports = {
     SchemaValidationError,
     IWriteNodeResult
 };
-},{"./data-index":35,"./ipc":29,"./node-info":31,"./node-value-types":33,"./promise-fs":36,"acebase-core":12}],39:[function(require,module,exports){
+},{"./data-index":36,"./ipc":30,"./node-info":32,"./node-value-types":34,"./promise-fs":37,"acebase-core":12}],40:[function(require,module,exports){
 
-},{}]},{},[28])(28)
+},{}]},{},[29])(29)
 });
