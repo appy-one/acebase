@@ -12,8 +12,7 @@ describe('Event', () => {
     });
     
     it('child_added', async () => {
-        const collectionRef = db.ref('collection');
-        await collectionRef.set({ 
+        const items = { 
             item1: { text: 'Item 1' },
             item2: { text: 'Item 2' },
             item3: { text: 'Item 3' },
@@ -24,29 +23,32 @@ describe('Event', () => {
             item8: { text: 'Item 8' },
             item9: { text: 'Item 9' },
             item10: { text: 'Item 10' },
-        });
-        
+        };
+        const collectionRef = db.ref('collection');
+        await collectionRef.set(items);
+
         // Part 1: test callbacks for existing items
 
         // Test with callback
-        let resolve, count = 0, promise = new Promise(r => resolve = r);
+        let expectKeys = Object.keys(items);
+        let resolve, promise = new Promise(r => resolve = r);
         let childAddedCallback = (snap) => {
-            count++;
-            expect(snap.key).toBe(`item${count}`);
-            if (count === 10) { resolve(); }
+            expect(expectKeys.includes(snap.key)).toBeTrue();
+            expectKeys.splice(expectKeys.indexOf(snap.key), 1);
+            if (expectKeys.length === 0) { resolve(); }
         };
         collectionRef.on('child_added', childAddedCallback);
         await promise;
         collectionRef.off('child_added', childAddedCallback);
 
         // Test with subscribe
-        count = 0, promise = new Promise(r => resolve = r);
+        expectKeys = Object.keys(items), promise = new Promise(r => resolve = r);
         let subscription = collectionRef.on('child_added', true).subscribe(childAddedCallback);
         await promise;
         subscription.stop();
 
         // Test with newOnly option
-        count = 0, promise = new Promise(r => resolve = r);
+        expectKeys = Object.keys(items), promise = new Promise(r => resolve = r);
         subscription = collectionRef.on('child_added', { newOnly: false }).subscribe(childAddedCallback);
         await promise;
         subscription.stop();
@@ -85,13 +87,13 @@ describe('Event', () => {
         // Part 3: test callbacks for existing AND new items
 
         childAddedCallback = (snap) => {
-            count++;
-            expect(snap.key).toBe(`item${count}`);
-            if (count === 11) { resolve(); }
+            expect(expectKeys.includes(snap.key)).toBeTrue();
+            expectKeys.splice(expectKeys.indexOf(snap.key), 1);
+            if (expectKeys.length === 0) { resolve(); }
         };
 
         // Test with callback
-        count = 0, promise = new Promise(r => resolve = r);
+        expectKeys = Object.keys(items).concat('item11'), promise = new Promise(r => resolve = r);
         collectionRef.on('child_added', childAddedCallback);
         collectionRef.child('item11').set({ text: 'Item 11' });
         await promise;
@@ -99,7 +101,7 @@ describe('Event', () => {
         await collectionRef.child('item11').remove();
 
         // Test subscription with true as fireForCurrentValue argument
-        count = 0, promise = new Promise(r => resolve = r);
+        expectKeys = Object.keys(items).concat('item11'), promise = new Promise(r => resolve = r);
         subscription = collectionRef.on('child_added', true).subscribe(childAddedCallback);
         collectionRef.child('item11').set({ text: 'Item 11' });
         await promise;
@@ -107,7 +109,7 @@ describe('Event', () => {
         await collectionRef.child('item11').remove();
 
         // Test subscription with 'truthy' fireForCurrentValue argument
-        count = 0, promise = new Promise(r => resolve = r);
+        expectKeys = Object.keys(items).concat('item11'), promise = new Promise(r => resolve = r);
         subscription = collectionRef.on('child_added', 'truthy argument').subscribe(childAddedCallback);
         collectionRef.child('item11').set({ text: 'Item 11' });
         await promise;
@@ -115,7 +117,7 @@ describe('Event', () => {
         await collectionRef.child('item11').remove();
 
         // Test subscription with newOnly option
-        count = 0, promise = new Promise(r => resolve = r);
+        expectKeys = Object.keys(items).concat('item11'), promise = new Promise(r => resolve = r);
         subscription = collectionRef.on('child_added', { newOnly: false }).subscribe(childAddedCallback);
         collectionRef.child('item11').set({ text: 'Item 11' });
         await promise;
