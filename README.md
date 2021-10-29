@@ -38,7 +38,10 @@ AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, yo
     * [Using proxy methods in Typescript](#using-proxy-methods-in-typescript)
 * Queries
     * [Querying data](#querying-data)
+    * [Limiting query result data](#limiting-query-result-data)
     * [Removing data with a query](#removing-data-with-a-query)
+    * [Counting query results](#counting-query-results)
+    * [Checking query result existence](#checking-query-result-existence)
     * [Streaming query results](#streaming-query-results)
     * [Realtime queries](#realtime-queries)
 * Indexes
@@ -979,31 +982,31 @@ I'll leave up to your imagination what the ```MessageComponent``` would look lik
 
 ## Querying data
 
-When running a query, all child nodes of the referenced path will be matched against your set criteria and returned in any requested ```sort``` order. Pagination of results is also supported, so you can ```skip``` and ```take``` any number of results. Queries do not require data to be indexed, although this is recommended if your data becomes larger.
+When running a query, all child nodes of the referenced path will be matched against your set criteria and returned in any requested `sort` order. Pagination of results is also supported, so you can `skip` and `take` any number of results. Queries do not require data to be indexed, although this is recommended if your data becomes larger.
 
-To filter results, multiple ```filter(key, operator, compare)``` statements can be added. The filtered results must match all conditions set (logical AND). Supported query operators are:
-- ```'<'```: value must be smaller than ```compare```
-- ```'<='```: value must be smaller or equal to ```compare```
-- ```'=='```: value must be equal to ```compare```
-- ```'!='```: value must not be equal to ```compare```
-- ```'>'```: value must be greater than ```compare```
-- ```'>='```: value must be greater or equal to ```compare```
-- ```'exists'```: key must exist
-- ```'!exists'```: key must not exist
-- ```'between'```: value must be between the 2 values in ```compare``` array (```compare[0]``` <= value <= ```compare[1]```). If ```compare[0] > compare[1]```, their values will be swapped
-- ```'!between'```: value must not be between the 2 values in ```compare``` array (value < ```compare[0]``` or value > ```compare[1]```). If ```compare[0] > compare[1]```, their values will be swapped
-- ```'like'```: value must be a string and must match the given pattern ```compare```. Patterns are case-insensitive and can contain wildcards _*_ for 0 or more characters, and ? for 1 character. (pattern ```"Th?"``` matches ```"The"```, not ```"That"```; pattern ```"Th*"``` matches ```"the"``` and ```"That"```)
-- ```'!like'```: value must be a string and must not match the given pattern ```compare```
-- ```'matches'```: value must be a string and must match the regular expression ```compare```
-- ```'!matches'```: value must be a string and must not match the regular expression ```compare```
-- ```'in'```: value must be equal to one of the values in ```compare``` array
-- ```'!in'```: value must not be equal to any value in ```compare``` array
-- ```'has'```: value must be an object, and it must have property ```compare```.
-- ```'!has'```: value must be an object, and it must not have property ```compare```
-- ```'contains'```: value must be an array and it must contain a value equal to ```compare```, or contain all of the values in ```compare``` array
-- ```'!contains'```: value must be an array and it must not contain a value equal to ```compare```, or not contain any of the values in ```compare``` array
+To filter results, multiple `filter(key, operator, compare)` statements can be added. The filtered results must match all conditions set (logical AND). Supported query operators are:
+- `'<'`: value must be smaller than `compare`
+- `'<='`: value must be smaller or equal to `compare`
+- `'=='`: value must be equal to `compare`
+- `'!='`: value must not be equal to `compare`
+- `'>'`: value must be greater than `compare`
+- `'>='`: value must be greater or equal to `compare`
+- `'exists'`: `key` must exist
+- `'!exists'`: `key` must not exist
+- `'between'`: value must be between the 2 values in `compare` array (`compare[0]` <= value <= `compare[1]`). If `compare[0] > compare[1]`, their values will be swapped
+- `'!between'`: value must not be between the 2 values in `compare` array (value < `compare[0]` or value > `compare[1]`). If `compare[0] > compare[1]`, their values will be swapped
+- `'like'`: value must be a string and must match the given pattern `compare`. Patterns are case-insensitive and can contain wildcards _*_ for 0 or more characters, and _?_ for 1 character. (pattern `"Th?"` matches `"The"`, not `"That"`; pattern `"Th*"` matches `"the"` and `"That"`)
+- `'!like'`: value must be a string and must not match the given pattern `compare`
+- `'matches'`: value must be a string and must match the regular expression `compare`
+- `'!matches'`: value must be a string and must not match the regular expression `compare`
+- `'in'`: value must be equal to one of the values in `compare` array
+- `'!in'`: value must not be equal to any value in `compare` array
+- `'has'`: value must be an object, and it must have property `compare`.
+- `'!has'`: value must be an object, and it must not have property `compare`
+- `'contains'`: value must be an array and it must contain a value equal to `compare`, or contain all of the values in `compare` array
+- `'!contains'`: value must be an array and it must not contain a value equal to `compare`, or not contain any of the values in `compare` array
 
-NOTE: A query does not require any ```filter``` criteria, you can also use a ```query``` to paginate your data using ```skip```, ```take``` and ```sort```. If you don't specify any of these, AceBase will use ```.take(100)``` as default. If you do not specify a ```sort```, the order of the returned values can vary between executions.
+NOTE: A query does not require any `filter` criteria, you can also use a `query` to paginate your data using `skip`, `take` and `sort`. If you don't specify any of these, AceBase will use `.take(100)` as default. If you do not specify a `sort`, the order of the returned values can vary between executions.
 
 ```javascript
 db.query('songs')
@@ -1018,7 +1021,7 @@ db.query('songs')
 });
 ```
 
-To quickly convert a snapshots array to the values it encapsulates, you can call ```snapshots.getValues()```. This is a convenience method and comes in handy if you are not interested in the results' paths or keys. You can also do it yourself with ```var values = snapshots.map(snap => snap.val())```:
+To quickly convert a snapshots array to the values it encapsulates, you can call `snapshots.getValues()`. This is a convenience method and comes in handy if you are not interested in the results' paths or keys. You can also do it yourself with `var values = snapshots.map(snap => snap.val())`:
 ```javascript
 db.query('songs')
 .filter('year', '>=', 2018)
@@ -1027,15 +1030,7 @@ db.query('songs')
 });
 ```
 
-By default, queries will return snapshots of the matched nodes, but you can also get references only by passing the option ```{ snapshots: false }```
-```javascript
-// ...
-.get({ snapshots: false }, references => {
-    // now we have references only, so we can decide what data to load
-});
-```
-
-Instead of using the callback of ```.get```, you can also use the returned ```Promise``` which is very useful in promise chains:
+Instead of using the callback of `.get`, you can also use the returned `Promise` which is very useful in promise chains:
 ```javascript
 // ... in some promise chain
 .then(fromYear => {
@@ -1046,25 +1041,99 @@ Instead of using the callback of ```.get```, you can also use the returned ```Pr
 .then(snapshots => {
     // Got snapshots from returned promise
 })
-
 ```
-This also enables using ES6 syntax:
+
+This also enables using ES6 `async` / `await`:
 ```javascript
 const snapshots = await db.query('songs')
     .filter('year', '>=', fromYear)
     .get();
 ```
 
+### Limiting query result data
+
+By default, queries will return snapshots of the matched nodes, but you can also get references only by passing the option `{ snapshots: false }` or use the new `.find()` method.
+
+```javascript
+// ...
+const references = await db.query('songs')
+    .filter('genre', 'contains', 'rock')
+    .get({ snapshots: false });
+
+// now we have references only, so we can decide what data to load
+
+```
+Using the new `find()` method does the same (v1.10.0+):
+
+```javascript
+const references = await db.query('songs')
+    .filter('genre', 'contains', 'blues')
+    .find();
+```
+
+If you do want your query results to include some (but not all) data, you can use the `include` and `exclude` options to filter the fields in the query results returned by `get`:
+
+```javascript
+const snapshots = await db.query('songs')
+    .filter('title', 'like', 'Love*')
+    .get({ include: ['title', 'artist'] });
+```
+
+The snapshots in the example above will only contain each matching song's _title_ and _artist_ fields. See [Limit nested data loading](#limit-nested-data-loading) for more info about `include` and `exclude` filters.
+
 ### Removing data with a query
 
 To remove all nodes that match a query, simply call ```remove``` instead of ```get```:
 ```javascript
 db.query('songs')
-.filter('year', '<', 1950)
-.remove(() => {
-    // Old junk gone
-}); 
+    .filter('year', '<', 1950)
+    .remove(() => {
+        // Old junk gone
+    }); 
+
+// Or, with await
+await db.query('songs')
+    .filter('year', '<', 1950)
+    .remove();
 ```
+
+### Counting query results
+(NEW since v1.10.0)
+
+To get a quick count of query results, you can use `.count()`:
+
+```javascript
+const count = await db.query('songs')
+    .filter('artist', '==', 'John Mayer')
+    .count();
+```
+
+You can use this in combination with `skip` and `limit` to check if there are results beyond a currently loaded dataset:
+
+```javascript
+const nextPageSongsCount = await db.query('songs')
+    .filter('artist', '==', 'John Mayer')
+    .skip(100)
+    .take(10)
+    .count(); // 10: full page, <10: last page.
+```
+
+NOTE: This method currently performs a count on results returned by `.find()` behind the scenes, this will be optimized in a future version.
+
+### Checking query result existence
+(NEW since v1.10.0)
+
+To quickly determine if a query has any matches, you can use `.exists()`:
+
+```javascript
+const exists = await db.query('users')
+    .filter('email', '==', 'me@appy.one')
+    .exists();
+```
+
+Just like `count()`, you can also combine this with `skip` and `limit`.
+
+NOTE: This method currently performs a check on the result returned by `.count()` behind the scenes, this will be optimized in a future version.
 
 ### Streaming query results
 (NEW since v1.4.0)
@@ -1125,11 +1194,11 @@ function matchRemoved(match) {
 }
 
 db.query('books')
-.filter('rating', '==', 5)
-.on('add', matchAdded)
-.on('change', matchChanged)
-.on('remove', matchRemoved)
-.get(gotMatches)
+    .filter('rating', '==', 5)
+    .on('add', matchAdded)
+    .on('change', matchChanged)
+    .on('remove', matchRemoved)
+    .get(gotMatches)
 ```
 
 NOTE: Usage of ```take``` and ```skip``` are currently not taken into consideration, events might fire for results that are not in the requested range.
