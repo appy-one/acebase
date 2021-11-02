@@ -153,6 +153,13 @@ export abstract class CustomStorageTransaction {
      * @returns Returns a promise that resolves when there are no more descendants to be streamed
      */
     abstract descendantsOf(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (descPath: string, metadata?: ICustomStorageNodeMetaData) => boolean, addCallback: (descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean): Promise<any>;
+    
+    /**
+     * (optional) Returns the number of children stored in their own records. Default implementation uses `childrenOf` to count, override if storage supports a quicker way. 
+     * Eg: For SQL databases, you can implement this with a single query like `SELECT count(*) FROM nodes WHERE ${CustomStorageHelpers.ChildPathsSql(path)}`
+     * @returns Returns a promise that resolves with the number of children
+     */
+    getChildCount(path: string): Promise<number>
 
     /** (optional, not used yet) Function that gets multiple nodes (metadata AND value) from your custom data store at once. Must return a Promise that resolves with Map<path,value> */
     getMultiple?(paths: string[]): Promise<Map<string, ICustomStorageNode|null>>;
