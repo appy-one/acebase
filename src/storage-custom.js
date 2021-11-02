@@ -96,6 +96,18 @@ class CustomStorageTransaction {
     async descendantsOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.descendantsOf must be overridden by subclass`); }
 
     /**
+     * Returns the number of children stored in their own records. This implementation uses `childrenOf` to count, override if storage supports a quicker way. 
+     * Eg: For SQL databases, you can implement this with a single query like `SELECT count(*) FROM nodes WHERE ${CustomStorageHelpers.ChildPathsSql(path)}`
+     * @param {string} path 
+     * @returns {Promise<number>} Returns a promise that resolves with the number of children
+     */
+    async getChildCount(path) {
+        let childCount = 0;
+        await this.childrenOf(path, { metadata: false, value: false }, () => { childCount++; return false; });
+        return childCount;
+    }
+
+    /**
      * NOT USED YET
      * Default implementation of getMultiple that executes .get for each given path. Override for custom logic
      * @param {string[]} paths
@@ -556,13 +568,17 @@ class CustomStorage extends Storage {
 
         // Check if the value for this node changed, to prevent recursive calls to 
         // perform unnecessary writes that do not change any data
-        if (typeof options.currentValue !== 'undefined' && !options.merge) {
+        if (typeof options.diff === 'undefined' && typeof options.currentValue !== 'undefined') {
             const diff = compareValues(options.currentValue, value);
-            if (diff === 'identical') {
-                return Promise.resolve(); // Done!
+            if (options.merge && typeof diff === 'object') {
+                diff.removed = diff.removed.filter(key => value[key] === null); // Only keep "removed" items that are really being removed by setting to null
             }
+            options.diff = diff;
         }
-        
+        if (options.diff === 'identical') {
+            return; // Done!
+        }
+    
         const transaction = options.transaction;
 
         // Get info about current node at path
@@ -736,6 +752,11 @@ class CustomStorage extends Storage {
                 // (over)write all child nodes that must be stored in their own record
                 const writePromises = Object.keys(childNodeValues).map(key => {
                     if (isArray) { key = parseInt(key); }
+                    const childDiff = typeof options.diff === 'object' ? options.diff.forChild(key) : undefined;
+                    if (childDiff === 'identical') {
+                        // console.warn(`Skipping _writeNode recursion for child "${key}"`);
+                        return; // Skip
+                    }
                     const childPath = pathInfo.childPath(key); // PathInfo.getChildPath(path, key);
                     const childValue = childNodeValues[key];
 
@@ -746,7 +767,7 @@ class CustomStorage extends Storage {
                             ? options.currentValue[key] 
                             : null;
 
-                    return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: currentChildValue });
+                    return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: currentChildValue, diff: childDiff });
                 });
 
                 // Delete all child nodes that were stored in their own record, but are being removed 
@@ -765,7 +786,7 @@ class CustomStorage extends Storage {
 
             // Update main node
             // TODO: Check if revision should change?
-            return await this._storeNode(path, {
+            const p = this._storeNode(path, {
                 type: mainNode.type,
                 value: mainNode.value,
                 revision: currentRow.revision,
@@ -775,6 +796,9 @@ class CustomStorage extends Storage {
             }, {
                 transaction
             });
+            if (p instanceof Promise) {
+                return await p;
+            }
         }
         else {
             // Current node does not exist, create it and any child nodes
@@ -1285,7 +1309,8 @@ class CustomStorage extends Storage {
                 info.childCount = 0;
                 if ([VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(info.valueType) && info.address) {
                     // Get number of children
-                    await transaction.childrenOf(path, { metadata: false, value: false }, () => { info.childCount++; return false; })
+                    info.childCount = node.value ? Object.keys(node.value).length : 0;
+                    info.childCount += await transaction.getChildCount(path);
                 }
             }
 
