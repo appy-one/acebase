@@ -13,25 +13,23 @@ class Node {
      * @param {boolean} [options.include_child_count=false] whether to include child count
      * @returns {Promise<NodeInfo>} promise that resolves with info about the node
      */
-    static getInfo(storage, path, options = { no_cache: false, include_child_count: false }) {
+    static async getInfo(storage, path, options = { no_cache: false, include_child_count: false }) {
 
         // Check if the info has been cached
         const cacheable = options && !options.no_cache && !options.include_child_count;
         if (cacheable) {
             let cachedInfo = storage.nodeCache.find(path);
             if (cachedInfo) {
-                return Promise.resolve(cachedInfo);
+                return cachedInfo;
             }
         }
 
         // Cache miss. Check if node is being looked up already
-        return storage.getNodeInfo(path, { include_child_count: options.include_child_count })
-        .then(info => {
-            if (cacheable) {
-                storage.nodeCache.update(info);
-            }
-            return info;
-        });
+        const info = await storage.getNodeInfo(path, { include_child_count: options.include_child_count });
+        if (cacheable) {
+            storage.nodeCache.update(info);
+        }
+        return info;
     }
 
     /**
@@ -61,11 +59,9 @@ class Node {
      * @param {string} path 
      * @returns {Promise<boolean>}
      */
-    static exists(storage, path) {
-        return storage.getNodeInfo(path)
-        .then(nodeInfo => {
-            return nodeInfo.exists;
-        });
+    static async exists(storage, path) {
+        const nodeInfo = await storage.getNodeInfo(path);
+        return nodeInfo.exists;
     }
 
     /**
@@ -92,23 +88,22 @@ class Node {
         return storage.getNodeValue(path, options);
     }
 
-    /**
-     * Gets info about a child node by delegating to getChildren with keyFilter
-     * @param {Storage} storage 
-     * @param {string} path 
-     * @param {string|number} childKeyOrIndex 
-     * @returns {Promise<NodeInfo>}
-     */
-    static getChildInfo(storage, path, childKeyOrIndex) {
-        let childInfo;
-        return storage.getChildren(path, { keyFilter: [childKeyOrIndex] })
-        .next(info => {
-            childInfo = info;
-        })
-        .then(() => {
-            return childInfo;
-        });
-    }
+    // Appears unused:
+    // /**
+    //  * Gets info about a child node by delegating to getChildren with keyFilter
+    //  * @param {Storage} storage 
+    //  * @param {string} path 
+    //  * @param {string|number} childKeyOrIndex 
+    //  * @returns {Promise<NodeInfo>}
+    //  */
+    // static async getChildInfo(storage, path, childKeyOrIndex) {
+    //     let childInfo;
+    //     await storage.getChildren(path, { keyFilter: [childKeyOrIndex] })
+    //     .next(info => {
+    //         childInfo = info;
+    //     })
+    //     return childInfo || { exists: false };
+    // }
 
     /**
      * Enumerates all children of a given Node for reflection purposes
