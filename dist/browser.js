@@ -393,6 +393,7 @@ class LiveDataProxy {
      * with live data by listening for 'mutations' events. Any changes made to the value by the client will be synced back
      * to the database.
      * @param ref DataReference to create proxy for.
+     * @param options TODO: implement LiveDataProxyOptions to allow cursor to be specified (and ref.get({ cursor }) will have to be able to get cached value augmented with changes since cursor)
      * @param defaultValue Default value to use for the proxy if the database path does not exist yet. This value will also
      * be written to the database.
      */
@@ -412,17 +413,26 @@ class LiveDataProxy {
                 cache = newValue;
                 return true;
             }
+            const allowCreation = false; //cache === null; // If the proxy'd target did not exist upon load, we must allow it to be created now.
+            if (allowCreation) {
+                cache = typeof keys[0] === 'number' ? [] : {};
+            }
             let target = cache;
-            keys = keys.slice();
-            while (keys.length > 1) {
-                const key = keys.shift();
+            const trailKeys = keys.slice();
+            while (trailKeys.length > 1) {
+                const key = trailKeys.shift();
                 if (!(key in target)) {
-                    // Have we missed an event, or are local pending mutations creating this conflict?
-                    return false; // Do not proceed
+                    if (allowCreation) {
+                        target[key] = typeof key === 'number' ? [] : {};
+                    }
+                    else {
+                        // Have we missed an event, or are local pending mutations creating this conflict?
+                        return false; // Do not proceed
+                    }
                 }
                 target = target[key];
             }
-            const prop = keys.shift();
+            const prop = trailKeys.shift();
             if (newValue === null) {
                 // Remove it
                 target instanceof Array ? target.splice(prop, 1) : delete target[prop];
@@ -435,6 +445,9 @@ class LiveDataProxy {
         };
         // Subscribe to mutations events on the target path
         const syncFallback = async () => {
+            if (!loaded) {
+                return;
+            }
             await reload();
         };
         const subscription = ref.on('mutations', { syncFallback }).subscribe(async (snap) => {
@@ -3520,21 +3533,36 @@ exports.SchemaDefinition = SchemaDefinition;
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleCache = void 0;
+const utils_1 = require("./utils");
+/**
+ * Simple cache implementation that retains immutable values in memory for a limited time.
+ * Immutability is enforced by cloning the stored and retrieved values. To change a cached value, it will have to be `set` again with the new value.
+ */
 class SimpleCache {
     constructor(expirySeconds) {
+        this.enabled = true;
         this.expirySeconds = expirySeconds;
         this.cache = new Map();
         setInterval(() => { this.cleanUp(); }, 60 * 1000); // Cleanup every minute
     }
-    set(key, value) {
-        this.cache.set(key, { value, expires: Date.now() + (this.expirySeconds * 1000) });
+    has(key) {
+        if (!this.enabled) {
+            return false;
+        }
+        return this.cache.has(key);
     }
     get(key) {
-        const entry = this.cache.get(key);
-        if (!entry || entry.expires <= Date.now()) {
+        if (!this.enabled) {
             return null;
         }
-        return entry.value;
+        const entry = this.cache.get(key);
+        if (!entry) {
+            return null;
+        } // if (!entry || entry.expires <= Date.now()) { return null; }
+        return utils_1.cloneObject(entry.value);
+    }
+    set(key, value) {
+        this.cache.set(key, { value: utils_1.cloneObject(value), expires: Date.now() + (this.expirySeconds * 1000) });
     }
     remove(key) {
         this.cache.delete(key);
@@ -3550,7 +3578,7 @@ class SimpleCache {
 }
 exports.SimpleCache = SimpleCache;
 
-},{}],20:[function(require,module,exports){
+},{"./utils":25}],20:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Colorize = exports.SetColorsEnabled = exports.ColorsSupported = exports.ColorStyle = void 0;
@@ -4685,7 +4713,21 @@ function compareValues(oldVal, newVal) {
             return {
                 added: addedKeys,
                 removed: removedKeys,
-                changed: changedKeys
+                changed: changedKeys,
+                forChild: (key) => {
+                    const oldHas = oldKeys.includes(key), newHas = newKeys.includes(key);
+                    if (!oldHas && !newHas) {
+                        return "identical";
+                    }
+                    if (newHas && !oldHas) {
+                        return "added";
+                    }
+                    if (oldHas && !newHas) {
+                        return "removed";
+                    }
+                    const changed = changedKeys.find(ch => ch.key === key);
+                    return changed ? changed.change : "identical";
+                }
             };
         }
     }
@@ -4715,7 +4757,7 @@ exports.defer = defer;
 
 }).call(this)}).call(this,require("buffer").Buffer)
 },{"./data-snapshot":9,"./path-reference":16,"./process":17,"buffer":40}],26:[function(require,module,exports){
-const { cloneObject } = require('acebase-core').Utils;
+const { SimpleCache } = require('acebase-core');
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
 
@@ -4766,6 +4808,7 @@ class BrowserAceBase extends AceBase {
      * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
      * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
      * @param {boolean} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
+     * @param {number} [settings.cacheSeconds=60] How many seconds to keep node info in memory, to speed up IndexedDB performance.
      */
     static WithIndexedDB(dbname, settings) {
 
@@ -4798,6 +4841,9 @@ class BrowserAceBase extends AceBase {
             readyReject(e);
         };
 
+        const cache = new SimpleCache(typeof settings.cacheSeconds === 'number' ? settings.cacheSeconds : 60); // 60 second node cache by default
+        // cache.enabled = false;
+
         const storageSettings = new CustomStorageSettings({
             name: 'IndexedDB',
             locking: true, // IndexedDB transactions are short-lived, so we'll use AceBase's path based locking
@@ -4810,12 +4856,26 @@ class BrowserAceBase extends AceBase {
                 await readyPromise;
                 const context = {
                     debug: true,
-                    db
+                    db,
+                    cache,
+                    ipc
                 }
                 return new IndexedDBStorageTransaction(context, target);
             }
         });
-        return new BrowserAceBase(dbname, { multipleTabs: settings.multipleTabs, logLevel: settings.logLevel, storage: storageSettings });
+        const acebase = new BrowserAceBase(dbname, { multipleTabs: settings.multipleTabs, logLevel: settings.logLevel, storage: storageSettings });
+        const ipc = acebase.api.storage.ipc;
+        ipc.on('notification', async notification => {
+            const message = notification.data;
+            if (typeof message !== 'object') { return; }
+            if (message.action === 'cache.invalidate') {
+                // console.warn(`Invalidating cache for paths`, message.paths);
+                for (let path of message.paths) {
+                    cache.remove(path);
+                }
+            }
+        });
+        return acebase;
     }
 }
 
@@ -4832,19 +4892,21 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 
     /** Creates a transaction object for IndexedDB usage. Because IndexedDB automatically commits
      * transactions when they have not been touched for a number of microtasks (eg promises 
-     * resolving whithout querying data), we will actually create seperate IndexedDB transactions 
-     * for each get, set and remove operation. Rollbacks are not possible for this reason.
-     * @param {{debug: boolean, db: typeof IndexedDB }} context
+     * resolving whithout querying data), we will enqueue set and remove operations until commit 
+     * or rollback. We'll create separate IndexedDB transactions for get operations, caching their
+     * values to speed up successive requests for the same data.
+     * @param {{debug: boolean, db: IDBDatabase, cache: SimpleCache<string, ICustomStorageNode> }} context
      * @param {{path: string, write: boolean}} target 
-     * @param {NodeLocker} nodeLocker 
      */
     constructor(context, target) {
         super(target);
         this.production = true; // Improves performance, only set when all works well
+        /** @type {{debug: boolean, db: IDBDatabase, cache: SimpleCache<string, ICustomStorageNode> }} */
         this.context = context;
         this._pending = [];
     }
 
+    /** @returns {IDBTransaction} */
     _createTransaction(write = false) {
         const tx = this.context.db.transaction(['nodes', 'content'], write ? 'readwrite' : 'readonly');
         return tx;
@@ -4862,12 +4924,12 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
     }
 
     async commit() {
-        // console.log(`*** COMMIT ${this._pending.length} operations ****`);
+        // console.log(`*** commit ${this._pending.length} operations ****`);
         if (this._pending.length === 0) { return; }
         const batch = this._pending.splice(0);
-        delete this._cache;
 
-        /** @type {IDBTransaction} */
+        this.context.ipc.sendMessage({ type: 'notification', data: { action: 'cache.invalidate', paths: batch.map(op => op.path) } });
+
         const tx = this._createTransaction(true);
         try {
             await new Promise((resolve, reject) => {
@@ -4888,13 +4950,15 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     if (op.action === 'set') { 
                         const { metadata, value } = this._splitMetadata(op.node);
                         /** @type {IIndexedDBNodeData} */
-                        const nodeInfo = { path, metadata }
+                        const nodeInfo = { path, metadata };
                         r1 = tx.objectStore('nodes').put(nodeInfo); // Insert into "nodes" object store
                         r2 = tx.objectStore('content').put(value, path); // Add value to "content" object store
+                        this.context.cache.set(path, op.node);
                     }
                     else if (op.action === 'remove') { 
                         r1 = tx.objectStore('content').delete(path); // Remove from "content" object store
                         r2 = tx.objectStore('nodes').delete(path); // Remove from "nodes" data store
+                        this.context.cache.set(path, null);
                     }
                     else { 
                         handleError(new Error(`Unknown pending operation "${op.action}" on path "${path}" `)); 
@@ -4921,10 +4985,11 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
     }
 
     async get(path) {
-        if (!this._cache) { this._cache = new Map(); }
-        else if (this._cache.has(path)) { 
-            const cache = this._cache.get(path);
-            return cloneObject(cache); // cloneValue(cache);
+        // console.log(`*** get "${path}" ****`);
+        if (this.context.cache.has(path)) {
+            const cache = this.context.cache.get(path);
+            // console.log(`Using cached node for path "${path}": `, cache);
+            return cache;
         }
         const tx = this._createTransaction(false);
         const r1 = _requestToPromise(tx.objectStore('nodes').get(path)); // Get metadata from "nodes" object store
@@ -4936,13 +5001,13 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
             const info = results[0];
             if (!info) {
                 // Node doesn't exist
-                this._cache.set(path, null);
+                this.context.cache.set(path, null);
                 return null; 
             }
             /** @type {ICustomStorageNode} */
             const node = info.metadata;
             node.value = results[1];
-            this._cache.set(path, cloneObject(node));
+            this.context.cache.set(path, node);
             return node;
         }
         catch(err) {
@@ -4952,17 +5017,17 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         }
     }
 
-    async set(path, node) {
+    set(path, node) {
         // Queue the operation until commit
         this._pending.push({ action: 'set', path, node });
     }
 
-    async remove(path) {
+    remove(path) {
         // Queue the operation until commit
         this._pending.push({ action: 'remove', path });
     }
 
-    async removeMultiple(paths) {
+    removeMultiple(paths) {
         // Queues multiple items at once, dramatically improves performance for large datasets
         paths.forEach(path => {
             this._pending.push({ action: 'remove', path });
@@ -4970,11 +5035,13 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
     }
 
     childrenOf(path, include, checkCallback, addCallback) {
+        // console.log(`*** childrenOf "${path}" ****`);
         include.descendants = false;
         return this._getChildrenOf(path, include, checkCallback, addCallback);
     }
 
     descendantsOf(path, include, checkCallback, addCallback) {
+        // console.log(`*** descendantsOf "${path}" ****`);
         include.descendants = true;
         return this._getChildrenOf(path, include, checkCallback, addCallback);
     }
@@ -5029,15 +5096,22 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     if (shouldAdd) {
                         if (include.value) {
                             // Load value!
-                            const req = tx.objectStore('content').get(otherPath);
-                            node.value = await new Promise((resolve, reject) => {
-                                req.onerror = e => {
-                                    resolve(null); // Value missing?
-                                };
-                                req.onsuccess = e => {
-                                    resolve(req.result);
-                                };
-                            });
+                            if (this.context.cache.has(otherPath)) {
+                                const cache = this.context.cache.get(otherPath);
+                                node.value = cache.value;
+                            }
+                            else {
+                                const req = tx.objectStore('content').get(otherPath);
+                                node.value = await new Promise((resolve, reject) => {
+                                    req.onerror = e => {
+                                        resolve(null); // Value missing?
+                                    };
+                                    req.onsuccess = e => {
+                                        resolve(req.result);
+                                    };
+                                });
+                                this.context.cache.set(otherPath, node.value === null ? null : node);
+                            }
                         }
                         keepGoing = addCallback(otherPath, node);
                     }
@@ -7390,25 +7464,23 @@ class Node {
      * @param {boolean} [options.include_child_count=false] whether to include child count
      * @returns {Promise<NodeInfo>} promise that resolves with info about the node
      */
-    static getInfo(storage, path, options = { no_cache: false, include_child_count: false }) {
+    static async getInfo(storage, path, options = { no_cache: false, include_child_count: false }) {
 
         // Check if the info has been cached
         const cacheable = options && !options.no_cache && !options.include_child_count;
         if (cacheable) {
             let cachedInfo = storage.nodeCache.find(path);
             if (cachedInfo) {
-                return Promise.resolve(cachedInfo);
+                return cachedInfo;
             }
         }
 
         // Cache miss. Check if node is being looked up already
-        return storage.getNodeInfo(path, { include_child_count: options.include_child_count })
-        .then(info => {
-            if (cacheable) {
-                storage.nodeCache.update(info);
-            }
-            return info;
-        });
+        const info = await storage.getNodeInfo(path, { include_child_count: options.include_child_count });
+        if (cacheable) {
+            storage.nodeCache.update(info);
+        }
+        return info;
     }
 
     /**
@@ -7438,11 +7510,9 @@ class Node {
      * @param {string} path 
      * @returns {Promise<boolean>}
      */
-    static exists(storage, path) {
-        return storage.getNodeInfo(path)
-        .then(nodeInfo => {
-            return nodeInfo.exists;
-        });
+    static async exists(storage, path) {
+        const nodeInfo = await storage.getNodeInfo(path);
+        return nodeInfo.exists;
     }
 
     /**
@@ -7469,23 +7539,22 @@ class Node {
         return storage.getNodeValue(path, options);
     }
 
-    /**
-     * Gets info about a child node by delegating to getChildren with keyFilter
-     * @param {Storage} storage 
-     * @param {string} path 
-     * @param {string|number} childKeyOrIndex 
-     * @returns {Promise<NodeInfo>}
-     */
-    static getChildInfo(storage, path, childKeyOrIndex) {
-        let childInfo;
-        return storage.getChildren(path, { keyFilter: [childKeyOrIndex] })
-        .next(info => {
-            childInfo = info;
-        })
-        .then(() => {
-            return childInfo;
-        });
-    }
+    // Appears unused:
+    // /**
+    //  * Gets info about a child node by delegating to getChildren with keyFilter
+    //  * @param {Storage} storage 
+    //  * @param {string} path 
+    //  * @param {string|number} childKeyOrIndex 
+    //  * @returns {Promise<NodeInfo>}
+    //  */
+    // static async getChildInfo(storage, path, childKeyOrIndex) {
+    //     let childInfo;
+    //     await storage.getChildren(path, { keyFilter: [childKeyOrIndex] })
+    //     .next(info => {
+    //         childInfo = info;
+    //     })
+    //     return childInfo || { exists: false };
+    // }
 
     /**
      * Enumerates all children of a given Node for reflection purposes
@@ -7805,6 +7874,18 @@ class CustomStorageTransaction {
      */
     // eslint-disable-next-line no-unused-vars
     async descendantsOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.descendantsOf must be overridden by subclass`); }
+
+    /**
+     * Returns the number of children stored in their own records. This implementation uses `childrenOf` to count, override if storage supports a quicker way. 
+     * Eg: For SQL databases, you can implement this with a single query like `SELECT count(*) FROM nodes WHERE ${CustomStorageHelpers.ChildPathsSql(path)}`
+     * @param {string} path 
+     * @returns {Promise<number>} Returns a promise that resolves with the number of children
+     */
+    async getChildCount(path) {
+        let childCount = 0;
+        await this.childrenOf(path, { metadata: false, value: false }, () => { childCount++; return false; });
+        return childCount;
+    }
 
     /**
      * NOT USED YET
@@ -8267,13 +8348,17 @@ class CustomStorage extends Storage {
 
         // Check if the value for this node changed, to prevent recursive calls to 
         // perform unnecessary writes that do not change any data
-        if (typeof options.currentValue !== 'undefined' && !options.merge) {
+        if (typeof options.diff === 'undefined' && typeof options.currentValue !== 'undefined') {
             const diff = compareValues(options.currentValue, value);
-            if (diff === 'identical') {
-                return Promise.resolve(); // Done!
+            if (options.merge && typeof diff === 'object') {
+                diff.removed = diff.removed.filter(key => value[key] === null); // Only keep "removed" items that are really being removed by setting to null
             }
+            options.diff = diff;
         }
-        
+        if (options.diff === 'identical') {
+            return; // Done!
+        }
+    
         const transaction = options.transaction;
 
         // Get info about current node at path
@@ -8447,6 +8532,11 @@ class CustomStorage extends Storage {
                 // (over)write all child nodes that must be stored in their own record
                 const writePromises = Object.keys(childNodeValues).map(key => {
                     if (isArray) { key = parseInt(key); }
+                    const childDiff = typeof options.diff === 'object' ? options.diff.forChild(key) : undefined;
+                    if (childDiff === 'identical') {
+                        // console.warn(`Skipping _writeNode recursion for child "${key}"`);
+                        return; // Skip
+                    }
                     const childPath = pathInfo.childPath(key); // PathInfo.getChildPath(path, key);
                     const childValue = childNodeValues[key];
 
@@ -8457,7 +8547,7 @@ class CustomStorage extends Storage {
                             ? options.currentValue[key] 
                             : null;
 
-                    return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: currentChildValue });
+                    return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: currentChildValue, diff: childDiff });
                 });
 
                 // Delete all child nodes that were stored in their own record, but are being removed 
@@ -8476,7 +8566,7 @@ class CustomStorage extends Storage {
 
             // Update main node
             // TODO: Check if revision should change?
-            return await this._storeNode(path, {
+            const p = this._storeNode(path, {
                 type: mainNode.type,
                 value: mainNode.value,
                 revision: currentRow.revision,
@@ -8486,6 +8576,9 @@ class CustomStorage extends Storage {
             }, {
                 transaction
             });
+            if (p instanceof Promise) {
+                return await p;
+            }
         }
         else {
             // Current node does not exist, create it and any child nodes
@@ -8996,7 +9089,8 @@ class CustomStorage extends Storage {
                 info.childCount = 0;
                 if ([VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(info.valueType) && info.address) {
                     // Get number of children
-                    await transaction.childrenOf(path, { metadata: false, value: false }, () => { info.childCount++; return false; })
+                    info.childCount = node.value ? Object.keys(node.value).length : 0;
+                    info.childCount += await transaction.getChildCount(path);
                 }
             }
 
