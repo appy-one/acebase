@@ -1,3 +1,7 @@
+<p align="center">
+    <img src="https://github.com/appy-one/acebase/blob/master/logo.png?raw=true" alt="AceBase realtime database">
+</p>
+
 # AceBase realtime database engine
 
 A fast, low memory, transactional, index & query enabled NoSQL database engine and server for node.js and browser with realtime data change notifications. Supports storing of JSON objects, arrays, numbers, strings, booleans, dates and binary (ArrayBuffer) data.
@@ -1658,9 +1662,9 @@ const db = AceBase.WithLocalStorage('mydb', { temp: false }); // temp:true to us
 ```
 
 ### Cross-tab synchronization
-(NEW in v1.5.0, beta)
+(NEW in v1.5.0)
 
-When you're using AceBase with an IndexedDB or LocalStorage backend, you might notice that if you change data in one open tab, those changes do not raise change events in other open tabs monitoring that same data. This is because IndexedDB or LocalStorage databases do not raise change events themselves, and AceBase won't be able to either if the data was not changed through AceBase itself. To overcome this issue, AceBase will have to notify local changes to other AceBase instances in different browser tabs. 
+When you're using AceBase with an IndexedDB or LocalStorage backend, you might notice that if you change data in one open tab, those changes do not raise change events in other open tabs monitoring that same data. This is because `IndexedDB` or `LocalStorage` databases do not raise change events themselves, and AceBase won't be able to either if the data was not changed through AceBase itself. To overcome this issue, AceBase will have to notify local changes to other AceBase instances in different browser tabs. 
 
 AceBase is now able to communicate with other tabs using the `BroadcastChannel` implemented in most browsers\*, and is able to notify others of changes made to the underlaying database. This functionality is in beta and disabled by default, to enable it set the `multipleTabs: true` in the options parameter:
 
@@ -1670,7 +1674,7 @@ const db = AceBase.WithIndexedDB('mydb', { multipleTabs: true });
 
 Once you've enabled this setting, the AceBase instances running in multiple tabs will exchange what events they are listening for, and notify eachother with any changes made to the monitored data.
 
-\* Safari (both desktop and iOS versions) do not currently support `BroadcastChannel`, a polyfill will be implemented for this soon. [Browser support](https://caniuse.com/broadcastchannel) is currently at 77% (April 2021)
+\* Safari (both desktop and iOS versions) do not currently support `BroadcastChannel`, a polyfill will be used. [Browser support](https://caniuse.com/broadcastchannel) is currently at 77% (April 2021)
 
 NOTE: This applies to local databases only. If you are using an `AceBaseClient`, connected to an `AceBaseServer`, changing something in one browser tab will already notify other tabs, because the events are raised by the AceBase server and sent back to the clients automatically. If you use a local AceBase instance as offline cache for an `AceBaseClient`, setting `multipleTabs` on for your cache db might cause events to be raised twice when online - more work is needed here. 
 
@@ -1678,7 +1682,7 @@ NOTE: This applies to local databases only. If you are using an `AceBaseClient`,
 
 In additional to the already available binary, SQL Server, SQLite, IndexedDB and LocalStorage backends, it's also possible to roll your own custom storage backend, such as MongoDB, MySQL, WebSQL etc. To do this, all you have to do is write a couple of methods to get, set, remove and query data within a transactional context. The only prerequisite is that your used database provider is able to execute queries, or provides some other way to iterate through record entries without having to load them all into memory at once. (Firebase won't do because it can't do that)
 
-The example below shows how to implement a ```CustomStorage``` class that uses the browser's LocalStorage, but you can use anything you'd want. For example, it's easy to change the code below to use [Ionic's Storage API](https://github.com/ionic-team/ionic-storage) instead.
+The example below shows how to implement a ```CustomStorage``` class that uses the browser's `LocalStorage`, but you can use anything you'd want. It's easy to change the code below to use any other database provider like MongoDB, PostgreSQL, MySQL etc.
 
 NOTE: The code below is similar to the implementation of `AceBase.WithLocalStorage`
 
@@ -1690,7 +1694,7 @@ const dbname = 'test';
 // Setup our CustomStorageSettings
 const storageSettings = new CustomStorageSettings({
     name: 'LocalStorage',
-    locking: true, // Let AceBase handle resource locking to prevent multiple simultanious updates to the same data. NOTE: This does not prevent multiple tabs from doing this!!
+    locking: true, // Let AceBase handle resource locking to prevent multiple simultanious updates to the same data
     
     ready() {
         // LocalStorage is always ready
