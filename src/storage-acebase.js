@@ -98,6 +98,11 @@ class AceBaseStorage extends Storage {
             this.txStorage = new AceBaseStorage(name, txSettings);
         }
 
+        this._ready = false;
+        this.once('ready', () => {
+            this._ready = true;
+        });
+
         this.nodeCache = new NodeCache();
         /**
          * Use this method to update cache, instead of through this.nodeCache
@@ -788,7 +793,7 @@ class AceBaseStorage extends Storage {
             await this.KIT.load();  // Read Key Index Table
             await this.FST.load();  // Read Free Space Table
             await this.indexes.load(); // Load indexes
-            !justCreated && this.emit('ready');
+            !justCreated && this.emitOnce('ready');
             return fd;
         };
 
@@ -864,7 +869,7 @@ class AceBaseStorage extends Storage {
                 // Now create the root record
                 await Node.set(this, '', {});
                 this.rootRecord.exists = true;
-                this.emit('ready');
+                this.emitOnce('ready');
             }
         });
 
@@ -876,6 +881,8 @@ class AceBaseStorage extends Storage {
             });
         });
     }
+
+    get isReady() { return this._ready; }
 
     async close() {
         const p1 = super.close();
@@ -906,6 +913,13 @@ class AceBaseStorage extends Storage {
         if (!this.settings.transactions || this.settings.transactions.log !== true) { throw new Error('transaction logging is not enabled on database'); }
         if (!context.acebase_cursor) { throw new Error('context.acebase_cursor must have been set'); }
 
+        if (this.type === 'data') {
+            return this.txStorage.logMutation(type, path, value, context, mutations);
+        }
+        else if (this.type !== 'transaction') {
+            throw new Error(`Wrong database type`);
+        }
+
         if (value === null) {
             // Target path was deleted. Log the mutation on parent node: prevents 2 different delete flows and allows for uniform getMutations logic
             const pathInfo = PathInfo.get(path);
@@ -930,10 +944,21 @@ class AceBaseStorage extends Storage {
             context,
             mutations
         };
-        const cursor = context.acebase_cursor; // ID.generate();
-        const promise = this.txStorage._updateNode(`history/${cursor}`, item).catch(err => {
-            this.debug.error(`Failed to add to transaction log: `, err);
-        });
+
+        const cursor = context.acebase_cursor;
+        const store = async () => {
+            if (!this.isReady) {
+                await this.once('ready');
+            }
+            try {
+                await this._updateNode(`history`, { [cursor]: item }, { merge: true });
+            }
+            catch(err) {
+                this.debug.error(`Failed to add to transaction log: `, err);
+            }
+        };
+
+        const promise = store();
         if (!this.settings.transactions.noWait) {
             return promise.then(() => cursor);
         }
@@ -941,21 +966,24 @@ class AceBaseStorage extends Storage {
     }
 
     /**
-     * 
+     * Gets all mutations from a given cursor or timestamp on a given path, or on multiple paths that are relevant for given events
      * @param {object} filter 
      * @param {string} [filter.cursor] cursor is a generated key (ID.generate) that represents a point of time
      * @param {number} [filter.timestamp] earliest transaction to include, will be converted to a cursor
      * @param {string} [filter.path] top-most paths to include. Can include wildcards to facilitate wildcard event listeners. Only used if `for` filter is not used, equivalent to `for: { path, events: ['value] }
      * @param {Array<{ path: string, events:string[] }>} [filter.for] Specifies which paths and events to get all relevant mutations for
-     * @param {boolean} [filter.compressed=true] whether to merge mutations to get effective changes only, instead of each individual change. NOTE this will remove original updating contexts and might change the order of some mutations
-     * @returns 
+     * @returns {Promise<{ used_cursor: string, new_cursor: string, mutations: Array<{ path: string, value: any, context: any, id: string, timestamp: number, changes: { path: string, list: Array<{ target: Array<string|number>, prev: any, val: any }>} }> }>}
      */
     async getMutations(filter) {
         if (this.type === 'data') {
+            if (this.settings.transactions?.log !== true) { throw new Error('Transaction logging is not enabled'); }
             return this.txStorage.getMutations(filter);
         }
         else if (this.type !== 'transaction') {
             throw new Error(`Wrong database type`);
+        }
+        if (!this.isReady) {
+            await this.once('ready');
         }
         const cursor = // Use given cursor, timestamp or nothing to filter on
             (filter.cursor && filter.cursor.slice(0, 8)) // .slice(0, 12)
@@ -988,6 +1016,9 @@ class AceBaseStorage extends Storage {
             let mutations = [];
             let done, donePromise = new Promise(resolve => done = resolve);
             let allEnumerated = false;
+
+            const hasValue = val => ![undefined,null].includes(val);
+            const hasPropertyValue = (val, prop) => hasValue(val) && typeof val === 'object' && hasValue(val[prop]);
 
             // const filterPathInfo = PathInfo.get(filter.path || '');
             const check = async key => {
@@ -1044,11 +1075,16 @@ class AceBaseStorage extends Storage {
                         // Add removed properties to the target value again
                         mutation.deleted.forEach(key => targetValue[key] = null);
                     }
+                    for (let m of tx.mutations.list) {
+                        if (typeof m.val === 'undefined') { m.val = null; }
+                        if (typeof m.prev === 'undefined') { m.prev = null; }
+                    }
                     if (load === 'target') {
                         targetOp = 'set';
                         const trailKeys = filterPathInfo.keys.slice(mutationPathInfo.keys.length);
                         const process = (targetPath, targetValue, trailKeys) => {
-                            const childKey = trailKeys.shift();
+                            const childKey = trailKeys[0];
+                            trailKeys = trailKeys.slice(1);
                             if (childKey === '*' || childKey.toString().startsWith('$')) {
                                 // Wildcard. Process all child keys
                                 return Object.keys(targetValue).forEach(childKey => {
@@ -1059,7 +1095,20 @@ class AceBaseStorage extends Storage {
                             targetValue = targetValue !== null && childKey in targetValue ? targetValue[childKey] : null;
                             if (trailKeys.length === 0) {
                                 // console.log(`Adding mutation on "${targetPath}" to history of "${filterPathInfo.path}"`)
-                                mutations.push({ id: key, path: targetPath, type: targetOp, timestamp: mutation.timestamp, value: targetValue, context: tx.context, mutations: tx.mutations }); // TODO remove __mutation__: mutation
+                                // Check if the targeted value actually changed
+                                const targetPathInfo = PathInfo.get(targetPath);
+                                const hasTargetMutation = tx.mutations.list.some(m => {
+                                    const mTargetPathInfo = PathInfo.get(tx.mutations.path).child(m.target);
+                                    if (mTargetPathInfo.isAncestorOf(targetPathInfo)) {
+                                        // Mutation on higher path, check if target mutation prev and val are different
+                                        const trailKeys = targetPathInfo.keys.slice(mTargetPathInfo.keys.length);
+                                        const val = !hasValue(m.val) ? null : trailKeys.reduce((val, key) => hasPropertyValue(val, key) ? val[key] : null, m.val);
+                                        const prev = !hasValue(m.prev) ? null : trailKeys.reduce((prev, key) => hasPropertyValue(prev, key) ? prev[key] : null, m.prev);
+                                        return (val !== prev);
+                                    }
+                                    return mTargetPathInfo.isOnTrailOf(targetPathInfo);
+                                });
+                                hasTargetMutation && mutations.push({ id: key, path: targetPath, type: targetOp, timestamp: mutation.timestamp, value: targetValue, context: tx.context, changes: tx.mutations });
                             }
                             else {
                                 process(targetPath, targetValue, trailKeys); // Deeper
@@ -1069,7 +1118,7 @@ class AceBaseStorage extends Storage {
                     }
                     else {
                         // console.log(`Adding mutation on "${targetPath}" to history of "${filterPathInfo.path}"`)
-                        mutations.push({ id: key, path: targetPath, type: targetOp, timestamp: mutation.timestamp, value: targetValue, context: tx.context, mutations: tx.mutations }); // TODO remove __mutation__: mutation
+                        mutations.push({ id: key, path: targetPath, type: targetOp, timestamp: mutation.timestamp, value: targetValue, context: tx.context, changes: tx.mutations }); // TODO remove __mutation__: mutation
                     }
                 }
 
@@ -1107,59 +1156,58 @@ class AceBaseStorage extends Storage {
             // Make sure they are sorted
             mutations.sort((a, b) => a.timestamp - b.timestamp);
 
-            if (filter.compressed !== false) {
-                // Get effective changes to the target paths
-                const hasValue = val => ![undefined,null].includes(val);
-                const hasPropertyValue = (val, prop) => hasValue(val) && typeof val === 'object' && hasValue(val[prop]);
+            // Toss all mutations the caller is not interested in
+            const hasNewKeys = (val, prev) => Object.keys(val || {}).some(key => !(key in (prev || {})));
+            const hasRemovedKeys = (val, prev) => Object.keys(prev || {}).some(key => !(key in (val || {})));
+            const allEventsFor = (...events) => events.concat(...events.map(e => `notify_${e}`));
+            const hasEvent = (events, check) => allEventsFor(...check).some(e => events.includes(e));
+            mutations = mutations.filter(item => {
 
-                mutations = mutations.reduce((all, item) => {
-                    // 1. Add all effective mutations as 'set' operations on their target paths, removing previous 'set's on the same or descendant paths
-                    const basePathInfo = PathInfo.get(item.mutations.path);
+                // Get all changes as 'set' operations so we can compare
+                const changes = (() => {
+                    const basePathInfo = PathInfo.get(item.changes.path);
                     if (basePathInfo.isAncestorOf(item.path)) {
-                        // Mutation has been recorded on higher path. Modify mutations to be on target path
-                        for (let i = 0; i < item.mutations.list.length; i++) {
-                            const m = item.mutations.list[i];
+                        // Mutation has been recorded on higher path. 
+                        // - Remove changes that are not on the requested target, caller might not have rights to read them
+                        // - Modify relevant changes to be on target path
+                        for (let i = 0; i < item.changes.list.length; i++) {
+                            const ch = item.changes.list[i];
                             // item.path === 'library/books/book1'
-                            // item.mutations.path === 'library/books'
+                            // item.changes.path === 'library/books'
                             // m.target === ['book1']
                             // m.value === { ... }
                             const trailKeys = PathInfo.get(item.path).keys.slice(basePathInfo.keys.length);
                             
-                            // If target is not a trail, remove mutation from list because it is not relevant                            
-                            const onTarget = m.target.every((key, index) => key === trailKeys[index]);
+                            // Remove mutation from list if it's not on the target
+                            const onTarget = ch.target.every((key, index) => key === trailKeys[index]);
                             if (!onTarget) {
-                                item.mutations.list.splice(i, 1); 
+                                item.changes.list.splice(i, 1); 
                                 i--; continue;
                             }
-
+        
                             // Remove target keys from trail
-                            trailKeys.splice(0, m.target.length);
-
-                            const val = !hasValue(m.val) ? null : trailKeys.reduce((val, key) => hasPropertyValue(val, key) ? val[key] : null, m.val);
-                            const prev = !hasValue(m.prev) ? null : trailKeys.reduce((prev, key) => hasPropertyValue(prev, key) ? prev[key] : null, m.prev);
+                            trailKeys.splice(0, ch.target.length);
+        
+                            const val = !hasValue(ch.val) ? null : trailKeys.reduce((val, key) => hasPropertyValue(val, key) ? val[key] : null, ch.val);
+                            const prev = !hasValue(ch.prev) ? null : trailKeys.reduce((prev, key) => hasPropertyValue(prev, key) ? prev[key] : null, ch.prev);
                             if (val === prev) {
                                 // This mutation has no changes on target path
-                                item.mutations.list.splice(i, 1); 
+                                item.changes.list.splice(i, 1); 
                                 i--; continue;
                             }
-                            m.val = val;
-                            m.prev = prev;
-                            m.target.push(...trailKeys); // Adjust target
+                            ch.val = val;
+                            ch.prev = prev;
+                            ch.target.push(...trailKeys); // Adjust target
                         }
-                        if (item.mutations.list.length === 0) {
-                            // Skip, no mutations on target path
-                            return all;
+                        if (item.changes.list.length === 0) {
+                            // Skip, no changes on target path
+                            return [];
                         }
-                        // item.mutations.path = item.path;
                     }
-                    item.mutations.list.forEach(m => {
+                    // Return all changes as individual 'set' operations
+                    return item.changes.list.map(m => {
                         const targetPathInfo = m.target.length === 0 ? basePathInfo : basePathInfo.child(m.target);
-                        
-                        // Remove previous 'set's on the same and descendant paths
-                        all = all.filter(prev => !prev.pathInfo.equals(targetPathInfo) && !prev.pathInfo.isDescendantOf(targetPathInfo));
-                        
-                        // Add new 'set' item
-                        all.push({
+                        return {
                             id: item.id,
                             type: 'set',
                             path: targetPathInfo.path,
@@ -1168,147 +1216,167 @@ class AceBaseStorage extends Storage {
                             context: item.context,
                             prev: hasValue(m.prev) ? m.prev : null,
                             val: hasValue(m.val) ? m.val : null
-                        });
+                        };
                     });
-                    return all;
-                }, [])
-                .reduce((all, item) => {
-                    // 2. Merge successive 'set' mutations on the same parent to single parent 'update's, using last used context
-                    if (item.path === '') {
-                        // 'set' on the root path. Don't change
-                        all.push(item);
-                    }
-                    else {
-                        const pathInfo = item.pathInfo;
-                        const parentPath = pathInfo.parentPath;
-                        const parentUpdate = all.find(u => u.path === parentPath);
-                        if (!parentUpdate) {
-                            // Create new parent update
-                            all.push({ 
-                                id: item.id, 
-                                type: 'update',
-                                path: parentPath, 
-                                pathInfo: pathInfo.parent,
-                                val: { [pathInfo.key]: item.val }, 
-                                prev: { [pathInfo.key]: item.prev },
-                                context: item.context
-                            });
-                        }
-                        else {
-                            // Add this change to parent update
-                            parentUpdate.val[pathInfo.key] = item.val;
-                            if (parentUpdate.prev !== null) { // previous === null on very first root 'set' only
-                                parentUpdate.prev[pathInfo.key] = item.prev;
-                            }
-                            parentUpdate.context = item.context;                            
-                        }
-                    }
-                    return all;
-                }, []);
+                })();
 
-                // Toss all mutations that caller is not interested in using "raise your hand if you need this" logic
-                const hasNewKeys = (val, prev) => Object.keys(val || {}).some(key => !(key in (prev || {})));
-                const hasRemovedKeys = (val, prev) => Object.keys(prev || {}).some(key => !(key in (val || {})));
-                const allEventsFor = (...events) => events.concat(...events.map(e => `notify_${e}`));
-                const hasEvent = (events, check) => allEventsFor(...check).some(e => events.includes(e));
-                mutations = mutations.filter(item => {
+                // Now, are any of these changes relevant to any of the requested path/event combinations?
+                return changes.some(ch => {
                     return filter.for.some(target => {
 
-                        if (!item.pathInfo.isOnTrailOf(target.path)) {
+                        if (!ch.pathInfo.isOnTrailOf(target.path)) {
                             return false; 
                         }
-
-                        // && target.events.some(event => ['value','child_changed','mutated','mutations'].includes(event))) {
-                        if ((item.pathInfo.equals(target.path) || item.pathInfo.isDescendantOf(target.path)) 
+                        else if ((ch.pathInfo.equals(target.path) || ch.pathInfo.isDescendantOf(target.path)) 
                             && hasEvent(target.events, ['value','child_changed','mutated','mutations'])) {
                             return true;
                         }
-
-                        // For simplicity, use 'set' operations on targets
-                        const setMutations = item.type === 'update' 
-                            ? Object.keys(item.val).map(key => {
-                                const pathInfo = item.pathInfo.child(key);
-                                return { 
-                                    path: pathInfo.path, 
-                                    pathInfo,
-                                    val: item.val[key],
-                                    prev: item.prev[key]
-                                };
-                            })
-                            : [item];
-
-                        return setMutations.some(set => {
-                            if (!set.pathInfo.isOnTrailOf(target.path)) {
-                                return false; 
+                        else if (ch.pathInfo.equals(target.path)) {
+                            // mutation on target: value is being overwritten.
+                            if (hasEvent(target.events, ['value','child_changed','mutated','mutations'])) {
+                                return true;
                             }
-                            else if (set.pathInfo.equals(target.path)) {
-                                // mutation on target: value is being overwritten.
-                                // Events [child_changed, value, mutated, mutations] will already have returned true above
-                                if (hasEvent(target.events, ['child_added']) && hasNewKeys(set.val, set.prev)) {
-                                    return true;
-                                }
-                                if (hasEvent(target.events, ['child_removed']) && hasRemovedKeys(set.val, set.prev)) {
-                                    return true;
-                                }
+                            if (hasEvent(target.events, ['child_added']) && hasNewKeys(ch.val, ch.prev)) {
+                                return true;
                             }
-                            else if (set.pathInfo.isDescendantOf(target.path)) {
-                                // mutation on deeper than target path
-                                // eg: mutation on path 'books/book1/title', child_added target on 'books'
-                                // Events [child_changed, value, mutated, mutations] will already have returned true above
-                                if(hasEvent(target.events, ['child_added','child_removed'])) {
-                                    if (!set.pathInfo.isChildOf(target.path)) { return false; }
-                                    if (hasEvent(target.events, ['child_added']) && set.prev === null) { return true; }
-                                    if (hasEvent(target.events, ['child_removed']) && set.val === null) { return true; }
-                                }
+                            if (hasEvent(target.events, ['child_removed']) && hasRemovedKeys(ch.val, ch.prev)) {
+                                return true;
                             }
-                            else {
-                                // Mutation on higher than target path.
-                                // eg mutation on path 'books/book1', child_changed on target 'books/book1/authors'
-                                // Get values at target path
-                                const trailKeys = PathInfo.getPathKeys(target.path).slice(set.pathInfo.keys.length);
-                                const prev = trailKeys.reduce((prev, key) => hasValue(prev) && hasPropertyValue(prev, key) ? prev[key] : null, set.prev);
-                                const val = trailKeys.reduce((val, key) => hasValue(val) && hasPropertyValue(val, key) ? val[key] : null, set.val);
-                                if (prev === val) { return false; }
-                                if (hasEvent(target.events, ['value','mutated','mutations'])) { 
-                                    return true; 
-                                }
-                                if (hasEvent(target.events, ['child_added']) && hasNewKeys(val, prev)) {
-                                    return true;
-                                }
-                                if (hasEvent(target.events, ['child_removed']) && hasRemovedKeys(val, prev)) {
-                                    return true;
-                                }
+                        }
+                        else if (ch.pathInfo.isDescendantOf(target.path)) {
+                            // mutation on deeper than target path
+                            // eg: mutation on path 'books/book1/title', child_added target on 'books'
+                            // Events [child_changed, value, mutated, mutations] will already have returned true above
+                            if(hasEvent(target.events, ['child_added','child_removed'])) {
+                                if (!ch.pathInfo.isChildOf(target.path)) { return false; }
+                                if (hasEvent(target.events, ['child_added']) && ch.prev === null) { return true; }
+                                if (hasEvent(target.events, ['child_removed']) && ch.val === null) { return true; }
                             }
-                            return false;
-                        });
+                        }
+                        else {
+                            // Mutation on higher than target path.
+                            // eg mutation on path 'books/book1', child_changed on target 'books/book1/authors'
+                            // Get values at target path
+                            const trailKeys = PathInfo.getPathKeys(target.path).slice(ch.pathInfo.keys.length);
+                            const prev = trailKeys.reduce((prev, key) => hasValue(prev) && hasPropertyValue(prev, key) ? prev[key] : null, ch.prev);
+                            const val = trailKeys.reduce((val, key) => hasValue(val) && hasPropertyValue(val, key) ? val[key] : null, ch.val);
+                            if (prev === val) { return false; }
+                            if (hasEvent(target.events, ['value','mutated','mutations'])) { 
+                                return true; 
+                            }
+                            if (hasEvent(target.events, ['child_added']) && hasNewKeys(val, prev)) {
+                                return true;
+                            }
+                            if (hasEvent(target.events, ['child_removed']) && hasRemovedKeys(val, prev)) {
+                                return true;
+                            }
+                        }
+                        return false;
                     });
                 });
+            });
 
-                // Transform output to match uncompressed output
-                mutations.forEach(item => {
-                    // Remove tmp pathInfo
-                    delete item.pathInfo;
-
-                    // Replace context
-                    // delete item.context; // TODO: maybe include the last acebase_cursor?
-                    item.context = { acebase_cursor: item.context.acebase_cursor };
-
-                    // Rename val property
-                    item.value = item.val;
-                    delete item.val;
-
-                    // Rename prev property
-                    item.previous = item.prev;
-                    delete item.prev;
-                });
-
-            }
-
-            return mutations;
+            return { mutations, used_cursor: filter.cursor, new_cursor: ID.generate() };
         }
         finally {
             lock.release();
         }
+    }
+
+    /**
+     * Gets all effective changes from a given cursor or timestamp on a given path, or on multiple paths that are relevant for given events.
+     * Multiple mutations will be merged so the returned changes will not have their original updating contexts and order of the original timeline.
+     * @param {object} filter 
+     * @param {string} [filter.cursor] cursor is a generated key (ID.generate) that represents a point of time
+     * @param {number} [filter.timestamp] earliest transaction to include, will be converted to a cursor
+     * @param {string} [filter.path] top-most paths to include. Can include wildcards to facilitate wildcard event listeners. Only used if `for` filter is not used, equivalent to `for: { path, events: ['value] }
+     * @param {Array<{ path: string, events:string[] }>} [filter.for] Specifies which paths and events to get all relevant mutations for
+     * @returns {Promise<{ used_cursor: string, new_cursor: string, changes: Array<{ path: string, type: 'set'|'update', previous: any, value: any, context: any }> }>}
+     */
+    async getChanges(filter) {
+        const mutationsResult = await this.getMutations(filter);
+        const { used_cursor, new_cursor, mutations } = mutationsResult;
+        
+        const hasValue = val => ![undefined,null].includes(val);
+
+        // Get effective changes to the target paths
+        let changes = mutations.reduce((all, item) => {
+
+            // 1. Add all effective mutations as 'set' operations on their target paths, removing previous 'set' mutations on the same or descendant paths
+            const basePathInfo = PathInfo.get(item.changes.path);
+            item.changes.list.forEach(m => {
+                const targetPathInfo = m.target.length === 0 ? basePathInfo : basePathInfo.child(m.target);
+
+                // Remove previous 'set' mutations on the same and descendant paths
+                all = all.filter(prev => !prev.pathInfo.equals(targetPathInfo) && !prev.pathInfo.isDescendantOf(targetPathInfo));
+
+                all.push({
+                    id: item.id,
+                    type: 'set',
+                    path: targetPathInfo.path,
+                    pathInfo: targetPathInfo, 
+                    timestamp: item.timestamp,
+                    context: item.context,
+                    prev: hasValue(m.prev) ? m.prev : null,
+                    val: hasValue(m.val) ? m.val : null
+                });
+            });
+            return all;
+        }, [])
+        .reduce((all, item) => {
+            // 2. Merge successive 'set' mutations on the same parent to single parent 'update's, using last used context
+            if (item.path === '') {
+                // 'set' on the root path. Don't change
+                all.push(item);
+            }
+            else {
+                const pathInfo = item.pathInfo;
+                const parentPath = pathInfo.parentPath;
+                const parentUpdate = all.find(u => u.path === parentPath);
+                if (!parentUpdate) {
+                    // Create new parent update
+                    all.push({ 
+                        id: item.id, 
+                        type: 'update',
+                        path: parentPath, 
+                        pathInfo: pathInfo.parent,
+                        val: { [pathInfo.key]: item.val }, 
+                        prev: { [pathInfo.key]: item.prev },
+                        context: item.context
+                    });
+                }
+                else {
+                    // Add this change to parent update
+                    parentUpdate.val[pathInfo.key] = item.val;
+                    if (parentUpdate.prev !== null) { // previous === null on very first root 'set' only
+                        parentUpdate.prev[pathInfo.key] = item.prev;
+                    }
+                    parentUpdate.context = item.context;                            
+                }
+            }
+            return all;
+        }, []);
+
+
+        // Transform results to desired output
+        changes.forEach(item => {
+            // Remove tmp pathInfo
+            delete item.pathInfo;
+
+            // Replace original context
+            // delete item.context;
+            item.context = { acebase_cursor: item.context.acebase_cursor };
+
+            // Rename val property
+            item.value = item.val;
+            delete item.val;
+
+            // Rename prev property
+            item.previous = item.prev;
+            delete item.prev;
+        });
+
+        return { used_cursor, new_cursor, changes };
     }
 
     get oldestValidCursor() {
@@ -1401,12 +1469,21 @@ class AceBaseStorage extends Storage {
                 value = await reader.getValue({ include: options.include, exclude: options.exclude, child_objects: options.child_objects });
             }
             return {
-                revision: null, // TODO: implement
+                revision: null, // TODO: implement (or maybe remove from other storage backends because we're not using it anywhere)
                 value
             };
         }
         catch(err) {
-            this.debug.error(`DEBUG THIS: getNode error:`, err);
+            if (err instanceof CorruptRecordError) {
+                // err.record points to the broken record address (path, pageNr, recordNr)
+                // err.key points to the property causing the issue
+                // To fix this, the record needs to be rewritten without the violating key
+                // No need to console.error here, should have already been done
+                // TODO: release acebase-cli with ability to do that
+            }
+            else {
+                this.debug.error(`DEBUG THIS: getNode error:`, err);
+            }
             throw err;
         }
         finally {
@@ -1905,7 +1982,19 @@ class RecordInfo {
 class AdditionalDataRequest extends Error {
     constructor() { super('More data needs to be loaded from the source'); }
 }
-
+class CorruptRecordError extends Error {
+    /**
+     * 
+     * @param {NodeAddress} record 
+     * @param {string|number} key 
+     * @param {string} message 
+     */
+    constructor(record, key, message) { 
+        super(message); 
+        this.record = record;
+        this.key = key;
+    }
+}
 class NodeReader {
     /**
      * 
@@ -1914,7 +2003,7 @@ class NodeReader {
      * @param {NodeLock} lock 
      * @param {boolean} [updateCache=false]
      */
-    constructor(storage, address, lock, updateCache = false) {
+    constructor(storage, address, lock, updateCache = false, stack = {}) { //stack = []
         if (!(address instanceof NodeAddress)) {
             throw new TypeError(`address argument must be a NodeAddress`);
         }
@@ -1923,6 +2012,39 @@ class NodeReader {
         this.lock = lock;
         this.lockTimestamp = lock.granted;
         this.updateCache = updateCache;
+        
+        const key = `${address.pageNr},${address.recordNr}`;        
+        if (key in stack) {
+            // Corrupted record. This can happen when locks have not been applied correctly during development, 
+            // or if 2 separate processes accessed the database without proper inter-process communication (IPC) in place.
+
+            // If you see this happening, make sure you are not accessing this database from multiple isolated processes! 
+            // An example could be 2+ AceBase instances on the same database files in multiple isolated processes.
+            // Kindly note that acebase-server does NOT support clustering YET
+            
+            // If you don't want to corrupt your database, here's how:
+            
+            // - DO NOT use multiple AceBase instances on a single database in your app
+            //      Instead: use a shared AceBase instance throughout your app
+            // - DO NOT let multiple apps access the same database at the same time
+            //      Instead: setup an AceBaseServer and use AceBaseClients to connect to it
+            // - DO NOT let multiple instances of your application (in isolated processes) access the same database at the same time
+            //      Instead: Use NodeJS or pm2 clustering functionality to fork the process (IPC is available)
+            // - Do NOT run multiple AceBaseServer instances on the same database files
+            //      Instead: Wait until AceBaseServer's cluster functionality is ready (and documented)
+            
+            // See the discussion about this at https://github.com/appy-one/acebase/discussions/48
+
+            const clash = stack[key];
+            const pathInfo = PathInfo.get(address.path);
+            const parentAddress = stack[Object.keys(stack).find(key => stack[key].path === pathInfo.parentPath)];
+            // const error = new CorruptRecordError(stack.slice(-1)[0], pathInfo.key, `Recursive read of record address ${clash.pageNr},${clash.recordNr}. Record "/${pathInfo.parentPath}" is corrupt: property "${pathInfo.key}" refers to the address belonging to path "/${clash.path}"`);
+            const error = new CorruptRecordError(parentAddress, pathInfo.key, `CORRUPT RECORD: key "${pathInfo.key}" in "/${parentAddress.path}" (@${parentAddress.pageNr},${parentAddress.recordNr}) refers to address @${clash.pageNr},${clash.recordNr} which was already used to read "/${clash.path}". Recursive or repeated reading has been prevented.`);
+            this.storage.debug.error(error.message);
+            throw error;
+        }
+        stack[key] = address;
+        this.stack = stack;
         
         /** @type {RecordInfo} */
         this.recordInfo = null;
@@ -2116,7 +2238,7 @@ class NodeReader {
                         // }
 
                         // this.storage.debug.log(`Reading child node "/${child.address.path}" from ${child.address.pageNr},${child.address.recordNr}`.colorize(ColorStyle.magenta));
-                        const reader = new NodeReader(this.storage, child.address, childLock, this.updateCache);
+                        const reader = new NodeReader(this.storage, child.address, childLock, this.updateCache, this.stack);
                         const val = await reader.getValue(childOptions);
                         obj[isArray ? child.index : child.key] = val;
                     }
