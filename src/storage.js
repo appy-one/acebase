@@ -67,7 +67,7 @@ class Storage extends SimpleEventEmitter {
         super();
         this.name = name;
         this.settings = settings;
-        this.debug = new DebugLogger(settings.logLevel, `[${name}]`); // `├ ${name} ┤` // `[🧱${name}]`
+        this.debug = new DebugLogger(settings.logLevel, `[${name}${settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
         // // Setup node locking
         // this.nodeLocker = new NodeLocker();
