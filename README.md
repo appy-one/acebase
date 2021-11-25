@@ -2,7 +2,7 @@
     <img src="https://github.com/appy-one/acebase/blob/master/logo.png?raw=true" alt="AceBase realtime database">
 </p>
 
-# AceBase realtime database engine
+# AceBase realtime database
 
 A fast, low memory, transactional, index & query enabled NoSQL database engine and server for node.js and browser with realtime data change notifications. Supports storing of JSON objects, arrays, numbers, strings, booleans, dates and binary (ArrayBuffer) data.
 
@@ -10,16 +10,16 @@ Inspired by (and largely compatible with) the Firebase realtime database, with a
 
 AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, your PC/Mac, Raspberry Pi, the [browser](#running-acebase-in-the-browser), wherever you want.
 
-🔥 Check out the new [live data proxy](#realtime-synchronization-with-a-live-data-proxy) feature!
+🔥 Check out the new [live data proxy](#realtime-synchronization-with-a-live-data-proxy) feature that allows your app to use and update live database values using in-memory objects and **no additional db coding**!
 
 ## Table of contents
 
 * [Getting started](#getting-started)
-* [Prerequisites](#prerequisites)
-* [Installing](#installing)
-* Loading and storing data
-    * [Introduction](#example-usage)
+    * [Prerequisites](#prerequisites)
+    * [Installing](#installing)
+    * [Example usage](#example-usage)
     * [Creating a database](#creating-a-database)
+* Loading and storing data
     * [Loading data](#loading-data)
     * [Storing data](#storing-data)
     * [Updating data](#updating-data)
@@ -52,6 +52,7 @@ AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, yo
     * [Indexing data](#indexing-data)
     * [Indexing scattered data with wildcards](#indexing-scattered-data-with-wildcards)
     * [Include additional data in indexes](#include-additional-data-in-indexes)
+    * [Other indexing options](#other-indexing-options)
     * [Special indexes](#special-indexes)
     * [Array indexes](#array-indexes)
     * [Fulltext indexes](#fulltext-indexes)
@@ -79,8 +80,7 @@ AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, yo
 * [Known issues](#known-issues)
 * [Authors](#authors)
 * [Contributing](#contributing)
-* [Buy me a coffee](#buy-me-a-coffee)
-
+* [Sponsoring](#sponsoring)
 ## Getting Started
 
 AceBase is split up into multiple packages:
@@ -89,7 +89,9 @@ AceBase is split up into multiple packages:
 * **acebase-client**: client to connect to an external AceBase server ([github](https://github.com/appy-one/acebase-client), [npm](https://www.npmjs.com/package/acebase-client))
 * **acebase-core**: shared functionality, dependency of above packages ([github](https://github.com/appy-one/acebase-core), [npm](https://www.npmjs.com/package/acebase-core))
 
-**IMPORTANT**: AceBase is now fresh out of the beta stage. PLEASE report any errors / unexpected behaviour you encounter by creating issues in Github! AceBase now uses [semver](https://semver.org/) versioning to prevent breaking changes to impact older code.
+AceBase uses [semver](https://semver.org/) versioning to prevent breaking changes to impact older code.
+Please report any errors / unexpected behaviour you encounter by creating an issue on Github.
+
 
 ### Prerequisites
 
@@ -1282,6 +1284,14 @@ db.indexes.create('songs', 'title', { include: ['year', 'genre'] })
 });
 ```
 
+### Other indexing options
+
+In addition to the `include` option described above, you can specify the following options:
+
+ * `caseSensitive`: boolean that specifies whether texts should be indexed using case sensitivity. Setting this to `true` will cause words with mixed casings (eg `"word"`, `"Word"` and `"WORD"`) to be indexed separately. Default is `false`.
+ * `textLocale`: string that specifies the default locale of the indexed texts. Should be a 2-character language code such as `"en"` for English and `"nl"` for Dutch, or an LCID string for country specific locales such as `"en-us"` for American English, `"en-gb"` for British English etc.
+ * `textLocaleKey`: string that specifies a key in the source data that contains the locale to use instead of the default specified in `textLocale`
+
 ### Special indexes
 
 Normal indexes are able to index ```string```, ```number```, ```Date```, ```boolean``` and ```undefined``` (non-existent) values. To index other data, you have to create a special index. Currently supported special indexes are: **Array**, **FullText** and **Geo** indexes.
@@ -1346,6 +1356,127 @@ db.indexes.create('chats/*/messages', 'text', { type: 'fulltext' });
     // Got all confidential messages
 })
 ```
+
+Fulltext indexes support *whitelisting*, *blacklisting*, manual word *stemming* and *filtering*, and using different *locales*. All indexed words are stored *"unidecoded"*: all unicode characters are translated into ascii characters so they become searchable in both ways. Eg: Japanese "AceBaseはクールです" is indexed as "acebase wa kurudesu" and will be found with queries on both "クール", "kūru" and "kuru".
+
+You can define these additional settings using the the `config` property in the options parameter passed to the `indexes.create` method:
+
+#### `transform`
+Callback function that transforms (and/or filters) words being indexed *and* queried.
+
+```js
+db.indexes.create('chats/*/messages', 'text', { 
+    type: 'fulltext', 
+    config: { 
+        transform: function(locale, word) {
+            // Correct misspelled words:
+            if (word === 'mispeled') { return 'misspelled'; } 
+
+            // Do not index a specific word:
+            if (word === 'secret') { return null; }
+
+            // Word stemming:
+            if (['fishing','fished','fisher'].includes(word)) { return 'fish'; }
+
+            // Consider multiple locales to allow multilingual query results:
+            if (locale === 'nl') {
+                // Word being indexed or queried is Dutch, index and query in English
+                // Also see localeKey setting for more info
+                return dutchToEnglish(word);
+            }
+
+            // Or, keep the word as it is:
+            return word;
+        } 
+    } 
+});
+```
+
+#### `blacklist`
+Also known as a *stoplist*. Array of words to automatically be ignored for indexing and querying. 
+
+```javascript
+db.indexes.create('chats/*/messages', 'text', { 
+    type: 'fulltext', 
+    config: { 
+        blacklist: ['a','the','on','at'] // these words won't be indexed and ignored in queries
+    }
+}
+```
+
+#### `whitelist`
+Words to be included if they did not match `minLength` and/or `blacklist` criteria:
+
+```javascript
+db.indexes.create('chats/*/messages', 'text', { 
+    type: 'fulltext', 
+    config: { 
+        minLength: 3,
+        whitelist: ['ok'] // allow "ok" although it's only 2 characters
+    }
+}
+```
+
+#### `minLength` and `maxLength`
+Only use words with a minimum and/or maximum length:
+```javascript
+db.indexes.create('chats/*/messages', 'text', { 
+    type: 'fulltext', 
+    config: { 
+        minLength: 3,   // Ignore small words
+        maxLength: 20   // Ignore large words
+    }
+}
+```
+#### `localeKey`
+Specify a key in the data that contains the locale of the indexed texts. This allows multiple languages to be indexed using their own rules.
+
+Imagine the following the dataset:
+```json
+{
+    "love": {
+        "item1": {
+            "text": "I love AceBase",
+            "locale": "en"
+        },
+        "item2": {
+            "text": "Amo AceBase",
+            "locale": "es"
+        },
+        "item3": {
+            "text": "J'aime AceBase",
+            "locale": "fr"
+        },
+        "item4": {
+            "text": "Ich liebe AceBase",
+            "locale": "de"
+        },
+        "item5": {
+            "text": "Ik hou van AceBase",
+            "locale": "nl"
+        },
+        "item6": {
+            "text": "Jag älskar AceBase",
+            "locale": "sv"
+        }
+    }
+}
+```
+
+You can have the texts in `text` indexed using the locale specified in `locale`. The locale found is used in a given `transform` function. If the source data does not have the specified locale key, the default `textLocale` option specified in the options will be used.
+
+```javascript
+db.indexes.create('chats/*/messages', 'text', { 
+    type: 'fulltext', 
+    textLocale: 'en' // default locale to use
+    config: { 
+        localeKey: 'locale' // Use the locale found in the locale property
+    }
+}
+```
+
+#### `useStoplist`
+Boolean value that specifies whether a default stoplist for the used locale should be used to automatically blacklist words. Currently only available for locale `"en"`, which contains very frequently used words like "a", "i", "me", "it", "the", "they", "them" etc.
 
 ### Geo indexes
 
