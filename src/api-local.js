@@ -1,4 +1,4 @@
-const { Api } = require('acebase-core');
+const { Api, ID } = require('acebase-core');
 const { StorageSettings, NodeNotFoundError } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
@@ -63,9 +63,17 @@ class LocalApi extends Api {
         return Node.update(this.storage, path, updates, { merge: true, suppress_events: options.suppress_events, context: options.context });
     }
 
+    get transactionLoggingEnabled() {
+        return this.storage.settings.transactions && this.storage.settings.transactions.log === true;
+    }
+
     async get(path, options) {
+        const context = {};
+        if (this.transactionLoggingEnabled) {
+            context.acebase_cursor = ID.generate();
+        }
         const value = await Node.getValue(this.storage, path, options);
-        return { value, context: {} };
+        return { value, context };
     }
 
     transaction(path, callback, options = { suppress_events: false, context: null }) {
@@ -118,12 +126,19 @@ class LocalApi extends Api {
      * @param {boolean} [options.monitor.change=false] monitor changed children that still match this query
      * @param {boolean} [options.monitor.remove=false] monitor children that don't match this query anymore
      * @ param {(event:string, path: string, value?: any) => boolean} [options.monitor.callback] NEW (BETA) callback with subscription to enable monitoring of new matches
-     * @returns {Promise<object[]|string[]>} returns a promise that resolves with matching data or paths
+     * @returns {Promise<{ results: object[]|string[]>, context: any }} returns a promise that resolves with matching data or paths in `results`
      */
     query(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: event => {} }) {
+        // TODO: Refactor to async
+
         if (typeof options !== "object") { options = {}; }
         if (typeof options.snapshots === "undefined") { options.snapshots = false; }
         
+        const context = {};
+        if (this.transactionLoggingEnabled) {
+            context.acebase_cursor = ID.generate();
+        }
+
         const sortMatches = (matches) => {
             matches.sort((a,b) => {
                 const compare = (i) => {
@@ -858,7 +873,7 @@ class LocalApi extends Api {
                 }
             }
         
-            return matches;
+            return { results: matches, context };
         });
     }
 
@@ -979,11 +994,30 @@ class LocalApi extends Api {
      * @param {string} [filter.path] path to get all mutations for, only used if `for` property isn't used
      * @param {Array<{ path: string, events: string[] }>} [filter.for] paths and events to get relevant mutations for
      * @param {string} filter.cursor cursor to use
+     * @param {number} filter.timestamp timestamp to use
+     * @returns {Promise<{ used_cursor: string, new_cursor: string, mutations: object[] }>}
      */
     async getMutations(filter) {
+        if (typeof this.storage.getMutations !== 'function') { throw new Error('Used storage type does not support getMutations'); }
         if (typeof filter !== 'object') { throw new Error('No filter specified'); }
-        if (typeof filter.cursor !== 'string') { throw new Error('No cursor given'); }
+        if (typeof filter.cursor !== 'string' && typeof filter.timestamp !== 'number') { throw new Error('No cursor or timestamp given'); }
         return this.storage.getMutations(filter);
+    }
+
+    /**
+     * Gets all relevant effective changes for specific events on a path and since specified cursor
+     * @param {object} filter
+     * @param {string} [filter.path] path to get all mutations for, only used if `for` property isn't used
+     * @param {Array<{ path: string, events: string[] }>} [filter.for] paths and events to get relevant mutations for
+     * @param {string} filter.cursor cursor to use
+     * @param {number} filter.timestamp timestamp to use
+     * @returns {Promise<{ used_cursor: string, new_cursor: string, changes: object[] }>}
+     */
+    async getChanges(filter) {
+        if (typeof this.storage.getChanges !== 'function') { throw new Error('Used storage type does not support getChanges'); }
+        if (typeof filter !== 'object') { throw new Error('No filter specified'); }
+        if (typeof filter.cursor !== 'string' && typeof filter.timestamp !== 'number') { throw new Error('No cursor or timestamp given'); }
+        return this.storage.getChanges(filter);
     }
 }
 
