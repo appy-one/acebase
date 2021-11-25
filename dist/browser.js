@@ -204,6 +204,8 @@ class Api {
     getSchema(path) { throw new NotImplementedError('getSchema'); }
     getSchemas() { throw new NotImplementedError('getSchemas'); }
     validateSchema(path, value, isUpdate) { throw new NotImplementedError('validateSchema'); }
+    getMutations(filter) { throw new NotImplementedError('getMutations'); }
+    getChanges(filter) { throw new NotImplementedError('getChanges'); }
 }
 exports.Api = Api;
 
@@ -594,7 +596,7 @@ class LiveDataProxy {
             const isObject = val => val !== null && typeof val === 'object';
             const mutationsHandler = async (details) => {
                 var _a;
-                const snap = details.snap;
+                const { snap, origin } = details;
                 const context = snap.context();
                 const causedByOurProxy = ((_a = context.acebase_proxy) === null || _a === void 0 ? void 0 : _a.id) === proxyId;
                 if (details.origin === 'remote' && causedByOurProxy) {
@@ -1523,13 +1525,17 @@ class DataRetrievalOptions {
         if (typeof options.child_objects !== 'undefined' && typeof options.child_objects !== 'boolean') {
             throw new TypeError(`options.child_objects must be a boolean`);
         }
-        if (typeof options.allow_cache !== 'undefined' && typeof options.allow_cache !== 'boolean') {
-            throw new TypeError(`options.allow_cache must be a boolean`);
+        if (typeof options.cache_mode === 'string' && !['allow', 'bypass', 'force'].includes(options.cache_mode)) {
+            throw new TypeError(`invalid value for options.cache_mode`);
         }
         this.include = options.include || undefined;
         this.exclude = options.exclude || undefined;
-        this.child_objects = typeof options.child_objects === "boolean" ? options.child_objects : undefined;
-        this.allow_cache = typeof options.allow_cache === "boolean" ? options.allow_cache : undefined;
+        this.child_objects = typeof options.child_objects === 'boolean' ? options.child_objects : undefined;
+        this.cache_mode = typeof options.cache_mode === 'string'
+            ? options.cache_mode
+            : typeof options.allow_cache === 'boolean'
+                ? options.allow_cache ? 'allow' : 'bypass'
+                : 'allow';
     }
 }
 exports.DataRetrievalOptions = DataRetrievalOptions;
@@ -1539,10 +1545,10 @@ class QueryDataRetrievalOptions extends DataRetrievalOptions {
      */
     constructor(options) {
         super(options);
-        if (typeof options.snapshots !== 'undefined' && typeof options.snapshots !== 'boolean') {
-            throw new TypeError(`options.snapshots must be an array`);
+        if (!['undefined', 'boolean'].includes(typeof options.snapshots)) {
+            throw new TypeError(`options.snapshots must be a boolean`);
         }
-        this.snapshots = typeof options.snapshots === 'boolean' ? options.snapshots : undefined;
+        this.snapshots = typeof options.snapshots === 'boolean' ? options.snapshots : true;
     }
 }
 exports.QueryDataRetrievalOptions = QueryDataRetrievalOptions;
@@ -1969,12 +1975,7 @@ class DataReference {
             }
             return Promise.reject(error);
         }
-        const options = typeof optionsOrCallback === 'object'
-            ? optionsOrCallback
-            : new DataRetrievalOptions({ allow_cache: true });
-        if (typeof options.allow_cache === 'undefined') {
-            options.allow_cache = true;
-        }
+        const options = new DataRetrievalOptions(typeof optionsOrCallback === 'object' ? optionsOrCallback : { cache_mode: 'allow' });
         const promise = this.db.api.get(this.path, options).then(result => {
             const isNewApiResult = ('context' in result && 'value' in result);
             if (!isNewApiResult) {
@@ -1987,7 +1988,9 @@ class DataReference {
             return snapshot;
         });
         if (callback) {
-            promise.then(callback);
+            promise.then(callback).catch(err => {
+                console.error(`Uncaught error:`, err);
+            });
             return;
         }
         else {
@@ -2141,7 +2144,7 @@ class DataReference {
                 }
                 observer.next(cache);
             };
-            this.on('mutated', updateCache);
+            this.on('mutated', updateCache); // TODO: Refactor to 'mutations' event instead
             // Return unsubscribe function
             return () => {
                 this.off('mutated', updateCache);
@@ -2184,6 +2187,16 @@ class DataReference {
             }
         }
         return summary;
+    }
+    async getMutations(cursorOrDate) {
+        const cursor = typeof cursorOrDate === 'string' ? cursorOrDate : undefined;
+        const timestamp = typeof cursorOrDate === 'undefined' ? 0 : cursorOrDate instanceof Date ? cursorOrDate.getTime() : undefined;
+        return this.db.api.getMutations({ path: this.path, cursor, timestamp });
+    }
+    async getChanges(cursorOrDate) {
+        const cursor = typeof cursorOrDate === 'string' ? cursorOrDate : undefined;
+        const timestamp = typeof cursorOrDate === 'undefined' ? 0 : cursorOrDate instanceof Date ? cursorOrDate.getTime() : undefined;
+        return this.db.api.getChanges({ path: this.path, cursor, timestamp });
     }
 }
 exports.DataReference = DataReference;
@@ -2276,15 +2289,8 @@ class DataReferenceQuery {
                 : typeof callback === 'function'
                     ? callback
                     : undefined;
-        const options = typeof optionsOrCallback === 'object'
-            ? optionsOrCallback
-            : new QueryDataRetrievalOptions({ snapshots: true, allow_cache: true });
-        if (typeof options.snapshots === 'undefined') {
-            options.snapshots = true;
-        }
-        if (typeof options.allow_cache === 'undefined') {
-            options.allow_cache = true;
-        }
+        const options = new QueryDataRetrievalOptions(typeof optionsOrCallback === 'object' ? optionsOrCallback : { snapshots: true, cache_mode: 'allow' });
+        options.allow_cache = options.cache_mode !== 'bypass'; // Backward compatibility when using older acebase-client
         options.eventHandler = ev => {
             // TODO: implement context for query events
             if (!this[_private].events[ev.name]) {
@@ -2325,15 +2331,21 @@ class DataReferenceQuery {
             }
         }
         const db = this.ref.db;
+        // NOTE: returning promise here, regardless of callback argument. Good argument to refactor method to async/await soon
         return db.api.query(this.ref.path, this[_private], options)
             .catch(err => {
             throw new Error(err);
         })
-            .then(results => {
+            .then(res => {
+            let { results, context } = res;
+            if (!('results' in res && 'context' in res)) {
+                console.warn(`Query results missing context. Update your acebase and/or acebase-client packages`);
+                results = res, context = {};
+            }
             if (options.snapshots) {
                 const snaps = results.map(result => {
                     const val = db.types.deserialize(result.path, result.val);
-                    return new data_snapshot_1.DataSnapshot(db.ref(result.path), val);
+                    return new data_snapshot_1.DataSnapshot(db.ref(result.path), val, false, undefined, context);
                 });
                 return DataSnapshotsArray.from(snaps);
             }
@@ -5349,7 +5361,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 
 module.exports = { AceBase, AceBaseLocalSettings };
 },{"./api-local":28,"./storage":39,"./storage-custom":38,"acebase-core":12}],28:[function(require,module,exports){
-const { Api } = require('acebase-core');
+const { Api, ID } = require('acebase-core');
 const { StorageSettings, NodeNotFoundError } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
@@ -5414,9 +5426,17 @@ class LocalApi extends Api {
         return Node.update(this.storage, path, updates, { merge: true, suppress_events: options.suppress_events, context: options.context });
     }
 
+    get transactionLoggingEnabled() {
+        return this.storage.settings.transactions && this.storage.settings.transactions.log === true;
+    }
+
     async get(path, options) {
+        const context = {};
+        if (this.transactionLoggingEnabled) {
+            context.acebase_cursor = ID.generate();
+        }
         const value = await Node.getValue(this.storage, path, options);
-        return { value, context: {} };
+        return { value, context };
     }
 
     transaction(path, callback, options = { suppress_events: false, context: null }) {
@@ -5469,12 +5489,19 @@ class LocalApi extends Api {
      * @param {boolean} [options.monitor.change=false] monitor changed children that still match this query
      * @param {boolean} [options.monitor.remove=false] monitor children that don't match this query anymore
      * @ param {(event:string, path: string, value?: any) => boolean} [options.monitor.callback] NEW (BETA) callback with subscription to enable monitoring of new matches
-     * @returns {Promise<object[]|string[]>} returns a promise that resolves with matching data or paths
+     * @returns {Promise<{ results: object[]|string[]>, context: any }} returns a promise that resolves with matching data or paths in `results`
      */
     query(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: event => {} }) {
+        // TODO: Refactor to async
+
         if (typeof options !== "object") { options = {}; }
         if (typeof options.snapshots === "undefined") { options.snapshots = false; }
         
+        const context = {};
+        if (this.transactionLoggingEnabled) {
+            context.acebase_cursor = ID.generate();
+        }
+
         const sortMatches = (matches) => {
             matches.sort((a,b) => {
                 const compare = (i) => {
@@ -6209,7 +6236,7 @@ class LocalApi extends Api {
                 }
             }
         
-            return matches;
+            return { results: matches, context };
         });
     }
 
@@ -6330,11 +6357,30 @@ class LocalApi extends Api {
      * @param {string} [filter.path] path to get all mutations for, only used if `for` property isn't used
      * @param {Array<{ path: string, events: string[] }>} [filter.for] paths and events to get relevant mutations for
      * @param {string} filter.cursor cursor to use
+     * @param {number} filter.timestamp timestamp to use
+     * @returns {Promise<{ used_cursor: string, new_cursor: string, mutations: object[] }>}
      */
     async getMutations(filter) {
+        if (typeof this.storage.getMutations !== 'function') { throw new Error('Used storage type does not support getMutations'); }
         if (typeof filter !== 'object') { throw new Error('No filter specified'); }
-        if (typeof filter.cursor !== 'string') { throw new Error('No cursor given'); }
+        if (typeof filter.cursor !== 'string' && typeof filter.timestamp !== 'number') { throw new Error('No cursor or timestamp given'); }
         return this.storage.getMutations(filter);
+    }
+
+    /**
+     * Gets all relevant effective changes for specific events on a path and since specified cursor
+     * @param {object} filter
+     * @param {string} [filter.path] path to get all mutations for, only used if `for` property isn't used
+     * @param {Array<{ path: string, events: string[] }>} [filter.for] paths and events to get relevant mutations for
+     * @param {string} filter.cursor cursor to use
+     * @param {number} filter.timestamp timestamp to use
+     * @returns {Promise<{ used_cursor: string, new_cursor: string, changes: object[] }>}
+     */
+    async getChanges(filter) {
+        if (typeof this.storage.getChanges !== 'function') { throw new Error('Used storage type does not support getChanges'); }
+        if (typeof filter !== 'object') { throw new Error('No filter specified'); }
+        if (typeof filter.cursor !== 'string' && typeof filter.timestamp !== 'number') { throw new Error('No cursor or timestamp given'); }
+        return this.storage.getChanges(filter);
     }
 }
 
@@ -9321,7 +9367,7 @@ class Storage extends SimpleEventEmitter {
         super();
         this.name = name;
         this.settings = settings;
-        this.debug = new DebugLogger(settings.logLevel, `[${name}]`); // `├ ${name} ┤` // `[🧱${name}]`
+        this.debug = new DebugLogger(settings.logLevel, `[${name}${settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
         // // Setup node locking
         // this.nodeLocker = new NodeLocker();
