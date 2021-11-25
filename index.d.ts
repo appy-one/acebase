@@ -242,6 +242,8 @@ export class SchemaValidationError extends Error {
 
 export import DataSnapshot = acebasecore.DataSnapshot;
 export import DataReference = acebasecore.DataReference;
+export import DataSnapshotsArray = acebasecore.DataSnapshotsArray;
+export import DataReferencesArray = acebasecore.DataReferencesArray;
 export import EventStream = acebasecore.EventStream;
 export import EventSubscription = acebasecore.EventSubscription;
 export import PathReference = acebasecore.PathReference;
@@ -253,5 +255,6 @@ export import IStreamLike = acebasecore.IStreamLike;
 export import ILiveDataProxy = acebasecore.ILiveDataProxy;
 export import ILiveDataProxyValue = acebasecore.ILiveDataProxyValue;
 export import IObjectCollection = acebasecore.IObjectCollection;
+export import ObjectCollection = acebasecore.ObjectCollection;
 export import ID = acebasecore.ID;
 export import proxyAccess = acebasecore.proxyAccess;
