@@ -2190,12 +2190,12 @@ class DataReference {
     }
     async getMutations(cursorOrDate) {
         const cursor = typeof cursorOrDate === 'string' ? cursorOrDate : undefined;
-        const timestamp = typeof cursorOrDate === 'undefined' ? 0 : cursorOrDate instanceof Date ? cursorOrDate.getTime() : undefined;
+        const timestamp = cursorOrDate === null || typeof cursorOrDate === 'undefined' ? 0 : cursorOrDate instanceof Date ? cursorOrDate.getTime() : undefined;
         return this.db.api.getMutations({ path: this.path, cursor, timestamp });
     }
     async getChanges(cursorOrDate) {
         const cursor = typeof cursorOrDate === 'string' ? cursorOrDate : undefined;
-        const timestamp = typeof cursorOrDate === 'undefined' ? 0 : cursorOrDate instanceof Date ? cursorOrDate.getTime() : undefined;
+        const timestamp = cursorOrDate === null || typeof cursorOrDate === 'undefined' ? 0 : cursorOrDate instanceof Date ? cursorOrDate.getTime() : undefined;
         return this.db.api.getChanges({ path: this.path, cursor, timestamp });
     }
 }
