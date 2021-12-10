@@ -56,8 +56,21 @@ export abstract class StorageSettings {
     maxInlineValueSize?: number;
     removeVoidProperties?: boolean;
     path?: string;
+    ipc?: IPCClientSettings
 }
 
+export interface IPCClientSettings {
+    /** IPC Server hostname. Default is "localhost" */
+    host?: string
+    /** IPC Server port */
+    port: number
+    /** IPC Server token needed to access the server. Only needed if the server does not use a token */
+    token?: string
+    /** Whether to use a secure connection to the IPC server, default is `false` */
+    ssl?: boolean
+    /** Role of the IPC Client. There can only be 1 `master`, all other need to be a `worker`. */
+    role: 'master'|'worker'
+}
 export abstract class TransactionLogSettings {
     log?: boolean;
     maxAge?: number;
