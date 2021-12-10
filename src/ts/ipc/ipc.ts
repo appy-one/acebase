@@ -78,7 +78,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         });
     }
 
-    private _exiting: boolean = false;
+    protected _exiting: boolean = false;
     /**
      * Requests the peer to shut down. Resolves once its locks are cleared and 'exit' event has been emitted. 
      * Has to be overridden by the IPC implementation to perform custom shutdown tasks
@@ -225,7 +225,9 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
             case 'lock-request': {
                 // Lock request sent by worker to master
-                console.assert(this.isMaster, `Workers are not supposed to receive lock requests!`);
+                if (!this.isMaster) {
+                    throw new Error(`Workers are not supposed to receive lock requests!`);
+                }
 
                 const request = message as ILockRequestMessage;
                 const result: ILockResponseMessage = { type: 'lock-result', id: request.id, from: this.id, to: request.from, ok: true, data: undefined };
@@ -249,11 +251,15 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
             case 'lock-result': {
                 // Lock result sent from master to worker
-                console.assert(!this.isMaster, `Masters are not supposed to receive results for lock requests!`);
+                if (this.isMaster) {
+                    throw new Error(`Masters are not supposed to receive results for lock requests!`);
+                }
 
                 const result = message as ILockResponseMessage;
                 const request = this._requests.get(result.id);
-                console.assert(typeof request === 'object', `The request must be known to us!`);
+                if (typeof request !== 'object') {
+                    throw new Error(`The request must be known to us!`);
+                }
 
                 if (result.ok) {
                     request.resolve(result.data);
@@ -266,7 +272,9 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
             case 'unlock-request': {
                 // lock release request sent from worker to master
-                console.assert(this.isMaster, `Workers are not supposed to receive unlock requests!`);
+                if (!this.isMaster) {
+                    throw new Error(`Workers are not supposed to receive unlock requests!`);
+                }
 
                 const request = message as IUnlockRequestMessage;
                 const result: IUnlockResponseMessage = { type: 'unlock-result', id: request.id, from: this.id, to: request.from, ok: true, data: { id: request.data.id } };
@@ -283,11 +291,15 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
             case 'unlock-result': {
                 // lock release result sent from master to worker
-                console.assert(!this.isMaster, `Masters are not supposed to receive results for unlock requests!`);
+                if (this.isMaster) {
+                    throw new Error(`Masters are not supposed to receive results for unlock requests!`);
+                }
 
                 const result = message as IUnlockResponseMessage;
                 const request = this._requests.get(result.id);
-                console.assert(typeof request === 'object', `The request must be known to us!`);
+                if (typeof request !== 'object') {
+                    throw new Error(`The request must be known to us!`);
+                }
 
                 if (result.ok) {
                     request.resolve(result.data);
@@ -300,7 +312,9 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
             case 'move-lock-request': {
                 // move lock request sent from worker to master
-                console.assert(this.isMaster, `Workers are not supposed to receive move lock requests!`);
+                if (!this.isMaster) {
+                    throw new Error(`Workers are not supposed to receive move lock requests!`);
+                }
 
                 const request = message as IMoveLockRequestMessage;
                 const result: ILockResponseMessage = { type: 'lock-result', id: request.id, from: this.id, to: request.from, ok: true, data: undefined };
@@ -348,7 +362,9 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
                 // Result of custom request received - raise event
                 const result = message as IResponseMessage;
                 const request = this._requests.get(result.id);
-                console.assert(typeof request === 'object', `Result of unknown request received`);
+                if (typeof request !== 'object') {
+                    throw new Error(`Result of unknown request received`);
+                }
 
                 if (result.ok) {
                     request.resolve(result.data);
@@ -374,7 +390,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
             const tidApproved = this._locks.find(l => l.tid === details.tid && l.granted);
             if (!tidApproved) {
                 // We have no previously granted locks for this transaction. Deny.
-                throw new AceBaseIPCPeerExitingError('new transaction lock denied');
+                throw new AceBaseIPCPeerExitingError('new transaction lock denied because the IPC peer is exiting');
             }
         }
 
