@@ -1,6 +1,6 @@
 {
   "name": "acebase",
-  "version": "1.11.1",
+  "version": "1.12.0",
   "description": "AceBase realtime database. Open source firebase alternative for nodejs and browser, with additional features: indexes, geo, fulltext, queries, custom storage, offline usage, synchronization, live data proxies and more",
   "main": "./src/index.js",
   "browser": {
@@ -21,16 +21,45 @@
     "test": "jasmine"
   },
   "keywords": [
-    "binary", "fast", "low-memory", "lightweight", "schemaless", "realtime",
-    "database", "db", "json", "json database", "nosql", "nosql database",
-    "object store", "document store", "datastore",
-    "realtime updates", "synchronization", "sync", "offline", 
-    "query", "queries", "fulltext queries", "fulltext search", "geo queries", "realtime queries",
-    "indexes", "fulltext indexes", "geo indexes", "array indexes",
-    "transactional", "transactions",
-    "firebase", "firebase alternative",
-    "browser", "browser database", "localStorage json", "IndexedDB json",
-    "live data", "data proxy"
+    "binary",
+    "fast",
+    "low-memory",
+    "lightweight",
+    "schemaless",
+    "realtime",
+    "database",
+    "db",
+    "json",
+    "json database",
+    "nosql",
+    "nosql database",
+    "object store",
+    "document store",
+    "datastore",
+    "realtime updates",
+    "synchronization",
+    "sync",
+    "offline",
+    "query",
+    "queries",
+    "fulltext queries",
+    "fulltext search",
+    "geo queries",
+    "realtime queries",
+    "indexes",
+    "fulltext indexes",
+    "geo indexes",
+    "array indexes",
+    "transactional",
+    "transactions",
+    "firebase",
+    "firebase alternative",
+    "browser",
+    "browser database",
+    "localStorage json",
+    "IndexedDB json",
+    "live data",
+    "data proxy"
   ],
   "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
   "license": "MIT",
@@ -41,5 +70,19 @@
   "devDependencies": {
     "@types/jasmine": "^3.7.4",
     "@types/node": "^14.14.37"
-  }
+  },
+  "funding": [
+    {
+      "type": "GitHub sponsoring",
+      "url": "https://github.com/sponsors/appy-one"
+    },
+    {
+      "type": "Buy me coffee",
+      "url": "https://www.buymeacoffee.com/appyone"
+    },
+    {
+      "type": "PayPal",
+      "url": "https://paypal.me/theappyone"
+    }
+  ]
 }
