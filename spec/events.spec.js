@@ -123,7 +123,7 @@ describe('Event', () => {
         await promise;
         subscription.stop();
         await collectionRef.child('item11').remove();
-    });
+    }, 10e3);
 
     afterAll(async () => {
         await removeDB();
