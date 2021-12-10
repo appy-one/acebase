@@ -96,7 +96,7 @@ class BrowserAceBase extends AceBase {
             async getTransaction(target) {
                 await readyPromise;
                 const context = {
-                    debug: true,
+                    debug: false,
                     db,
                     cache,
                     ipc
