@@ -2,7 +2,7 @@ const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmi
 const { VALUE_TYPES } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
 const { compareValues, getChildValues, encodeString, defer } = Utils;
-const { IPCPeer } = require('./ipc');
+const { IPCPeer, RemoteIPCPeer } = require('./ipc');
 const { pfs } = require('./promise-fs');
 // const { IPCTransactionManager } = require('./node-transaction');
 
@@ -26,16 +26,35 @@ class SchemaValidationError extends Error {
  */
 class IWriteNodeResult {}
 
+/**
+ * @typedef IPCClientSettings
+ * @property {string} [host='localhost'] IPC Server host to connect to. Default is `"localhost"`
+ * @property {number} port IPC Server port number
+ * @property {boolean} [ssl=false] Whether to use a secure connection to the server. Strongly recommended if `host` is not `"localhost"`. Default is `false`
+ * @property {string} [token] Token used in the IPC Server configuration (optional). The server will refuse connections using the wrong token.
+ * @property {'master'|'worker'} role Determines the role of this IPC client. Only 1 process can be assigned the 'master' role, all other processes must use the role 'worker'
+ */
+
+/**
+ * @typedef IStorageSettings
+ * @property {number} [maxInlineValueSize=50] in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
+ * @property {boolean} [removeVoidProperties=false] Instead of throwing errors on undefined values, remove the properties automatically. Default is false
+ * @property {string} [path="."] Target path to store database files in, default is '.'
+ * @property {string} [info="realtime database"] optional info to be written to the console output underneith the logo
+ * @property {string} [type] optional type of storage class - will be used by AceBaseStorage to create different db files in the future (data, transaction, auth etc)
+ * @property {IPCClientSettings} [ipc] External IPC server configuration. You need this if you are running multiple AceBase processes using the same database files in a pm2 or cloud-based cluster so the individual processes can communicate with each other.
+ */
+
+/**
+ * Storage Settings
+ * @class
+ * @implements {IStorageSettings}
+ */
 class StorageSettings {
 
     /**
      * 
-     * @param {object} settings 
-     * @param {number} [settings.maxInlineValueSize=50] in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
-     * @param {boolean} [settings.removeVoidProperties=false] Instead of throwing errors on undefined values, remove the properties automatically. Default is false
-     * @param {string} [settings.path="."] Target path to store database files in, default is '.'
-     * @param {string} [settings.info="realtime database"] optional info to be written to the console output underneith the logo
-     * @param {string} [settings.type] optional type of storage class - will be used by AceBaseStorage to create different db files in the future (data, transaction, auth etc)
+     * @param {IStorageSettings} settings 
      */
     constructor(settings) {
         settings = settings || {};
@@ -48,6 +67,7 @@ class StorageSettings {
         this.logLevel = settings.logLevel || 'log';
         this.info = settings.info || 'realtime database';
         this.type = settings.type;
+        this.ipc = settings.ipc;
     }
 }
 
@@ -73,7 +93,20 @@ class Storage extends SimpleEventEmitter {
         // this.nodeLocker = new NodeLocker();
 
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
-        this.ipc = new IPCPeer(this, name + (typeof settings.type === 'string' ? `_${settings.type}` : ''));
+        const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
+        if (settings.ipc) {
+            if (typeof settings.ipc.port !== 'number') {
+                throw new Error(`IPC port number must be a number`);
+            }
+            if (!['master','worker'].includes(settings.ipc.role)) {
+                throw new Error(`IPC client role must be either "master" or "worker", not "${settings.ipc.role}"`);
+            }
+            const ipcSettings = Object.assign({ dbname: ipcName }, settings.ipc);
+            this.ipc = new RemoteIPCPeer(this, ipcSettings);
+        }
+        else {
+            this.ipc = new IPCPeer(this, ipcName);
+        }
         this.ipc.once('exit', code => {
             // We can perform any custom cleanup here:
             // - storage-acebase should close the db file
