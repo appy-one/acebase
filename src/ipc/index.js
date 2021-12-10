@@ -1,17 +1,25 @@
 "use strict";
 // export { NodeClusterIPCPeer as IPCPeer } from './node-cluster';
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.IPCPeer = void 0;
+exports.IPCPeer = exports.RemoteIPCPeer = void 0;
 const ipc_1 = require("./ipc");
 const cluster = require("cluster");
+var remote_1 = require("./remote");
+Object.defineProperty(exports, "RemoteIPCPeer", { enumerable: true, get: function () { return remote_1.RemoteIPCPeer; } });
 const masterPeerId = '[master]';
 /**
  * Node cluster functionality - enables vertical scaling with forked processes. AceBase will enable IPC at startup, so
  * any forked process will communicate database changes and events automatically. Locking of resources will be done by
- * the election of a single locking master: the one with the lowest id.
+ * the cluster's primary (previously master) process. NOTE: if the master process dies, all peers stop working
  */
 class IPCPeer extends ipc_1.AceBaseIPCPeer {
     constructor(storage, dbname) {
+        var _a, _b;
+        // Throw eror on PM2 clusters --> they should use an AceBase IPC server
+        const pm2id = ((_a = process.env) === null || _a === void 0 ? void 0 : _a.NODE_APP_INSTANCE) || ((_b = process.env) === null || _b === void 0 ? void 0 : _b.pm_id);
+        if (typeof pm2id === 'string' && pm2id !== '0') {
+            throw new Error(`To use AceBase with pm2 in cluster mode, use an AceBase IPC server to enable interprocess communication.`);
+        }
         const peerId = cluster.isMaster ? masterPeerId : cluster.worker.id.toString();
         super(storage, peerId, dbname);
         this.masterPeerId = masterPeerId;

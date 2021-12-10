@@ -3,6 +3,7 @@
 import { AceBaseIPCPeer, IByeMessage, IHelloMessage, IMessage } from './ipc';
 import { Storage } from '../storage';
 import * as cluster from 'cluster';
+export { RemoteIPCPeer, RemoteIPCServerConfig } from './remote';
 
 const masterPeerId = '[master]';
 
@@ -16,11 +17,18 @@ interface INodeIPCMessage extends IMessage {
 /**
  * Node cluster functionality - enables vertical scaling with forked processes. AceBase will enable IPC at startup, so
  * any forked process will communicate database changes and events automatically. Locking of resources will be done by
- * the election of a single locking master: the one with the lowest id.
+ * the cluster's primary (previously master) process. NOTE: if the master process dies, all peers stop working
  */
 export class IPCPeer extends AceBaseIPCPeer {
 
     constructor(storage: Storage, dbname: string) {
+
+        // Throw eror on PM2 clusters --> they should use an AceBase IPC server
+        const pm2id = process.env?.NODE_APP_INSTANCE || process.env?.pm_id;
+        if (typeof pm2id === 'string' && pm2id !== '0') {
+            throw new Error(`To use AceBase with pm2 in cluster mode, use an AceBase IPC server to enable interprocess communication.`)
+        }
+
         const peerId = cluster.isMaster ? masterPeerId : cluster.worker.id.toString();
         super(storage, peerId, dbname);
 
