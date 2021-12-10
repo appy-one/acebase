@@ -117,6 +117,21 @@ db.ready(() => {
 });
 ```
 
+### Aside: Try AceBase in your browser console now
+
+**Open a new tab** and go to google or whatever (github's CORS policy forbids the fetch) and run this code snippet to have AceBase in your browser repl immediately. (Or you can try https://npm.runkit.com/acebase) Then you can follow along with the examples.
+
+```js
+fetch('https://cdn.jsdelivr.net/npm/acebase@latest/dist/browser.min.js')
+    .then(response => response.text())
+    .then(text => { 
+        eval(text)
+        console.log('AceBase is:', AceBase) 
+        if (AceBase != null)
+            db = AceBase.WithIndexedDB('mydb')
+    })
+```
+
 ### Setup a database server
 If you want to setup an **AceBase server**, install [acebase-server](https://github.com/appy-one/acebase-server).
 
