@@ -1426,8 +1426,14 @@ class AceBaseStorage extends Storage {
                 }
                 let reader = new NodeReader(this, nodeInfo.address, lock, true);
                 const nextCallback = isAsync 
-                    ? async childInfo => (await callback(childInfo)) !== false
-                    : childInfo => callback(childInfo) !== false;
+                    ? async childInfo => {
+                        canceled = (await callback(childInfo)) === false;
+                        return !canceled;
+                    }
+                    : childInfo => {
+                        canceled = callback(childInfo) === false;
+                        return !canceled;
+                    };
                 await reader.getChildStream({ keyFilter: options.keyFilter })
                 .next(nextCallback, isAsync);
                 return canceled;
