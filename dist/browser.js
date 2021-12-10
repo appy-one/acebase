@@ -4881,7 +4881,7 @@ class BrowserAceBase extends AceBase {
             async getTransaction(target) {
                 await readyPromise;
                 const context = {
-                    debug: true,
+                    debug: false,
                     db,
                     cache,
                     ipc
@@ -6774,7 +6774,9 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
             }
             case 'lock-request': {
                 // Lock request sent by worker to master
-                console.assert(this.isMaster, `Workers are not supposed to receive lock requests!`);
+                if (!this.isMaster) {
+                    throw new Error(`Workers are not supposed to receive lock requests!`);
+                }
                 const request = message;
                 const result = { type: 'lock-result', id: request.id, from: this.id, to: request.from, ok: true, data: undefined };
                 try {
@@ -6796,10 +6798,14 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
             }
             case 'lock-result': {
                 // Lock result sent from master to worker
-                console.assert(!this.isMaster, `Masters are not supposed to receive results for lock requests!`);
+                if (this.isMaster) {
+                    throw new Error(`Masters are not supposed to receive results for lock requests!`);
+                }
                 const result = message;
                 const request = this._requests.get(result.id);
-                console.assert(typeof request === 'object', `The request must be known to us!`);
+                if (typeof request !== 'object') {
+                    throw new Error(`The request must be known to us!`);
+                }
                 if (result.ok) {
                     request.resolve(result.data);
                 }
@@ -6810,7 +6816,9 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
             }
             case 'unlock-request': {
                 // lock release request sent from worker to master
-                console.assert(this.isMaster, `Workers are not supposed to receive unlock requests!`);
+                if (!this.isMaster) {
+                    throw new Error(`Workers are not supposed to receive unlock requests!`);
+                }
                 const request = message;
                 const result = { type: 'unlock-result', id: request.id, from: this.id, to: request.from, ok: true, data: { id: request.data.id } };
                 try {
@@ -6825,10 +6833,14 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
             }
             case 'unlock-result': {
                 // lock release result sent from master to worker
-                console.assert(!this.isMaster, `Masters are not supposed to receive results for unlock requests!`);
+                if (this.isMaster) {
+                    throw new Error(`Masters are not supposed to receive results for unlock requests!`);
+                }
                 const result = message;
                 const request = this._requests.get(result.id);
-                console.assert(typeof request === 'object', `The request must be known to us!`);
+                if (typeof request !== 'object') {
+                    throw new Error(`The request must be known to us!`);
+                }
                 if (result.ok) {
                     request.resolve(result.data);
                 }
@@ -6839,7 +6851,9 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
             }
             case 'move-lock-request': {
                 // move lock request sent from worker to master
-                console.assert(this.isMaster, `Workers are not supposed to receive move lock requests!`);
+                if (!this.isMaster) {
+                    throw new Error(`Workers are not supposed to receive move lock requests!`);
+                }
                 const request = message;
                 const result = { type: 'lock-result', id: request.id, from: this.id, to: request.from, ok: true, data: undefined };
                 try {
@@ -6882,7 +6896,9 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                 // Result of custom request received - raise event
                 const result = message;
                 const request = this._requests.get(result.id);
-                console.assert(typeof request === 'object', `Result of unknown request received`);
+                if (typeof request !== 'object') {
+                    throw new Error(`Result of unknown request received`);
+                }
                 if (result.ok) {
                     request.resolve(result.data);
                 }
@@ -6902,7 +6918,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
             const tidApproved = this._locks.find(l => l.tid === details.tid && l.granted);
             if (!tidApproved) {
                 // We have no previously granted locks for this transaction. Deny.
-                throw new AceBaseIPCPeerExitingError('new transaction lock denied');
+                throw new AceBaseIPCPeerExitingError('new transaction lock denied because the IPC peer is exiting');
             }
         }
         const removeLock = lockDetails => {
@@ -9302,7 +9318,7 @@ const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmi
 const { VALUE_TYPES } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
 const { compareValues, getChildValues, encodeString, defer } = Utils;
-const { IPCPeer } = require('./ipc');
+const { IPCPeer, RemoteIPCPeer } = require('./ipc');
 const { pfs } = require('./promise-fs');
 // const { IPCTransactionManager } = require('./node-transaction');
 
@@ -9326,16 +9342,35 @@ class SchemaValidationError extends Error {
  */
 class IWriteNodeResult {}
 
+/**
+ * @typedef IPCClientSettings
+ * @property {string} [host='localhost'] IPC Server host to connect to. Default is `"localhost"`
+ * @property {number} port IPC Server port number
+ * @property {boolean} [ssl=false] Whether to use a secure connection to the server. Strongly recommended if `host` is not `"localhost"`. Default is `false`
+ * @property {string} [token] Token used in the IPC Server configuration (optional). The server will refuse connections using the wrong token.
+ * @property {'master'|'worker'} role Determines the role of this IPC client. Only 1 process can be assigned the 'master' role, all other processes must use the role 'worker'
+ */
+
+/**
+ * @typedef IStorageSettings
+ * @property {number} [maxInlineValueSize=50] in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
+ * @property {boolean} [removeVoidProperties=false] Instead of throwing errors on undefined values, remove the properties automatically. Default is false
+ * @property {string} [path="."] Target path to store database files in, default is '.'
+ * @property {string} [info="realtime database"] optional info to be written to the console output underneith the logo
+ * @property {string} [type] optional type of storage class - will be used by AceBaseStorage to create different db files in the future (data, transaction, auth etc)
+ * @property {IPCClientSettings} [ipc] External IPC server configuration. You need this if you are running multiple AceBase processes using the same database files in a pm2 or cloud-based cluster so the individual processes can communicate with each other.
+ */
+
+/**
+ * Storage Settings
+ * @class
+ * @implements {IStorageSettings}
+ */
 class StorageSettings {
 
     /**
      * 
-     * @param {object} settings 
-     * @param {number} [settings.maxInlineValueSize=50] in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
-     * @param {boolean} [settings.removeVoidProperties=false] Instead of throwing errors on undefined values, remove the properties automatically. Default is false
-     * @param {string} [settings.path="."] Target path to store database files in, default is '.'
-     * @param {string} [settings.info="realtime database"] optional info to be written to the console output underneith the logo
-     * @param {string} [settings.type] optional type of storage class - will be used by AceBaseStorage to create different db files in the future (data, transaction, auth etc)
+     * @param {IStorageSettings} settings 
      */
     constructor(settings) {
         settings = settings || {};
@@ -9348,6 +9383,7 @@ class StorageSettings {
         this.logLevel = settings.logLevel || 'log';
         this.info = settings.info || 'realtime database';
         this.type = settings.type;
+        this.ipc = settings.ipc;
     }
 }
 
@@ -9373,7 +9409,20 @@ class Storage extends SimpleEventEmitter {
         // this.nodeLocker = new NodeLocker();
 
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
-        this.ipc = new IPCPeer(this, name + (typeof settings.type === 'string' ? `_${settings.type}` : ''));
+        const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
+        if (settings.ipc) {
+            if (typeof settings.ipc.port !== 'number') {
+                throw new Error(`IPC port number must be a number`);
+            }
+            if (!['master','worker'].includes(settings.ipc.role)) {
+                throw new Error(`IPC client role must be either "master" or "worker", not "${settings.ipc.role}"`);
+            }
+            const ipcSettings = Object.assign({ dbname: ipcName }, settings.ipc);
+            this.ipc = new RemoteIPCPeer(this, ipcSettings);
+        }
+        else {
+            this.ipc = new IPCPeer(this, ipcName);
+        }
         this.ipc.once('exit', code => {
             // We can perform any custom cleanup here:
             // - storage-acebase should close the db file
