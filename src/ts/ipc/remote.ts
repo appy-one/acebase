@@ -2,8 +2,16 @@ import { ID, Transport } from "acebase-core";
 import { AceBaseIPCPeer, IAceBaseIPCLock, IHelloMessage, IMessage } from './ipc';
 import { Storage } from '../storage';
 import * as http from 'http';
-/** @ts-ignore To use remote IPC add 'ws' WebSocket library, run: npm i ws @types/ws */
-import * as ws from 'ws';
+
+import type * as wsTypes from 'ws'; // @types/ws must always available
+const ws = (() => {
+    try {
+        return require('ws');
+    }
+    catch (err) {
+        // Remote IPC will not work because ws package is not installed, this will be an error if app attempts to use it.
+    }
+})();
 
 type MessageEventCallback = (event: MessageEvent) => any;
 
@@ -101,7 +109,7 @@ const WS_CLOSE_SERVER_ERROR = 5;
  export class RemoteIPCPeer extends AceBaseIPCPeer {
 
     private get version() { return '1.0.0'; }
-    private ws: ws.WebSocket;
+    private ws: wsTypes.WebSocket;
     private queue: boolean = true;
     private pending: {
         in: string[],

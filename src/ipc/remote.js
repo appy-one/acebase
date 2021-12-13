@@ -4,8 +4,14 @@ exports.RemoteIPCPeer = void 0;
 const acebase_core_1 = require("acebase-core");
 const ipc_1 = require("./ipc");
 const http = require("http");
-/** @ts-ignore To use remote IPC add 'ws' WebSocket library, run: npm i ws @types/ws */
-const ws = require("ws");
+const ws = (() => {
+    try {
+        return require('ws');
+    }
+    catch (err) {
+        // Remote IPC will not work because ws package is not installed, this will be an error if app attempts to use it.
+    }
+})();
 const masterPeerId = '[master]';
 const WS_CLOSE_PING_TIMEOUT = 1;
 const WS_CLOSE_PROCESS_EXIT = 2;
