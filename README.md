@@ -75,7 +75,9 @@ AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, yo
 * Export API
     * [Usage](#export-api)
 * Transaction Logging
-    * [Introduction](#transaction-logging)
+    * [Info](#transaction-logging)
+* Multi-process support
+    * [Info](#multi-process-support)
 * [Upgrade notices](#upgrade-notices)
 * [Known issues](#known-issues)
 * [Authors](#authors)
@@ -1769,7 +1771,7 @@ AceBase is now able to run stand-alone in the browser. It uses IndexedDB or Loca
 
 NOTE: If you want to connect to a remote AceBase [acebase-server](https://www.npmjs.com/package/acebase-server) from the browser instead of running one locally, use [acebase-client](https://www.npmjs.com/package/acebase-client) instead.
 
-You can also use a local database in the browser to sync with an AceBase server. To do this, create your database in the browser and pass it as ```cache``` db in ```AceBaseClient```'s storage settings.
+You can also use a local database in the browser to sync with an AceBase server. To do this, create your database in the browser and pass it as `cache` db in `AceBaseClient`'s settings.
 
 If you are using TypeScript (eg with Angular/Ionic), or webpack, add `acebase` to your project (`npm i acebase`), and use:
 ```typescript
@@ -2112,6 +2114,12 @@ const db = new AceBase('mydb', { transactions: { log: true, maxAge: 30, noWait: 
 
 More documentation will follow soon, see `transaction-logs.spec.js` unit tests for more info for now.
 
+## Multi-process support
+
+AceBase supports running in multiple processes by using interprocess communication (IPC). If your app runs in a standard Node.js cluster, AceBase is able to communicate with each process through Node.js's built-in `cluster` functionality. If your app runs in the browser, AceBase will use `BroadcastChannel` (or shim for Safari) to communicate with other browser tabs. 
+
+If you are using pm2 to run your app in a cluster, or run your app in a cloud-based cluster (eg Kubernetes, Docker Swarm), AceBase instances will need some other way to communicate with eachother. This is now possible using an AceBase IPC Server, which allows fast communication using websockets. See [AceBase IPC Server](https://github.com/appy-one/acebase-ipc-server) for more info!
+
 ## Upgrade notices
 
 * v0.9.68 - To get the used updating context in data event handlers, read from `snap.context()` instead of `snap.ref.context()`. This is to prevent further updates on `snap.ref` to use the same context. If you need to reuse the event context for new updates, you will have to manually set it: `snap.ref.context(snap.context()).update(...)`
@@ -2125,16 +2133,6 @@ More documentation will follow soon, see `transaction-logs.spec.js` unit tests f
 ## Known issues
 
 * No currently known issues. Please submit any issues you might find in the respective GitHub repository! For this repository go to [AceBase issues](https://github.com/appy-one/acebase/issues)
-
-* FIXED: Before v0.9.18 Fulltext indexes were only able to index words with latin characters. All indexed texts are now stored "unidecoded", meaning that all unicode characters are translated into ascii characters and become searchable in both ways. Eg: Japanese "AceBaseはクールです" is indexed as "acebase wa kurudesu" and will be found with queries on both "クール", "kūru" and "kuru". (NOTE: Google translate says this is Japanese for "AceBase is cool", I had no idea..)
-
-* FIXED: Before v0.9.11, indexes were not updated when the indexed key or included keys were updated. Also, there was an issue when indexed nodes were removed, corrupting the index file in some cases.
-
-* FIXED: Before v0.8.0, event listening on the root node would have caused errors.
-
-* FIXED: Before v0.7.0 ```fulltext:!contains``` queries on FullText indexes, and ```!contains``` queries on Array indexes did not produce the right results.
-
-* FIXED: Before v0.7.0 index building was done in memory (heap), which could cause a "v8::internal::FatalProcessOutOfMemory" (JavaScript heap out of memory) crash on larger datasets. From v0.4.3 it used an output stream and allows for larger indexes to be created, but was still vulnerable to this issue. v0.7.0 now completely builds indexes using streams from/to disk, eliminating memory issues.
 
 ## Authors
 
@@ -2150,7 +2148,7 @@ What can you help me with?
 * Enhancements - if you've got code to make AceBase even faster or better, you're welcome to contribute!
 * Ports - If you would like to port ```AceBaseClient``` to other languages (Java, Swift, C#, etc) that would be awesome!
 * Ideas - I love new ideas, share them!
-* Money - I am an independant developer and many (MANY) months were put into developing this. I also have a family to feed so if you like AceBase, feel free to send me a donation ♥
+* Money - I am an independant developer and many (MANY) months were put into developing this. I also have a family to feed so if you like AceBase, send me a donation or become a sponsor ♥
 
 ## Sponsoring
 
