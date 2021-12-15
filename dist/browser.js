@@ -5162,19 +5162,26 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 module.exports = { BrowserAceBase };
 },{"./acebase-local":27,"./storage-custom":38,"acebase-core":12}],27:[function(require,module,exports){
 const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
-const { StorageSettings } = require('./storage');
 const { LocalApi } = require('./api-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('./storage-custom');
 
 class AceBaseLocalSettings extends AceBaseBaseSettings {
     /**
      * 
-     * @param {{ logLevel: 'verbose'|'log'|'warn'|'error', storage: StorageSettings }} options 
+     * @param {{ logLevel: 'verbose'|'log'|'warn'|'error', storage: import('./storage').StorageSettings, ipc: import('./storage').IPCClientSettings, transactions: import('..').TransactionLogSettings }} options 
      */
     constructor(options) {
         super(options);
         if (!options) { options = {}; }
-        this.storage = options.storage;
+        this.storage = options.storage || {};
+
+        // Copy IPC and transaction settings to storage settings
+        if (typeof options.ipc === 'object') {
+            options.storage.ipc = options.ipc;
+        }
+        if (typeof options.transactions === 'object') {
+            options.storage.transactions = options.transactions;
+        }
     }
 }
 
@@ -5360,7 +5367,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":28,"./storage":39,"./storage-custom":38,"acebase-core":12}],28:[function(require,module,exports){
+},{"./api-local":28,"./storage-custom":38,"acebase-core":12}],28:[function(require,module,exports){
 const { Api, ID } = require('acebase-core');
 const { StorageSettings, NodeNotFoundError } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
