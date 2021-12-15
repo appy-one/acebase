@@ -50,12 +50,14 @@ export interface AceBaseLocalSettings {
     logLevel?: 'verbose'|'log'|'warn'|'error';
     storage?: StorageSettings;
     transactions?: TransactionLogSettings;
+    ipc?: IPCClientSettings
 }
 
 export abstract class StorageSettings {
     maxInlineValueSize?: number;
     removeVoidProperties?: boolean;
     path?: string;
+    /**@deprecated Moved to main settings */
     ipc?: IPCClientSettings
 }
 

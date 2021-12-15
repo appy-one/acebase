@@ -7,7 +7,7 @@ module.exports = {
         const dbname = 'test-' + ID.generate();
         const options = { storage: { path: __dirname }, logLevel: 'verbose' };
         if (enable.transactionLogging === true) {
-            options.storage.transactions = { log: true };
+            options.transactions = { log: true };
         }
         const db = new AceBase(dbname, options);
         await db.ready();

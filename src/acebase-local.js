@@ -1,17 +1,24 @@
 const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
-const { StorageSettings } = require('./storage');
 const { LocalApi } = require('./api-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('./storage-custom');
 
 class AceBaseLocalSettings extends AceBaseBaseSettings {
     /**
      * 
-     * @param {{ logLevel: 'verbose'|'log'|'warn'|'error', storage: StorageSettings }} options 
+     * @param {{ logLevel: 'verbose'|'log'|'warn'|'error', storage: import('./storage').StorageSettings, ipc: import('./storage').IPCClientSettings, transactions: import('..').TransactionLogSettings }} options 
      */
     constructor(options) {
         super(options);
         if (!options) { options = {}; }
-        this.storage = options.storage;
+        this.storage = options.storage || {};
+
+        // Copy IPC and transaction settings to storage settings
+        if (typeof options.ipc === 'object') {
+            options.storage.ipc = options.ipc;
+        }
+        if (typeof options.transactions === 'object') {
+            options.storage.transactions = options.transactions;
+        }
     }
 }
 
