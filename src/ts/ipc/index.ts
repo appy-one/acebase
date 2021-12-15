@@ -63,12 +63,16 @@ export class IPCPeer extends AceBaseIPCPeer {
         }
 
         const handleMessage = (message:INodeIPCMessage) => {
+            if (typeof message !== 'object') {
+                 // Ignore non-object IPC messages
+                return; 
+            }
             if (message.dbname !== this.dbname) {
                 // Ignore, message not meant for this database
                 return;
             }
             if (cluster.isMaster && message.to !== masterPeerId) {
-                // Message is meant for others. Forward it
+                // Message is meant for others (or all). Forward it
                 this.sendMessage(message);
             }
             if (message.to && message.to !== this.id) {
