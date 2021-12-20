@@ -236,40 +236,28 @@ class DataIndex {
         lock.release();
     }
 
-    static readFromFile(storage, fileName) {
+    static async readFromFile(storage, fileName) {
         // Read an index from file
-        let dataIndex;
-        let fd;
-        const filePath = `${storage.settings.path}/${storage.name}.acebase/${fileName}`;
-
-        return pfs.open(filePath, pfs.flags.read)
-        .then(fileDescriptor => {
-            fd = fileDescriptor;
+        const filePath = fileName.includes('/') ? fileName : `${storage.settings.path}/${storage.name}.acebase/${fileName}`;
+        const fd = await pfs.open(filePath, pfs.flags.read);
+        try {
             // Read signature
-            return pfs.read(fd, Buffer.alloc(10));
-        })
-        .then(result => {
+            let result = await pfs.read(fd, Buffer.alloc(10));
             // Check signature
             if (result.buffer.toString() !== 'ACEBASEIDX') {
                 throw new Error(`File "${filePath}" is not an AceBase index. If you get this error after updating acebase, delete the index file and rebuild it`);
             }
             // Read layout_version
-            return pfs.read(fd, Buffer.alloc(1));
-        })
-        .then(result => {
+            result = await pfs.read(fd, Buffer.alloc(1));
             const versionNr = result.buffer[0];
             if (versionNr !== 1) {
                 throw new Error(`Index "${filePath}" version ${versionNr} is not supported by this version of AceBase. npm update your acebase packages`);
             }
             // Read header_length
-            return pfs.read(fd, Buffer.alloc(4));
-        })
-        .then(result => {
+            result = await pfs.read(fd, Buffer.alloc(4));
             const headerLength = (result.buffer[0] << 24) | (result.buffer[1] << 16) | (result.buffer[2] << 8) | result.buffer[3];
             // Read header
-            return pfs.read(fd, Buffer.alloc(headerLength-11));
-        })
-        .then(result => {
+            result = await pfs.read(fd, Buffer.alloc(headerLength-11));
             // Process header
             const header = Uint8Array.from(result.buffer);
             let index = 0;
@@ -339,6 +327,7 @@ class DataIndex {
 
             const indexInfo = readInfo();
             let indexOptions = { caseSensitive: indexInfo.cs, textLocale: indexInfo.locale, include: indexInfo.include };
+            let dataIndex;
             switch (indexInfo.type) {
                 case 'normal': {
                     dataIndex = new DataIndex(storage, indexInfo.path, indexInfo.key, indexOptions); 
@@ -382,16 +371,15 @@ class DataIndex {
                 Object.assign(treeInfo, info); //treeInfo.info = info;
             }
 
-            return pfs.close(fd);
-        })
-        .catch(err => {
-            pfs.close(fd);
-            throw err;
-        })
-        .then(() => {
+            await pfs.close(fd);
             dataIndex.state = DataIndex.STATE.READY;
             return dataIndex;
-        });
+        }
+        catch(err) {
+            storage.debug.error(err);
+            pfs.close(fd);
+            throw err;
+        }
     }
 
     get type() {
@@ -1699,7 +1687,7 @@ class DataIndex {
                 // Wait until output stream is done writing
                 await new Promise(resolve => {
                     outputStream.end(resolve);
-                }); 
+                });
 
                 // Close all batch files
                 const crPromises = readers.map(reader => reader.close());
@@ -1799,7 +1787,7 @@ class DataIndex {
             )
             .then(() => {
                 return Promise.all([
-                    pfs.close(writeFD),
+                    pfs.fsync(writeFD).then(() => pfs.close(writeFD)),
                     indexedValues > 0 && pfs.close(readFD)
                 ]);
             });
