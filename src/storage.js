@@ -156,16 +156,6 @@ class Storage extends SimpleEventEmitter {
              * @returns {Promise<DataIndex>}
              */
             async create(path, key, options = { rebuild: false, type: undefined, include: undefined }) { //, refresh = false) {
-                if (!storage.ipc.isMaster) {
-                    // Pass create request to master
-                    const result = await storage.ipc.request({ type: 'index.create', path, key, options });
-                    if (result.ok) {
-                        const index = await DataIndex.readFromFile(storage, result.fileName);
-                        _indexes.push(index);
-                        return;
-                    }
-                    throw new Error(result.reason);
-                }
                 path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
                 const rebuild = options && options.rebuild === true;
                 const indexType = (options && options.type) || 'normal';
@@ -180,6 +170,16 @@ class Storage extends SimpleEventEmitter {
                     storage.debug.log(`Index on "/${path}/*/${key}" already exists`.colorize(ColorStyle.inverse));
                     return existingIndex;
                 }
+
+                if (!storage.ipc.isMaster) {
+                    // Pass create request to master
+                    const result = await storage.ipc.sendRequest({ type: 'index.create', path, key, options });
+                    if (result.ok) {
+                        return this.add(result.fileName);
+                    }
+                    throw new Error(result.reason);
+                }
+
                 const index = existingIndex || (() => {
                     switch (indexType) {
                         case 'array': return new ArrayIndex(storage, path, key, { include: options.include, config: options.config });
@@ -298,7 +298,7 @@ class Storage extends SimpleEventEmitter {
 
             async add(fileName) {
                 try {
-                    const index = await DataIndex.readFromFile(storage, fileName)
+                    const index = await DataIndex.readFromFile(storage, fileName);
                     _indexes.push(index);
                 }
                 catch(err) {
