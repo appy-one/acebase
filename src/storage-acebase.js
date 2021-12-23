@@ -907,10 +907,14 @@ class AceBaseStorage extends Storage {
         return index;
     }
 
+    get transactionLoggingEnabled() {
+        return this.settings.transactions && this.settings.transactions.log === true;
+    }
+
     logMutation(type, path, value, context, mutations) {
         // Add to transaction log
         if (!['set','update'].includes(type)) { throw new TypeError('op must be either "set" or "update"'); }
-        if (!this.settings.transactions || this.settings.transactions.log !== true) { throw new Error('transaction logging is not enabled on database'); }
+        if (!this.transactionLoggingEnabled) { throw new Error('transaction logging is not enabled on database'); }
         if (!context.acebase_cursor) { throw new Error('context.acebase_cursor must have been set'); }
 
         if (this.type === 'data') {
@@ -976,7 +980,7 @@ class AceBaseStorage extends Storage {
      */
     async getMutations(filter) {
         if (this.type === 'data') {
-            if (this.settings.transactions?.log !== true) { throw new Error('Transaction logging is not enabled'); }
+            if (!this.transactionLoggingEnabled) { throw new Error('Transaction logging is not enabled'); }
             return this.txStorage.getMutations(filter);
         }
         else if (this.type !== 'transaction') {
