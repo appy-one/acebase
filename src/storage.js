@@ -87,7 +87,7 @@ class Storage extends SimpleEventEmitter {
         super();
         this.name = name;
         this.settings = settings;
-        this.debug = new DebugLogger(settings.logLevel, `[${name}${settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
+        this.debug = new DebugLogger(settings.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
         // // Setup node locking
         // this.nodeLocker = new NodeLocker();
@@ -1182,7 +1182,7 @@ class Storage extends SimpleEventEmitter {
      * @param {any} value
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {string} [options.context] context info used by the client
+     * @param {any} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
     // eslint-disable-next-line no-unused-vars
@@ -1197,7 +1197,7 @@ class Storage extends SimpleEventEmitter {
      * @param {object} updates object with key/value pairs
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {string} [options.context] context info used by the client
+     * @param {any} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
     // eslint-disable-next-line no-unused-vars
@@ -1214,7 +1214,7 @@ class Storage extends SimpleEventEmitter {
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
-     * @param {string} [options.context] context info used by the client
+     * @param {any} [options.context] context info used by the client
      * @returns {Promise<void>}
      */
     async transactNode(path, callback, options = { no_lock: false, suppress_events: false, context: null }) {
@@ -1519,16 +1519,20 @@ class Storage extends SimpleEventEmitter {
     /**
      * Export a specific path's data to a stream
      * @param {string} path
-     * @param {{ write(str: string) => void|Promise<void>}} stream stream object that has a write method that (optionally) returns a promise the export needs to wait for before continuing
+     * @param {(str: string) => void|Promise<void> | { write(str: string) => void|Promise<void>}} write function that writes to a stream, or stream object that has a write method that (optionally) returns a promise the export needs to wait for before continuing
      * @returns {Promise<void>} returns a promise that resolves once all data is exported
      */
-    async exportNode(path, stream, options = { format: 'json', type_safe: true }) {
+    async exportNode(path, write, options = { format: 'json', type_safe: true }) {
         if (options && options.format !== 'json') {
             throw new Error(`Only json output is currently supported`);
         }
+        if (typeof write !== 'function') {
+            // Using the "old" stream argument. Use its write method for backward compatibility
+            write = write.write.bind(write);
+        }
 
         const stringifyValue = (type, val) => {
-            const escape = str => str.replace(/\\/i, "\\\\").replace(/"/g, '\\"').replace(/\n/g, '\\n');
+            const escape = str => str.replace(/"/g, '\\"').replace(/\n/g, '\\n');
             if (type === VALUE_TYPES.DATETIME) {
                 val = `"${val.toISOString()}"`;
                 if (options.type_safe) {
@@ -1562,7 +1566,7 @@ class Storage extends SimpleEventEmitter {
         let objStart = '', objEnd = '';
         const nodeInfo = await this.getNodeInfo(path);
         if (!nodeInfo.exists) {
-            return stream.write('null');
+            return write('null');
         }
         else if (nodeInfo.type === VALUE_TYPES.OBJECT) { objStart = '{'; objEnd = '}'; }
         else if (nodeInfo.type === VALUE_TYPES.ARRAY) { objStart = '['; objEnd = ']'; }
@@ -1570,11 +1574,11 @@ class Storage extends SimpleEventEmitter {
             // Node has no children, get and export its value
             const value = await this.getNodeValue(path);
             const val = stringifyValue(nodeInfo.type, value);
-            return stream.write(val);
+            return write(val);
         }
 
         if (objStart) {
-            const p = stream.write(objStart);
+            const p = write(objStart);
             if (p instanceof Promise) { await p; }
         }
 
@@ -1593,7 +1597,7 @@ class Storage extends SimpleEventEmitter {
             }
         });
         if (output) {
-            const p = stream.write(output);
+            const p = write(output);
             if (p instanceof Promise) { await p; }
         }
 
@@ -1603,17 +1607,386 @@ class Storage extends SimpleEventEmitter {
             const key = typeof childInfo.index === 'number' ? childInfo.index : childInfo.key;
             if (typeof key === 'string') { output += `"${key}":`; }
             if (output) {
-                const p = stream.write(output);
+                const p = write(output);
                 if (p instanceof Promise) { await p; }
             }
-            await this.exportNode(PathInfo.getChildPath(path, key), stream, options);
+            await this.exportNode(PathInfo.getChildPath(path, key), write, options);
         }
 
         if (objEnd) {
-            const p = stream.write(objEnd);
+            const p = write(objEnd);
             if (p instanceof Promise) { await p; }
         }
     }
+
+    /**
+     * Import a specific path's data from a stream
+     * @param {string} path
+     * @param {(bytes: number) => string|ArrayBufferView|Promise<string|ArrayBufferView>} read read function that streams a new chunk of data
+     * @returns {Promise<void>} returns a promise that resolves once all data is imported
+     */
+     async importNode(path, read, options = { format: 'json' }) {
+        const chunkSize = 64 * 1024; // 1KB
+        let state = {
+            data: '',
+            index: 0,
+            offset: 0
+        };
+        const readNextChunk = async (append = false) => {
+            let data = await read(chunkSize);
+            if (data === null) {
+                if (state.data) {
+                    throw new Error(`Unexpected EOF at index ${state.offset + state.data.length}`);
+                }
+                else {
+                    throw new Error(`Unable to read data from stream`);
+                }
+            }
+            else if (typeof data === 'object') {
+                data = new TextDecoder().decode(data);
+            }
+            if (append) {
+                state.data += data;
+            }
+            else {
+                state.offset += state.data.length;
+                state.data = data;
+                state.index = 0;
+            }
+        };
+        const readBytes = async (length) => {
+            let str = '';
+            if (state.index + length >= state.data.length) {
+                str = state.data.slice(state.index);
+                length -= str.length;
+                await readNextChunk();
+            }
+            str += state.data.slice(state.index, state.index + length);
+            state.index += length;
+            return str;
+        };
+        const assertBytes = async (length) => {
+            if (state.index + length > state.data.length) {
+                await readNextChunk(true);
+            }
+            if (state.index + length > state.data.length) {
+                throw new Error(`Not enough data available from stream`);
+            }
+        };
+        const consumeToken = async token => {
+            // const str = state.data.slice(state.index, state.index + token.length);
+            const str = await readBytes(token.length);
+            if (str !== token) { throw new Error(`Unexpected character "${str[0]}" at index ${state.offset + state.index}, expected "${token}"`); }
+        };
+        const consumeSpaces = async () => {
+            const spaces = [' ', '\t', '\r', '\n'];
+            while (true) {
+                if (state.index >= state.data.length) {
+                    await readNextChunk();
+                }
+                if (spaces.includes(state.data[state.index])) {
+                    state.index++;
+                }
+                else {
+                    break;
+                }
+            }
+        };
+        /**
+         * Reads number of bytes from the stream but does not consume them
+         */
+        const peekBytes = async (length) => {
+            await assertBytes(length);
+            const index = state.index;
+            return state.data.slice(index, index + length);
+        };
+        /**
+         * Tries to detect what type of value to expect, but does not read it
+         * @returns 
+         */
+        const peekValueType = async () => {
+            await consumeSpaces();
+            const ch = await peekBytes(1);
+            switch (ch) {
+                case '"': return 'string';
+                case '{': return 'object';
+                case '[': return 'array';
+                case 'n': return 'null';
+                case 'u': return 'undefined';
+                case 't':
+                case 'f':
+                    return 'boolean';
+                default: {
+                    if (ch === '-' || (ch >= '0' && ch <= '9')) {
+                        return 'number';
+                    }
+                    throw new Error(`Unknown value at index ${state.offset + state.index}`);
+                }
+            }
+        };
+
+        /**
+         * Reads a string from the stream at current index. Expects current character to be "
+         */
+        const readString = async () => {
+            await consumeToken('"');
+            let str = '';
+            let i = state.index;
+            // Read until next (unescaped) quote
+            while (state.data[i] !== '"' || state.data[i-1] === '\\') {
+                i++;
+                if (i >= state.data.length) {
+                    str += state.data.slice(state.index);
+                    await readNextChunk();
+                    i = 0;
+                }
+            }
+            str += state.data.slice(state.index, i);
+            state.index = i + 1;
+            return unescape(str);
+        };
+        const readBoolean = async () => {
+            if (state.data[state.index] === 't') {
+                await consumeToken('true');
+            }
+            else if (state.data[state.index] === 'f') {
+                await consumeToken('false');
+            }
+            throw new Error(`Expected true or false at index ${state.offset + state.index}`);
+        };
+        const readNumber = async () => {
+            let str = '';
+            let i = state.index;
+            // Read until non-number character is encountered
+            const nrChars = ['-','0','1','2','3','4','5','6','7','8','9','.','e','b','f','x'];
+            while (nrChars.includes(state.data[i])) {
+                i++;
+                if (i >= state.data.length) {
+                    str += state.data.slice(state.index);
+                    await readNextChunk();
+                    i = 0;
+                }
+            }
+            str += state.data.slice(state.index, i);
+            state.index = i;
+            const nr = str.includes('.') ? parseFloat(str) : parseInt(str);
+            return nr;
+        };
+        const readValue = async () => {
+            await consumeSpaces();
+            const type = await peekValueType();
+            const value = await (() => {
+                switch (type) {
+                    case 'string': return readString();
+                    case 'object': return {};
+                    case 'array': return [];
+                    case 'number': return readNumber();
+                    case 'null': return null;
+                    case 'undefined': return undefined;
+                    case 'boolean': return readBoolean();
+                }
+            })();
+            return { type, value };
+        };
+
+        const unescape = str => str.replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        const getTypeSafeValue = (path, obj) => {
+            const type = obj['.type'];
+            let val = obj['.val'];
+            switch (type) {
+                case 'Date': val = new Date(val); break;
+                case 'Buffer': 
+                    val = unescape(val);
+                    if (val.startsWith('<~')) {
+                        // Ascii85 encoded
+                        val = ascii85.decode(val);
+                    }
+                    else {
+                        // base64 not implemented yet
+                        throw new Error(`Import error: Unexpected encoding for value for value at path "/${path}"`);
+                    }
+                    break;
+                case 'PathReference': 
+                    val = new PathReference(val);
+                    break;
+                default:
+                    throw new Error(`Import error: Unsupported type "${type}" for value at path "/${path}"`);
+            }
+            return val;
+        };
+
+        const context = { acebase_import_id: ID.generate() };
+        const childOptions = { suppress_events: options.suppress_events, context };
+
+        /**
+         * 
+         * @param {PathInfo} target 
+         */
+        const importObject = async (target) => {
+            await consumeToken('{');
+            await consumeSpaces();
+            let nextChar = await peekBytes(1);
+            if (nextChar === '}') {
+                state.index++;
+                return this.setNode(target.path, {}, childOptions);
+            }
+            let childCount = 0;
+            let obj = {};
+            let flushedBefore = false;
+            const flushObject = async () => {
+                let p;
+                if (!flushedBefore) {
+                    flushedBefore = true;
+                    p = this.setNode(target.path, obj, childOptions);
+                }
+                else if (Object.keys(obj).length > 0) {
+                    p = this.updateNode(target.path, obj, childOptions);
+                }
+                obj = {};
+                if (p) { await p; }
+            };
+            const promises = [];
+            while (true) {
+                await consumeSpaces();
+                const property = await readString(); // readPropertyName();
+                await consumeSpaces();
+                await consumeToken(':');
+                await consumeSpaces();
+                const { value, type } = await readValue();
+                obj[property] = value;
+                childCount++;
+                if (['object','array'].includes(type)) {
+                    // Flush current imported value before proceeding with object/array child
+                    promises.push(flushObject());
+
+                    if (type === 'object') {
+                        // Import child object/array
+                        await importObject(target.child(property));
+                    }
+                    else {
+                        await importArray(target.child(property));
+                    }
+                }
+
+                // What comes next? End of object ('}') or new property (',')?
+                await consumeSpaces();
+                let nextChar = await peekBytes(1);
+                if (nextChar === '}') {
+                    // Done importing this object
+                    state.index++;
+                    break;
+                }
+                // Assume comma now
+                await consumeToken(',');
+            }
+            const isTypedValue = childCount === 2 && '.type' in obj && '.val' in obj;
+            if (isTypedValue) {
+                // This is a value that was exported with type safety. 
+                // Do not store as object, but convert to original value
+                // Note that this is done regardless of options.type_safe
+                const val = getTypeSafeValue(target.path, obj);
+                return this.setNode(target.path, val, childOptions);
+            }
+            promises.push(flushObject());
+            await Promise.all(promises);
+        };
+
+        /**
+         * 
+         * @param {PathInfo} target 
+         * @returns 
+         */
+        const importArray = async (target) => {
+            await consumeToken('[');
+            await consumeSpaces();
+            let nextChar = await peekBytes(1);
+            if (nextChar === ']') {
+                state.index++;
+                return this.setNode(target.path, [], childOptions);
+            }
+            let flushedBefore = false;
+            let arr = [];
+            let updates = {};
+            const flushArray = async () => {
+                let p;
+                if (!flushedBefore) {
+                    // Store array
+                    flushedBefore = true;
+                    p = this.setNode(target.path, arr, childOptions);
+                    arr = null; // GC
+                }
+                else if (Object.keys(updates).length > 0) {
+                    // Flush updates
+                    p = this.updateNode(target.path, updates, childOptions);
+                    updates = {};
+                }
+                if (p) { await p; }
+            };
+            const pushChild = (value, index) => {
+                if (flushedBefore) {
+                    updates[index] = value;
+                }
+                else {
+                    arr.push(value);
+                }
+            };
+
+            const promises = [];
+            let index = 0;
+            while (true) {
+                await consumeSpaces();
+                const { value, type } = await readValue();
+                pushChild(value, index);
+                if (['object','array'].includes(type)) {
+                    // Flush current imported value before proceeding with object/array child
+                    promises.push(flushArray()); // No need to await now
+
+                    if (type === 'object') {
+                        // Import child object/array
+                        await importObject(target.child(index));
+                    }
+                    else {
+                        await importArray(target.child(index));
+                    }
+                }
+
+                // What comes next? End of array (']') or new property (',')?
+                await consumeSpaces();
+                let nextChar = await peekBytes(1);
+                if (nextChar === ']') {
+                    // Done importing this array
+                    state.index++;
+                    break;
+                }
+                // Assume comma now
+                await consumeToken(',');
+                index++;
+            }
+
+            promises.push(flushArray());
+            await Promise.all(promises);
+        };
+
+        const start = async () => {
+            const { value, type } = await readValue();
+            if (['object','array'].includes(type)) {
+                // Object or array value, has not been read yet
+                const target = PathInfo.get(path);
+                if (type === 'object') {
+                    await importObject(target);
+                }
+                else {
+                    await importArray(target);
+                }
+            }
+            else {
+                // Simple value
+                await this.setNode(path, value, childOptions);
+            }
+        }
+        return start();
+     }
+
 
     /**
      * Adds, updates or removes a schema definition to validate node values before they are stored at the specified path
