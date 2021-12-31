@@ -72,8 +72,9 @@ AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, yo
     * [Introduction](#reflect-api)
     * [Get information about a node](#get-information-about-a-node)
     * [Get children of a node](#get-children-of-a-node)
-* Export API
-    * [Usage](#export-api)
+* Importing and Exporting data
+    * [Export API usage](#export-api)
+    * [Import API usage](#import-api)
 * Transaction Logging
     * [Info](#transaction-logging)
 * Multi-process support
@@ -195,6 +196,8 @@ db.ready(() => {
     // database is ready to use!
 })
 ```
+
+NOTE: The `logLevel` option specifies how much info should be written to the console logs. Possible values are: `'verbose'`, `'log'` (default), `'warn'` and `'error'` (only errors are logged)
 
 ### Loading data
 
@@ -1828,7 +1831,7 @@ const db = AceBase.WithLocalStorage('mydb', { temp: false }); // temp:true to us
 
 When you're using AceBase with an IndexedDB or LocalStorage backend, you might notice that if you change data in one open tab, those changes do not raise change events in other open tabs monitoring that same data. This is because `IndexedDB` or `LocalStorage` databases do not raise change events themselves, and AceBase won't be able to either if the data was not changed through AceBase itself. To overcome this issue, AceBase will have to notify local changes to other AceBase instances in different browser tabs. 
 
-AceBase is now able to communicate with other tabs using the `BroadcastChannel` implemented in most browsers\*, and is able to notify others of changes made to the underlaying database. This functionality is in beta and disabled by default, to enable it set the `multipleTabs: true` in the options parameter:
+AceBase is now able to communicate with other tabs using the `BroadcastChannel` implemented in most browsers\*, and is able to notify others of changes made to the underlaying database. This functionality is disabled by default, set `multipleTabs: true` in the options parameter to enable it:
 
 ```js
 const db = AceBase.WithIndexedDB('mydb', { multipleTabs: true });
@@ -1838,7 +1841,7 @@ Once you've enabled this setting, the AceBase instances running in multiple tabs
 
 \* Safari (both desktop and iOS versions) do not currently support `BroadcastChannel`, a polyfill will be used. [Browser support](https://caniuse.com/broadcastchannel) is currently at 77% (April 2021)
 
-NOTE: This applies to local databases only. If you are using an `AceBaseClient`, connected to an `AceBaseServer`, changing something in one browser tab will already notify other tabs, because the events are raised by the AceBase server and sent back to the clients automatically. If you use a local AceBase instance as offline cache for an `AceBaseClient`, setting `multipleTabs` on for your cache db might cause events to be raised twice when online - more work is needed here. 
+NOTE: This applies to local databases only. If you are using an `AceBaseClient`, connected to an `AceBaseServer`, changing something in one browser tab will already notify other tabs, because the events are raised by the AceBase server and sent back to the clients automatically. If you use a local `AceBase` instance as offline cache for an `AceBaseClient` and have `multipleTabs` enabled, cross-tab synchronization will only be used while offline.
 
 ## Using a CustomStorage backend
 
@@ -2075,32 +2078,58 @@ To export data from any node to json, you can use the export API. Simply pass an
 
 ```javascript
 let json = '';
-const stream = {
-    write(str) {
-        json += str;
-    }
-}
-db.ref('posts').export(stream)
+const write = str => {
+    json += str;
+};
+db.ref('posts').export(write)
 .then(() => {
     console.log('All posts have been exported:');
     console.log(json);
 })
 ```
 
-To export to a file in node.js, you could use a filestream:
+To export to a file in Node.js, you could use a filestream:
 ```js
-const fstream = fs.createWriteStream('export.json', { flags: 'w+' });
-const stream = {
-    write: chunk => {
-        const ok = fstream.write(chunk);
-        if (!ok) {
-            return new Promise(resolve => fstream.once('drain', resolve));
-        }
+const stream = fs.createWriteStream('export.json', { flags: 'w+' });
+const write = chunk => {
+    const ok = stream.write(chunk);
+    if (!ok) {
+        return new Promise(resolve => stream.once('drain', resolve));
     }
 };
-await db.root.export(stream); // Export all data
-fstream.close(); 
+await db.root.export(write); // Export all data
+stream.close(); 
 ```
+
+### Type safety
+Any data that can not be expressed in JSON format natively (such as Dates and binary data) are exported type-safe using an object describing the content. This is the default behaviour since v1.13.0 
+
+For example: a Date will be exported like `"date":{".type":"Date",".val":"2021-12-31T11:55:14.380Z"}`, and binary data like `"binary":{".type":"Buffer",".val":"<~@VK^gEd8d<@<>o~>"}`.
+
+If you do not want to use this type-safe formatting, you can disable it by setting the `type_safe` option: `ref.export(write, { type_safe: false })`;
+
+## Import API 
+(NEW v1.13.0)
+
+If you need to import large amounts of data it is recommended to use the new import API, which efficiently streams a JSON input source into the database without acquiring long-blocking write locks. This leaves your database responsive for other processes and eliminates the need to load your entire source into memory.
+
+Example:
+```js
+const fd = fs.openSync('data.json', 'r');
+const read = length => {
+    return new Promise((resolve, reject) => {
+        const buffer = new Uint8Array(length);
+        fs.read(fd, buffer, 0, length, null, err => {
+            if (err) { reject(err); }
+            else { resolve(buffer); }
+        });
+    });
+};
+await db.ref(path).import(read);
+fs.closeSync(fd);
+```
+
+NOTE: If you have transaction logging enabled, the import will cause many smaller updates to be logged, instead of just one.
 
 ## Transaction Logging
 (NEW v1.8.0, BETA, AceBase binary databases only)
