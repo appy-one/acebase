@@ -972,6 +972,10 @@ class LocalApi extends Api {
         return this.storage.exportNode(path, stream, options);
     }
 
+    import(path, read, options = { format: 'json', suppress_events: false }) {
+        return this.storage.importNode(path, read, options);
+    }
+
     async setSchema(path, schema) { 
         return this.storage.setSchema(path, schema);
     }
