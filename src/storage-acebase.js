@@ -1,7 +1,7 @@
 const fs = require('fs');
 const { pfs } = require('./promise-fs');
-const { ID, PathInfo, PathReference, Utils, ColorStyle } = require('acebase-core');
-const { concatTypedArrays, bytesToNumber, numberToBytes, encodeString, decodeString } = Utils;
+const { ID, PathInfo, PathReference, Utils, ColorStyle, PartialArray } = require('acebase-core');
+const { concatTypedArrays, bytesToNumber, numberToBytes, encodeString, decodeString, cloneObject } = Utils;
 const { Node, NodeChangeTracker, NodeChange } = require('./node');
 const { NodeAddress } = require('./node-address');
 const { NodeCache } = require('./node-cache');
@@ -785,9 +785,9 @@ class AceBaseStorage extends Storage {
             const intro = ColorStyle.dim;
             this.debug.log(`Database "${name}" details:`.colorize(intro));
             this.debug.log(`- Type: AceBase binary`.colorize(intro));
-            this.debug.log(`- Record size: ${this.settings.recordSize}`.colorize(intro));
-            this.debug.log(`- Page size: ${this.settings.pageSize}`.colorize(intro));
-            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(intro));
+            this.debug.log(`- Record size: ${this.settings.recordSize} bytes`.colorize(intro));
+            this.debug.log(`- Page size: ${this.settings.pageSize} records (${this.settings.pageSize * this.settings.recordSize} bytes)`.colorize(intro));
+            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize} bytes`.colorize(intro));
             this.debug.log(`- Root record address: ${this.rootRecord.pageNr}, ${this.rootRecord.recordNr}`.colorize(intro));
 
             await this.KIT.load();  // Read Key Index Table
@@ -916,7 +916,10 @@ class AceBaseStorage extends Storage {
         if (!['set','update'].includes(type)) { throw new TypeError('op must be either "set" or "update"'); }
         if (!this.transactionLoggingEnabled) { throw new Error('transaction logging is not enabled on database'); }
         if (!context.acebase_cursor) { throw new Error('context.acebase_cursor must have been set'); }
-
+        if (mutations.list.length === 0) {
+            // There were no changes, nothing to log.
+            return;
+        }
         if (this.type === 'data') {
             return this.txStorage.logMutation(type, path, value, context, mutations);
         }
@@ -948,6 +951,7 @@ class AceBaseStorage extends Storage {
             context,
             mutations
         };
+        // console.log(`Logging mutations on "/${path}": ${JSON.stringify(item.mutations)}`);
 
         const cursor = context.acebase_cursor;
         const store = async () => {
@@ -955,7 +959,11 @@ class AceBaseStorage extends Storage {
                 await this.once('ready');
             }
             try {
-                await this._updateNode(`history`, { [cursor]: item }, { merge: true });
+                // const info = await this.getNodeInfo(`history/${cursor}`);
+                // if (info.exists) {
+                //     throw new Error('Another transaction using the same cursor found');
+                // }
+                await this._updateNode(`history`, { [cursor]: item }, { merge: true, _internal: true });
             }
             catch(err) {
                 this.debug.error(`Failed to add to transaction log: `, err);
@@ -1617,13 +1625,14 @@ class AceBaseStorage extends Storage {
      * @returns {Promise<void>}
      */
     async setNode(path, value, options = { tid: undefined, suppress_events: false, context: null }) {
+        options.context = options.context || {};
         if (this.txStorage) {
-            if (!options.context) { options.context = {}; }
             options.context.acebase_cursor = ID.generate();
         }
-        const mutations = await this._updateNode(path, value, { merge: false, tid: options.tid, suppress_events: options.suppress_events, context: options.context });
+        const context = cloneObject(options.context); // copy context to prevent changes while code proceeds async
+        const mutations = await this._updateNode(path, value, { merge: false, tid: options.tid, suppress_events: options.suppress_events, context });
         if (this.txStorage && mutations) {
-            const p = this.logMutation('set', path, value, options.context, mutations);
+            const p = this.logMutation('set', path, value, context, mutations);
             if (p instanceof Promise) { await p; }
         }
     }
@@ -1639,13 +1648,14 @@ class AceBaseStorage extends Storage {
      * @returns {Promise<void>}
      */
     async updateNode(path, updates, options = { tid: undefined, suppress_events: false, context: null }) {
+        options.context = options.context || {};
         if (this.txStorage) {
-            if (!options.context) { options.context = {}; }
             options.context.acebase_cursor = ID.generate();
         }
-        const mutations = await this._updateNode(path, updates, { merge: true, tid: options.tid, suppress_events: options.suppress_events, context: options.context });
+        const context = cloneObject(options.context); // copy context to prevent changes while code proceeds async
+        const mutations = await this._updateNode(path, updates, { merge: true, tid: options.tid, suppress_events: options.suppress_events, context });
         if (this.txStorage && mutations) {
-            const p = this.logMutation('update', path, updates, options.context, mutations);
+            const p = this.logMutation('update', path, updates, context, mutations);
             if (p instanceof Promise) { await p; }
         }
     }
@@ -2155,11 +2165,10 @@ class NodeReader {
 
     /**
      * Gets the value stored in this record by parsing the binary data in this and any sub records
-     * @param {options} - options: when omitted retrieves all nested data. If include is set to an array of keys it will only return those children. If exclude is set to an array of keys, those values will not be included
+     * @param {{ include?: PathInfo[], exclude?: PathInfo[], child_objects?: boolean, no_cache?: boolean }} options when omitted retrieves all nested data. If include is set to an array of keys it will only return those children. If exclude is set to an array of keys, those values will not be included
      * @returns {Promise<any>} - returns the stored object, array or string
      */
     async getValue(options = { include: undefined, exclude: undefined, child_objects: true, no_cache: false }) {
-        if (!options) { options = {}; }
         if (typeof options.include !== "undefined" && !(options.include instanceof Array)) {
             throw new TypeError(`options.include must be an array of key names`);
         }
@@ -2197,14 +2206,55 @@ class NodeReader {
             case VALUE_TYPES.OBJECT: {
                 // We need ALL data, including from child sub records
                 const isArray = this.recordInfo.valueType === VALUE_TYPES.ARRAY;
+
+                /**
+                 * Convert include & exclude filters to PathInfo instances for easier handling
+                 * @param {string[]} arr 
+                 * @returns {PathInfo[]}
+                 */
+                const convertFilterArray = (arr) => {
+                    const isNumber = key => /^[0-9]+$/.test(key);
+                    return arr.map(path => PathInfo.get(isArray && isNumber(path) ? `[${path}]` : path));
+                };
+                const includeFilter = options.include ? options.include.some(item => item instanceof PathInfo) ? options.include : convertFilterArray(options.include) : [];
+                const excludeFilter = options.exclude ? options.exclude.some(item => item instanceof PathInfo) ? options.exclude : convertFilterArray(options.exclude) : [];
+
+                // if (isArray && isFiltered && options.include && options.include.length > 0) {
+                //     for (let i = 0; i < options.include.length; i++) {
+                //         // Convert indexes to numbers
+                //         const key = options.include[i];
+                //         if (/^[0-9]+$/.test(key)) { options.include[i] = +key; }
+                //     }
+                // }
+                // if (isArray && isFiltered && options.exclude && options.exclude.length > 0) {
+                //     for (let i = 0; i < options.exclude.length; i++) {
+                //         // Convert indexes to numbers
+                //         const key = options.exclude[i];
+                //         if (/^[0-9]+$/.test(key)) { options.exclude[i] = +key; }
+                //     }
+                // }
+                // if (isFiltered && options.include && options.include.length > 0) {
+                //     const keyFilter = options.include
+                //         .map(key => typeof key === 'string' && key.includes('/') ? key.slice(0, key.indexOf('/')) : key) // TODO: handle nested brackets
+                //         .reduce((keys, key) => (keys.includes(key) || keys.push(key)) && keys, []);
+                //     if (keyFilter.length > 0) { 
+                //         streamOptions.keyFilter = keyFilter;
+                //     }
+                // }
+
                 const promises = [];
-                const obj = isArray ? [] : {};
+                const isWildcardKey = key => typeof key === 'string' && (key === '*' || key[0] === '$');
+                const hasWildcardInclude = includeFilter.length > 0 && includeFilter.some(pathInfo => pathInfo.keys.length === 1 && isWildcardKey(pathInfo.keys[0]));
+                const hasChildIncludes = includeFilter.length > 0 && includeFilter.some(pathInfo => pathInfo.keys.length === 1 && !isWildcardKey(pathInfo.keys[0]));
+                const isFiltered = (includeFilter.length > 0 && !hasWildcardInclude && includeFilter.some(pathInfo => pathInfo.keys.length === 1)) || (excludeFilter.length > 0 && excludeFilter.some(pathInfo => pathInfo.keys.length === 1) ) || options.child_objects === false;
+                const obj = isArray ? isFiltered ? new PartialArray() : [] : {};
                 const streamOptions = { };
-                if (options.include && options.include.length > 0 && options.include.find(k => k[0] !== '*')) {
-                    const keyFilter = options.include
-                        .map(key => key.includes('/') ? key.slice(0, key.indexOf('/')) : key)
+                if (includeFilter.length > 0 && !hasWildcardInclude && hasChildIncludes) {
+                    const keyFilter = includeFilter
+                        .filter(pathInfo => !isWildcardKey(pathInfo.keys[0])) // pathInfo.keys.length === 1 && 
+                        .map(pathInfo => pathInfo.keys[0])
                         .reduce((keys, key) => (keys.includes(key) || keys.push(key)) && keys, []);
-                    if (keyFilter.length > 0) { 
+                    if (keyFilter.length > 0) {
                         streamOptions.keyFilter = keyFilter;
                     }
                 }
@@ -2218,18 +2268,22 @@ class NodeReader {
                         childLock = await this.storage.nodeLocker.lock(child.address.path, this.lock.tid, false, `NodeReader.getValue:child "/${child.address.path}"`);
 
                         // Are there any relevant nested includes / excludes?
+                        // Fixed: nested bracket (index) include/exclude handling like '[3]/name'
                         let childOptions = {};
-                        if (options.include) {
-                            const include = options.include
-                                .filter((path) => path.startsWith("*/") || path.startsWith(`${child.key}/`))
-                                .map(path => path.substr(path.indexOf('/') + 1));
+                        const getChildFilter = filter => {
+                            return filter
+                            .filter((pathInfo) => {
+                                const key = pathInfo.keys[0];
+                                return pathInfo.keys.length > 1 && (isWildcardKey(key) || (isArray && key === child.index) || (!isArray && key === child.key));
+                            })
+                            .map(pathInfo => PathInfo.get(pathInfo.keys.slice(1)));
+                        }
+                        if (includeFilter.length > 0) {
+                            const include = getChildFilter(includeFilter);
                             if (include.length > 0) { childOptions.include = include; }
                         }
-                        if (options.exclude) {
-                            const exclude = options.exclude
-                                .filter((path) => path.startsWith("*/") || path.startsWith(`${child.key}/`))
-                                .map(path => path.substr(path.indexOf('/') + 1));
-
+                        if (excludeFilter.length > 0) {
+                            const exclude = getChildFilter(excludeFilter);
                             if (exclude.length > 0) { childOptions.exclude = exclude; }
                         }
                         // if (typeof options.no_cache === 'boolean') {
@@ -2264,24 +2318,25 @@ class NodeReader {
                 try {
                     await this.getChildStream(streamOptions)
                     .next(child => {
+                        const keyOrIndex = isArray ? child.index : child.key;
                         if (options.child_objects === false && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(child.type)) {
                             // Options specify not to include any child objects
                             return;
                         }
-                        if (options.include && options.include.length > 0 && !options.include.find(k => k[0] === '*') && !streamOptions.keyFilter.includes(child.key)) { 
+                        if (includeFilter.some(pathInfo => pathInfo.keys.length === 1 && !isWildcardKey(pathInfo.keys[0])) && !includeFilter.some(pathInfo => pathInfo.keys.length === 1 && keyOrIndex === pathInfo.keys[0])) { // !options.include.find(k => typeof k === 'string' && k[0] === '*') && !streamOptions.keyFilter.includes(keyOrIndex)
                             // This particular child is not in the include list
                             return;
                         }
-                        if (options.exclude && options.exclude.length > 0 && options.exclude.includes(child.key)) {
+                        if (excludeFilter.some(pathInfo => pathInfo.keys.length === 1 && pathInfo.keys[0] === keyOrIndex)) {
                             // This particular child is on the exclude list
-                            return; 
+                            return;
                         }
                         if (child.address) {
                             const childValuePromise = loadChildValue(child);
                             promises.push(childValuePromise);
                         }
                         else if (typeof child.value !== "undefined") {
-                            obj[isArray ? child.index : child.key] = child.value;
+                            obj[keyOrIndex] = child.value;
                         }
                         else {
                             if (isArray) {
@@ -2985,7 +3040,9 @@ class NodeReader {
     if (isArray) {
         // keys to update must be integers
         for (let i = 0; i < affectedKeys.length; i++) {
-            if (isNaN(affectedKeys[i])) { throw new Error(`Cannot merge existing array of path "${nodeInfo.path}" with an object`); }
+            if (isNaN(affectedKeys[i])) {
+                throw new Error(`Cannot merge existing array of path "${nodeInfo.path}" with an object (properties ${Object.keys(updates).slice(0, 5).map(p => `"${p}"`).join(',')}...)`);
+            }
             affectedKeys[i] = +affectedKeys[i]; // Now an index
         }
     }
@@ -3029,7 +3086,7 @@ class NodeReader {
         else {
             changes.add(keyOrIndex, child.value, newValue);
         }
-    })
+    });
     
     await Promise.all(childValuePromises);            
 
@@ -3044,6 +3101,35 @@ class NodeReader {
     if (changes.all.length === 0) {
         storage.debug.log(`No effective changes to update node "/${nodeInfo.path}" with`.colorize(ColorStyle.yellow));
         return done(nodeReader.recordInfo);
+    }
+
+    if (isArray) {
+        // Check if resulting array is dense: every item must have a value, no gaps allowed
+        const getSequenceInfo = (changes) => {
+            const indice = changes.map(ch => ch.keyOrIndex).sort(); // sorted from low index to high index
+            const gaps = indice.map((_, i, arr) => i === 0 ? 0 : arr[i-1] - arr[i]);
+            return { indice, hasGaps: gaps.some(g => g > 1) };
+        }
+        const deleteSeqInfo = getSequenceInfo(changes.deletes);
+        const insertSeqInfo = getSequenceInfo(changes.inserts);
+        let isSparse = deleteSeqInfo.hasGaps || deleteSeqInfo.hasGaps;
+        if (!isSparse && changes.deletes.length > 0) {
+            // Only allow deletes at the end of an array, check if is there's an entry with a higher index
+            const highestIndex = deleteSeqInfo.indice.slice(-1)[0];
+            const nextEntryInfo = await nodeReader.getChildInfo(highestIndex + 1);
+            if (nextEntryInfo.exists) { isSparse = true; }
+        }
+        if (!isSparse && changes.inserts.length > 0) {
+            // Only allow inserts at the end of an array, check if there's an entry with a lower index
+            const lowestIndex = insertSeqInfo.indice[0];
+            if (lowestIndex > 0) {
+                const prevEntryInfo = await nodeReader.getChildInfo(lowestIndex - 1);
+                if (!prevEntryInfo.exists) { isSparse = true; }
+            }
+        }
+        if (isSparse) {
+            throw new Error(`Elements cannot be inserted beyond, or removed before the end of an array. Rewrite the whole array at path "${nodeInfo.path}" or change your schema to use an object collection instead`);
+        }
     }
 
     storage.debug.log(`Node "/${nodeInfo.path}" being updated:${isInternalUpdate ? ' (internal)' : ''} adding ${changes.inserts.length} keys (${changes.inserts.map(ch => `"${ch.keyOrIndex}"`).join(',')}), updating ${changes.updates.length} keys (${changes.updates.map(ch => `"${ch.keyOrIndex}"`).join(',')}), removing ${changes.deletes.length} keys (${changes.deletes.map(ch => `"${ch.keyOrIndex}"`).join(',')})`.colorize(ColorStyle.cyan));
@@ -3191,9 +3277,8 @@ class NodeReader {
     else {
         // This is a small record. In the future, it might be nice to make changes 
         // in the record itself, but let's just rewrite it for now.
+        // Record (de)allocation is managed by _writeNode
 
-        // TODO: Do not deallocate here, pass exising allocation to _writeNode, so it can be reused
-        // discardAllocation.ranges.push(...nodeReader.recordInfo.allocation.ranges);
         let mergedValue = isArray ? [] : {};
 
         await nodeReader.getChildStream()
@@ -3217,13 +3302,17 @@ class NodeReader {
         changes.inserts.forEach(change => {
             mergedValue[change.keyOrIndex] = change.newValue;
         });
-
         if (isArray) {
-            const isExhaustive = Object.keys(mergedValue).every((key, i) => +key === i); // test if there are gaps in the array (eg misses value at index 3)
-            if (!isExhaustive) {
-                throw new Error(`Elements cannot be inserted beyond, or removed before the end of an array. Rewrite the whole array at path "${nodeInfo.path}" or change your schema to use an object collection instead`);
-            }
+            mergedValue.length += changes.inserts.length - changes.deletes.length;
         }
+
+        // Check below has moved to more extensive test above which is done before the cache is altered - fixes an issue!
+        // if (isArray) {
+        //     const isExhaustive = Object.keys(mergedValue).every((key, i) => +key === i); // test if there are gaps in the array (eg misses value at index 3)
+        //     if (!isExhaustive) {
+        //         throw new Error(`Elements cannot be inserted beyond, or removed before the end of an array. Rewrite the whole array at path "${nodeInfo.path}" or change your schema to use an object collection instead`);
+        //     }
+        // }
         newRecordInfo = await _writeNode(storage, nodeInfo.path, mergedValue, lock, nodeReader.recordInfo);
     }
 
