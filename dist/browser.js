@@ -168,7 +168,7 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
 }
 exports.AceBaseBase = AceBaseBase;
 
-},{"./data-reference":8,"./debug":10,"./optional-observable":14,"./simple-colors":20,"./simple-event-emitter":21,"./type-mappings":24}],2:[function(require,module,exports){
+},{"./data-reference":8,"./debug":10,"./optional-observable":14,"./simple-colors":21,"./simple-event-emitter":22,"./type-mappings":25}],2:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Api = void 0;
@@ -1499,7 +1499,7 @@ class OrderedCollectionProxy {
 }
 exports.OrderedCollectionProxy = OrderedCollectionProxy;
 
-},{"./data-reference":8,"./data-snapshot":9,"./id":11,"./optional-observable":14,"./path-info":15,"./path-reference":16,"./process":17,"./simple-event-emitter":21,"./utils":25}],8:[function(require,module,exports){
+},{"./data-reference":8,"./data-snapshot":9,"./id":11,"./optional-observable":14,"./path-info":16,"./path-reference":17,"./process":18,"./simple-event-emitter":22,"./utils":26}],8:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DataReferencesArray = exports.DataSnapshotsArray = exports.DataReferenceQuery = exports.DataReference = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = void 0;
@@ -2522,7 +2522,7 @@ class DataReferencesArray extends Array {
 }
 exports.DataReferencesArray = DataReferencesArray;
 
-},{"./data-proxy":7,"./data-snapshot":9,"./id":11,"./optional-observable":14,"./path-info":15,"./subscription":22}],9:[function(require,module,exports){
+},{"./data-proxy":7,"./data-snapshot":9,"./id":11,"./optional-observable":14,"./path-info":16,"./subscription":23}],9:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MutationsDataSnapshot = exports.DataSnapshot = void 0;
@@ -2673,7 +2673,7 @@ class MutationsDataSnapshot extends DataSnapshot {
 }
 exports.MutationsDataSnapshot = MutationsDataSnapshot;
 
-},{"./path-info":15}],10:[function(require,module,exports){
+},{"./path-info":16}],10:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DebugLogger = void 0;
@@ -2703,7 +2703,7 @@ class DebugLogger {
 }
 exports.DebugLogger = DebugLogger;
 
-},{"./process":17}],11:[function(require,module,exports){
+},{"./process":18}],11:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ID = void 0;
@@ -2728,7 +2728,7 @@ exports.ID = ID;
 },{"./cuid":5}],12:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ObjectCollection = exports.SchemaDefinition = exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.proxyAccess = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.DataReferencesArray = exports.DataSnapshotsArray = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
+exports.PartialArray = exports.ObjectCollection = exports.SchemaDefinition = exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.proxyAccess = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.DataReferencesArray = exports.DataSnapshotsArray = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
 var acebase_base_1 = require("./acebase-base");
 Object.defineProperty(exports, "AceBaseBase", { enumerable: true, get: function () { return acebase_base_1.AceBaseBase; } });
 Object.defineProperty(exports, "AceBaseBaseSettings", { enumerable: true, get: function () { return acebase_base_1.AceBaseBaseSettings; } });
@@ -2776,8 +2776,10 @@ var schema_1 = require("./schema");
 Object.defineProperty(exports, "SchemaDefinition", { enumerable: true, get: function () { return schema_1.SchemaDefinition; } });
 var object_collection_1 = require("./object-collection");
 Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return object_collection_1.ObjectCollection; } });
+var partial_array_1 = require("./partial-array");
+Object.defineProperty(exports, "PartialArray", { enumerable: true, get: function () { return partial_array_1.PartialArray; } });
 
-},{"./acebase-base":1,"./api":2,"./ascii85":3,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./object-collection":13,"./path-info":15,"./path-reference":16,"./schema":18,"./simple-cache":19,"./simple-colors":20,"./simple-event-emitter":21,"./subscription":22,"./transport":23,"./type-mappings":24,"./utils":25}],13:[function(require,module,exports){
+},{"./acebase-base":1,"./api":2,"./ascii85":3,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./object-collection":13,"./partial-array":15,"./path-info":16,"./path-reference":17,"./schema":19,"./simple-cache":20,"./simple-colors":21,"./simple-event-emitter":22,"./subscription":23,"./transport":24,"./type-mappings":25,"./utils":26}],13:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ObjectCollection = void 0;
@@ -2871,7 +2873,30 @@ class ObservableShim {
 }
 exports.ObservableShim = ObservableShim;
 
-},{"rxjs":40}],15:[function(require,module,exports){
+},{"rxjs":41}],15:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PartialArray = void 0;
+/**
+ * Sparse/partial array converted to a serializable object. Use `Object.keys(sparseArray)` and `Object.values(sparseArray)` to iterate its indice and/or values
+ */
+class PartialArray {
+    constructor(sparseArray) {
+        if (sparseArray instanceof Array) {
+            for (let i = 0; i < sparseArray.length; i++) {
+                if (typeof sparseArray[i] !== 'undefined') {
+                    this[i] = sparseArray[i];
+                }
+            }
+        }
+        else if (sparseArray) {
+            Object.assign(this, sparseArray);
+        }
+    }
+}
+exports.PartialArray = PartialArray;
+
+},{}],16:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathInfo = void 0;
@@ -2882,7 +2907,7 @@ function getPathKeys(path) {
     }
     let keys = path.split('/');
     return keys.map(key => {
-        return key.startsWith('[') ? parseInt(key.substr(1, key.length - 2)) : key;
+        return key.startsWith('[') ? parseInt(key.slice(1, -1)) : key;
     });
 }
 class PathInfo {
@@ -3152,7 +3177,7 @@ class PathInfo {
 }
 exports.PathInfo = PathInfo;
 
-},{}],16:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathReference = void 0;
@@ -3167,7 +3192,7 @@ class PathReference {
 }
 exports.PathReference = PathReference;
 
-},{}],17:[function(require,module,exports){
+},{}],18:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = {
@@ -3176,7 +3201,7 @@ exports.default = {
     }
 };
 
-},{}],18:[function(require,module,exports){
+},{}],19:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SchemaDefinition = void 0;
@@ -3518,7 +3543,7 @@ class SchemaDefinition {
 }
 exports.SchemaDefinition = SchemaDefinition;
 
-},{}],19:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleCache = void 0;
@@ -3567,7 +3592,7 @@ class SimpleCache {
 }
 exports.SimpleCache = SimpleCache;
 
-},{"./utils":25}],20:[function(require,module,exports){
+},{"./utils":26}],21:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Colorize = exports.SetColorsEnabled = exports.ColorsSupported = exports.ColorStyle = void 0;
@@ -3719,7 +3744,7 @@ String.prototype.colorize = function (style) {
     return Colorize(this, style);
 };
 
-},{"./process":17}],21:[function(require,module,exports){
+},{"./process":18}],22:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleEventEmitter = void 0;
@@ -3804,7 +3829,7 @@ class SimpleEventEmitter {
 }
 exports.SimpleEventEmitter = SimpleEventEmitter;
 
-},{}],22:[function(require,module,exports){
+},{}],23:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EventStream = exports.EventPublisher = exports.EventSubscription = void 0;
@@ -3992,7 +4017,7 @@ class EventStream {
 }
 exports.EventStream = EventStream;
 
-},{}],23:[function(require,module,exports){
+},{}],24:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Transport = void 0;
@@ -4000,6 +4025,7 @@ const path_reference_1 = require("./path-reference");
 const utils_1 = require("./utils");
 const ascii85_1 = require("./ascii85");
 const path_info_1 = require("./path-info");
+const partial_array_1 = require("./partial-array");
 exports.Transport = {
     deserialize(data) {
         if (data.map === null || typeof data.map === "undefined") {
@@ -4019,6 +4045,9 @@ exports.Transport = {
             }
             else if (type === "regexp") {
                 return new RegExp(val.pattern, val.flags);
+            }
+            else if (type === 'array') {
+                return new partial_array_1.PartialArray(val);
             }
             return val;
         };
@@ -4053,6 +4082,9 @@ exports.Transport = {
         }
         obj = utils_1.cloneObject(obj); // Make sure we don't alter the original object
         const process = (obj, mappings, prefix) => {
+            if (obj instanceof partial_array_1.PartialArray) {
+                mappings[prefix] = "array";
+            }
             Object.keys(obj).forEach(key => {
                 const val = obj[key];
                 const path = prefix.length === 0 ? key : `${prefix}/${key}`;
@@ -4089,7 +4121,7 @@ exports.Transport = {
     }
 };
 
-},{"./ascii85":3,"./path-info":15,"./path-reference":16,"./utils":25}],24:[function(require,module,exports){
+},{"./ascii85":3,"./partial-array":15,"./path-info":16,"./path-reference":17,"./utils":26}],25:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TypeMappings = void 0;
@@ -4389,13 +4421,14 @@ class TypeMappings {
 }
 exports.TypeMappings = TypeMappings;
 
-},{"./data-reference":8,"./data-snapshot":9,"./path-info":15,"./utils":25}],25:[function(require,module,exports){
+},{"./data-reference":8,"./data-snapshot":9,"./path-info":16,"./utils":26}],26:[function(require,module,exports){
 (function (Buffer){(function (){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.defer = exports.getChildValues = exports.getMutations = exports.compareValues = exports.ObjectDifferences = exports.valuesAreEqual = exports.cloneObject = exports.concatTypedArrays = exports.decodeString = exports.encodeString = exports.bytesToNumber = exports.numberToBytes = void 0;
 const path_reference_1 = require("./path-reference");
 const process_1 = require("./process");
+const partial_array_1 = require("./partial-array");
 function numberToBytes(number) {
     const bytes = new Uint8Array(8);
     const view = new DataView(bytes.buffer);
@@ -4604,12 +4637,6 @@ function cloneObject(original, stack) {
         if (val === null || val instanceof Date || val instanceof ArrayBuffer || val instanceof path_reference_1.PathReference || val instanceof RegExp) { // || val instanceof ID
             return val;
         }
-        else if (val instanceof Array) {
-            stack.push(val);
-            val = val.map(item => cloneValue(item));
-            stack.pop();
-            return val;
-        }
         else if (typeof val === "object") {
             stack.push(val);
             val = cloneObject(val, stack);
@@ -4623,7 +4650,7 @@ function cloneObject(original, stack) {
     if (typeof stack === "undefined") {
         stack = [original];
     }
-    const clone = original instanceof Array ? [] : {};
+    const clone = original instanceof Array ? [] : original instanceof partial_array_1.PartialArray ? new partial_array_1.PartialArray() : {};
     Object.keys(original).forEach(key => {
         let val = original[key];
         if (typeof val === "function") {
@@ -4792,7 +4819,7 @@ function defer(fn) {
 exports.defer = defer;
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"./data-snapshot":9,"./path-reference":16,"./process":17,"buffer":40}],26:[function(require,module,exports){
+},{"./data-snapshot":9,"./partial-array":15,"./path-reference":17,"./process":18,"buffer":41}],27:[function(require,module,exports){
 const { SimpleCache } = require('acebase-core');
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
@@ -5170,7 +5197,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { BrowserAceBase };
-},{"./acebase-local":27,"./storage-custom":38,"acebase-core":12}],27:[function(require,module,exports){
+},{"./acebase-local":28,"./storage-custom":39,"acebase-core":12}],28:[function(require,module,exports){
 const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
 const { LocalApi } = require('./api-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('./storage-custom');
@@ -5377,7 +5404,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":28,"./storage-custom":38,"acebase-core":12}],28:[function(require,module,exports){
+},{"./api-local":29,"./storage-custom":39,"acebase-core":12}],29:[function(require,module,exports){
 const { Api, ID } = require('acebase-core');
 const { StorageSettings, NodeNotFoundError } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
@@ -6406,7 +6433,7 @@ class LocalApi extends Api {
 }
 
 module.exports = { LocalApi };
-},{"./data-index":36,"./node":35,"./storage":39,"./storage-acebase":36,"./storage-custom":38,"./storage-mssql":36,"./storage-sqlite":36,"acebase-core":12}],29:[function(require,module,exports){
+},{"./data-index":37,"./node":36,"./storage":40,"./storage-acebase":37,"./storage-custom":39,"./storage-mssql":37,"./storage-sqlite":37,"acebase-core":12}],30:[function(require,module,exports){
 /**
    ________________________________________________________________________________
    
@@ -6452,7 +6479,7 @@ window.acebase = acebase;
 window.AceBase = BrowserAceBase;
 // Expose classes for module imports:
 module.exports = acebase;
-},{"./acebase-browser":26,"./acebase-local":27,"./storage-custom":38,"acebase-core":12}],30:[function(require,module,exports){
+},{"./acebase-browser":27,"./acebase-local":28,"./storage-custom":39,"acebase-core":12}],31:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IPCPeer = void 0;
@@ -6588,7 +6615,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
 }
 exports.IPCPeer = IPCPeer;
 
-},{"./ipc":31,"acebase-core":12}],31:[function(require,module,exports){
+},{"./ipc":32,"acebase-core":12}],32:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
@@ -7090,7 +7117,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock":33,"acebase-core":12}],32:[function(require,module,exports){
+},{"../node-lock":34,"acebase-core":12}],33:[function(require,module,exports){
 const { getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
 
@@ -7152,7 +7179,7 @@ class NodeInfo {
 }
 
 module.exports = { NodeInfo };
-},{"./node-value-types":34,"acebase-core":12}],33:[function(require,module,exports){
+},{"./node-value-types":35,"acebase-core":12}],34:[function(require,module,exports){
 const { PathInfo, ID } = require('acebase-core');
 
 const SECOND = 1000;
@@ -7504,7 +7531,7 @@ class NodeLock {
 }
 
 module.exports = { NodeLocker, NodeLock };
-},{"acebase-core":12}],34:[function(require,module,exports){
+},{"acebase-core":12}],35:[function(require,module,exports){
 const { PathReference } = require('acebase-core');
 
 const VALUE_TYPES = {
@@ -7516,9 +7543,9 @@ const VALUE_TYPES = {
     STRING: 5,
     // Custom types:
     DATETIME: 6,
-    //ID: 7
+    // DOCUMENT: 7,     // JSON/XML documents that are contained entirely within the stored node
     BINARY: 8,
-    REFERENCE: 9
+    REFERENCE: 9        // Absolute or relative path to other node
 };
 
 function getValueTypeName(valueType) {
@@ -7531,6 +7558,7 @@ function getValueTypeName(valueType) {
         case VALUE_TYPES.OBJECT: return 'object';
         case VALUE_TYPES.REFERENCE: return 'reference';
         case VALUE_TYPES.STRING: return 'string';
+        // case VALUE_TYPES.DOCUMENT: return 'document';
         default: 'unknown';
     }
 }
@@ -7539,13 +7567,14 @@ function getNodeValueType(value) {
     if (value instanceof Array) { return VALUE_TYPES.ARRAY; }
     else if (value instanceof PathReference) { return VALUE_TYPES.REFERENCE; }
     else if (value instanceof ArrayBuffer) { return VALUE_TYPES.BINARY; }
+    // TODO else if (value instanceof DataDocument) { return VALUE_TYPES.DOCUMENT; }
     else if (typeof value === 'string') { return VALUE_TYPES.STRING; }
     else if (typeof value === 'object') { return VALUE_TYPES.OBJECT; }
     throw new Error(`Invalid value for standalone node: ${value}`);
 }
 
 module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType };
-},{"acebase-core":12}],35:[function(require,module,exports){
+},{"acebase-core":12}],36:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
@@ -7862,9 +7891,9 @@ module.exports = {
     NodeChange,
     NodeChangeTracker
 };
-},{"./node-info":32,"./node-value-types":34,"./storage":39}],36:[function(require,module,exports){
+},{"./node-info":33,"./node-value-types":35,"./storage":40}],37:[function(require,module,exports){
 // Not supported in current environment
-},{}],37:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pfs = void 0;
@@ -7874,7 +7903,7 @@ class pfs {
 }
 exports.pfs = pfs;
 
-},{}],38:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 const { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils } = require('acebase-core');
 const { compareValues } = Utils;
 const { NodeInfo } = require('./node-info');
@@ -9334,7 +9363,7 @@ module.exports = {
     ICustomStorageNodeMetaData,
     ICustomStorageNode
 }
-},{"./node-info":32,"./node-lock":33,"./node-value-types":34,"./storage":39,"acebase-core":12}],39:[function(require,module,exports){
+},{"./node-info":33,"./node-lock":34,"./node-value-types":35,"./storage":40,"acebase-core":12}],40:[function(require,module,exports){
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle, SchemaDefinition } = require('acebase-core');
 const { VALUE_TYPES } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
@@ -10124,7 +10153,10 @@ class Storage extends SimpleEventEmitter {
             if (obj === null || typeof obj !== 'object') { return obj; } // Nothing to do
             Object.keys(obj).forEach(prop => {
                 const val = obj[prop];
-                if (val === null) { delete obj[prop]; }
+                if (val === null) { 
+                    delete obj[prop]; 
+                    if (obj instanceof Array) { obj.length--; } // Array items can only be removed from the end, 
+                }
                 if (typeof val === 'object') { removeNulls(val); }
             });
         }
@@ -10260,13 +10292,25 @@ class Storage extends SimpleEventEmitter {
             else if (typeof result === 'string') {
                 // We are on a path that has an actual change
                 batch.push({ path: currentPath, oldValue, newValue });
-                // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
             }
-            else if (oldValue instanceof Array || newValue instanceof Array) {
-                // Trigger mutated event on the array itself instead of on individual indexes
-                batch.push({ path: currentPath, oldValue, newValue });
-                // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
-            }
+            // else if (oldValue instanceof Array || newValue instanceof Array) {
+            //     // Trigger mutated event on the array itself instead of on individual indexes.
+            //     // DO convert both arrays to objects because they are sparse
+            //     const oldObj = {}, newObj = {};
+            //     result.added.forEach(index => {
+            //         oldObj[index] = null;
+            //         newObj[index] = newValue[index];
+            //     });
+            //     result.removed.forEach(index => {
+            //         oldObj[index] = oldValue[index];
+            //         newObj[index] = null;
+            //     });
+            //     result.changed.forEach(index => {
+            //         oldObj[index] = oldValue[index];
+            //         newObj[index] = newValue[index];
+            //     });
+            //     batch.push({ path: currentPath, oldValue: oldObj, newValue: newObj });
+            // }
             else {
                 // DISABLED array handling here, because if a client is using a cache db this will cause problems
                 // because individual array entries should never be modified.
@@ -10283,32 +10327,35 @@ class Storage extends SimpleEventEmitter {
                 result.added.forEach(key => {
                     const childPath = PathInfo.getChildPath(currentPath, key);
                     batch.push({ path: childPath, oldValue: null, newValue: newValue[key] });
-                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, null, newValue[key], options.context);
                 });
+                if (oldValue instanceof Array && newValue instanceof Array) {
+                    result.removed.sort((a,b) => a - b);
+                }
                 result.removed.forEach(key => {
                     const childPath = PathInfo.getChildPath(currentPath, key);
                     batch.push({ path: childPath, oldValue: oldValue[key], newValue: null });
-                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, oldValue[key], null, options.context);
                 });
             }
             return batch;
         };
 
-        // Add mutations to result
-        result.mutations = (() => {
-            const trailPath = path.slice(topEventPath.length).replace(/^\//, '');
-            const trailKeys = PathInfo.getPathKeys(trailPath);
-            let oldValue = topEventData, newValue = newTopEventData;
-            while (trailKeys.length > 0) {
-                const key = trailKeys.shift();
-                ({ oldValue, newValue } = getChildValues(key, oldValue, newValue));
-            }
-            const compareResults = compareValues(oldValue, newValue);
-            const fakeSub = { event: 'mutations', path };
-            const batch = prepareMutationEvents(fakeSub, path, oldValue, newValue, compareResults);
-            const mutations = batch.map(m => ({ target: PathInfo.getPathKeys(m.path.slice(path.length)), prev: m.oldValue, val: m.newValue })); // key: PathInfo.get(m.path).key
-            return mutations;
-        })();
+        // Add mutations to result (only if transaction logging is enabled)
+        if (this.transactionLoggingEnabled && this.settings.type !== 'transaction') {
+            result.mutations = (() => {
+                const trailPath = path.slice(topEventPath.length).replace(/^\//, '');
+                const trailKeys = PathInfo.getPathKeys(trailPath);
+                let oldValue = topEventData, newValue = newTopEventData;
+                while (trailKeys.length > 0) {
+                    const key = trailKeys.shift();
+                    ({ oldValue, newValue } = getChildValues(key, oldValue, newValue));
+                }
+                const compareResults = compareValues(oldValue, newValue);
+                const fakeSub = { event: 'mutations', path };
+                const batch = prepareMutationEvents(fakeSub, path, oldValue, newValue, compareResults);
+                const mutations = batch.map(m => ({ target: PathInfo.getPathKeys(m.path.slice(path.length)), prev: m.oldValue, val: m.newValue })); // key: PathInfo.get(m.path).key
+                return mutations;
+            })();
+        }
 
         const triggerAllEvents = () => {
             // Notify all event subscriptions, should be executed with a delay
@@ -11482,7 +11529,7 @@ module.exports = {
     SchemaValidationError,
     IWriteNodeResult
 };
-},{"./data-index":36,"./ipc":30,"./node-info":32,"./node-value-types":34,"./promise-fs":37,"acebase-core":12}],40:[function(require,module,exports){
+},{"./data-index":37,"./ipc":31,"./node-info":33,"./node-value-types":35,"./promise-fs":38,"acebase-core":12}],41:[function(require,module,exports){
 
-},{}]},{},[29])(29)
+},{}]},{},[30])(30)
 });
