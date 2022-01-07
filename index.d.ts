@@ -273,3 +273,4 @@ export import IObjectCollection = acebasecore.IObjectCollection;
 export import ObjectCollection = acebasecore.ObjectCollection;
 export import ID = acebasecore.ID;
 export import proxyAccess = acebasecore.proxyAccess;
+export import PartialArray = acebasecore.PartialArray;

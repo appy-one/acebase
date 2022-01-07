@@ -16,7 +16,7 @@
    ________________________________________________________________________________
   
 */
-const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, ID, proxyAccess, ObjectCollection } = require('acebase-core');
+const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, ID, proxyAccess, ObjectCollection, PartialArray } = require('acebase-core');
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorageSettings } = require('./storage-sqlite');
@@ -41,5 +41,6 @@ module.exports = {
     SchemaValidationError,
     ID,
     proxyAccess,
-    ObjectCollection
+    ObjectCollection,
+    PartialArray
 };
