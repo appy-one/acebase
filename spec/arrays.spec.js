@@ -5,7 +5,7 @@ describe('arrays', () => {
     it('test array updates', async () => {
         const { db, removeDB } = await createTempDB();
 
-        const ref = db.ref('arrays');
+        const ref = db.ref('array');
         const baseText = 'entry with a longer text so it gets saved in its own record';
     
         await ref.set({

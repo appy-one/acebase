@@ -1,0 +1,47 @@
+{
+    "ewout": {
+        "name": "Ewout Stortenbeker", 
+        "country": "The Netherlands",
+        "instruments": {
+            "instrument1": {
+                "type": "guitar",
+                "make": "Fender",
+                "model": "Telecaster"
+            },
+            "instrument2": {
+                "type": "drums",
+                "make": "Roland",
+                "model": "TD-1KV"
+            },
+            "instrument3": {
+                "type": "piano",
+                "make": "Yamaha",
+                "model": "Clavinova"
+            }
+        },
+        "posts": { 
+            "post1": { 
+                "title": "My first post",
+                "posted": "2022-01-06T10:35:54.612Z",
+                "text": "This is my very first post here"
+            },
+            "post2": {
+                "title": "My second post",
+                "posted": "2022-01-06T10:35:54.612Z",
+                "text": "I just keep on posting!!"
+            }
+        }
+    },
+    "someuser": {
+        "name": "Some random user",
+        "country": "Deserted Island",
+        "instruments": { },
+        "posts": {
+            "post1": {
+                "title": "What to do?",
+                "posted": "2022-01-06T10:35:54.612Z",
+                "text": "I wish there was something to do on this island"
+            }
+        }
+    }
+}

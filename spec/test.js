@@ -33,4 +33,7 @@ jasmine.configureDefaultReporter({
     // `showColors` determines whether or not the reporter should use ANSI color codes.
     showColors: true
 });
+// jasmine.execute(['./spec/include-exclude-filters.spec.js']);
+// jasmine.execute(['./spec/arrays.spec.js']);
+// jasmine.execute(['./spec/arrays.spec.js']);
 jasmine.execute();
