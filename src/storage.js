@@ -787,7 +787,10 @@ class Storage extends SimpleEventEmitter {
             if (obj === null || typeof obj !== 'object') { return obj; } // Nothing to do
             Object.keys(obj).forEach(prop => {
                 const val = obj[prop];
-                if (val === null) { delete obj[prop]; }
+                if (val === null) { 
+                    delete obj[prop]; 
+                    if (obj instanceof Array) { obj.length--; } // Array items can only be removed from the end, 
+                }
                 if (typeof val === 'object') { removeNulls(val); }
             });
         }
@@ -923,13 +926,25 @@ class Storage extends SimpleEventEmitter {
             else if (typeof result === 'string') {
                 // We are on a path that has an actual change
                 batch.push({ path: currentPath, oldValue, newValue });
-                // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
             }
-            else if (oldValue instanceof Array || newValue instanceof Array) {
-                // Trigger mutated event on the array itself instead of on individual indexes
-                batch.push({ path: currentPath, oldValue, newValue });
-                // this.subscriptions.trigger(sub.type, sub.subscriptionPath, currentPath, oldValue, newValue, options.context);
-            }
+            // else if (oldValue instanceof Array || newValue instanceof Array) {
+            //     // Trigger mutated event on the array itself instead of on individual indexes.
+            //     // DO convert both arrays to objects because they are sparse
+            //     const oldObj = {}, newObj = {};
+            //     result.added.forEach(index => {
+            //         oldObj[index] = null;
+            //         newObj[index] = newValue[index];
+            //     });
+            //     result.removed.forEach(index => {
+            //         oldObj[index] = oldValue[index];
+            //         newObj[index] = null;
+            //     });
+            //     result.changed.forEach(index => {
+            //         oldObj[index] = oldValue[index];
+            //         newObj[index] = newValue[index];
+            //     });
+            //     batch.push({ path: currentPath, oldValue: oldObj, newValue: newObj });
+            // }
             else {
                 // DISABLED array handling here, because if a client is using a cache db this will cause problems
                 // because individual array entries should never be modified.
@@ -946,32 +961,35 @@ class Storage extends SimpleEventEmitter {
                 result.added.forEach(key => {
                     const childPath = PathInfo.getChildPath(currentPath, key);
                     batch.push({ path: childPath, oldValue: null, newValue: newValue[key] });
-                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, null, newValue[key], options.context);
                 });
+                if (oldValue instanceof Array && newValue instanceof Array) {
+                    result.removed.sort((a,b) => a - b);
+                }
                 result.removed.forEach(key => {
                     const childPath = PathInfo.getChildPath(currentPath, key);
                     batch.push({ path: childPath, oldValue: oldValue[key], newValue: null });
-                    // this.subscriptions.trigger(sub.type, sub.subscriptionPath, childPath, oldValue[key], null, options.context);
                 });
             }
             return batch;
         };
 
-        // Add mutations to result
-        result.mutations = (() => {
-            const trailPath = path.slice(topEventPath.length).replace(/^\//, '');
-            const trailKeys = PathInfo.getPathKeys(trailPath);
-            let oldValue = topEventData, newValue = newTopEventData;
-            while (trailKeys.length > 0) {
-                const key = trailKeys.shift();
-                ({ oldValue, newValue } = getChildValues(key, oldValue, newValue));
-            }
-            const compareResults = compareValues(oldValue, newValue);
-            const fakeSub = { event: 'mutations', path };
-            const batch = prepareMutationEvents(fakeSub, path, oldValue, newValue, compareResults);
-            const mutations = batch.map(m => ({ target: PathInfo.getPathKeys(m.path.slice(path.length)), prev: m.oldValue, val: m.newValue })); // key: PathInfo.get(m.path).key
-            return mutations;
-        })();
+        // Add mutations to result (only if transaction logging is enabled)
+        if (this.transactionLoggingEnabled && this.settings.type !== 'transaction') {
+            result.mutations = (() => {
+                const trailPath = path.slice(topEventPath.length).replace(/^\//, '');
+                const trailKeys = PathInfo.getPathKeys(trailPath);
+                let oldValue = topEventData, newValue = newTopEventData;
+                while (trailKeys.length > 0) {
+                    const key = trailKeys.shift();
+                    ({ oldValue, newValue } = getChildValues(key, oldValue, newValue));
+                }
+                const compareResults = compareValues(oldValue, newValue);
+                const fakeSub = { event: 'mutations', path };
+                const batch = prepareMutationEvents(fakeSub, path, oldValue, newValue, compareResults);
+                const mutations = batch.map(m => ({ target: PathInfo.getPathKeys(m.path.slice(path.length)), prev: m.oldValue, val: m.newValue })); // key: PathInfo.get(m.path).key
+                return mutations;
+            })();
+        }
 
         const triggerAllEvents = () => {
             // Notify all event subscriptions, should be executed with a delay
