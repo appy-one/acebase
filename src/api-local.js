@@ -725,8 +725,8 @@ class LocalApi extends Api {
                     const checkKeys = [];
                     query.filters.forEach(f => !checkKeys.includes(f.key) && checkKeys.push(f.key));
                     const seenKeys = [];
-                    typeof oldValue === 'object' && Object.keys(oldValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
-                    typeof newValue === 'object' && Object.keys(newValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
+                    oldValue && typeof oldValue === 'object' && Object.keys(oldValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
+                    newValue && typeof newValue === 'object' && Object.keys(newValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
                     const missingKeys = [];
                     let isMatch = seenKeys.every(key => {
                         if (!checkKeys.includes(key)) { return true; }
