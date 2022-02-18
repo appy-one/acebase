@@ -1,10 +1,7 @@
 const { PathInfo, ID } = require('acebase-core');
 
-const SECOND = 1000;
-const MINUTE = 60000;
-
 const DEBUG_MODE = false;
-const LOCK_TIMEOUT = DEBUG_MODE ? 15 * MINUTE : 90 * SECOND;
+const DEFAULT_LOCK_TIMEOUT = 120; // in seconds
 
 const LOCK_STATE = {
     PENDING: 'pending',
@@ -17,7 +14,7 @@ class NodeLocker {
     /**
      * Provides locking mechanism for nodes, ensures no simultanious read and writes happen to overlapping paths
      */
-    constructor() {
+    constructor(debug, lockTimeout = DEFAULT_LOCK_TIMEOUT) {
         /**
          * @type {NodeLock[]}
          */
@@ -27,6 +24,12 @@ class NodeLocker {
          * When .quit() is called, will be set to the quit promise's resolve function
          */
         this._quit = undefined;
+        this.debug = debug;
+        this.timeout = lockTimeout * 1000;
+    }
+
+    setTimeout(timeout) {
+        this.timeout = timeout * 1000;
     }
 
     createTid() {
@@ -177,7 +180,7 @@ class NodeLocker {
             else {
                 lock.granted = Date.now();
                 if (options.noTimeout !== true) {
-                    lock.expires = Date.now() + LOCK_TIMEOUT;
+                    lock.expires = Date.now() + this.timeout;
                     //debug.warn(`lock :: GRANTED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
 
                     let timeoutCount = 0;
@@ -192,11 +195,11 @@ class NodeLocker {
                         timeoutCount++;
                         if (timeoutCount <= 3) {
                             // Warn first.
-                            console.warn(`${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) is taking a long time to complete [${timeoutCount}]`);
-                            lock.timeout = setTimeout(timeoutHandler, LOCK_TIMEOUT / 3);
+                            this.debug.warn(`${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) is taking a long time to complete [${timeoutCount}]`);
+                            lock.timeout = setTimeout(timeoutHandler, this.timeout / 4);
                             return;
                         }
-                        console.error(`lock :: ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) took too long`);
+                        this.debug.error(`lock :: ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) took too long`);
                         lock.state = LOCK_STATE.EXPIRED;
                         // let allTransactionLocks = _locks.filter(l => l.tid === lock.tid).sort((a,b) => a.requested < b.requested ? -1 : 1);
                         // let transactionsDebug = allTransactionLocks.map(l => `${l.state} ${l.forWriting ? "WRITE" : "read"} ${l.comment}`).join("\n");
@@ -205,7 +208,7 @@ class NodeLocker {
                         this._processLockQueue();
                     };
 
-                    lock.timeout = setTimeout(timeoutHandler, LOCK_TIMEOUT / 3);
+                    lock.timeout = setTimeout(timeoutHandler, this.timeout / 4);
                 }
             }
             return lock;
