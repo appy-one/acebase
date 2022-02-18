@@ -28,8 +28,10 @@ export class AceBase extends acebasecore.AceBaseBase {
      * @param settings.removeVoidProperties Whether to remove undefined property values of objects being stored, instead of throwing an error.
      * @param settings.maxInlineValueSize Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Default is 50.
      * @param settings.multipleTabs Whether to enable cross-tab synchronization
+     * @param settings.cacheSeconds How many seconds to keep node info in memory, to speed up IndexedDB performance.
+     * @param settings.lockTimeout timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
      */
-    static WithIndexedDB(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error', removeVoidProperties?: boolean, maxInlineValueSize?: number, multipleTabs?: boolean }): AceBase;
+    static WithIndexedDB(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error'; removeVoidProperties?: boolean; maxInlineValueSize?: number; multipleTabs?: boolean; cacheSeconds?: number; lockTimeout?: number }): AceBase;
 
     /**
      * Creates an AceBase database instance using LocalStorage or SessionStorage as storage engine. When running in non-browser environments, set
@@ -42,8 +44,9 @@ export class AceBase extends acebasecore.AceBaseBase {
      * @param settings.removeVoidProperties Whether to remove undefined property values of objects being stored, instead of throwing an error.
      * @param settings.maxInlineValueSize Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Default is 50.
      * @param settings.multipleTabs Whether to enable cross-tab synchronization
+     * @param settings.lockTimeout timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
      */    
-    static WithLocalStorage(dbname: string, settings: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean, provider?: any, removeVoidProperties?: boolean, maxInlineValueSize?: number, multipleTabs?: boolean }): AceBase
+    static WithLocalStorage(dbname: string, settings: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean, provider?: any, removeVoidProperties?: boolean, maxInlineValueSize?: number, multipleTabs?: boolean, lockTimeout?: number }): AceBase
 }
 
 export interface AceBaseLocalSettings {
@@ -59,6 +62,7 @@ export abstract class StorageSettings {
     path?: string;
     /**@deprecated Moved to main settings */
     ipc?: IPCClientSettings
+    lockTimeout?: number
 }
 
 export interface IPCClientSettings {
