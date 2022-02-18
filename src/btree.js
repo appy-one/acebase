@@ -2461,7 +2461,7 @@ class BinaryBPlusTree {
             const promise = this._writeFn(bytes, leafInfo.index);
             writes.push(promise);
             
-            await Promise.all(writes);
+            return await Promise.all(writes);
         }
         catch(err) {
             throw new DetailedError('write-leaf-fail', `Failed to write leaf: ${err.message}`, err);
