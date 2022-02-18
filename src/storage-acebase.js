@@ -25,10 +25,10 @@ class AceBaseStorageSettings extends StorageSettings {
     /**
      * 
      * @param {AceBaseStorageSettings} settings 
-     * @param {number} [settings.recordSize=128] record size in bytes, defaults to 128 (recommended)
+     * @param {number} [settings.recordSize=128] record size in bytes, defaults to 128 (recommended). Max is 65536
      * @param {number} [settings.pageSize=1024] page size in records, defaults to 1024 (recommended). Max is 65536
      * @param {'data'|'transaction'|'auth'} [settings.type='data'] type of database content. Determines the name of the file within the .acebase directory
-     * @param {AceBaseTransactionLogSettings} [settings.transactions] ssettings to use for transaction logging
+     * @param {AceBaseTransactionLogSettings} [settings.transactions] settings to use for transaction logging
      */
     constructor(settings) {
         super(settings);
@@ -77,8 +77,11 @@ class AceBaseStorage extends Storage {
         if (settings.maxInlineValueSize > 64) {
             throw new Error("maxInlineValueSize cannot be larger than 64"); // This is technically not possible because we store inline length with 6 bits: range = 0 to 2^6-1 = 0 - 63 // NOTE: lengths are stored MINUS 1, because an empty value is stored as tiny value, so "a"'s stored inline length is 0, allowing values up to 64 bytes
         }
+        if (settings.recordSize > 65536) {
+            throw new Error("recordSize cannot be larger than 65536"); // Technically not possible because setting in db is 16 bits
+        }
         if (settings.pageSize > 65536) {
-            throw new Error("pageSize cannot be larger than 65536"); // Technically not possible because record_nr references are 16 bit: range = 0 - 2^16 = 0 - 65535
+            throw new Error("pageSize cannot be larger than 65536"); // Technically not possible because record_nr references are 16 bits
         }
 
         this.name = name;
@@ -401,6 +404,9 @@ class AceBaseStorage extends Storage {
                 },
                 async load() {
                     return []; // Fake loader
+                },
+                get maxScraps() {
+                    return 10;
                 }
             };
         }
@@ -412,12 +418,19 @@ class AceBaseStorage extends Storage {
                 pages: 0,
                 ranges: [],
 
+                get maxScraps() {
+                    return this.ranges.length > 7500 ? 10 : 3;
+                },
+
                 /**
                  * 
                  * @param {number} requiredRecords 
                  * @returns {Promise<Array<{ pageNr: number, recordNr: number, length: number }>>}
                  */
                 async allocate(requiredRecords) {
+                    if (storage.isLocked(true)) {
+                        throw new Error('database is locked');
+                    }
                     // First, try to find a range that fits all requested records sequentially
                     const recordsPerPage = storage.settings.pageSize;
                     let allocation = [];
@@ -470,7 +483,8 @@ class AceBaseStorage extends Storage {
                         return 0;
                     });
 
-                    const MAX_RANGES = 3;
+                    const MAX_RANGES = this.maxScraps; //this.ranges.length > 7500 ? 10 : 3; // Allow more ranges if FST is approaching its storage limit
+
                     const test = {
                         ranges: [],
                         totalRecords: 0,
@@ -489,6 +503,7 @@ class AceBaseStorage extends Storage {
                             test.additionalRanges++;
                         }
                     }
+
                     if (test.additionalRanges > MAX_RANGES) {
                         // Prevent overfragmentation, don't use more than 3 ranges
 
@@ -540,10 +555,15 @@ class AceBaseStorage extends Storage {
                 },
 
                 release(ranges) {
+                    if (storage.isLocked(true)) {
+                        throw new Error('database is locked');
+                    }
                     // Add freed ranges
                     ranges.forEach(range => {
                         this.ranges.push({ page: range.pageNr, start: range.recordNr, end: range.recordNr + range.length });
                     });
+
+                    this.sort();
 
                     // Now normalize the ranges
                     for(let i = 0; i < this.ranges.length; i++) {
@@ -572,7 +592,7 @@ class AceBaseStorage extends Storage {
                         }
                     }
 
-                    this.sort();
+                    this.sort(); // Do we have to? Already sorted, right?
                     this.write();
                 },
 
@@ -587,31 +607,47 @@ class AceBaseStorage extends Storage {
                 },
 
                 async write(updatedPageCount = false) {
-                    // Free Space Table starts at index 2^16 (65536), and is 2^16 (65536) bytes long
+                    // Free Space Table starts at index 2^16 (65536), and is 2^16 (65536) bytes long.
+                    // Each range needs 8 bytes to be stored, and the FST has 6 header bytes, so that means
+                    // a maximum of 8191 FST ranges can be stored. If this amount is exceeded, we'll have to
+                    // remove the smallest ranges from the FST. See https://github.com/appy-one/acebase/issues/69
+
+                    const MAX_FST_RANGES = 8191;
+                    if (this.ranges.length > MAX_FST_RANGES) {
+                        // Remove smallest ranges
+                        const n = this.ranges.length - MAX_FST_RANGES;
+                        const ranges = this.ranges.slice()
+                            .sort((a, b) => a.end - a.start < b.end - b.start ? -1 : 1)
+                            .slice(0, n);
+                        const totalRecords = ranges.reduce((records, range) => records + (range.end - range.start), 0);
+                        storage.debug.warn(`FST grew too big to store in the database file, removing ${n} entries for ${totalRecords} records`);
+                        ranges.forEach(range => {
+                            const i = this.ranges.indexOf(range);
+                            this.ranges.splice(i, 1);
+                        });
+                        if (this.ranges.length > MAX_FST_RANGES) {
+                            throw new Error(`DEV ERROR: Still too many entries in the FST!`);
+                        }
+                    }
+
                     const data = Buffer.alloc(this.length);
-                    // data.fill(0); //new Uint8Array(buffer).fill(0); // Initialize with all zeroes
                     const view = new DataView(data.buffer);
                     // Add 4-byte page count
-                    view.setUint32(0, this.pages); //new Uint32Array(data.buffer, 0, 4).set([metadata.fst.pages]);
+                    view.setUint32(0, this.pages);
                     // Add 2-byte number of free ranges
-                    view.setUint16(4, this.ranges.length); //new Uint16Array(data.buffer, 4, 2).set([ranges.length]);
+                    view.setUint16(4, this.ranges.length);
                     let index = 6;
                     for(let i = 0; i < this.ranges.length; i++) {
                         const range = this.ranges[i];
                         // Add 4-byte page nr
-                        view.setUint32(index, range.page); //new DataView(data.buffer, index, 4).setInt32(0, range.page);
+                        view.setUint32(index, range.page);
                         // Add 2-byte start record nr, 2-byte end record nr
-                        //new Uint16Array(data.buffer, index + 4, 4).set([range.start, range.end]);
                         view.setUint16(index + 4, range.start); 
                         view.setUint16(index + 6, range.end); 
                         index += 8;
                     }
                     const bytesToWrite = Math.max(this.bytesUsed, index);    // Determine how many bytes should be written to overwrite current FST
                     this.bytesUsed = index;
-
-                    if (this.bytesUsed > this.length) {
-                        throw new Error(`FST grew too big to store in the database file. Fix this!`);
-                    }
 
                     const promise = writeData(this.fileIndex, data, 0, bytesToWrite).catch(err => {
                         storage.debug.error(`Error writing FST: `, err);
@@ -762,9 +798,30 @@ class AceBaseStorage extends Storage {
             }
             index++;
             
-            // File should not be locked
-            if (header[index] !== 0) {
-                return handleError(`locked_db`, `The database is locked`);
+            // Read flags
+            const flagsIndex = index;
+            const flags = header[flagsIndex]; // flag bits: [r, r, r, r, r, r, FST2, LOCK]
+            let lock = {
+                enabled: ((flags & 0x1) > 0),
+                forUs: true
+            };
+            this.isLocked = (forUs = false) => {
+                return lock.enabled && lock.forUs === forUs;
+            };
+            this.lock = async (forUs = false) => {
+                await pfs.write(fd, new Uint8Array([flags | 0x1]), 0, 1, flagsIndex);
+                lock.enabled = true;
+                lock.forUs = forUs;
+                this.emit('locked', { forUs });
+            };
+            this.unlock = async () => {
+                await pfs.write(fd, new Uint8Array([flags & 0xfe]), 0, 1, flagsIndex);
+                lock.enabled = false;
+                this.emit('unlocked');
+            }
+            this.settings.fst2 = (flags & 0x2) > 0;
+            if (this.settings.fs2) {
+                throw new Error('FST2 is not supported by this version yet');
             }
             index++;
 
@@ -818,10 +875,11 @@ class AceBaseStorage extends Storage {
                 // Create the file with 64 byte header (settings etc), KIT, FST & root record
                 const version = 1;
                 const headerBytes = 64;
+                const flags = 0; // When implementing settings.fst2 ? 0x2 : 0x0;
 
                 let stats = new Uint8Array([
                     version,    // Version nr
-                    0,          // Database file is not locked
+                    flags,      // flags: [r,r,r,r,r,r,FST2,LOCK]
                     0,0,0,0,    // Root record pageNr (32 bits)
                     0,0,        // Root record recordNr (16 bits)
                     settings.recordSize >> 8 & 0xff,
@@ -1550,8 +1608,12 @@ class AceBaseStorage extends Storage {
         try {
             // We have a lock, check if the lookup has been cached by another "thread" in the meantime. 
             let childInfo = this.nodeCache.find(path, true);
+            if (childInfo instanceof Promise) {
+                // It was previously announced, wait for it
+                childInfo = await childInfo;
+            }
             if (childInfo && !options.include_child_count) {
-                // Return cached info, or promise thereof (announced)
+                // Return cached info
                 return childInfo;
             }
             if (!childInfo) {
@@ -2539,22 +2601,38 @@ class NodeReader {
         // Gets children from a indexed binary tree of key/value data
         const createStreamFromBinaryTree = async () => {
             const tree = new BinaryBPlusTree(this._treeDataReader.bind(this));
+            tree.id = this.address.path;
 
             let canceled = false;
             if (options.keyFilter) {
-                // Only get children for requested keys
-                for (let i = 0; i < options.keyFilter.length; i++) {
-                    const key = options.keyFilter[i];
-                    const value = await tree.find(key).catch(err => {
-                        console.error(`Error reading tree for node ${this.address}: ${err.message}`, err);
-                        throw err;
-                    });
 
-                    if (value === null) { continue; /* Key not found? */ }
+                // Only get children for requested keys
+                // for (let i = 0; i < options.keyFilter.length; i++) {
+                //     const key = options.keyFilter[i];
+                //     const value = await tree.find(key).catch(err => {
+                //         console.error(`Error reading tree for node ${this.address}: ${err.message}`, err);
+                //         throw err;
+                //     });
+
+                //     if (value === null) { continue; /* Key not found? */ }
+                //     const childInfo = isArray ? new NodeInfo({ path: `${this.address.path}[${key}]`, index: key }) : new NodeInfo({ path: `${this.address.path}/${key}`, key });
+                //     const res = getValueFromBinary(childInfo, value.recordPointer, 0);
+                //     if (!res.skip) {
+                //         let result = callback(childInfo, i);
+                //         if (isAsync && result instanceof Promise) { result = await result; }
+                //         canceled = result === false; // Keep going until callback returns false
+                //         if (canceled) { break; }
+                //     }
+                // }
+
+                // NEW: let B+Tree lookup all requested keys for drastic performance improvement, especially when all keys are new (> last key in tree)
+                const results = await tree.findAll(options.keyFilter, { existingOnly: true });
+                let i = 0;
+                for (const { key, value } of results) {
                     const childInfo = isArray ? new NodeInfo({ path: `${this.address.path}[${key}]`, index: key }) : new NodeInfo({ path: `${this.address.path}/${key}`, key });
                     const res = getValueFromBinary(childInfo, value.recordPointer, 0);
                     if (!res.skip) {
-                        let result = callback(childInfo, i);
+                        let result = callback(childInfo, i++);
                         if (isAsync && result instanceof Promise) { result = await result; }
                         canceled = result === false; // Keep going until callback returns false
                         if (canceled) { break; }
@@ -3011,7 +3089,7 @@ class NodeReader {
         throw new TypeError(`updates parameter must be an object`);
     }
 
-    const nodeReader = new NodeReader(storage, nodeInfo.address, lock, false);
+    let nodeReader = new NodeReader(storage, nodeInfo.address, lock, false);
     const affectedKeys = Object.keys(updates);
     const changes = new NodeChangeTracker(nodeInfo.path);
 
@@ -3019,12 +3097,12 @@ class NodeReader {
     let isArray = false;
     let isInternalUpdate = false;
 
-    const recordInfo = await nodeReader.readHeader();
+    let recordInfo = await nodeReader.readHeader();
     isArray = recordInfo.valueType === VALUE_TYPES.ARRAY;
     nodeInfo.type = recordInfo.valueType; // Set in nodeInfo too, because it might be unknown
 
+    let recordMoved = false;
     const done = (newRecordInfo) => {
-        let recordMoved = false;
         if (newRecordInfo !== nodeReader.recordInfo) {
             // release the old record allocation
             discardAllocation.ranges.push(...nodeReader.recordInfo.allocation.ranges);
@@ -3132,25 +3210,33 @@ class NodeReader {
         }
     }
 
-    storage.debug.log(`Node "/${nodeInfo.path}" being updated:${isInternalUpdate ? ' (internal)' : ''} adding ${changes.inserts.length} keys (${changes.inserts.map(ch => `"${ch.keyOrIndex}"`).join(',')}), updating ${changes.updates.length} keys (${changes.updates.map(ch => `"${ch.keyOrIndex}"`).join(',')}), removing ${changes.deletes.length} keys (${changes.deletes.map(ch => `"${ch.keyOrIndex}"`).join(',')})`.colorize(ColorStyle.cyan));
+    const maxDebugItems = 10;
+    storage.debug.log(`Node "/${nodeInfo.path}" being updated:${isInternalUpdate ? ' (internal)' : ''} adding ${changes.inserts.length} keys (${changes.inserts.slice(0, maxDebugItems).map(ch => `"${ch.keyOrIndex}"`).join(',')}${changes.inserts.length > maxDebugItems ? '...' : ''}), updating ${changes.updates.length} keys (${changes.updates.slice(0, maxDebugItems).map(ch => `"${ch.keyOrIndex}"`).join(',')}${changes.updates.length > maxDebugItems ? '...' : ''}), removing ${changes.deletes.length} keys (${changes.deletes.slice(0, maxDebugItems).map(ch => `"${ch.keyOrIndex}"`).join(',')}${changes.deletes.length > maxDebugItems ? '...' : ''})`.colorize(ColorStyle.cyan));
     if (!isInternalUpdate) {
         // Update cache (remove entries or mark them as deleted)
-        const pathInfo = PathInfo.get(nodeInfo.path);
-        const invalidatePaths = changes.all
+        // const pathInfo = PathInfo.get(nodeInfo.path);
+        // const invalidatePaths = changes.all
+        //     .filter(ch => !(ch.newValue instanceof InternalNodeReference))
+        //     .map(ch => {
+        //         const childPath = pathInfo.childPath(ch.keyOrIndex);
+        //         return { 
+        //             path: childPath, 
+        //             pathInfo: PathInfo.get(childPath), 
+        //             action: ch.changeType === NodeChange.CHANGE_TYPE.DELETE ? 'delete' : 'invalidate' 
+        //         };
+        //     });
+        // storage.invalidateCache(false, nodeInfo.path, false, 'mergeNode');
+        // invalidatePaths.forEach(item => {
+        //     if (item.action === 'invalidate') { storage.invalidateCache(false, item.path, true, 'mergeNode'); }
+        //     else { storage.nodeCache.delete(item.path); }
+        // });
+        const inv = changes.all
             .filter(ch => !(ch.newValue instanceof InternalNodeReference))
-            .map(ch => {
-                const childPath = pathInfo.childPath(ch.keyOrIndex);
-                return { 
-                    path: childPath, 
-                    pathInfo: PathInfo.get(childPath), 
-                    action: ch.changeType === NodeChange.CHANGE_TYPE.DELETE ? 'delete' : 'invalidate' 
-                };
-            });
-        storage.invalidateCache(false, nodeInfo.path, false, 'mergeNode');
-        invalidatePaths.forEach(item => {
-            if (item.action === 'invalidate') { storage.invalidateCache(false, item.path, true, 'mergeNode'); }
-            else { storage.nodeCache.delete(item.path); }
-        });
+            .reduce((obj, ch) => { 
+                obj[ch.keyOrIndex] = ch.changeType === NodeChange.CHANGE_TYPE.DELETE ? 'delete' : 'invalidate';
+                return obj;
+            }, {});
+        storage.invalidateCache(false, nodeInfo.path, inv, 'mergeNode');
     }
 
     // What we need to do now is make changes to the actual record data. 
@@ -3163,9 +3249,11 @@ class NodeReader {
         // Try to have the binary B+Tree updated. If there is not enough free space for this
         // (eg, if a leaf to add to is full), we have to rebuild the whole tree and write new records
 
+        const pathInfo = PathInfo.get(nodeInfo.path);
         const childPromises = [];
-        changes.all.forEach(change => {
-            const childPath = PathInfo.getChildPath(nodeInfo.path, change.keyOrIndex)
+        for (const change of changes.all) {
+        // changes.all.forEach(change => {
+            const childPath = pathInfo.childPath(change.keyOrIndex); //PathInfo.getChildPath(nodeInfo.path, change.keyOrIndex);
             if (change.oldValue !== null) {
                 let kvp = _serializeValue(storage, childPath, change.keyOrIndex, change.oldValue, null);
                 console.assert(kvp instanceof SerializedKeyValue, `return value must be of type SerializedKeyValue, it cannot be a Promise!`);
@@ -3186,7 +3274,11 @@ class NodeReader {
                     convert(s);
                 }
             }
-        });
+            // if (childPromises.length === 100) {
+            //     // Too many promises. Wait before continuing?
+            //     await Promise.all(childPromises.splice(0));
+            // }
+        } //);
 
         let operations = [];
         let tree = nodeReader.getChildTree();
@@ -3210,66 +3302,112 @@ class NodeReader {
         // Changed behaviour: 
         // previously, if 1 operation failed, the tree was rebuilt. If any operation thereafter failed, it stopped processing
         // now, processOperations() will be called after each rebuild, so all operations will be processed
-        const debugOpCounts = [];
-        const processOperations = async (retry = 0, prevRecordInfo = nodeReader.recordInfo) => {
-            if (retry > 1 && operations.length === debugOpCounts[debugOpCounts.length-1]) {
-                // Number of pending operations did not decrease after rebuild?!
-                throw new Error(`DEV: Tree rebuild did not fix ${operations.length} pending operation(s) failing to execute. Debug this!`);
+        const opCountsLog = [], fixHistory = [];
+        const processOperations = async (retry = 0) => {
+            if (retry > 2 && operations.length === opCountsLog[opCountsLog.length-1]) {
+                // Number of pending operations did not decrease after 2 possible tree fixes
+                throw new Error(`DEV: Applied tree fixes did not change ${operations.length} pending operation(s) failing to execute. Debug this!`, fixHistory);
             }
-            debugOpCounts.push(operations.length);
+            opCountsLog.push(operations.length);
             try {
                 await tree.transaction(operations);
                 storage.debug.log(`Updated tree for node "/${nodeInfo.path}"`.colorize(ColorStyle.green)); 
-                return prevRecordInfo;
+                return recordInfo; // We do our own cleanup, return current allocation which is always the same as nodeReader.recordInfo
             }
             catch (err) {
-                storage.debug.log(`Could not update tree for "/${nodeInfo.path}"${retry > 0 ? ` (retry ${retry})` : ''}: ${err.message}`.colorize(ColorStyle.yellow), err.codes);
-                // Failed to update the binary data, we need to recreate the whole tree
+                storage.debug.log(`Could not update tree for "/${nodeInfo.path}"${retry > 0 ? ` (retry ${retry})` : ''}: ${err.message}, ${err.codes}`.colorize(ColorStyle.yellow));
+                
+                if (err.hasErrorCode && err.hasErrorCode('tree-full-no-autogrow')) {
+                    storage.debug.verbose(`Tree needs more space`);
 
-                // NEW: Rebuild tree to a temp file
-                const tempFilepath = `${storage.settings.path}/${storage.name}.acebase/tree-${ID.generate()}.tmp`;
-                let bytesWritten = 0;
-                const fd = await pfs.open(tempFilepath, pfs.flags.readAndWriteAndCreate)
-                const writer = BinaryWriter.forFunction(async (data, index) => {
-                    await pfs.write(fd, data, 0, data.length, index)
-                    bytesWritten += data.length;
-                });
-                await tree.rebuild(writer);
+                    const growBytes = Math.ceil(tree.info.byteLength * 0.1); // grow 10%
+                    const bytesRequired = tree.info.byteLength + growBytes;
 
-                // Now write the record with data read from the temp file
-                let readOffset = 0;
-                const reader = async length => {
-                    const buffer = new Uint8Array(length);
-                    const { bytesRead } = await pfs.read(fd, buffer, 0, buffer.length, readOffset);
-                    readOffset += bytesRead;
-                    if (bytesRead < length) { 
-                        return buffer.slice(0, bytesRead); // throw new Error(`Failed to read ${length} bytes from file, only got ${bytesRead}`); 
+                    fixHistory.push({ err, fix: 'grow', from: tree.info.byteLength, to: bytesRequired, growBytes });
+
+                    // Copy from original allocation to new allocation
+                    let sourceIndex = 0, originalLength = tree.info.byteLength;
+                    const reader = async (length) => {
+                        let data;
+                        if (sourceIndex > originalLength) {
+                            // 0s only
+                            data = new Uint8Array(length);
+                        }
+                        else {
+                            const readLength = sourceIndex + length < originalLength ? length : originalLength - sourceIndex;
+                            data = await nodeReader._treeDataReader(sourceIndex, readLength);
+                            if (data.length < length) {
+                                // Append 0s
+                                data = concatTypedArrays(new Uint8Array(data), new Uint8Array(length - data.length));
+                            }
+                            else if (data.length > length) {
+                                // cut off unrequested bytes. TODO: check _treeDataReader logic
+                                data = data.slice(0, length);
+                            }
+                        }
+                        sourceIndex += data.byteLength;
+                        return data;
                     }
-                    return buffer;
-                };
-                const recordInfo = await _write(storage, nodeInfo.path, nodeReader.recordInfo.valueType, bytesWritten, true, reader, nodeReader.recordInfo);
-                // Close and remove the tmp file, don't wait for this
-                pfs.close(fd)
-                .then(() => pfs.rm(tempFilepath))
-                .catch(err => {
-                    // Error removing the file?
-                    storage.debug.error(`Can't remove temp rebuild file ${tempFilepath}: `, err);
-                });
-
-                if (retry >= 1 && prevRecordInfo !== recordInfo) {
-                    // If this is a 2nd+ call to processOperations, we have to release the previous allocation here
-                    discardAllocation.ranges.push(...prevRecordInfo.allocation.ranges);
+                    tree.info.byteLength = bytesRequired;
+                    tree.info.freeSpace += growBytes;
+                    await tree.writeAllocationBytes();
+                    recordInfo = await _write(storage, nodeInfo.path, nodeReader.recordInfo.valueType, bytesRequired, true, reader, nodeReader.recordInfo);
                 }
-                const newNodeReader = new NodeReader(storage, recordInfo.address, lock, false);
-                const info = await newNodeReader.readHeader();
+                else {
+                    // Failed to update the binary data, we need to recreate the whole tree
+                    // console.log(err);
+                    storage.debug.verbose(`Tree needs rebuild`);
+                    fixHistory.push({ err, fix: 'rebuild' });
+
+                    // NEW: Rebuild tree to a temp file
+                    const tempFilepath = `${storage.settings.path}/${storage.name}.acebase/tree-${ID.generate()}.tmp`;
+                    let bytesWritten = 0;
+                    const fd = await pfs.open(tempFilepath, pfs.flags.readAndWriteAndCreate);
+                    const writer = BinaryWriter.forFunction(async (data, index) => {
+                        await pfs.write(fd, data, 0, data.length, index);
+                        bytesWritten += data.length;
+                    });
+                    await tree.rebuild(writer, { reserveSpaceForNewEntries: changes.inserts.length - changes.deletes.length });
+
+                    // Now write the record with data read from the temp file
+                    let readOffset = 0;
+                    const reader = async length => {
+                        const buffer = new Uint8Array(length);
+                        const { bytesRead } = await pfs.read(fd, buffer, 0, buffer.length, readOffset);
+                        readOffset += bytesRead;
+                        if (bytesRead < length) { 
+                            return buffer.slice(0, bytesRead); // throw new Error(`Failed to read ${length} bytes from file, only got ${bytesRead}`); 
+                        }
+                        return buffer;
+                    };
+                    recordInfo = await _write(storage, nodeInfo.path, nodeReader.recordInfo.valueType, bytesWritten, true, reader, nodeReader.recordInfo);
+                    // Close and remove the tmp file, don't wait for this
+                    pfs.close(fd)
+                    .then(() => pfs.rm(tempFilepath))
+                    .catch(err => {
+                        // Error removing the file?
+                        storage.debug.error(`Can't remove temp rebuild file ${tempFilepath}: `, err);
+                    });
+                }
+
+                if (recordInfo !== nodeReader.recordInfo) {
+                    // release previous allocation
+                    discardAllocation.ranges.push(...nodeReader.recordInfo.allocation.ranges);
+                    recordMoved = true;
+                }
+
+                // Create new node reader and new tree
+                nodeReader = new NodeReader(storage, recordInfo.address, lock, false);
+                recordInfo = await nodeReader.readHeader();
                 tree = new BinaryBPlusTree(
-                    newNodeReader._treeDataReader.bind(newNodeReader), 
+                    nodeReader._treeDataReader.bind(nodeReader), 
                     1024 * 100, // 100KB reads/writes
-                    newNodeReader._treeDataWriter.bind(newNodeReader),
-                    'record@' + newNodeReader.recordInfo.address.toString()
+                    nodeReader._treeDataWriter.bind(nodeReader),
+                    'record@' + nodeReader.recordInfo.address.toString()
                 );
-                // Retry remaining operations
-                return processOperations(retry+1, recordInfo);
+
+                // // Retry remaining operations
+                return processOperations(retry+1);
             }
         }
         newRecordInfo = await processOperations();
@@ -3437,9 +3575,9 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
         Object.keys(value).forEach(key => {
             // eslint-disable-next-line no-control-regex
             if (/[\x00-\x08\x0b\x0c\x0e-\x1f/[\]\\]/.test(key)) { 
-                throw new Error(`Key ${key} cannot contain control characters or any of the following characters: \\ / [ ]`); 
+                throw new Error(`Invalid key "${key}" for object to store at path "${path}". Keys cannot contain control characters or any of the following characters: \\ / [ ]`); 
             }
-            if (key.length > 128) { throw new Error(`Key ${key} is too long to store. Max length=128`); }
+            if (key.length > 128) { throw new Error(`Key "${key}" is too long to store for object at path "${path}". Max key length is 128`); }
 
             const childPath = PathInfo.getChildPath(path, key); // `${path}/${key}`;
             let val = value[key];
@@ -3837,8 +3975,9 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
     if (requiredRecords > 1) {
         // In the worst case scenario, we get fragmented record space for each required record.
         // Calculate with this scenario. If we claim a record too many, we'll free it again when done
-        let wholePages = Math.floor(requiredRecords / storage.settings.pageSize);
-        let maxChunks = Math.max(0, wholePages) + Math.min(3, requiredRecords);
+        const wholePages = Math.floor(requiredRecords / storage.settings.pageSize);
+        const remainingRecords = requiredRecords % storage.settings.pageSize;
+        const maxChunks = Math.max(0, wholePages) + Math.min(storage.FST.maxScraps, remainingRecords);
         calculateStorageNeeds(maxChunks);
     }
 
@@ -3906,7 +4045,6 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
             if (length === 0) { return headerBytes; }
         }
         let dataBytes = reader(length);
-        bytesRead += length;
         if (dataBytes instanceof Promise) { dataBytes = await dataBytes; }
         if (dataBytes instanceof Array) {
             dataBytes = Uint8Array.from(dataBytes);
@@ -3914,6 +4052,7 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
         else if (!(dataBytes instanceof Uint8Array)) {
             throw new Error(`bytes must be Uint8Array or plain byte Array`);
         }
+        bytesRead += dataBytes.byteLength;
         if (headerBytes) {
             dataBytes = concatTypedArrays(headerBytes, dataBytes);
         }
