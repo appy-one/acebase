@@ -1,9 +1,13 @@
 /// <reference types="@types/jasmine" />
 const { DataReference, DataSnapshotsArray, DataReferencesArray, DataReferenceQuery, ObjectCollection } = require("acebase-core");
+const { AceBase } = require("..");
 const { createTempDB } = require("./tempdb");
 
 describe('Query', () => {
-    let db, removeDB;
+    /** @type {AceBase} */
+    let db;
+    /** @type {{() => Promise<void>}} */
+    let removeDB;
 
     /** @type {DataReference} */
     let moviesRef;
@@ -98,6 +102,66 @@ describe('Query', () => {
             const exists = await test.query.exists();
             expect(exists).toBe(test.expect.length > 0);
         }
+    });
+
+    it('is live', async() => {
+        // Code based on realtime query example in README.md
+        const wait = async (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        const fiveStarBooks = {}; // local query result set
+        const snaps = await db.query('books')
+            .filter('rating', '==', 5)
+            .on('add', match => {
+                // add book to results
+                fiveStarBooks[match.snapshot.key] = match.snapshot.val();
+            })
+            .on('change', match => {
+                // update book details
+                fiveStarBooks[match.snapshot.key] = match.snapshot.val();
+            })
+            .on('remove', match => {
+                // remove book from results
+                delete fiveStarBooks[match.ref.key];
+            })
+            .get();
+
+        // Add current query results to our local result set
+        snaps.forEach(snap => {
+            fiveStarBooks[snap.key] = snap.val();
+        });
+
+        const countBooks = () => Object.keys(fiveStarBooks).length;
+
+        // Collection is empty, so there should be 0 results
+        expect(countBooks()).toBe(0);
+
+        // Let's add a non-matching book
+        await db.ref('books').push({ title: 'Some mediocre novel', rating: 3 });
+        
+        // Wait few ms to make sure results are (not) being updated
+        await wait(10);
+
+        // Collection should still be 0
+        expect(countBooks()).toBe(0);
+
+        // Add a matching book
+        let matchRef1 = await db.ref('books').push({ title: 'A very good novel', rating: 5 });
+        
+        // Wait few ms to make sure results are being updated
+        await wait(10);
+
+        // Collection should now contain 1 book
+        expect(countBooks()).toBe(1);
+
+        // Change the rating so it doesn't match anymore
+        await matchRef1.update({ rating: 4 });
+        await wait(10); // Wait few ms
+        expect(countBooks()).toBe(0);
+
+        // Change rating back to 5
+        await matchRef1.update({ rating: 5 });
+        await wait(10); // Wait few ms
+        expect(countBooks()).toBe(1);
     });
 
     afterAll(async () => {
