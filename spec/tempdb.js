@@ -2,12 +2,15 @@ const { AceBase, ID } = require("..");
 const { pfs } = require('../src/promise-fs');
 
 module.exports = {
-    async createTempDB(enable = { transactionLogging: false }) {
+    async createTempDB(enable = { transactionLogging: false, logLevel: 'log', config: (options) => { } }) {
         // Create temp db
         const dbname = 'test-' + ID.generate();
-        const options = { storage: { path: __dirname }, logLevel: 'verbose' };
+        const options = { storage: { path: __dirname }, logLevel: enable.logLevel || 'verbose' };
         if (enable.transactionLogging === true) {
             options.transactions = { log: true };
+        }
+        if (typeof enable.config === 'function') {
+            enable.config(options);
         }
         const db = new AceBase(dbname, options);
         await db.ready();
