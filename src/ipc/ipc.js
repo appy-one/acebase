@@ -25,7 +25,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         this._locks = [];
         this._requests = new Map();
         this._eventsEnabled = true;
-        this._nodeLocker = new node_lock_1.NodeLocker();
+        this._nodeLocker = new node_lock_1.NodeLocker(storage.debug, storage.settings.lockTimeout);
         // Setup db event listeners
         storage.on('subscribe', (subscription) => {
             // Subscription was added to db

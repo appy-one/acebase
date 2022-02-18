@@ -50,6 +50,7 @@ class BrowserAceBase extends AceBase {
      * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
      * @param {boolean} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
      * @param {number} [settings.cacheSeconds=60] How many seconds to keep node info in memory, to speed up IndexedDB performance.
+     * @param {number} [settings.lockTimeout=120] timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
      */
     static WithIndexedDB(dbname, settings) {
 
@@ -89,7 +90,8 @@ class BrowserAceBase extends AceBase {
             name: 'IndexedDB',
             locking: true, // IndexedDB transactions are short-lived, so we'll use AceBase's path based locking
             removeVoidProperties: settings.removeVoidProperties,
-            maxInlineValueSize: settings.maxInlineValueSize, 
+            maxInlineValueSize: settings.maxInlineValueSize,
+            lockTimeout: settings.lockTimeout,
             ready() {
                 return readyPromise;
             },

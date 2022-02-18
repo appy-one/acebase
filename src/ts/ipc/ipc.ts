@@ -23,7 +23,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
     constructor(protected storage: Storage, protected id: string, protected dbname: string = storage.name) {
         super();
-        this._nodeLocker = new NodeLocker();
+        this._nodeLocker = new NodeLocker(storage.debug, storage.settings.lockTimeout);
 
         // Setup db event listeners
         storage.on('subscribe', (subscription: { path: string, event: string, callback: AceBaseSubscribeCallback }) => {
