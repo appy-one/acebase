@@ -700,6 +700,8 @@ class LocalApi extends Api {
                 options.monitor = { add: true, change: true, remove: true };
             }
             if (typeof options.monitor === 'object' && (options.monitor.add || options.monitor.change || options.monitor.remove)) {
+                // TODO: Refactor this to use 'mutations' event instead of 'notify_child_*'
+
                 const matchedPaths = options.snapshots ? matches.map(match => match.path) : matches.slice();
                 const ref = this.db.ref(path);
                 const removeMatch = (path) => {
@@ -712,8 +714,8 @@ class LocalApi extends Api {
                     matchedPaths.push(path);
                 };
                 const stopMonitoring = () => {
-                    this.unsubscribe(ref.path, 'notify_child_changed', childChangedCallback);
-                    this.unsubscribe(ref.path, 'notify_child_added', childAddedCallback);
+                    this.unsubscribe(ref.path, 'child_changed', childChangedCallback);
+                    this.unsubscribe(ref.path, 'child_added', childAddedCallback);
                     this.unsubscribe(ref.path, 'notify_child_removed', childRemovedCallback);
                 };
                 const childChangedCallback = (err, path, newValue, oldValue) => {
@@ -863,13 +865,13 @@ class LocalApi extends Api {
                 };
                 if (options.monitor.add || options.monitor.change || options.monitor.remove) {
                     // Listen for child_changed events
-                    this.subscribe(ref.path, 'notify_child_changed', childChangedCallback);
+                    this.subscribe(ref.path, 'child_changed', childChangedCallback);
                 }
                 if (options.monitor.remove) {
                     this.subscribe(ref.path, 'notify_child_removed', childRemovedCallback);
                 }
                 if (options.monitor.add) {
-                    this.subscribe(ref.path, 'notify_child_added', childAddedCallback);
+                    this.subscribe(ref.path, 'child_added', childAddedCallback);
                 }
             }
         
@@ -972,7 +974,7 @@ class LocalApi extends Api {
         return this.storage.exportNode(path, stream, options);
     }
 
-    import(path, read, options = { format: 'json', suppress_events: false }) {
+    import(path, read, options = { format: 'json', suppress_events: false, method: 'set' }) {
         return this.storage.importNode(path, read, options);
     }
 
