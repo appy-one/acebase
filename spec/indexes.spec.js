@@ -4,6 +4,42 @@ const { AceBase, ID } = require("..");
 
 // TODO: MANY MORE index options to spec
 
+describe('index', () => {
+    /** @type {AceBase} */
+    let db, removeDB;
+
+    beforeAll(async () => {
+        const tmp = await createTempDB();
+        db = tmp.db;
+        removeDB = tmp.removeDB;
+    });
+
+    afterAll(async () => {
+        await removeDB();
+    });
+
+    it('key can not contain slashes', async () => {
+        // Created for issue https://github.com/appy-one/acebase/issues/67
+        try {
+            const index = await db.indexes.create('*', 'some/property');
+            fail('index key cannot contain slash');
+        }
+        catch (err) {
+            // Expected
+            if (err.code === 'ENOENT') {
+                throw err;
+            }
+        }
+    });
+
+    it('can be on the root', async () => {
+        // Created for issue https://github.com/appy-one/acebase/issues/67
+        const index = await db.indexes.create('', 'some_property');
+        expect(index.fileName).not.toContain('[undefined]');
+    });
+
+});
+
 describe('string index', () => {
     /** @type {AceBase} */
     let db, removeDB;
