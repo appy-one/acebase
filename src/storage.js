@@ -43,12 +43,12 @@ class IWriteNodeResult {}
  * @property {string} [info="realtime database"] optional info to be written to the console output underneith the logo
  * @property {string} [type] optional type of storage class - will be used by AceBaseStorage to create different db files in the future (data, transaction, auth etc)
  * @property {IPCClientSettings} [ipc] External IPC server configuration. You need this if you are running multiple AceBase processes using the same database files in a pm2 or cloud-based cluster so the individual processes can communicate with each other.
- */
+ * @property {number} [lockTimeout=120] timeout setting for read /and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+*/
 
 /**
  * Storage Settings
- * @class
- * @implements {IStorageSettings}
+ * @type {IStorageSettings}
  */
 class StorageSettings {
 
@@ -66,8 +66,9 @@ class StorageSettings {
         /** @type {string} */
         this.logLevel = settings.logLevel || 'log';
         this.info = settings.info || 'realtime database';
-        this.type = settings.type;
+        this.type = settings.type || 'data';
         this.ipc = settings.ipc;
+        this.lockTimeout = typeof settings.lockTimeout === 'number' ? settings.lockTimeout : 120;
     }
 }
 
@@ -88,9 +89,6 @@ class Storage extends SimpleEventEmitter {
         this.name = name;
         this.settings = settings;
         this.debug = new DebugLogger(settings.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
-
-        // // Setup node locking
-        // this.nodeLocker = new NodeLocker();
 
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
@@ -156,6 +154,9 @@ class Storage extends SimpleEventEmitter {
              * @returns {Promise<DataIndex>}
              */
             async create(path, key, options = { rebuild: false, type: undefined, include: undefined }) { //, refresh = false) {
+                if (!this.supported) {
+                    throw new Error(`Indexes are not supported in current environment because it requires Node.js fs`)
+                }
                 path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
                 const rebuild = options && options.rebuild === true;
                 const indexType = (options && options.type) || 'normal';
@@ -179,6 +180,12 @@ class Storage extends SimpleEventEmitter {
                     }
                     throw new Error(result.reason);
                 }
+
+                await pfs.mkdir(`${storage.settings.path}/${storage.name}.acebase`).catch(err => {
+                    if (err.code !== 'EEXIST') {
+                        throw err;
+                    }
+                });
 
                 const index = existingIndex || (() => {
                     switch (indexType) {
@@ -1641,14 +1648,29 @@ class Storage extends SimpleEventEmitter {
      * Import a specific path's data from a stream
      * @param {string} path
      * @param {(bytes: number) => string|ArrayBufferView|Promise<string|ArrayBufferView>} read read function that streams a new chunk of data
+     * @param {object} [options]
+     * @param {'json'} [options.format]
+     * @param {'set'|'update'|'merge'} [options.method] How to store the imported data: 'set' and 'update' will use the same logic as when calling 'set' or 'update' on the target, 
+     * 'merge' will do something special: it will use 'update' logic on all nested child objects: 
+     * consider existing data `{ users: { ewout: { name: 'Ewout Stortenbeker', age: 42 } } }`: 
+     * importing `{ users: { ewout: { country: 'The Netherlands', age: 43 } } }` with `method: 'merge'` on the root node
+     * will effectively add `country` and update `age` properties of "users/ewout", and keep all else the same.4
+     * This method is extremely useful to replicate effective data changes to remote databases.
      * @returns {Promise<void>} returns a promise that resolves once all data is imported
      */
-     async importNode(path, read, options = { format: 'json' }) {
-        const chunkSize = 64 * 1024; // 1KB
+     async importNode(path, read, options = { format: 'json', method: 'set' }) {
+        const chunkSize = 256 * 1024; // 256KB
+        const maxQueueBytes = 1024 * 1024; // 1MB
         let state = {
             data: '',
             index: 0,
-            offset: 0
+            offset: 0,
+            queue: [],
+            queueStartByte: 0,
+            timesFlushed: 0,
+            get processedBytes() {
+                return this.offset + this.index;
+            }
         };
         const readNextChunk = async (append = false) => {
             let data = await read(chunkSize);
@@ -1835,6 +1857,60 @@ class Storage extends SimpleEventEmitter {
 
         const context = { acebase_import_id: ID.generate() };
         const childOptions = { suppress_events: options.suppress_events, context };
+
+        /**
+         * Work in progress (not used yet): queue nodes to store to improve performance
+         * @param {PathInfo} target
+         * @param {any} value
+         */
+        const enqueue = async (target, value) => {
+            state.queue.push({ target, value });
+            if (state.processedBytes >= state.queueStartByte + maxQueueBytes) {
+                // Flush queue, group queued (set) items as update operations on their parents
+                const operations = state.queue.reduce((updates, item) => {
+                    // Optimization idea: find all data we know is complete, add that as 1 set if method !== 'merge'
+                    // Example: queue is something like [
+                    //   "users/user1": {},
+                    //   "users/user1/email": "user@example.com"
+                    //   "users/user1/addresses": {},
+                    //   "users/user1/addresses/address1": {},
+                    //   "users/user1/addresses/address1/city": "Amsterdam",
+                    //   "users/user1/addresses/address2": {}, // We KNOW "users/user1/addresses/address1" is not coming back
+                    //   "users/user1/addresses/address2/city": "Berlin",
+                    //   "users/user2": {} // <-- We KNOW "users/user1" is not coming back!
+                    //]
+                    if (item.target.path === path) {
+                        // This is the import target. If method is 'set' and this is the first flush, add it as 'set' operation.
+                        // Use 'update' in all other cases
+                        updates.push({ op: options.method === 'set' && state.timesFlushed === 0 ? 'set' : 'update', ...item });
+                    }
+                    else {
+                        // Find parent to merge with
+                        const parent = updates.find(other => other.target.isParentOf(item.target));
+                        if (parent) {
+                            parent.value[item.target.key] = item.value;
+                        }
+                        else {
+                            // Parent not found. If method is 'merge', use 'update', otherwise use or 'set'
+                            updates.push({ op: options.method === 'merge' ? 'update' : 'set', ...item });
+                        }
+                    }
+                }, []);
+
+                // Fresh state
+                state.queueStartBytestate.queueStartByte = state.processedBytes;
+                state.queue = [];
+                state.timesFlushed++;
+
+                // Execute db updates
+
+
+            }
+            if (target.path === path) {
+                // This is the import target. If method === 'set'
+
+            }
+        };
 
         /**
          * 
