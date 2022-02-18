@@ -51,7 +51,7 @@ describe('node locking', () => {
     it('should not cause deadlocks - part2', async () => {
         // Simulate high load
   
-        const { db, removeDB } = await createTempDB();
+        const { db, removeDB } = await createTempDB({ logLevel: 'verbose' });
         const mem = {};
         const actions = [
             async () => { 
@@ -133,7 +133,7 @@ describe('node locking', () => {
             // },
             async () => { 
                 const pulse = new Date();
-                await db.ref('').update({ pulse });
+                await db.root.update({ pulse });
                 mem.pulse = pulse;
             },
             async () => {
@@ -146,12 +146,22 @@ describe('node locking', () => {
                 delete mem.products[key];
             },
             async () => {
-                const products = await db.ref('products').count();
-                expect(products).toBe(Object.keys(mem.products || {}).length);
+                const dbCount = await db.ref('products').count();
+                const memCount = Object.keys(mem.products || {}).length;
+                // if (dbCount !== memCount) {
+                //     // debugger;
+                //     console.error(`Expected a products count of ${memCount}, but got ${dbCount}`);
+                // }
+                expect(dbCount).toBe(memCount);
             },
             async () => {
-                const posts = await db.ref('posts').count();
-                expect(posts).toBe(Object.keys(mem.posts || {}).length);
+                const dbCount = await db.ref('posts').count();
+                const memCount = Object.keys(mem.posts || {}).length
+                // if (dbCount !== memCount) {
+                //     // debugger;
+                //     console.error(`Expected a posts count of ${memCount}, but got ${dbCount}`);
+                // }
+                expect(dbCount).toBe(memCount);
             },
             async () => {
                 // Transaction on 'stats'
@@ -173,14 +183,32 @@ describe('node locking', () => {
             expect(snap.val()).toEqual(mem);            
         };
 
+        const replay = {
+            enabled: false,
+            actions: [],
+            delays: []
+        };
+        const handleError = err => {
+            console.error(err.message);
+            console.log(`To replay, use following actions and delays`);
+            console.log(replay);
+            throw err;
+        }
         const promises = [];
         for (let i = 0; i < 10000; i++) {
             if (i % 100 === 0) {
-                await testEquality();
+                await testEquality().catch(handleError);
             }
-            const actionIndex = Math.floor(Math.random() * actions.length);
-            promises.push(actions[actionIndex]());
-            const ms = Math.round(50 * Math.random());
+            const actionIndex = replay.enabled ? replay.actions[i] : Math.floor(Math.random() * actions.length);
+            !replay.enabled && replay.actions.push(actionIndex);
+            const nr = i;
+            const p = actions[actionIndex]().catch(err => {
+                console.error(`Error executing action nr ${nr} index ${actionIndex}:`, actions[actionIndex]);
+                handleError(err);
+            });
+            promises.push(p);
+            const ms = replay.enabled ? replay.delays[i] : Math.round(50 * Math.random());
+            !replay.enabled && replay.delays.push(ms);
             if (ms > 10) {
                 await new Promise(resolve => setTimeout(resolve, ms));
             }
