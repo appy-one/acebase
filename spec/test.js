@@ -35,5 +35,9 @@ jasmine.configureDefaultReporter({
 });
 // jasmine.execute(['./spec/include-exclude-filters.spec.js']);
 // jasmine.execute(['./spec/arrays.spec.js']);
-// jasmine.execute(['./spec/arrays.spec.js']);
+// jasmine.execute(['./spec/examples.spec.js']);
+// jasmine.execute(['./spec/query.spec.js']);
+// jasmine.execute(['./spec/bulk-import.spec.js']);
+// jasmine.execute(['./spec/indexes.spec.js'], 'slashes');
+// jasmine.execute(['./spec/node-lock.spec.js']);
 jasmine.execute();
