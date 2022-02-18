@@ -4,20 +4,28 @@ const _threadSafeLocks = new Map();
 class ThreadSafe {
     /**
      * 
-     * @param {any} target 
+     * @param {any} target Target object to lock. Do not use object references!
      * @param {object} [options]
      * @param {number} [options.timeout=60000] max amount of ms the target is allowed to be locked (and max time to wait to get it), default is 60000 (60s) 
      * @param {boolean} [options.critical=true] flag that indicates whether this lock does critical work, canceling queued lock requests if this lock is not released in time
      * @param {string} [options.name='unnamed lock'] name of the lock, good for debugging purposes
+     * @param {boolean} [options.shared=false] if this lock is allowed to be shared with others also requesting a shared lock. Requested lock will be exclusive otherwise (default)
      * @param {any} [options.target] if you are using a string to uniquely identify the locking target, you can pass the actual object target with this option; lock.target will be set to this value instead.
      * @returns {Promise<{ achieved: Date, release: () => void, target: any, name: string }}
      */
-    static lock(target, options = { timeout: 60000 * 15, critical: true, name: 'unnamed lock' }) {
+    static lock(target, options = { timeout: 60000 * 15, critical: true, name: 'unnamed lock', shared: false }) {
         if (typeof options !== 'object') { options = {}; }
         if (typeof options.timeout !== 'number') { options.timeout = 60 * 1000; }
         if (typeof options.critical !== 'boolean') { options.critical = true; }
         if (typeof options.name !== 'string') {
             options.name = typeof target === 'string' ? target : 'unnamed lock'; 
+        }
+        if (typeof options.shared !== 'boolean') {
+            options.shared = false;
+        }
+        if (options.shared) {
+            // TODO: Implement
+            // console.warn('shared locking not implemented yet, using exclusive lock');
         }
 
         let lock = _threadSafeLocks.get(target);
