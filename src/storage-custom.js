@@ -183,6 +183,7 @@ class CustomStorageSettings extends StorageSettings {
      * @param {object} settings 
      * @param {string} [settings.name] Name of the custom storage adapter
      * @param {boolean} [settings.locking=true] Whether default node locking should be used. Set to false if your storage backend disallows multiple simultanious write transactions (eg IndexedDB). Set to true if your storage backend does not support transactions (eg LocalStorage) or allows multiple simultanious write transactions (eg AceBase binary).
+     * @param {number} [settings.lockTimeout=120] If default node locking is used, timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
      * @param {() => Promise<any>} settings.ready Function that returns a Promise that resolves once your data store backend is ready for use
      * @param {(target: { path: string, write: boolean }, nodeLocker: NodeLocker) => Promise<CustomStorageTransaction>} settings.getTransaction Function that starts a transaction for read/write operations on a specific path and/or child paths
      */
@@ -198,11 +199,14 @@ class CustomStorageSettings extends StorageSettings {
         this.name = settings.name;
         // this.info = `${this.name || 'CustomStorage'} realtime database`;
         this.locking = settings.locking !== false;
+        if (this.locking) {
+            this.lockTimeout = typeof settings.lockTimeout === 'number' ? settings.lockTimeout : 120;
+        }
         this.ready = settings.ready;
 
         // Hijack getTransaction to add locking
         const useLocking = this.locking;
-        const nodeLocker = useLocking ? new NodeLocker() : null;
+        const nodeLocker = useLocking ? new NodeLocker(console.bind(console), this.lockTimeout) : null;
         this.getTransaction = async ({ path, write }) => {
             // console.log(`${write ? 'WRITE' : 'READ'} transaction requested for path "${path}"`)
             const transaction = await settings.getTransaction({ path, write });
