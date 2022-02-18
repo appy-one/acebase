@@ -30,6 +30,14 @@ class DetailedError extends Error {
         }
         return arr.join('\r\n-----------------\r\n');
     }
+
+    hasErrorCode(code) {
+        let err = this;
+        while (err.code !== code && err.originalError) {
+            err = err.originalError;
+        }
+        return err.code === code; 
+    }
 }
 
 module.exports = { DetailedError };
