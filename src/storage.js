@@ -109,6 +109,7 @@ class Storage extends SimpleEventEmitter {
             // We can perform any custom cleanup here:
             // - storage-acebase should close the db file
             // - storage-mssql / sqlite should close connection
+            // - indexes should close their files
             if (this.indexes.supported) {
                 this.indexes.close();
             }
@@ -324,11 +325,10 @@ class Storage extends SimpleEventEmitter {
                 _indexes.splice(_indexes.indexOf(index), 1);
             },
 
-            close() {
-                // TODO:
-                // this.list().forEach(index => {
-                //     index.close();
-                // });
+            async close() {
+                // Close all indexes
+                const promises = this.list().map(index => index.close().catch(err => storage.debug.error(err)));
+                await Promise.all(promises);
             }
         };
 
