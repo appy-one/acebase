@@ -592,13 +592,13 @@ class DataIndex {
      * @param {any} newValue 
      */
     async handleRecordUpdate(path, oldValue, newValue, indexMetadata) {
-
+        const getValues = (key, oldValue, newValue) => PathInfo.getPathKeys(key).reduce((values, key) => getChildValues(key, values.oldValue, values.newValue), { oldValue, newValue });
         const updatedKey = PathInfo.get(path).key;
         const keyValues = this.key === '{key}' 
             ? { oldValue: oldValue === null ? null : updatedKey, newValue: newValue === null ? null : updatedKey }
-            : getChildValues(this.key, oldValue, newValue);
+            : getValues(this.key, oldValue, newValue);
 
-        const includedValues = this.includeKeys.map(key => getChildValues(key, oldValue, newValue));
+        const includedValues = this.includeKeys.map(key => getValues(key, oldValue, newValue));
         if (!this.caseSensitive) {
             // Convert to locale aware lowercase
             const allValues = [keyValues].concat(includedValues);
@@ -1125,8 +1125,8 @@ class DataIndex {
                                         keyFilter.forEach(key => {
                                             // What can be indexed? 
                                             // strings, numbers, booleans, dates, undefined
-                                            const val = key.split('/').reduce((val, key) => typeof val === 'object' && key in val ? val[key] : undefined, obj);
-                                            if (typeof val === 'undefined') { 
+                                            const val = PathInfo.getPathKeys(key).reduce((val, key) => typeof val === 'object' && key in val ? val[key] : undefined, obj);
+                                            if (typeof val === 'undefined') {
                                                 // Key not present
                                                 return;
                                             }
@@ -2280,7 +2280,7 @@ class IndexQueryResults extends Array {
             compare = null;
         }
         const filtered = this.filter(result => {
-            let value = result.metadata[key];
+            let value = key === this.filterKey ? result.value : result.metadata ? result.metadata[key] : null;
             if (typeof value === 'undefined') { 
                 value = null; // compare with null
             }
