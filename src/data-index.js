@@ -8,6 +8,7 @@ const Geohash = require('./geohash');
 const { pfs } = require('./promise-fs');
 const ThreadSafe = require('./thread-safe');
 const unidecode = require('unidecode');
+const { getValueType } = require('./node-value-types');
 
 const DISK_BLOCK_SIZE = 4096; // use 512 for older disks
 const FILL_FACTOR = 50; // leave room for inserts
@@ -115,8 +116,9 @@ class DataIndex {
             BUILD: 'build',
             REBUILD: 'rebuild',
             ERROR: 'error',
-            REMOVED: 'removed'
-        }
+            REMOVED: 'removed',
+            CLOSED: 'closed'
+        };
     }
 
     /**
@@ -229,11 +231,19 @@ class DataIndex {
     }
 
     async delete() {
-        const lock = await this._lock(true, 'delete');
+        const idx = await this._getTree('exclusive');
+        await idx.close();
         const filePath = `${this.storage.settings.path}/${this.storage.name}.acebase/${this.fileName}`;
         await pfs.rm(filePath);
         this.state = DataIndex.STATE.REMOVED;
-        lock.release();
+        idx.release();
+    }
+
+    async close() {
+        const idx = await this._getTree('exclusive');
+        await idx.close();
+        this.state = DataIndex.STATE.CLOSED;
+        idx.release();
     }
 
     static async readFromFile(storage, fileName) {
@@ -393,12 +403,14 @@ class DataIndex {
         }
         const dir = `${this.storage.settings.path}/${this.storage.name}.acebase`;
         const storagePrefix = this.storage.settings.type !== 'data' ? `[${this.storage.settings.type}]-` : '';
-        const escapedPath = this.path.replace(/\//g, '-').replace(/\*/g, '#');
+        const escape = key => key.replace(/\//g, '~').replace(/\*/g, '#');
+        const escapedPath = escape(this.path);
+        const escapedKey = escape(this.key);
         const includes = this.includeKeys.length > 0 
-            ? ',' + this.includeKeys.join(',')
+            ? ',' + this.includeKeys.map(key => escape(key)).join(',')
             : '';
         const extension = (this.type !== 'normal' ? `${this.type}.` : '') + 'idx';
-        return `${dir}/${storagePrefix}${escapedPath}-${this.key}${includes}.${extension}`;        
+        return `${dir}/${storagePrefix}${escapedPath}-${escapedKey}${includes}.${extension}`;        
     }
 
     get description() {
@@ -457,10 +469,10 @@ class DataIndex {
     }
 
     /**
-     * @param {BinaryBPlusTree} tree
+     * @param {{ tree: BinaryBPlusTree; close() => Promise<void>; release() => void }} idx
      */
-    async _rebuild() {
-        // NEW: Rebuild with streams
+    async _rebuild(idx) {
+        // Rebuild by writing to temp file
         const newIndexFile = this.fileName + '.tmp';
         const fd = await pfs.open(newIndexFile, pfs.flags.write);
         const treeStatistics = {};
@@ -484,7 +496,6 @@ class DataIndex {
             }
             return pfs.write(fd, data, 0, data.length, headerStats.length + index);
         }
-        const idx = await this._getTree();
         this.state = DataIndex.STATE.REBUILD;
         try {
             // this._fst = []; // Reset fst memory
@@ -492,17 +503,19 @@ class DataIndex {
                 BinaryWriter.forFunction(writer), 
                 { treeStatistics }
             )
-            idx.close(true);
+            await idx.close();
             await headerStats.updateTreeLength(treeStatistics.byteLength);
             await pfs.close(fd);
 
             // rename new file, overwriting the old file
             await pfs.rename(newIndexFile, this.fileName);
             this.state = DataIndex.STATE.READY;
+            idx.release();
         }
         catch(err) {
             this.state = DataIndex.STATE.ERROR;
             this._buildError = err;
+            idx.release();
             throw err;
         }
     }
@@ -513,38 +526,30 @@ class DataIndex {
      */
     async _processTreeOperations(path, operations) {
         const startTime = Date.now();
-        const lock = await this._lock(true, `index._processTreeOperations "/${path}"`);
-        // this.storage.debug.log(`Got update lock on index ${this.description}`.colorize(ColorStyle.blue), l);
         if (this._buildError) {
-            lock.release();
             throw new Error('Cannot update index because there was an error building it');
         }
-        let idx = await this._getTree();
-
+        let idx = await this._getTree('exclusive');
         // const oldEntry = tree.find(keyValues.oldValue);
         
         const go = async (retry = 0) => {
-            /**
-             * @type BinaryBPlusTree
-             */
-            const tree = idx.tree;
             try {
-                await tree.transaction(operations);
+                await idx.tree.transaction(operations);
                 // Index updated
-                idx.close();
+                idx.release();
                 return false; // "not rebuilt"
             }
             catch(err) {
                 // Could not update index --> leaf full?
-                this.storage.debug.log(`Could not update index ${this.description}: ${err.message}`.colorize(ColorStyle.yellow));
+                this.storage.debug.verbose(`Could not update index ${this.description}: ${err.message}`.colorize(ColorStyle.yellow));
 
                 console.assert(retry === 0, `unable to process operations because tree was rebuilt, and it didn't help?!`);
 
-                idx.close(); // rebuild will overwrite the idx file
-                await this._rebuild();
+                await this._rebuild(idx); // rebuild calls idx.close() and release()
+
                 // Process left-over operations
-                this.storage.debug.log(`Index was rebuilt, retrying pending operations`);
-                idx = await this._getTree();
+                this.storage.debug.verbose(`Index was rebuilt, retrying pending operations`);
+                idx = await this._getTree('exclusive');
                 await go(retry + 1);
                 return true; // "rebuilt"
             }
@@ -552,10 +557,10 @@ class DataIndex {
         const rebuilt = await go();
 
         // this.storage.debug.log(`Released update lock on index ${this.description}`.colorize(ColorStyle.blue));
-        lock.release();
         const doneTime = Date.now();
-        const duration = Math.round((doneTime - startTime) / 1000);
-        this.storage.debug.log(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration} seconds`.colorize(ColorStyle.green));
+        const ms = doneTime - startTime;
+        const duration = ms < 5000 ? ms + 'ms' : Math.round(ms / 1000) + 's';
+        this.storage.debug.verbose(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration}`.colorize(ColorStyle.green));
 
         // Process any queued updates
         return await this._processUpdateQueue();
@@ -620,13 +625,17 @@ class DataIndex {
             return obj;
         })();
         
-        if (this.state === DataIndex.STATE.READY) {
+        if (this.state === DataIndex.STATE.ERROR) {
+            throw new Error(`Cannot update index ${this.description}: it's in the error state:`, this.buildError);
+        }
+        else if (this.state === DataIndex.STATE.READY) {
             // Invalidate query cache
             this._cache.clear();
             // Update the tree
             return await this._updateTree(path, keyValues.oldValue, keyValues.newValue, recordPointer, recordPointer, metadata);
         }
         else {
+            this.storage.debug.verbose(`Queueing index ${this.description} update for "/${path}"`)
             // Queue the update
             const update = { 
                 path, 
@@ -644,7 +653,7 @@ class DataIndex {
                 update.reject = reject;
             })
             .catch(err => {
-                this.storage.debug.error(`Unable to process queued index update for ${this.description}:`, err);
+                this.storage.debug.error(`Unable to process queued update for "/${path}" on index ${this.description}:`, err);
             });
 
             this._updateQueue.push(update);
@@ -652,73 +661,11 @@ class DataIndex {
         }
     }
 
-    _lock(forWriting, comment) {
-        // Do we still need this? B+Tree now does its own locking, so this might be obsolete...
-        // UPDATE: Yes, we do. When an index is being created/rebuilt and queried at the same time, we very much need this locking!
-
-        if (!this._lockQueue) { this._lockQueue = []; }
-        if (!this._lockState) {
-            this._lockState = {
-                isLocked: false,
-                forWriting: undefined,
-                comment: undefined
-            };
-        }
-
-        const lock = { forWriting, comment, release: comment => {
-            const pending = [];
-            while (true) {
-                // Gather all queued read locks, or 1 write lock
-                if (this._lockQueue.length === 0) { break; }
-                const next = this._lockQueue[0];
-                if (next.forWriting) { 
-                    // allow this write lock only if there are no previous read locks
-                    if (pending.length === 0) {
-                        pending.push(next);
-                        this._lockQueue.shift();
-                    }
-                    // stop while loop
-                    break;
-                }
-                else {
-                    // a(nother) read loop
-                    pending.push(next);
-                    this._lockQueue.shift();
-                }
-            }
-            if (pending.length === 0) {
-                this._lockState.isLocked = false;
-                this._lockState.forWriting = undefined;
-                this._lockState.comment = undefined;
-                return;
-            }
-            // Grant pending locks (can be multiple reads, or 1 pending write)
-            this._lockState.forWriting = pending[0].forWriting;
-            this._lockState.comment = '';
-            for (let i = 0; i < pending.length; i++) {
-                const lock = pending[i];
-                if (this._lockState.comment.length > 0) { this._lockState.comment += ' && '}
-                this._lockState.comment += lock.comment;
-                lock.resolve(lock); // go!
-            }
-        }};
-        if (this._lockState.isLocked) {
-            // Queue lock request
-            this._lockQueue.push(lock);
-            return new Promise(resolve => {
-                lock.resolve = resolve;
-            });
-        }
-        else {
-            // No current lock, allow
-            this._lockState.isLocked = true;
-            this._lockState.forWriting = forWriting;
-            this._lockState.comment = comment;
-            return Promise.resolve(lock);
-        }
+    async _lock(mode = 'exclusive') {
+        return ThreadSafe.lock(this.fileName, { shared: mode === 'shared' });
     }
 
-    count(op, val) {
+    async count(op, val) {
         if (!this.caseSensitive) {
             // Convert to locale aware lowercase
             if (typeof val === 'string') { val = val.toLocaleLowerCase(this.textLocale); }
@@ -733,100 +680,74 @@ class DataIndex {
         const cache = this.cache(cacheKey, val);
         if (cache) {
             // Cached count, saves time!
-            return Promise.resolve(cache);
+            return cache;
         }
 
-        let lock;
-        return this._lock(false, `index.count "${op}", ${val}`)
-        .then(l => {
-            // this.storage.debug.log(`Got query lock on index ${this.description}`.colorize(ColorStyle.blue), l);
-            lock = l;
-            return this._getTree();
-        })
-        .then(idx => {
-            /** @type BinaryBPlusTree */
-            const tree = idx.tree;
-            return tree.search(op, val, { count: true, keys: true, values: false })
-            .then(result => {
-                lock.release();
-                idx.close();
+        const idx = await this._getTree('shared');
+        const result = await idx.tree.search(op, val, { count: true, keys: true, values: false });
+        idx.release();
 
-                this.cache(cacheKey, val, result.valueCount);
-                return result.valueCount;
-            });
-        });
+        this.cache(cacheKey, val, result.valueCount);
+        return result.valueCount;
     }
 
-    take(skip, take, ascending) {
+    async take(skip, take, ascending) {
         const cacheKey = `${skip}+${take}-${ascending ? 'asc' : 'desc'}`;
         const cache = this.cache('take', cacheKey);
         if (cache) {
-            return Promise.resolve(cache);
+            return cache;
         }
 
         const stats = new IndexQueryStats('take', { skip, take, ascending }, true);
 
-        var lock;
-        // this.storage.debug.log(`Requesting query lock on index ${this.description}`.colorize(ColorStyle.blue));
-        return this._lock(false, `index.take ${take}, skip ${skip}, ${ascending ? 'ascending' : 'descending'}`)
-        .then(l => {
-            // this.storage.debug.log(`Got query lock on index ${this.description}`.colorize(ColorStyle.blue), l);
-            lock = l;
-            return this._getTree();
-        })
-        .then(idx => {
-            /**
-             * @type BinaryBPlusTree
-             */
-            const tree = idx.tree;
-            const results = new IndexQueryResults(); //[];
-            results.filterKey = this.key;
-            let skipped = 0;
-            const processLeaf = (leaf) => {
-                if (!ascending) { leaf.entries.reverse(); }
-                for (let i = 0; i < leaf.entries.length; i++) {
-                    const entry = leaf.entries[i];
-                    const value = entry.key;
-                    for (let j = 0; j < entry.values.length; j++) {
-                        if (skipped < skip) { 
-                            skipped++; 
-                            continue; 
-                        }
-                        const entryValue = entry.values[j];
-                        const recordPointer = _parseRecordPointer(this.path, entryValue.recordPointer);
-                        const metadata = entryValue.metadata;
-                        const result = new IndexQueryResult(recordPointer.key, recordPointer.path, value, metadata);
-                        results.push(result);
-                        if (results.length === take) { 
-                            return results;
-                        }
+        const idx = await this._getTree('shared');
+        const results = new IndexQueryResults(); //[];
+        results.filterKey = this.key;
+        let skipped = 0;
+        const processLeaf = (leaf) => {
+            if (!ascending) { leaf.entries.reverse(); }
+            for (let i = 0; i < leaf.entries.length; i++) {
+                const entry = leaf.entries[i];
+                const value = entry.key;
+                for (let j = 0; j < entry.values.length; j++) {
+                    if (skipped < skip) {
+                        skipped++;
+                        continue;
+                    }
+                    const entryValue = entry.values[j];
+                    const recordPointer = _parseRecordPointer(this.path, entryValue.recordPointer);
+                    const metadata = entryValue.metadata;
+                    const result = new IndexQueryResult(recordPointer.key, recordPointer.path, value, metadata);
+                    results.push(result);
+                    if (results.length === take) {
+                        return results;
                     }
                 }
-
-                if (ascending && leaf.getNext) {
-                    return leaf.getNext().then(processLeaf);
-                }
-                else if (!ascending && leaf.getPrevious) {
-                    return leaf.getPrevious().then(processLeaf);
-                }
-                else {
-                    return results;
-                }
             }
-            const promise = ascending 
-                ? tree.getFirstLeaf().then(processLeaf)
-                : tree.getLastLeaf().then(processLeaf);
 
-            return promise.then(() => {
-                lock.release();
-                idx.close();
-
-                stats.stop(results.length);
-                results.stats = stats;
-                this.cache('take', cacheKey, results);                
+            if (ascending && leaf.getNext) {
+                return leaf.getNext().then(processLeaf);
+            }
+            else if (!ascending && leaf.getPrevious) {
+                return leaf.getPrevious().then(processLeaf);
+            }
+            else {
                 return results;
-            })
-        });
+            }
+        }
+        if (ascending) {
+            await idx.tree.getFirstLeaf().then(processLeaf);
+        }
+        else {
+            await idx.tree.getLastLeaf().then(processLeaf);
+        }
+
+        idx.release();
+
+        stats.stop(results.length);
+        results.stats = stats;
+        this.cache('take', cacheKey, results);
+        return results;
     }
 
     static get validOperators() {
@@ -844,7 +765,7 @@ class DataIndex {
      * @param {IndexQueryResults} [options.filter=undefined] previous results to filter upon
      * @returns {Promise<IndexQueryResults>}
      */
-    query(op, val, options = { filter: undefined }) {
+    async query(op, val, options = { filter: undefined }) {
         if (!DataIndex.validOperators.includes(op) && !(op instanceof BlacklistingSearchOperator)) {
             throw new TypeError(`Cannot use operator "${op}" to query index "${this.description}"`);
         }
@@ -861,159 +782,136 @@ class DataIndex {
 
         const stats = new IndexQueryStats('query', { op, val }, true);
 
-        /** @type {Promise<BinaryBPlusTreeLeafEntry[]>} */
-        let entriesPromise;
+        /** @type {BinaryBPlusTreeLeafEntry[]} */
+        let entries;
         const isCacheable = !(op instanceof BlacklistingSearchOperator);
         let cache = isCacheable && this.cache(op, val);
         if (cache) {
-            entriesPromise = Promise.resolve(cache);
+            entries = cache;
         }
         else {
-            var lock;
-            entriesPromise = this._lock(false, `index.query "${op}", ${val}`)
-            .then(l => {
-                lock = l;
-                return this._getTree();
-            })
-            .then(idx => {
-                /**
-                 * @type BinaryBPlusTree
-                 */
-                const tree = idx.tree;
-                const searchOptions = {
-                    entries: true,
-                    // filter: options.filter && options.filter.treeEntries // Don't let tree apply filter, so we can cache results before filtering ourself
-                }
-                return tree.search(op, val, searchOptions)
-                .then(({ entries }) => {
-                    lock.release();
-                    idx.close();
+            const idx = await this._getTree('shared');
+            const searchOptions = {
+                entries: true,
+                // filter: options.filter && options.filter.treeEntries // Don't let tree apply filter, so we can cache results before filtering ourself
+            }
+            const result = await idx.tree.search(op, val, searchOptions);
+            entries = result.entries;
+            idx.release();
 
-                    // Cache entries
-                    // let opCache = this._cache.get(op);
-                    // if (!opCache) {
-                    //     opCache = new Map();
-                    //     this._cache.set(op, opCache);
-                    // }
-                    // opCache.set(val, entries);
-                    isCacheable && this.cache(op, val, entries);
-
-                    return entries;
-                });
-            });
+            // Cache entries
+            isCacheable && this.cache(op, val, entries);
         }
 
-        return entriesPromise.then(entries => {
-            const results = new IndexQueryResults(); //[];
-            results.filterKey = this.key;
-            results.values = [];
+        const results = new IndexQueryResults();
+        results.filterKey = this.key;
+        results.values = [];
 
-            if (options.filter) {
-                const filterStep = new IndexQueryStats(
-                    'filter', { 
-                        entries: entries.length, 
-                        entryValues: entries.reduce((total, entry) => total + entry.values.length, 0), 
-                        filterValues: options.filter.values.length 
-                    }, 
-                    true
-                );
-                stats.steps.push(filterStep);
+        if (options.filter) {
+            const filterStep = new IndexQueryStats(
+                'filter', { 
+                    entries: entries.length, 
+                    entryValues: entries.reduce((total, entry) => total + entry.values.length, 0), 
+                    filterValues: options.filter.values.length 
+                }, 
+                true
+            );
+            stats.steps.push(filterStep);
 
-                let values = [], valueEntryIndexes = [];
-                entries.forEach(entry => {
-                    valueEntryIndexes.push(values.length);
-                    values = values.concat(entry.values);
-                });
-                let filterValues = options.filter.values;
+            let values = [], valueEntryIndexes = [];
+            entries.forEach(entry => {
+                valueEntryIndexes.push(values.length);
+                values = values.concat(entry.values);
+            });
+            let filterValues = options.filter.values;
 
-                // Pre-process recordPointers to speed up matching
-                const preProcess = (values, tree = false) => {
-                    if (tree && values.rpTree) { return; }
+            // Pre-process recordPointers to speed up matching
+            const preProcess = (values, tree = false) => {
+                if (tree && values.rpTree) { return; }
 
-                    let builder = tree ? new BPlusTreeBuilder(true, 100) : null;
+                let builder = tree ? new BPlusTreeBuilder(true, 100) : null;
 
-                    for (let i = 0; i < values.length; i++) {
-                        let val = values[i];
-                        let rp = val.rp || '';
-                        if (rp === '') {
-                            for (let j = 0; j < val.recordPointer.length; j++) { rp += val.recordPointer[j].toString(36); }
-                            val.rp = rp;
-                        }
-                        
-                        if (tree && !builder.list.has(rp)) {
-                            builder.add(rp, [i]);
-                        }
+                for (let i = 0; i < values.length; i++) {
+                    let val = values[i];
+                    let rp = val.rp || '';
+                    if (rp === '') {
+                        for (let j = 0; j < val.recordPointer.length; j++) { rp += val.recordPointer[j].toString(36); }
+                        val.rp = rp;
                     }
-                    if (tree) {
-                        values.rpTree = builder.create();
+                    
+                    if (tree && !builder.list.has(rp)) {
+                        builder.add(rp, [i]);
                     }
                 }
-                // preProcess(values);
-                // preProcess(filterValues);
+                if (tree) {
+                    values.rpTree = builder.create();
+                }
+            }
+            // preProcess(values);
+            // preProcess(filterValues);
 
-                // Loop through smallest set
-                let smallestSet = filterValues.length < values.length ? filterValues : values;
-                let otherSet = smallestSet === filterValues ? values : filterValues;
+            // Loop through smallest set
+            let smallestSet = filterValues.length < values.length ? filterValues : values;
+            let otherSet = smallestSet === filterValues ? values : filterValues;
+            
+            preProcess(smallestSet, false);
+            preProcess(otherSet, true);
+
+            // TODO: offload filtering from event loop to stay responsive
+            for (let i = 0; i < smallestSet.length; i++) {
+                let value = smallestSet[i];
+                // Find in other set
+                let match = null;
+                let matchIndex;
                 
-                preProcess(smallestSet, false);
-                preProcess(otherSet, true);
+                /** @type {BPlusTree} */
+                let tree = otherSet.rpTree;
+                let rpEntryValue = tree.find(value.rp);
+                if (rpEntryValue) {
+                    let j = rpEntryValue.recordPointer[0];
+                    match = smallestSet === values ? value : otherSet[j];
+                    matchIndex = match === value ? i : j;                        
+                }
 
-                // TODO: offload filtering from event loop to stay responsive
-                for (let i = 0; i < smallestSet.length; i++) {
-                    let value = smallestSet[i];
-                    // Find in other set
-                    let match = null;
-                    let matchIndex;
-                    
-                    /** @type {BPlusTree} */
-                    let tree = otherSet.rpTree;
-                    let rpEntryValue = tree.find(value.rp);
-                    if (rpEntryValue) {
-                        let j = rpEntryValue.recordPointer[0];
-                        match = smallestSet === values ? value : otherSet[j];
-                        matchIndex = match === value ? i : j;                        
-                    }
+                if (match) {
+                    const recordPointer = _parseRecordPointer(this.path, match.recordPointer);
+                    const metadata = match.metadata;
+                    const entry = entries[valueEntryIndexes.findIndex((entryIndex, i, arr) => 
+                        i + 1 === arr.length || (entryIndex <= matchIndex && arr[i + 1] > matchIndex)
+                    )];
+                    const result = new IndexQueryResult(recordPointer.key, recordPointer.path, entry.key, metadata);
+                    // result.entry = entry;
+                    results.push(result);
+                    results.values.push(match);
+                }
+            }
 
-                    if (match) {
-                        const recordPointer = _parseRecordPointer(this.path, match.recordPointer);
-                        const metadata = match.metadata;
-                        const entry = entries[valueEntryIndexes.findIndex((entryIndex, i, arr) => 
-                            i + 1 === arr.length || (entryIndex <= matchIndex && arr[i + 1] > matchIndex)
-                        )];
+            filterStep.stop({ results: results.length, values: results.values.length });
+        }
+        else {
+            // No filter, add all (unique) results
+            const uniqueRecordPointers = new Set();
+            entries.forEach(entry => {
+                entry.values.forEach(value => {
+                    const recordPointer = _parseRecordPointer(this.path, value.recordPointer);
+                    if (!uniqueRecordPointers.has(recordPointer.path)) {
+                        // If a single recordPointer exists in multiple entries (can happen with eg 'like' queries),
+                        // only add the first one, ignore others (prevents duplicate results!)
+                        uniqueRecordPointers.add(recordPointer.path);
+                        const metadata = value.metadata;
                         const result = new IndexQueryResult(recordPointer.key, recordPointer.path, entry.key, metadata);
                         // result.entry = entry;
                         results.push(result);
-                        results.values.push(match);
+                        results.values.push(value);
                     }
-                }
-
-                filterStep.stop({ results: results.length, values: results.values.length });
-            }
-            else {
-                // No filter, add all (unique) results
-                const uniqueRecordPointers = new Set();
-                entries.forEach(entry => {
-                    entry.values.forEach(value => {
-                        const recordPointer = _parseRecordPointer(this.path, value.recordPointer);
-                        if (!uniqueRecordPointers.has(recordPointer.path)) {
-                            // If a single recordPointer exists in multiple entries (can happen with eg 'like' queries),
-                            // only add the first one, ignore others (prevents duplicate results!)
-                            uniqueRecordPointers.add(recordPointer.path);
-                            const metadata = value.metadata;
-                            const result = new IndexQueryResult(recordPointer.key, recordPointer.path, entry.key, metadata);
-                            // result.entry = entry;
-                            results.push(result);
-                            results.values.push(value);
-                        }
-                    });
                 });
-                uniqueRecordPointers.clear(); // Help GC
-            }
+            });
+            uniqueRecordPointers.clear(); // Help GC
+        }
 
-            stats.stop(results.length);
-            results.stats = stats;
-            return results;
-        });
+        stats.stop(results.length);
+        results.stats = stats;
+        return results;
     }
     
     /**
@@ -1221,32 +1119,58 @@ class DataIndex {
                                         // Get child values
                                         const keyPromises = [];
                                         const seenKeys = gotNamedWildcardKeys.slice();
-                                        await Node.getChildren(this.storage, childPath, keyFilter)
-                                        .next(childInfo => {
+
+                                        // NEW: Use getNodeValue to get data, enables indexing of subkeys
+                                        const obj = await this.storage.getNodeValue(childPath, { include: keyFilter, tid });
+                                        keyFilter.forEach(key => {
                                             // What can be indexed? 
                                             // strings, numbers, booleans, dates, undefined
-                                            seenKeys.push(childInfo.key);
-                                            if (childInfo.key === this.key && !allowedKeyValueTypes.includes(childInfo.valueType)) {
+                                            const val = key.split('/').reduce((val, key) => typeof val === 'object' && key in val ? val[key] : undefined, obj);
+                                            if (typeof val === 'undefined') { 
+                                                // Key not present
+                                                return;
+                                            }
+                                            seenKeys.push(key);
+                                            const type = getValueType(val);
+                                            if (key === this.key && !allowedKeyValueTypes.includes(type)) {
                                                 // Key value isn't allowed to be this type, mark it as null so it won't be indexed
                                                 keyValue = null;
                                                 return;
                                             }
-                                            else if (childInfo.key !== this.key && !indexableTypes.includes(childInfo.valueType)) {
+                                            else if (key !== this.key && !indexableTypes.includes(type)) {
                                                 // Metadata that can't be indexed because it has the wrong type
                                                 return;
                                             }
                                             // Index this value
-                                            if (childInfo.address) {
-                                                const p = Node.getValue(this.storage, childInfo.address.path, { tid })
-                                                    .then(value => {
-                                                        addValue(childInfo.key, value);
-                                                    });
-                                                keyPromises.push(p);
-                                            }
-                                            else {
-                                                addValue(childInfo.key, childInfo.value);
-                                            }
+                                            addValue(key, val);
                                         });
+
+                                        // await Node.getChildren(this.storage, childPath, keyFilter)
+                                        // .next(childInfo => {
+                                        //     // What can be indexed? 
+                                        //     // strings, numbers, booleans, dates, undefined
+                                        //     seenKeys.push(childInfo.key);
+                                        //     if (childInfo.key === this.key && !allowedKeyValueTypes.includes(childInfo.valueType)) {
+                                        //         // Key value isn't allowed to be this type, mark it as null so it won't be indexed
+                                        //         keyValue = null;
+                                        //         return;
+                                        //     }
+                                        //     else if (childInfo.key !== this.key && !indexableTypes.includes(childInfo.valueType)) {
+                                        //         // Metadata that can't be indexed because it has the wrong type
+                                        //         return;
+                                        //     }
+                                        //     // Index this value
+                                        //     if (childInfo.address) {
+                                        //         const p = Node.getValue(this.storage, childInfo.address.path, { tid })
+                                        //             .then(value => {
+                                        //                 addValue(childInfo.key, value);
+                                        //             });
+                                        //         keyPromises.push(p);
+                                        //     }
+                                        //     else {
+                                        //         addValue(childInfo.key, childInfo.value);
+                                        //     }
+                                        // });
                                         // If the key value wasn't present, set it to undefined (so it'll be indexed)
                                         if (!seenKeys.includes(this.key)) { keyValue = undefined; }
                                         await Promise.all(keyPromises);
@@ -1710,7 +1634,7 @@ class DataIndex {
 
         const startTime = Date.now();
         let lock;
-        return this._lock(true, `index.build ${this.description}`)
+        return this._lock('exclusive')
         .then(l => {
             lock = l;
             return createBuildFile();
@@ -2242,64 +2166,54 @@ class DataIndex {
         }
     }
 
-    // _fst = []
-    async _getTree () {
-        // TODO:
-        // Improve performance - the index is now opened each times it is accessed, and closed right after.
-        // This means that the B+Tree inside cannot keep track of the free space (FST) in it, and it will need
-        // very frequent rebuilds. Also, the "autoGrow" feature on the B+Tree seems to cause file corruptions, 
-        // so I had to keep that disabled until further investaged and fixed. I attempted to keep the tree's FST
-        // array available in-memory here (this._fst), but tested it in conjunction with autoGrow so, not sure
-        // where the corruption starts in that combination. 
+    async _getTree (lockMode = 'exclusive') {
+        // File is now opened the first time it is requested, only closed when it needs to be rebuilt or removed
+        // This enables the tree to keep its FST state in memory.
+        // Also enabled "autoGrow" again, this allows the tree to grow instead of being rebuilt every time it needs
+        // more storage space
+        if ([DataIndex.STATE.ERROR, DataIndex.STATE.CLOSED, DataIndex.STATE.REMOVED].includes(this.state)) {
+            throw new Error(`Can't open index ${this.description} with state "${this.state}"`);
+        }
 
-        // Future goals: 
-        // - Add FST to B+Tree's binary data layout!
-        // - Keep the tree open while in use, close upon rebuilds and reopen.
+        const lock = await this._lock(lockMode);
+        if (!this._idx) {
+            // File being opened for the first time (or after a rebuild)
+            const fd = await pfs.open(this.fileName, pfs.flags.readAndWrite);
+            const reader = async (index, length) => {
+                const buffer = Buffer.alloc(length);
+                const { bytesRead } = await pfs.read(fd, buffer, 0, length, this.trees.default.fileIndex + index);
+                if (bytesRead < length) { return buffer.slice(0, bytesRead); }
+                return buffer;
+            };
+            const writer = async (data, index) => {
+                const buffer = data.constructor === Uint8Array 
+                    ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) 
+                    : Buffer.from(data);
+                const result = await pfs.write(fd, buffer, 0, data.length, this.trees.default.fileIndex + index);
+                return result;
+            };
+            const tree = new BinaryBPlusTree(reader, DISK_BLOCK_SIZE, writer);
+            tree.id = ID.generate(); // this.fileName; // For tree locking
+            tree.autoGrow = true; // Allow the tree to grow. DISABLE THIS IF THERE ARE MULTIPLE TREES IN THE INDEX FILE LATER! (which is not implemented yet)
 
-        const lock = await ThreadSafe.lock(this.fileName);
-        // if (this._idx) {
-        //     this._idx.open++;
-        //     lock.release();
-        //     return this._idx;
-        // }
-        const fd = await pfs.open(this.fileName, pfs.flags.readAndWrite);
-        const reader = async (index, length) => {
-            const buffer = Buffer.alloc(length);
-            const { bytesRead } = await pfs.read(fd, buffer, 0, length, this.trees.default.fileIndex + index);
-            if (bytesRead < length) { return buffer.slice(0, bytesRead); }
-            return buffer;
-        };
-        const writer = async (data, index) => {
-            const buffer = data.constructor === Uint8Array 
-                ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) 
-                : Buffer.from(data);
-            const result = await pfs.write(fd, buffer, 0, data.length, this.trees.default.fileIndex + index);
-            return result;
-        };
-        const tree = new BinaryBPlusTree(reader, DISK_BLOCK_SIZE, writer);
-        tree.id = this.fileName; // For tree locking
-        // tree.autoGrow = true; // Allow the tree to grow. DISABLE THIS IS THERE ARE MULTIPLE TREES IN THE INDEX FILE LATER! (which is not implemented yet)
-        // tree._fst = this._fst; // Set free space table
-        const idx = { 
-            open: 1,
-            tree,
-            close: () => {
-                idx.open--;
-                // debounce(`close:${this.fileName}`, 10000, () => {
-                if (idx.open === 0) {
-                    // this._fst = tree._fst; // Cache the free space table
-                    // this._idx = null;
-                    pfs.close(fd)
-                    .catch(err => {
-                        this.storage.debug.warn(`Could not close index file "${this.fileName}":`, err);
-                    });
-                }
-                // });
+            this._idx = { fd, tree };
+        }
+        return {
+            tree: this._idx.tree,
+            /** Closes the index file, does not release the lock! */
+            close: async () => {
+                const fd = this._idx.fd;
+                this._idx = null;
+                await pfs.close(fd)
+                .catch(err => {
+                    this.storage.debug.warn(`Could not close index file "${this.fileName}":`, err);
+                });
+            },
+            /** Releases the acquired tree lock */
+            release() {
+                lock.release();
             }
         };
-        // this._idx = idx;
-        lock.release();
-        return idx;
     }
 }
 
@@ -3029,6 +2943,8 @@ class FullTextIndex extends DataIndex {
             added.push(word);
         })
         const promises = [];
+        // TODO: Prepare operations batch, then execute 1 tree update. 
+        // Now every word is a seperate update which is not necessary!
         removed.forEach(word => {
             const p = super.handleRecordUpdate(path, { [this.key]: word }, { [this.key]: null });
             promises.push(p);
