@@ -39,4 +39,17 @@ function getNodeValueType(value) {
     throw new Error(`Invalid value for standalone node: ${value}`);
 }
 
-module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType };
+function getValueType(value) {
+    if (value instanceof Array) { return VALUE_TYPES.ARRAY; }
+    else if (value instanceof PathReference) { return VALUE_TYPES.REFERENCE; }
+    else if (value instanceof ArrayBuffer) { return VALUE_TYPES.BINARY; }
+    else if (value instanceof Date) { return VALUE_TYPES.DATETIME; }
+    // TODO else if (value instanceof DataDocument) { return VALUE_TYPES.DOCUMENT; }
+    else if (typeof value === 'string') { return VALUE_TYPES.STRING; }
+    else if (typeof value === 'object') { return VALUE_TYPES.OBJECT; }
+    else if (typeof value === 'number') { return VALUE_TYPES.NUMBER; }
+    else if (typeof value === 'boolean') { return VALUE_TYPES.BOOLEAN; }
+    throw new Error(`Unknown value type: ${value}`);
+}
+
+module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType, getValueType };
