@@ -206,7 +206,7 @@ class CustomStorageSettings extends StorageSettings {
 
         // Hijack getTransaction to add locking
         const useLocking = this.locking;
-        const nodeLocker = useLocking ? new NodeLocker(console.bind(console), this.lockTimeout) : null;
+        const nodeLocker = useLocking ? new NodeLocker(console, this.lockTimeout) : null;
         this.getTransaction = async ({ path, write }) => {
             // console.log(`${write ? 'WRITE' : 'READ'} transaction requested for path "${path}"`)
             const transaction = await settings.getTransaction({ path, write });
