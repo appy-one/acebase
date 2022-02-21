@@ -9,27 +9,11 @@ describe('index', () => {
     let db, removeDB;
 
     beforeAll(async () => {
-        const tmp = await createTempDB();
-        db = tmp.db;
-        removeDB = tmp.removeDB;
+        ({ db, removeDB } = await createTempDB());
     });
 
     afterAll(async () => {
         await removeDB();
-    });
-
-    it('key can not contain slashes', async () => {
-        // Created for issue https://github.com/appy-one/acebase/issues/67
-        try {
-            const index = await db.indexes.create('*', 'some/property');
-            fail('index key cannot contain slash');
-        }
-        catch (err) {
-            // Expected
-            if (err.code === 'ENOENT') {
-                throw err;
-            }
-        }
     });
 
     it('can be on the root', async () => {
@@ -45,9 +29,7 @@ describe('string index', () => {
     let db, removeDB;
 
     beforeAll(async () => {
-        const tmp = await createTempDB();
-        db = tmp.db;
-        removeDB = tmp.removeDB;
+        ({ db, removeDB } = await createTempDB());
 
         // Insert sample data from meteorites json
         const m = require('./dataset/meteorites.json');
@@ -61,10 +43,38 @@ describe('string index', () => {
                 location: m.geolocation && m.geolocation.coordinates ? {
                     lat: m.geolocation.coordinates[1],
                     long: m.geolocation.coordinates[0]
-                } : null
+                } : null,
+                meta: {
+                    id: m.id,
+                    date: m.year ? new Date(m.year) : null
+                }
             };
         });
         await db.ref('meteorites').set(meteorites);
+    }, 30000);
+
+    it('key can contain slashes', async () => {
+        // Created for issue https://github.com/appy-one/acebase/issues/67
+        try {
+            const index = await db.indexes.create('meteorites', 'meta/id', { include: ['meta/date'] });
+        }
+        catch (err) {
+            fail('index key must be allowed to contain slashes');
+        }
+
+        // Try querying the subkey index:
+        const results = await db.query('meteorites')
+            .filter('meta/id', 'in', ['53829','463','4922']) // Sołtmany, Alessandria, Bahjoi
+            .sort('meta/id')
+            .get();
+
+        expect(results.length).toBe(3);
+
+        const meteorites = results.getValues();
+        expect(meteorites[0].name).toBe('Alessandria');
+        expect(meteorites[1].name).toBe('Bahjoi');
+        expect(meteorites[2].name).toBe('Sołtmany');
+
     }, 30000);
 
     it('without included columns', async () => {
