@@ -75,7 +75,23 @@ describe('string index', () => {
         expect(meteorites[1].name).toBe('Bahjoi');
         expect(meteorites[2].name).toBe('Sołtmany');
 
-    }, 30000);
+        // Try adding a meteorite, index should update ok
+        await db.ref('meteorites').push({
+            name: 'BigRock',
+            class: 'Unknown',
+            meta: {
+                id: 'bigrock',
+                date: new Date()
+            }
+        });
+
+        // Query me
+        const snaps = await db.query('meteorites')
+            .filter('meta/id', '==', 'bigrock')
+            .get();
+        expect(snaps.length).toBe(1);
+
+    }, 60000);
 
     it('without included columns', async () => {
         // Build
@@ -115,14 +131,15 @@ describe('string index', () => {
         stats = [], hints = [];
         snaps = await db.ref('meteorites').query()
             .filter('name', '!like', 'L*')
+            .filter('name', '!=', 'BigRock') // Might have been added by other test above
             .on('stats', ev => stats.push(ev))
             .on('hints', ev => hints.push(ev))
             .get();
 
         expect(snaps.length).toEqual(952);
         expect(stats.length).toEqual(1);
-        expect(stats[0].stats.result).toEqual(snaps.length);
-    }, 30000);
+        expect([952, 953].includes(stats[0].stats.result)).toBeTrue();
+    }, 60000);
 
     afterAll(async () => {
         await removeDB();
