@@ -405,7 +405,11 @@ class LocalApi extends Api {
                     // Hook into the promise
                     promise = promise.then(results => {
                         resultFilters.forEach(filter => {
-                            results = results.filterMetadata(filter.key, filter.op, filter.compare);
+                            let { key, op, compare, index } = filter;
+                            if (typeof compare === 'string' && !index.caseSensitive) {
+                                compare = compare.toLocaleLowerCase(index.textLocale);
+                            }
+                            results = results.filterMetadata(key, op, compare);
                         });
                         return results;
                     });
