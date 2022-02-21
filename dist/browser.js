@@ -4872,6 +4872,7 @@ class BrowserAceBase extends AceBase {
      * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
      * @param {boolean} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
      * @param {number} [settings.cacheSeconds=60] How many seconds to keep node info in memory, to speed up IndexedDB performance.
+     * @param {number} [settings.lockTimeout=120] timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
      */
     static WithIndexedDB(dbname, settings) {
 
@@ -4911,7 +4912,8 @@ class BrowserAceBase extends AceBase {
             name: 'IndexedDB',
             locking: true, // IndexedDB transactions are short-lived, so we'll use AceBase's path based locking
             removeVoidProperties: settings.removeVoidProperties,
-            maxInlineValueSize: settings.maxInlineValueSize, 
+            maxInlineValueSize: settings.maxInlineValueSize,
+            lockTimeout: settings.lockTimeout,
             ready() {
                 return readyPromise;
             },
@@ -5812,7 +5814,11 @@ class LocalApi extends Api {
                     // Hook into the promise
                     promise = promise.then(results => {
                         resultFilters.forEach(filter => {
-                            results = results.filterMetadata(filter.key, filter.op, filter.compare);
+                            let { key, op, compare, index } = filter;
+                            if (typeof compare === 'string' && !index.caseSensitive) {
+                                compare = compare.toLocaleLowerCase(index.textLocale);
+                            }
+                            results = results.filterMetadata(key, op, compare);
                         });
                         return results;
                     });
@@ -6107,6 +6113,8 @@ class LocalApi extends Api {
                 options.monitor = { add: true, change: true, remove: true };
             }
             if (typeof options.monitor === 'object' && (options.monitor.add || options.monitor.change || options.monitor.remove)) {
+                // TODO: Refactor this to use 'mutations' event instead of 'notify_child_*'
+
                 const matchedPaths = options.snapshots ? matches.map(match => match.path) : matches.slice();
                 const ref = this.db.ref(path);
                 const removeMatch = (path) => {
@@ -6119,8 +6127,8 @@ class LocalApi extends Api {
                     matchedPaths.push(path);
                 };
                 const stopMonitoring = () => {
-                    this.unsubscribe(ref.path, 'notify_child_changed', childChangedCallback);
-                    this.unsubscribe(ref.path, 'notify_child_added', childAddedCallback);
+                    this.unsubscribe(ref.path, 'child_changed', childChangedCallback);
+                    this.unsubscribe(ref.path, 'child_added', childAddedCallback);
                     this.unsubscribe(ref.path, 'notify_child_removed', childRemovedCallback);
                 };
                 const childChangedCallback = (err, path, newValue, oldValue) => {
@@ -6270,13 +6278,13 @@ class LocalApi extends Api {
                 };
                 if (options.monitor.add || options.monitor.change || options.monitor.remove) {
                     // Listen for child_changed events
-                    this.subscribe(ref.path, 'notify_child_changed', childChangedCallback);
+                    this.subscribe(ref.path, 'child_changed', childChangedCallback);
                 }
                 if (options.monitor.remove) {
                     this.subscribe(ref.path, 'notify_child_removed', childRemovedCallback);
                 }
                 if (options.monitor.add) {
-                    this.subscribe(ref.path, 'notify_child_added', childAddedCallback);
+                    this.subscribe(ref.path, 'child_added', childAddedCallback);
                 }
             }
         
@@ -6379,7 +6387,7 @@ class LocalApi extends Api {
         return this.storage.exportNode(path, stream, options);
     }
 
-    import(path, read, options = { format: 'json', suppress_events: false }) {
+    import(path, read, options = { format: 'json', suppress_events: false, method: 'set' }) {
         return this.storage.importNode(path, read, options);
     }
 
@@ -6643,7 +6651,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         this._locks = [];
         this._requests = new Map();
         this._eventsEnabled = true;
-        this._nodeLocker = new node_lock_1.NodeLocker();
+        this._nodeLocker = new node_lock_1.NodeLocker(storage.debug, storage.settings.lockTimeout);
         // Setup db event listeners
         storage.on('subscribe', (subscription) => {
             // Subscription was added to db
@@ -7182,11 +7190,8 @@ module.exports = { NodeInfo };
 },{"./node-value-types":35,"acebase-core":12}],34:[function(require,module,exports){
 const { PathInfo, ID } = require('acebase-core');
 
-const SECOND = 1000;
-const MINUTE = 60000;
-
 const DEBUG_MODE = false;
-const LOCK_TIMEOUT = DEBUG_MODE ? 15 * MINUTE : 90 * SECOND;
+const DEFAULT_LOCK_TIMEOUT = 120; // in seconds
 
 const LOCK_STATE = {
     PENDING: 'pending',
@@ -7199,7 +7204,7 @@ class NodeLocker {
     /**
      * Provides locking mechanism for nodes, ensures no simultanious read and writes happen to overlapping paths
      */
-    constructor() {
+    constructor(debug, lockTimeout = DEFAULT_LOCK_TIMEOUT) {
         /**
          * @type {NodeLock[]}
          */
@@ -7209,6 +7214,12 @@ class NodeLocker {
          * When .quit() is called, will be set to the quit promise's resolve function
          */
         this._quit = undefined;
+        this.debug = debug;
+        this.timeout = lockTimeout * 1000;
+    }
+
+    setTimeout(timeout) {
+        this.timeout = timeout * 1000;
     }
 
     createTid() {
@@ -7359,7 +7370,7 @@ class NodeLocker {
             else {
                 lock.granted = Date.now();
                 if (options.noTimeout !== true) {
-                    lock.expires = Date.now() + LOCK_TIMEOUT;
+                    lock.expires = Date.now() + this.timeout;
                     //debug.warn(`lock :: GRANTED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
 
                     let timeoutCount = 0;
@@ -7374,11 +7385,11 @@ class NodeLocker {
                         timeoutCount++;
                         if (timeoutCount <= 3) {
                             // Warn first.
-                            console.warn(`${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) is taking a long time to complete [${timeoutCount}]`);
-                            lock.timeout = setTimeout(timeoutHandler, LOCK_TIMEOUT / 3);
+                            this.debug.warn(`${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) is taking a long time to complete [${timeoutCount}]`);
+                            lock.timeout = setTimeout(timeoutHandler, this.timeout / 4);
                             return;
                         }
-                        console.error(`lock :: ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) took too long`);
+                        this.debug.error(`lock :: ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) took too long`);
                         lock.state = LOCK_STATE.EXPIRED;
                         // let allTransactionLocks = _locks.filter(l => l.tid === lock.tid).sort((a,b) => a.requested < b.requested ? -1 : 1);
                         // let transactionsDebug = allTransactionLocks.map(l => `${l.state} ${l.forWriting ? "WRITE" : "read"} ${l.comment}`).join("\n");
@@ -7387,7 +7398,7 @@ class NodeLocker {
                         this._processLockQueue();
                     };
 
-                    lock.timeout = setTimeout(timeoutHandler, LOCK_TIMEOUT / 3);
+                    lock.timeout = setTimeout(timeoutHandler, this.timeout / 4);
                 }
             }
             return lock;
@@ -7573,7 +7584,20 @@ function getNodeValueType(value) {
     throw new Error(`Invalid value for standalone node: ${value}`);
 }
 
-module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType };
+function getValueType(value) {
+    if (value instanceof Array) { return VALUE_TYPES.ARRAY; }
+    else if (value instanceof PathReference) { return VALUE_TYPES.REFERENCE; }
+    else if (value instanceof ArrayBuffer) { return VALUE_TYPES.BINARY; }
+    else if (value instanceof Date) { return VALUE_TYPES.DATETIME; }
+    // TODO else if (value instanceof DataDocument) { return VALUE_TYPES.DOCUMENT; }
+    else if (typeof value === 'string') { return VALUE_TYPES.STRING; }
+    else if (typeof value === 'object') { return VALUE_TYPES.OBJECT; }
+    else if (typeof value === 'number') { return VALUE_TYPES.NUMBER; }
+    else if (typeof value === 'boolean') { return VALUE_TYPES.BOOLEAN; }
+    throw new Error(`Unknown value type: ${value}`);
+}
+
+module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType, getValueType };
 },{"acebase-core":12}],36:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
@@ -8089,6 +8113,7 @@ class CustomStorageSettings extends StorageSettings {
      * @param {object} settings 
      * @param {string} [settings.name] Name of the custom storage adapter
      * @param {boolean} [settings.locking=true] Whether default node locking should be used. Set to false if your storage backend disallows multiple simultanious write transactions (eg IndexedDB). Set to true if your storage backend does not support transactions (eg LocalStorage) or allows multiple simultanious write transactions (eg AceBase binary).
+     * @param {number} [settings.lockTimeout=120] If default node locking is used, timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
      * @param {() => Promise<any>} settings.ready Function that returns a Promise that resolves once your data store backend is ready for use
      * @param {(target: { path: string, write: boolean }, nodeLocker: NodeLocker) => Promise<CustomStorageTransaction>} settings.getTransaction Function that starts a transaction for read/write operations on a specific path and/or child paths
      */
@@ -8104,11 +8129,14 @@ class CustomStorageSettings extends StorageSettings {
         this.name = settings.name;
         // this.info = `${this.name || 'CustomStorage'} realtime database`;
         this.locking = settings.locking !== false;
+        if (this.locking) {
+            this.lockTimeout = typeof settings.lockTimeout === 'number' ? settings.lockTimeout : 120;
+        }
         this.ready = settings.ready;
 
         // Hijack getTransaction to add locking
         const useLocking = this.locking;
-        const nodeLocker = useLocking ? new NodeLocker() : null;
+        const nodeLocker = useLocking ? new NodeLocker(console, this.lockTimeout) : null;
         this.getTransaction = async ({ path, write }) => {
             // console.log(`${write ? 'WRITE' : 'READ'} transaction requested for path "${path}"`)
             const transaction = await settings.getTransaction({ path, write });
@@ -9409,12 +9437,12 @@ class IWriteNodeResult {}
  * @property {string} [info="realtime database"] optional info to be written to the console output underneith the logo
  * @property {string} [type] optional type of storage class - will be used by AceBaseStorage to create different db files in the future (data, transaction, auth etc)
  * @property {IPCClientSettings} [ipc] External IPC server configuration. You need this if you are running multiple AceBase processes using the same database files in a pm2 or cloud-based cluster so the individual processes can communicate with each other.
- */
+ * @property {number} [lockTimeout=120] timeout setting for read /and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+*/
 
 /**
  * Storage Settings
- * @class
- * @implements {IStorageSettings}
+ * @type {IStorageSettings}
  */
 class StorageSettings {
 
@@ -9432,8 +9460,9 @@ class StorageSettings {
         /** @type {string} */
         this.logLevel = settings.logLevel || 'log';
         this.info = settings.info || 'realtime database';
-        this.type = settings.type;
+        this.type = settings.type || 'data';
         this.ipc = settings.ipc;
+        this.lockTimeout = typeof settings.lockTimeout === 'number' ? settings.lockTimeout : 120;
     }
 }
 
@@ -9455,9 +9484,6 @@ class Storage extends SimpleEventEmitter {
         this.settings = settings;
         this.debug = new DebugLogger(settings.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
-        // // Setup node locking
-        // this.nodeLocker = new NodeLocker();
-
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
         if (settings.ipc) {
@@ -9477,6 +9503,7 @@ class Storage extends SimpleEventEmitter {
             // We can perform any custom cleanup here:
             // - storage-acebase should close the db file
             // - storage-mssql / sqlite should close connection
+            // - indexes should close their files
             if (this.indexes.supported) {
                 this.indexes.close();
             }
@@ -9522,6 +9549,9 @@ class Storage extends SimpleEventEmitter {
              * @returns {Promise<DataIndex>}
              */
             async create(path, key, options = { rebuild: false, type: undefined, include: undefined }) { //, refresh = false) {
+                if (!this.supported) {
+                    throw new Error(`Indexes are not supported in current environment because it requires Node.js fs`)
+                }
                 path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
                 const rebuild = options && options.rebuild === true;
                 const indexType = (options && options.type) || 'normal';
@@ -9545,6 +9575,12 @@ class Storage extends SimpleEventEmitter {
                     }
                     throw new Error(result.reason);
                 }
+
+                await pfs.mkdir(`${storage.settings.path}/${storage.name}.acebase`).catch(err => {
+                    if (err.code !== 'EEXIST') {
+                        throw err;
+                    }
+                });
 
                 const index = existingIndex || (() => {
                     switch (indexType) {
@@ -9683,11 +9719,10 @@ class Storage extends SimpleEventEmitter {
                 _indexes.splice(_indexes.indexOf(index), 1);
             },
 
-            close() {
-                // TODO:
-                // this.list().forEach(index => {
-                //     index.close();
-                // });
+            async close() {
+                // Close all indexes
+                const promises = this.list().map(index => index.close().catch(err => storage.debug.error(err)));
+                await Promise.all(promises);
             }
         };
 
@@ -11007,14 +11042,29 @@ class Storage extends SimpleEventEmitter {
      * Import a specific path's data from a stream
      * @param {string} path
      * @param {(bytes: number) => string|ArrayBufferView|Promise<string|ArrayBufferView>} read read function that streams a new chunk of data
+     * @param {object} [options]
+     * @param {'json'} [options.format]
+     * @param {'set'|'update'|'merge'} [options.method] How to store the imported data: 'set' and 'update' will use the same logic as when calling 'set' or 'update' on the target, 
+     * 'merge' will do something special: it will use 'update' logic on all nested child objects: 
+     * consider existing data `{ users: { ewout: { name: 'Ewout Stortenbeker', age: 42 } } }`: 
+     * importing `{ users: { ewout: { country: 'The Netherlands', age: 43 } } }` with `method: 'merge'` on the root node
+     * will effectively add `country` and update `age` properties of "users/ewout", and keep all else the same.4
+     * This method is extremely useful to replicate effective data changes to remote databases.
      * @returns {Promise<void>} returns a promise that resolves once all data is imported
      */
-     async importNode(path, read, options = { format: 'json' }) {
-        const chunkSize = 64 * 1024; // 1KB
+     async importNode(path, read, options = { format: 'json', method: 'set' }) {
+        const chunkSize = 256 * 1024; // 256KB
+        const maxQueueBytes = 1024 * 1024; // 1MB
         let state = {
             data: '',
             index: 0,
-            offset: 0
+            offset: 0,
+            queue: [],
+            queueStartByte: 0,
+            timesFlushed: 0,
+            get processedBytes() {
+                return this.offset + this.index;
+            }
         };
         const readNextChunk = async (append = false) => {
             let data = await read(chunkSize);
@@ -11201,6 +11251,60 @@ class Storage extends SimpleEventEmitter {
 
         const context = { acebase_import_id: ID.generate() };
         const childOptions = { suppress_events: options.suppress_events, context };
+
+        /**
+         * Work in progress (not used yet): queue nodes to store to improve performance
+         * @param {PathInfo} target
+         * @param {any} value
+         */
+        const enqueue = async (target, value) => {
+            state.queue.push({ target, value });
+            if (state.processedBytes >= state.queueStartByte + maxQueueBytes) {
+                // Flush queue, group queued (set) items as update operations on their parents
+                const operations = state.queue.reduce((updates, item) => {
+                    // Optimization idea: find all data we know is complete, add that as 1 set if method !== 'merge'
+                    // Example: queue is something like [
+                    //   "users/user1": {},
+                    //   "users/user1/email": "user@example.com"
+                    //   "users/user1/addresses": {},
+                    //   "users/user1/addresses/address1": {},
+                    //   "users/user1/addresses/address1/city": "Amsterdam",
+                    //   "users/user1/addresses/address2": {}, // We KNOW "users/user1/addresses/address1" is not coming back
+                    //   "users/user1/addresses/address2/city": "Berlin",
+                    //   "users/user2": {} // <-- We KNOW "users/user1" is not coming back!
+                    //]
+                    if (item.target.path === path) {
+                        // This is the import target. If method is 'set' and this is the first flush, add it as 'set' operation.
+                        // Use 'update' in all other cases
+                        updates.push({ op: options.method === 'set' && state.timesFlushed === 0 ? 'set' : 'update', ...item });
+                    }
+                    else {
+                        // Find parent to merge with
+                        const parent = updates.find(other => other.target.isParentOf(item.target));
+                        if (parent) {
+                            parent.value[item.target.key] = item.value;
+                        }
+                        else {
+                            // Parent not found. If method is 'merge', use 'update', otherwise use or 'set'
+                            updates.push({ op: options.method === 'merge' ? 'update' : 'set', ...item });
+                        }
+                    }
+                }, []);
+
+                // Fresh state
+                state.queueStartBytestate.queueStartByte = state.processedBytes;
+                state.queue = [];
+                state.timesFlushed++;
+
+                // Execute db updates
+
+
+            }
+            if (target.path === path) {
+                // This is the import target. If method === 'set'
+
+            }
+        };
 
         /**
          * 
