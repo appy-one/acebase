@@ -1,6 +1,6 @@
 /// <reference types="@types/jasmine" />
 const { DataReference, DataSnapshotsArray, DataReferencesArray, DataReferenceQuery, ObjectCollection } = require("acebase-core");
-const { AceBase } = require("..");
+const { AceBase, ID } = require("..");
 const { createTempDB } = require("./tempdb");
 
 describe('Query', () => {
@@ -167,4 +167,87 @@ describe('Query', () => {
     afterAll(async () => {
         await removeDB();
     });
+});
+
+describe('Query with take/skip', () => {
+    // Based on https://github.com/appy-one/acebase/issues/75
+
+    /** @type {AceBase} */
+    let db;
+    /** @type {{() => Promise<void>}} */
+    let removeDB;
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+
+        const updates = {};
+        for (let i = 0; i < 2000; i++) {
+            updates[ID.generate()] = { letter: String.fromCharCode(97 + Math.floor(Math.random() * 26)) };
+        }
+
+        // create non-indexed collection
+        await db.ref("sort").update(updates);
+        
+        // create indexed collection
+        await db.indexes.create("sort_indexed", "letter");  // | Swap these to
+        await db.ref("sort_indexed").update(updates);       // | improve performance
+
+    }, 60e3);
+
+    afterAll(async () => {
+        await removeDB();
+    });
+    
+    // Non-indexed:
+
+    it('load first 100 sort letter by a-z (non-indexed)', async () => {
+        await db.query("sort").sort("letter", true).take(100).get();
+    }, 30e3);
+
+    it('load second 100 sort letter by a-z (non-indexed)', async () => {
+        await db.query("sort").sort("letter", true).skip(100).take(100).get();
+    }, 30e3);
+
+    it('load third 100 sort letter by a-z (non-indexed)', async () => {
+        await db.query("sort").sort("letter", true).skip(200).take(100).get();
+    }, 30e3);
+
+    it('load first 100 sort letter by z-a (non-indexed)', async () => {
+        await db.query("sort").sort("letter", false).take(100).get();
+    }, 30e3);
+
+    it('load second 100 sort letter by z-a (non-indexed)', async () => {
+        await db.query("sort").sort("letter", false).skip(100).take(100).get();
+    }, 30e3);
+
+    it('load third 100 sort letter by z-a (non-indexed)', async () => {
+        await db.query("sort").sort("letter", false).skip(200).take(100).get();
+    }, 30e3);
+
+    // Indexed:
+
+    it('load first 100 sort letter by a-z (non-indexed)', async () => {
+        await db.query("sort_indexed").sort("letter", true).take(100).get();
+    }, 30e3);
+
+    it('load second 100 sort letter by a-z (non-indexed)', async () => {
+        await db.query("sort_indexed").sort("letter", true).skip(100).take(100).get();
+    }, 30e3);
+
+    it('load third 100 sort letter by a-z (non-indexed)', async () => {
+        await db.query("sort_indexed").sort("letter", true).skip(200).take(100).get();
+    }, 30e3);
+
+    it('load first 100 sort letter by z-a (non-indexed)', async () => {
+        await db.query("sort_indexed").sort("letter", false).take(100).get();
+    }, 30e3);
+
+    it('load second 100 sort letter by z-a (non-indexed)', async () => {
+        await db.query("sort_indexed").sort("letter", false).skip(100).take(100).get();
+    }, 30e3);
+
+    it('load third 100 sort letter by z-a (non-indexed)', async () => {
+        await db.query("sort_indexed").sort("letter", false).skip(200).take(100).get();
+    }, 30e3);
+
 });
