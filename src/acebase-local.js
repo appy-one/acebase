@@ -14,10 +14,10 @@ class AceBaseLocalSettings extends AceBaseBaseSettings {
 
         // Copy IPC and transaction settings to storage settings
         if (typeof options.ipc === 'object') {
-            options.storage.ipc = options.ipc;
+            this.storage.ipc = options.ipc;
         }
         if (typeof options.transactions === 'object') {
-            options.storage.transactions = options.transactions;
+            this.storage.transactions = options.transactions;
         }
     }
 }
