@@ -178,7 +178,8 @@ const WS_CLOSE_SERVER_ERROR = 5;
                         this.storage.debug.error(`Unable to connect to remote IPC server (${event.message}). Trying again in ${retryMs}ms`);
                         const retryOptions:{ maxRetries?: number } = {};
                         if (typeof typeof options?.maxRetries === 'number') { retryOptions.maxRetries = options.maxRetries-1 };
-                        setTimeout(() => { this.connect(retryOptions); }, retryMs);
+                        const timeout = setTimeout(() => { this.connect(retryOptions); }, retryMs);
+                        timeout.unref?.();
                     }
                     else {
                         reject(event);
@@ -200,7 +201,7 @@ const WS_CLOSE_SERVER_ERROR = 5;
                     this.ws.send('ping');
                 }
             }, 500);
-            pingInterval.unref && pingInterval.unref();
+            pingInterval.unref?.();
 
             // Close connection if we're exiting
             process.once('exit', () => {

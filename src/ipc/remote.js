@@ -112,6 +112,7 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
     get version() { return '1.0.0'; }
     connect(options) {
         return new Promise((resolve, reject) => {
+            var _a;
             let connected = false;
             this.ws = new ws.WebSocket(`ws${this.config.ssl ? 's' : ''}://${this.config.host || 'localhost'}:${this.config.port}/${this.config.dbname}/connect?v=${this.version}&id=${this.id}&t=${this.config.token}`); // &role=${this.config.role}
             // Handle connection success
@@ -138,6 +139,7 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
             // });
             // Handle connection error
             this.ws.addEventListener('error', event => {
+                var _a;
                 if (!connected) {
                     // We had no connection yet
                     if (event.message.includes('403')) {
@@ -157,7 +159,8 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
                             retryOptions.maxRetries = options.maxRetries - 1;
                         }
                         ;
-                        setTimeout(() => { this.connect(retryOptions); }, retryMs);
+                        const timeout = setTimeout(() => { this.connect(retryOptions); }, retryMs);
+                        (_a = timeout.unref) === null || _a === void 0 ? void 0 : _a.call(timeout);
                     }
                     else {
                         reject(event);
@@ -180,7 +183,7 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
                     this.ws.send('ping');
                 }
             }, 500);
-            pingInterval.unref && pingInterval.unref();
+            (_a = pingInterval.unref) === null || _a === void 0 ? void 0 : _a.call(pingInterval);
             // Close connection if we're exiting
             process.once('exit', () => {
                 this.ws.close(WS_CLOSE_PROCESS_EXIT);
