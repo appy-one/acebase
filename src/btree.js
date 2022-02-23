@@ -2130,7 +2130,7 @@ class BinaryBPlusTree {
                                 },
                                 get values() {
                                     if (this._values !== null) { return this._values; }
-                                    throw new Error('ext_data values were not read yet. use entry.extData.loadValues() first')
+                                    throw new Error('ext_data values were not read yet. use entry.extData.loadValues() first');
                                 },
                                 set values(values) {
                                     this._values = values;
@@ -4924,13 +4924,13 @@ class BinaryBPlusTree {
         }
         finally {
             mark('end');
-            if (perf) {
-                // inspect perf here
-                console.log(`[perf] tree rebuild took ${measure('start', 'end')}ms`);
-                console.log(`[perf] getLeafStartKeys: ${measure('getLeafStartKeys.start', 'getLeafStartKeys.end')}ms`);
-                console.log(`[perf] getEntries: ${measure('getEntries.first', 'getEntries.last')}ms`);
-                console.log(`[perf] tree.create: ${measure('tree.createStart', 'tree.createEnd')}ms`);
-            }
+            // if (perf) {
+            //     // inspect perf here
+            //     console.log(`[perf] tree rebuild took ${measure('start', 'end')}ms`);
+            //     console.log(`[perf] getLeafStartKeys: ${measure('getLeafStartKeys.start', 'getLeafStartKeys.end')}ms`);
+            //     console.log(`[perf] getEntries: ${measure('getEntries.first', 'getEntries.last')}ms`);
+            //     console.log(`[perf] tree.create: ${measure('tree.createStart', 'tree.createEnd')}ms`);
+            // }
         }
     }
 
@@ -6805,6 +6805,7 @@ class TX {
 module.exports = { 
     BPlusTree,
     BinaryBPlusTree,
+    BinaryBPlusTreeLeaf,
     BinaryBPlusTreeLeafEntry,
     BPlusTreeBuilder,
     BinaryWriter,
