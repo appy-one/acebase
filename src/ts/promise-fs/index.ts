@@ -300,4 +300,14 @@ export abstract class pfs {
             });
         });
     }
+
+    /**
+     * Opens a file and returns a writable stream
+     * @param path A path to a file
+     * @param options encoding or options
+     * @returns Returns a new WriteStream object
+     */
+    static createWriteStream(path:string, options?: string|Partial<{ flags: string; encoding: BufferEncoding; fd: number; mode: number; autoClose: boolean; emitClose: boolean; start: number; fs: any }>) {
+        return fs.createWriteStream(path, options);
+    }
 }
