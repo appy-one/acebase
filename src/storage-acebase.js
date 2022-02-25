@@ -1,4 +1,3 @@
-const fs = require('fs');
 const { pfs } = require('./promise-fs');
 const { ID, PathInfo, PathReference, Utils, ColorStyle, PartialArray } = require('acebase-core');
 const { concatTypedArrays, bytesToNumber, numberToBytes, encodeString, decodeString, cloneObject } = Utils;
@@ -135,7 +134,9 @@ class AceBaseStorage extends Storage {
                 // convert it to a Buffer instance or fs.write will FAIL.
                 buffer = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
             }
-            console.assert(buffer instanceof Buffer, 'buffer argument must be a Buffer or Uint8Array');
+            else if (!(buffer instanceof Buffer)) {
+                throw new Error('DEV ERROR: buffer argument must be a Buffer or Uint8Array');
+            }
             if (length === -1) {
                 length = buffer.byteLength;
             }
@@ -855,7 +856,7 @@ class AceBaseStorage extends Storage {
         };
 
         // Open or create database 
-        fs.exists(filename, async (exists) => {
+        pfs.exists(filename).then(async (exists) => {
             if (exists) {
                 // Open
                 openDatabaseFile(false);
