@@ -38,7 +38,7 @@ class BrowserAceBase extends AceBase {
             throw new Error(deprecatedConstructorError);
         }
         super(name, settings);
-        this.settings.ipcEvents = settings.multipleTabs === true;
+        this.settings.ipcEvents = settings.multipleTabs !== false; // Enable browser IPC by default
     }
 
     /**
