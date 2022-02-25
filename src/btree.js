@@ -1761,36 +1761,36 @@ class BPlusTreeBuilder {
         return tree;
     }
 
-    dumpToFile(filename) {
-        const fs = require('fs');
-        fs.appendFileSync(filename, this.uniqueKeys + '\n');
-        fs.appendFileSync(filename, this.fillFactor + '\n');
-        for (let [key, val] of this.list) {
-            let json = JSON.stringify({ key, val }) + '\n';
-            fs.appendFileSync(filename, json);
-        }
-    }
+    // dumpToFile(filename) {
+    //     const fs = require('fs');
+    //     fs.appendFileSync(filename, this.uniqueKeys + '\n');
+    //     fs.appendFileSync(filename, this.fillFactor + '\n');
+    //     for (let [key, val] of this.list) {
+    //         let json = JSON.stringify({ key, val }) + '\n';
+    //         fs.appendFileSync(filename, json);
+    //     }
+    // }
 
-    static fromFile(filename) {
-        const fs = require('fs');
-        const entries = fs.readFileSync(filename, 'utf8')
-            .split('\n')
-            .map(str => str.length > 0 ? JSON.parse(str) : '');
+    // static fromFile(filename) {
+    //     const fs = require('fs');
+    //     const entries = fs.readFileSync(filename, 'utf8')
+    //         .split('\n')
+    //         .map(str => str.length > 0 ? JSON.parse(str) : '');
 
-        const last = entries.pop(); // Remove last empty one (because split \n)
-        console.assert(last === '');
-        const uniqueKeys = entries.shift() === 'true';
-        const fillFactor = parseInt(entries.shift());
-        let builder = new BPlusTreeBuilder(uniqueKeys, fillFactor);
-        // while(entries.length > 0) {
-        //     let entry = entries.shift();
-        //     builder.list.set(entry.key, entry.val);
-        // }
-        for (let i = 0; i < entries.length; i++) {
-            builder.list.set(entries[i].key, entries[i].val);
-        }
-        return builder;
-    }
+    //     const last = entries.pop(); // Remove last empty one (because split \n)
+    //     console.assert(last === '');
+    //     const uniqueKeys = entries.shift() === 'true';
+    //     const fillFactor = parseInt(entries.shift());
+    //     let builder = new BPlusTreeBuilder(uniqueKeys, fillFactor);
+    //     // while(entries.length > 0) {
+    //     //     let entry = entries.shift();
+    //     //     builder.list.set(entry.key, entry.val);
+    //     // }
+    //     for (let i = 0; i < entries.length; i++) {
+    //         builder.list.set(entries[i].key, entries[i].val);
+    //     }
+    //     return builder;
+    // }
 }
 
 class BinaryBPlusTree {
@@ -6550,7 +6550,9 @@ class BinaryReader {
      */
     async init() {
         const chunk = await this.read(0, this.chunkSize);
-        console.assert(chunk instanceof Buffer, 'read function must return a Buffer');
+        if (!(chunk instanceof Buffer || chunk instanceof Uint8Array)) {
+            throw new Error('DEV ERROR: read function must return a Buffer or Uint8Array');
+        }
         this.data = chunk;
         this.offset = 0;
         this.index = 0;
@@ -6600,7 +6602,9 @@ class BinaryReader {
     async more(chunks = 1) {
         const length = chunks * this.chunkSize;
         const nextChunk = await this.read(this.offset + this.data.length, length);
-        console.assert(nextChunk instanceof Buffer, 'read function must return a Buffer');
+        if (!(nextChunk instanceof Buffer || nextChunk instanceof Uint8Array)) {
+            throw new Error('DEV ERROR: read function must return a Buffer or Uint8Array');
+        }
 
         // Let go of old data before current index:
         this.data = this.data.slice(this.index);
