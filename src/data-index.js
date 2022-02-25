@@ -254,7 +254,7 @@ class DataIndex {
             // Read signature
             let result = await pfs.read(fd, Buffer.alloc(10));
             // Check signature
-            if (result.buffer.toString() !== 'ACEBASEIDX') {
+            if (!result.buffer.every((byte, i) => 'ACEBASEIDX'.charCodeAt(i) === byte)) {
                 throw new Error(`File "${filePath}" is not an AceBase index. If you get this error after updating acebase, delete the index file and rebuild it`);
             }
             // Read layout_version
@@ -958,7 +958,7 @@ class DataIndex {
         const buildFile = this.fileName + '.build';
         const createBuildFile = () => {
             return new Promise((resolve, reject) => {
-                const buildWriteStream = pfs.fs.createWriteStream(buildFile, { flags: pfs.flags.readAndAppendAndCreate });
+                const buildWriteStream = pfs.createWriteStream(buildFile, { flags: pfs.flags.readAndAppendAndCreate });
                 const streamState = { wait: false, chunks: [] };
                 buildWriteStream.on('error', (err) => {
                     console.error(err);
@@ -993,6 +993,7 @@ class DataIndex {
                 buildWriteStream.on('drain', () => {
                     // Write queued chunks
                     let totalBytes = streamState.chunks.reduce((total, bytes) => total + bytes.length, 0);
+                    if (totalBytes === 0) { return; }
                     let buffer = new Uint8Array(totalBytes);
                     let offset = 0;
                     streamState.chunks.forEach(bytes => {
@@ -1401,7 +1402,8 @@ class DataIndex {
                     });
 
                     // write batch
-                    let batchStream = pfs.fs.createWriteStream(`${buildFile}.${batchNr}`, { flags: pfs.flags.appendAndCreate });
+                    let batchStream = pfs.createWriteStream(`${buildFile}.${batchNr}`, { flags: pfs.flags.appendAndCreate });
+                    await new Promise((resolve) => batchStream.once('open', resolve));
                     for (const key of sortedKeys) {
                         const values = map.get(key);
                         const isDateKey = values.dateKey === true;
@@ -1465,7 +1467,8 @@ class DataIndex {
                 }
 
                 // create write stream for merged data
-                const outputStream = pfs.fs.createWriteStream(mergeFile, { flags: pfs.flags.writeAndCreate });
+                const outputStream = pfs.createWriteStream(mergeFile, { flags: pfs.flags.writeAndCreate });
+                await new Promise((resolve) => outputStream.once('open', resolve));
                 // const outputStream = BinaryWriter.forFunction((data, position) => {
                 //     return pfs.write(fd, data, 0, data.byteLength, position);
                 // });
@@ -2132,7 +2135,7 @@ class DataIndex {
             await pfs.write(fd, Buffer.from(header));
             // append binary tree data
             const tree = builder.create();
-            const stream = pfs.fs.createWriteStream(null, { fd, autoClose: false });
+            const stream = pfs.createWriteStream(null, { fd, autoClose: false });
             const references = [];
             const writer = new BinaryWriter(stream, (data, position) => {
                 references.push({ data, position });
