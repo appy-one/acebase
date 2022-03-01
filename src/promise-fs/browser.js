@@ -4,6 +4,7 @@ exports.pfs = void 0;
 const acebase_core_1 = require("acebase-core");
 const flags_1 = require("./flags");
 // Work in progress: browser fs implementation for working with large binary files
+const DEBUG_MODE = false;
 // Polyfill for Node.js Buffer
 class BrowserBuffer {
     constructor() { throw new Error(`Don't use Buffer constructor, use Buffer.alloc or Buffer.from`); }
@@ -27,7 +28,7 @@ class pfs {
     }
     static async open(path, flags, mode) {
         // TODO: flags, mode
-        return await openFile(path);
+        return await openFile(path, flags);
     }
     static async close(fd) {
         return closeFile(fd);
@@ -65,7 +66,8 @@ class pfs {
      * @returns returns a promise that resolves once the file has been written
      */
     static async writeFile(path, data, options) {
-        const fd = await openFile(path);
+        const flag = (typeof options === 'object' && options.flag) || flags_1.flags.write;
+        const fd = await openFile(path, flag);
         await truncate(fd, 0);
         if (typeof data === 'string') {
             const encoding = typeof options === 'string' ? options : options === null || options === void 0 ? void 0 : options.encoding;
@@ -109,9 +111,9 @@ class pfs {
      * @returns returns a promise that resolves with a string if an encoding was specified, or a raw buffer otherwise
      */
     static async readFile(path, options) {
-        const fd = await openFile(path);
+        const fd = await openFile(path, flags_1.flags.read);
         const encoding = typeof options === 'string' ? options : options === null || options === void 0 ? void 0 : options.encoding;
-        const size = openFiles[fd].size;
+        const size = openFiles[fd].stat.size;
         const buffer = new Uint8Array(size); // Buffer.alloc(size);
         await read(fd, buffer, 0, size, 0);
         await closeFile(fd);
@@ -128,7 +130,7 @@ class pfs {
      * @returns returns a promise that resolves once the file has been truncated
      */
     static async truncate(path, len = 0) {
-        const fd = await openFile(path);
+        const fd = await openFile(path, flags_1.flags.write);
         await truncate(fd, len);
         await closeFile(fd);
     }
@@ -265,7 +267,7 @@ class WriteStream extends acebase_core_1.SimpleEventEmitter {
         return this.state.fileState === 'opening';
     }
     async init(path, options) {
-        var _a, _b, _c;
+        var _a, _b;
         this.state = { bytesWritten: 0, path, options, fd: null, position: 0, pendingWrites: 0, fileState: 'opening' };
         this.on('error', err => {
             const autoClose = typeof options !== 'object' || options.autoClose === true;
@@ -274,14 +276,21 @@ class WriteStream extends acebase_core_1.SimpleEventEmitter {
             }
         });
         // open file
-        const flags = (_a = (typeof options === 'object' && options.flags)) !== null && _a !== void 0 ? _a : 'w';
-        const fd = (_b = (typeof options === 'object' && options.fd)) !== null && _b !== void 0 ? _b : await openFile(path, flags);
+        const flag = (typeof options === 'object' && options.flags) || flags_1.flags.write;
+        const alreadyOpen = typeof options === 'object' && typeof options.fd === 'number';
+        const fd = alreadyOpen ? options.fd : await openFile(path, flag);
         const file = openFiles[fd];
         if (!file) {
             const err = new Error('File not open');
             return this.emit('error', err);
         }
-        const position = ((_c = (typeof options === 'object' && options.start)) !== null && _c !== void 0 ? _c : flags.includes('a')) ? file.size : 0;
+        if (alreadyOpen) {
+            // Read file stat again
+            const tx = file.db.transaction('stat', 'readonly');
+            file.stat = await readFileStats(tx.objectStore('stat'));
+            (_a = tx.commit) === null || _a === void 0 ? void 0 : _a.call(tx);
+        }
+        const position = ((_b = (typeof options === 'object' && options.start)) !== null && _b !== void 0 ? _b : flag.includes('a')) ? file.stat.size : 0;
         this.state.fd = fd;
         this.state.position = position;
         this.state.fileState = 'open';
@@ -397,35 +406,26 @@ const openFile = async (path, flags) => {
         request.onupgradeneeded = async () => {
             // db created
             const db = request.result;
-            const metadataStore = db.createObjectStore('metadata');
-            await set(metadataStore, 'path', path);
-            await set(metadataStore, 'created', new Date());
-            await set(metadataStore, 'accessed', new Date());
-            await set(metadataStore, 'modified', new Date());
-            await set(metadataStore, 'size', 0);
-            await set(metadataStore, 'blocks', 0);
-            await set(metadataStore, 'block_size', 4096); // Try 4KB blocks
-            db.createObjectStore('content');
+            // Create stat store
+            const store = db.createObjectStore('stat');
+            const now = new Date();
+            await writeFileStats(null, store, { birthtime: now, ctime: now, mtime: now, atime: now, size: 0, blocks: 0, blksize: 4096 }); // Use 4KB blocks
+            // Create data store
+            db.createObjectStore('data');
         };
         request.onsuccess = async () => {
             var _a;
             // db created / opened
             const db = request.result;
-            const tx = db.transaction('metadata', 'readwrite');
-            const metadataStore = tx.objectStore('metadata');
-            const size = await get(metadataStore, 'size');
-            const blocks = await get(metadataStore, 'blocks');
-            const blockSize = await get(metadataStore, 'block_size');
-            const accessed = await get(metadataStore, 'accessed');
-            const modified = await get(metadataStore, 'modified');
-            const created = await get(metadataStore, 'created');
-            await set(metadataStore, 'accessed', new Date());
-            (_a = tx.commit) === null || _a === void 0 ? void 0 : _a.call(tx);
-            const position = (() => {
-                return 0; // TODO: depends on read/write/append flags?
-            })();
+            const tx = db.transaction('stat', 'readwrite');
+            const store = tx.objectStore('stat');
+            const stat = await readFileStats(store);
+            await writeFileStats(null, store, { atime: new Date() }); // Update access time
+            (_a = tx.commit) === null || _a === void 0 ? void 0 : _a.call(// Update access time
+            tx);
+            const position = flags.includes('a') ? stat.size : 0; // If appending, set position to end of file
             const fd = ++lastFd;
-            openFiles[fd] = { db, path, size, blocks: blocks, blockSize: blockSize, position, created, accessed, modified };
+            openFiles[fd] = { db, path, position, stat };
             resolve(fd);
         };
         request.onerror = event => reject(event.target);
@@ -507,46 +507,43 @@ const write = async (fd, buffer, offset, length, position) => {
     if (updatePosition) {
         position = file.position;
     }
-    console.warn(`File ${file.db.name}: Writing ${length} bytes at position ${position}`);
+    DEBUG_MODE && console.warn(`File ${file.db.name}: Writing ${length} bytes at position ${position}`);
     // What blocks are being written to?
-    const start = getBlockAndOffset(file.blockSize, position);
-    const end = getBlockAndOffset(file.blockSize, position + length);
+    const start = getBlockAndOffset(file.stat.blksize, position);
+    const end = getBlockAndOffset(file.stat.blksize, position + length);
     if (end.offset === 0) {
         end.block--;
-        end.offset = file.blockSize;
+        end.offset = file.stat.blksize;
     }
     // Create transaction
-    const tx = file.db.transaction(['content', 'metadata'], 'readwrite');
-    const store = tx.objectStore('content');
+    const tx = file.db.transaction(['data', 'stat'], 'readwrite');
+    const dataStore = tx.objectStore('data');
     // Fetch blocks and modify data
-    const blocks = await loadBlocks(file, store, start.block, end.block, true);
+    const blocks = await loadBlocks(file, dataStore, start.block, end.block, true);
     let bytesWritten = 0;
     for (let blockNr = start.block; blockNr <= end.block; blockNr++) {
         const block = new Uint8Array(blocks[blockNr]);
-        const length = file.blockSize - (blockNr === start.block ? start.offset : 0) - (blockNr === end.block ? file.blockSize - end.offset : 0);
+        const length = file.stat.blksize - (blockNr === start.block ? start.offset : 0) - (blockNr === end.block ? file.stat.blksize - end.offset : 0);
         const data = new Uint8Array(buffer.buffer, offset + bytesWritten, length);
         block.set(data, blockNr === start.block ? start.offset : 0);
         bytesWritten += length;
     }
     // Write data back to the db
-    const sizeChanged = await writeBlocks(file, store, blocks);
-    if (position + length > file.size) {
-        // Update metadata
-        console.warn(`File ${file.db.name} size changed to ${file.blocks} blocks, last block written to is ${end.block}`);
-        file.blocks = end.block + 1;
-        file.size = position + length;
-        const metadataStore = tx.objectStore('metadata');
-        await Promise.all([
-            set(metadataStore, 'blocks', file.blocks),
-            set(metadataStore, 'size', file.size)
-        ]);
-    }
-    if (end.block >= file.blocks) {
-        console.warn(`File ${file.db.name} has invalid block count: ${file.blocks}, last block written to is ${end.block}`);
+    const sizeChanged = await writeBlocks(file, dataStore, blocks);
+    // Update file stats
+    const statStore = tx.objectStore('stat');
+    const statUpdates = { mtime: new Date() };
+    if (position + length > file.stat.size) {
+        // Update stats
+        statUpdates.blocks = end.block + 1;
+        statUpdates.size = position + bytesWritten; //length;
+        DEBUG_MODE && console.warn(`File ${file.db.name} size changed to ${file.stat.blocks} blocks, last block written to is ${end.block}`);
     }
     if (updatePosition) {
         file.position += bytesWritten;
     }
+    // Write new file stats
+    await writeFileStats(file, statStore, statUpdates);
     // Commit
     (_a = tx.commit) === null || _a === void 0 ? void 0 : _a.call(tx);
     return { bytesWritten, buffer };
@@ -557,36 +554,39 @@ const truncate = async (fd, len) => {
     if (!file) {
         throw new Error('File not open');
     }
-    if (file.size === len) {
+    // Create transaction
+    const tx = file.db.transaction(['data', 'stat'], 'readwrite');
+    // Update file stats
+    const statStore = tx.objectStore('stat');
+    file.stat = await readFileStats(statStore);
+    if (file.stat.size === len) {
         // Filesize stays as it is
         return;
     }
-    // Create transaction
-    const tx = file.db.transaction(['content', 'metadata'], 'readwrite');
-    const store = tx.objectStore('content');
-    if (file.size < len) {
+    const store = tx.objectStore('data');
+    const statUpdates = { size: len, mtime: new Date() };
+    if (file.stat.size < len) {
         // file grows, add blocks
-        const to = getBlockAndOffset(file.blockSize, len);
+        const to = getBlockAndOffset(file.stat.blksize, len);
         if (to.offset === 0) {
             to.block--;
-            to.offset = file.blockSize;
+            to.offset = file.stat.blksize;
         }
         const promises = [];
-        const emptyBlock = new ArrayBuffer(file.blockSize);
-        console.warn(`truncate: file grows, adding blocks ${file.blocks} to ${to.block}`);
-        for (let blockNr = file.blocks; blockNr <= to.block; blockNr++) {
+        const emptyBlock = new ArrayBuffer(file.stat.blksize);
+        DEBUG_MODE && console.warn(`truncate: file grows, adding blocks ${file.stat.blocks} to ${to.block}`);
+        for (let blockNr = file.stat.blocks; blockNr <= to.block; blockNr++) {
             const p = set(store, blockNr, emptyBlock);
             promises.push(p);
         }
         await Promise.all(promises);
-        file.blocks = to.block + 1;
-        file.size = len;
+        statUpdates.blocks = to.block + 1;
     }
     else {
         // file shrinks, remove blocks
-        const from = getBlockAndOffset(file.blockSize, len);
+        const from = getBlockAndOffset(file.stat.blksize, len);
         // Create cursor from start block to the end
-        console.warn(`truncate: file shrinks, removing blocks ${from.block} to ${file.blocks - 1}`);
+        DEBUG_MODE && console.warn(`truncate: file shrinks, removing blocks ${from.block} to ${file.stat.blocks - 1}`);
         await new Promise((resolve, reject) => {
             const cursorRequest = store.openCursor(IDBKeyRange.lowerBound(from.block));
             cursorRequest.onsuccess = async () => {
@@ -617,16 +617,11 @@ const truncate = async (fd, len) => {
             };
             cursorRequest.onerror = event => reject(event.target);
         });
-        file.blocks = len === 0 ? 0 : from.block + 1;
-        file.size = len;
+        statUpdates.blocks = len === 0 ? 0 : from.block + 1;
     }
-    console.warn(`truncated file ${file.db.name} to ${len} bytes, is now ${file.blocks} blocks`);
-    // Update metadata
-    const metadataStore = tx.objectStore('metadata');
-    await Promise.all([
-        set(metadataStore, 'blocks', file.blocks),
-        set(metadataStore, 'size', file.size)
-    ]);
+    // Update stats
+    await writeFileStats(file, statStore, statUpdates);
+    DEBUG_MODE && console.warn(`truncated file ${file.db.name} to ${len} bytes, is now ${file.stat.blocks} blocks`);
     (_a = tx.commit) === null || _a === void 0 ? void 0 : _a.call(tx);
 };
 /**
@@ -649,15 +644,16 @@ const read = async (fd, buffer, offset, length, position) => {
         position = file.position;
     }
     // What blocks are being written to?
-    const start = getBlockAndOffset(file.blockSize, position);
-    const end = getBlockAndOffset(file.blockSize, position + length);
+    const start = getBlockAndOffset(file.stat.blksize, position);
+    const end = getBlockAndOffset(file.stat.blksize, position + length);
     if (end.offset === 0) {
         end.block--;
-        end.offset = file.blockSize;
+        end.offset = file.stat.blksize;
     }
     // Create transaction
-    const tx = file.db.transaction(['content', 'metadata'], 'readonly');
-    const store = tx.objectStore('content');
+    const tx = file.db.transaction(['data', 'stat'], 'readonly');
+    file.stat = await readFileStats(tx.objectStore('stat'));
+    const store = tx.objectStore('data');
     // Fetch blocks
     const blocks = await loadBlocks(file, store, start.block, end.block, false);
     (_a = tx.commit) === null || _a === void 0 ? void 0 : _a.call(tx);
@@ -665,13 +661,13 @@ const read = async (fd, buffer, offset, length, position) => {
     let bytesRead = 0;
     const target = new Uint8Array(buffer.buffer, offset);
     for (let blockNr = start.block; blocks[blockNr] && blockNr <= end.block; blockNr++) {
-        const length = file.blockSize - (blockNr === start.block ? start.offset : 0) - (blockNr === end.block ? file.blockSize - end.offset : 0);
+        const length = file.stat.blksize - (blockNr === start.block ? start.offset : 0) - (blockNr === end.block ? file.stat.blksize - end.offset : 0);
         const data = new Uint8Array(blocks[blockNr], blockNr === start.block ? start.offset : 0, length);
         target.set(data, bytesRead);
         bytesRead += length;
     }
-    if (position + bytesRead > file.size) {
-        bytesRead = file.size - position; // Correct amount of bytes read
+    if (position + bytesRead > file.stat.size) {
+        bytesRead = file.stat.size - position; // Correct amount of bytes read
     }
     if (updatePosition) {
         file.position += bytesRead;
@@ -701,7 +697,7 @@ const loadBlocks = async (file, store, start, end, addMissingBlocks = false) => 
     if (addMissingBlocks) {
         for (let i = start; i <= end; i++) {
             if (!(i in blocks)) {
-                blocks[i] = new ArrayBuffer(file.blockSize);
+                blocks[i] = new ArrayBuffer(file.stat.blksize);
             }
         }
     }
@@ -742,8 +738,6 @@ const writeBlocks = async (file, store, blocks) => {
     if (addBlocks) {
         const promises = blockNrs.map(nr => set(store, nr, blocks[nr]));
         await Promise.all(promises);
-        file.blocks = end + 1;
-        // file.size = file.blockSize * file.blocks; // Don't do this, we have to remember the exact size
     }
     return addBlocks;
 };
@@ -754,23 +748,31 @@ const exists = async (path) => {
     return entries.find(e => e.name === fileName) && true;
 };
 const stat = async (path) => {
+    var _a;
     if (!exists(path)) {
         const err = new Error('File does not exist');
         err.code = 'ENOENT';
         throw err;
     }
-    const fd = await openFile(path);
+    const fd = await openFile(path, flags_1.flags.read);
     const file = openFiles[fd];
+    const tx = file.db.transaction('stat', 'readonly');
+    const stat = await readFileStats(tx.objectStore('stat'));
+    (_a = tx.commit) === null || _a === void 0 ? void 0 : _a.call(tx);
     await closeFile(fd);
-    return {
-        size: file.size,
-        blksize: file.blockSize,
-        blocks: file.blocks,
-        atime: file.accessed,
-        ctime: file.created,
-        mtime: file.modified,
-        birthtime: file.created
-    };
+    return stat;
+};
+const readFileStats = async (store) => {
+    const stat = { size: 0, blksize: 0, blocks: 0, birthtime: null, ctime: null, mtime: null, atime: null };
+    const promises = Object.keys(stat).map(async (key) => stat[key] = await get(store, key));
+    await Promise.all(promises);
+    return stat;
+};
+const writeFileStats = async (file, store, stat) => {
+    const keys = Object.keys(stat);
+    file && keys.forEach(key => file.stat[key] = stat[key]);
+    const promises = keys.map(key => set(store, key, stat[key]));
+    await Promise.all(promises);
 };
 const rename = async (oldPath, newPath) => {
     // delete target db if it exists
@@ -796,8 +798,8 @@ const rename = async (oldPath, newPath) => {
     const oldDb = await openDb(oldPath);
     const newDb = await openDb(newPath, db => {
         // Upgrade callback: Create empty stores
-        db.createObjectStore('metadata');
-        db.createObjectStore('content');
+        db.createObjectStore('stat');
+        db.createObjectStore('data');
     });
     // Copy data from old to new
     const copyStore = async (name) => {
@@ -810,8 +812,12 @@ const rename = async (oldPath, newPath) => {
                     return resolve();
                 }
                 const writeTx = newDb.transaction(name, 'readwrite');
-                console.warn(`Copying key ${cursor.key} in store ${name}`);
-                const writeReq = writeTx.objectStore(name).add(cursor.value, cursor.key);
+                DEBUG_MODE && console.warn(`Copying key ${cursor.key} in store ${name}`);
+                let value = cursor.value;
+                if (name === 'stat' && cursor.key === 'ctime') {
+                    value = new Date(); // birthtime and ctime will now have different values
+                }
+                const writeReq = writeTx.objectStore(name).add(value, cursor.key);
                 writeReq.onsuccess = () => {
                     var _a;
                     (_a = writeTx.commit) === null || _a === void 0 ? void 0 : _a.call(writeTx);
@@ -821,8 +827,8 @@ const rename = async (oldPath, newPath) => {
             };
         });
     };
-    await copyStore('content');
-    await copyStore('metadata');
+    await copyStore('data');
+    await copyStore('stat');
     // Close databases
     oldDb.close();
     newDb.close();
