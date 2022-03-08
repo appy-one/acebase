@@ -111,10 +111,9 @@ export abstract class ThreadSafe {
                 },
                 name: options.name,
                 stack: DEBUG_MODE ? (new Error()).stack : 'not available',
-                _timeout: null,
+                _timeout: setTimeout(timeoutHandler, options.timeout, options.critical),
                 _queue: []
             };
-            lock._timeout = setTimeout(timeoutHandler, options.timeout, options.critical);
             _threadSafeLocks.set(target, lock);
             return Promise.resolve(lock);
         }
