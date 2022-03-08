@@ -1,6 +1,6 @@
 const { Utils } = require('acebase-core');
 const { numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
-const ThreadSafe = require('./thread-safe');
+const { ThreadSafe } = require('./thread-safe');
 const { DetailedError } = require('./detailed-error');
 const { pfs } = require('./promise-fs');
 const { Uint8ArrayBuilder } = require('./binary');

@@ -3,7 +3,7 @@ const { Storage, StorageSettings, NodeNotFoundError, NodeRevisionError } = requi
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
 const { pfs } = require('./promise-fs');
-const ThreadSafe = require('./thread-safe');
+const { ThreadSafe } = require('./thread-safe');
 
 let sqlite; // sqlite dependency is lazy loaded in SQLiteStorage constructor
 

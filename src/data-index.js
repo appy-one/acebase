@@ -6,7 +6,7 @@ const { PathInfo, Utils, ID, ColorStyle } = require('acebase-core');
 const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
 const Geohash = require('./geohash');
 const { pfs } = require('./promise-fs');
-const ThreadSafe = require('./thread-safe');
+const { ThreadSafe } = require('./thread-safe');
 const unidecode = require('unidecode');
 const { getValueType } = require('./node-value-types');
 
@@ -981,11 +981,14 @@ class DataIndex {
                         // }
                         this.storage.debug.log(`done writing values to ${buildFile}`);
                         if (streamState.wait) {
+                            this.storage.debug.log(`stream[drain] ${buildFile}`);
                             buildWriteStream.once('drain', () => {
+                                this.storage.debug.log(`stream.end: ${buildFile}`);
                                 buildWriteStream.end(resolve);
                             });
                         }
                         else {
+                            this.storage.debug.log(`stream.end: ${buildFile}`);
                             buildWriteStream.end(resolve);
                         }
                     });                    
