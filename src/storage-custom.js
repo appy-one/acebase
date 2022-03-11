@@ -776,7 +776,7 @@ class CustomStorage extends Storage {
 
                 // Delete all child nodes that were stored in their own record, but are being removed 
                 // Also delete nodes that are being moved from a dedicated record to inline
-                const movingNodes = keys.filter(key => key in mainNode.value); // moving from dedicated to inline value
+                const movingNodes = newIsObjectOrArray ? keys.filter(key => key in mainNode.value) : []; // moving from dedicated to inline value
                 const deleteDedicatedKeys = changes.delete.concat(movingNodes);
                 const deletePromises = deleteDedicatedKeys.map(key => {
                     if (isArray) { key = parseInt(key); }
@@ -1177,11 +1177,13 @@ class CustomStorage extends Storage {
                                 const mergePossible = typeof parent[key] === typeof nodeValue && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeType);
                                 if (!mergePossible) {
                                     // Ignore the value in the child record, see issue #20: "Assertion failed: Merging child values can only be done if existing and current values are both an array or object"
-                                    this.debug.error(`The value stored in node "${otherNode.path}" cannot be merged with the parent node, value will be ignored. This error should disappear once the target node value is updated. See issue #20 for more information`);
+                                    this.debug.error(`The value stored in node "${otherNode.path}" cannot be merged with the parent node, value will be ignored. This error should disappear once the target node value is updated. See issue #20 for more information`, { path, parent, key, nodeType, nodeValue });
                                 }
                                 else {
                                     Object.keys(nodeValue).forEach(childKey => {
-                                        console.assert(!(childKey in parent[key]), 'child key is in parent value already?! HOW?!');
+                                        if (childKey in parent[key]) {
+                                            throw new Error( `Custom storage merge error: child key "${childKey}" is in parent value already! Make sure the get/childrenOf/descendantsOf methods of the custom storage class return values that can be modified by AceBase without affecting the stored source`);
+                                        }
                                         parent[key][childKey] = nodeValue[childKey];
                                     });
                                 }
