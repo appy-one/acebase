@@ -1,6 +1,6 @@
 import { SimpleCache, SimpleEventEmitter } from 'acebase-core';
 import { flags } from './flags';
-import { ThreadSafe, ThreadSafeLock } from '../thread-safe';
+import { ThreadSafe2, ThreadSafeLock2 } from '../thread-safe';
 
 export type TypedArray = Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | BigUint64Array | BigInt64Array;
 
@@ -14,6 +14,10 @@ export type TypedArray = Uint8Array | Int8Array | Uint16Array | Int16Array | Uin
 
 const DEBUG_MODE = false;
 const USE_CACHE = true;
+const MAX_UNCOMMITTED_BLOCKS = 64; // max number of uncommitted block writes before forcing immediate commit (64 = 512KB with 8192b sized blocks)
+const COMMIT_TIMEOUT = 500; // ms after last write
+const BLOCK_SIZE = 8192; // or 4096
+const MAX_CACHE_ENTRIES = 1000;  // 8MB cache with blocksize 8192
 
 // Polyfill for Node.js Buffer
 class BrowserBuffer {
@@ -316,9 +320,10 @@ class WriteStream extends SimpleEventEmitter {
         }
         if (alreadyOpen) {
             // Read file stat again
-            const tx = file.db.transaction('stat', 'readonly');
-            file.stat = await readFileStats(tx.objectStore('stat'));
-            await commitTransaction(tx);
+            // const tx = file.db.transaction('stat', 'readonly');
+            // file.stat = await readFileStats(file, tx.objectStore('stat'));
+            // await commitTransaction(tx);
+            file.stat = await readFileStat(file);
         }
         const position = (typeof options === 'object' && options.start) ?? flag.includes('a') ? file.stat.size : 0;
         
@@ -372,6 +377,10 @@ class WriteStream extends SimpleEventEmitter {
         if (chunk) { 
             this.write(chunk);
         }
+        while (this.state.pendingWrites > 0) {
+            // Wait until all writes are done
+            await this.once('drain');
+        }        
         await this.close(callback);
     }
 
@@ -398,7 +407,7 @@ class WriteStream extends SimpleEventEmitter {
 let lastFd = 0;
 
 type FileStat = { size: number, blksize: number, blocks: number, birthtime: Date, ctime: Date, mtime: Date, atime: Date };
-const openFiles: { [fd: number]: { db: IDBDatabase, path: string, position: number, stat: FileStat, cache: SimpleCache<number, ArrayBuffer> } } = {};
+const openFiles: { [fd: number]: { db: IDBDatabase, path: string, position: number, stat: FileStat, cache: SimpleCache<number, ArrayBuffer>, uncommitted: { blocks: Map<number, ArrayBuffer>, stat: Partial<FileStat>, timeout?: NodeJS.Timeout } } } = {};
 
 /**
  * Inserts or updates a key/key pair
@@ -408,9 +417,9 @@ const openFiles: { [fd: number]: { db: IDBDatabase, path: string, position: numb
  * @returns 
  */
 const set = (store: IDBObjectStore, key: any, value: any) => {
-    return new Promise((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
         const req = store.put(value, key);
-        req.onsuccess = resolve;
+        req.onsuccess = () => resolve();
         req.onerror = reject;
     });
 };
@@ -459,9 +468,10 @@ const openFile = async (path: string, flags:string) : Promise<number> => {
             const db = request.result;
             
             // Create stat store
-            const store = db.createObjectStore('stat');
-            const now = new Date();
-            await writeFileStats(null, store, { birthtime: now, ctime: now, mtime: now, atime: now, size: 0, blocks: 0, blksize: 4096 }); // Use 4KB blocks
+            // const store = 
+            db.createObjectStore('stat');
+            // const now = new Date();
+            // await writeFileStat(null, { birthtime: now, ctime: now, mtime: now, atime: now, size: 0, blocks: 0, blksize: 4096 }); // Use 4KB blocks
 
             // Create data store
             db.createObjectStore('data');
@@ -470,16 +480,32 @@ const openFile = async (path: string, flags:string) : Promise<number> => {
         request.onsuccess = async () => {
             // db created / opened
             const db = request.result;
-            const tx = db.transaction('stat', 'readwrite');
-            const store = tx.objectStore('stat');
+            // const tx = db.transaction('stat', 'readwrite');
+            // const store = tx.objectStore('stat');
 
-            const stat = await readFileStats(store);
-            await writeFileStats(null, store, { atime: new Date() }); // Update access time
-            await commitTransaction(tx);
-
-            const position = flags.includes('a') ? stat.size : 0; // If appending, set position to end of file
             const fd = ++lastFd;
-            openFiles[fd] = { db, path, position, stat, cache: new SimpleCache<number, ArrayBuffer>(30, false) };
+            const cache = new SimpleCache<number, ArrayBuffer>({ cloneValues: false, maxEntries: MAX_CACHE_ENTRIES });
+            const uncommitted = {
+                blocks: new Map<number, ArrayBuffer>(),
+                stat: {}
+            };
+            const file = openFiles[fd] = { db, path, position: 0, stat: null, cache, uncommitted };
+            
+            // Read file stat
+            file.stat = await readFileStat(file);
+
+            if (file.stat.birthtime === null) {
+                // Create new file stats
+                const now = new Date();
+                await writeFileStat(file, { birthtime: now, ctime: now, mtime: now, atime: now, size: 0, blocks: 0, blksize: BLOCK_SIZE }, true); // Use 4KB blocks
+            }
+            else {
+                // Update access time
+                await writeFileStat(file, { atime: new Date() }, true);
+                file.position = flags.includes('a') ? file.stat.size : 0; // If appending, set position to end of file
+            }
+            // await commitTransaction(tx);
+
             resolve(fd);
         };
 
@@ -490,6 +516,10 @@ const openFile = async (path: string, flags:string) : Promise<number> => {
 const closeFile = async (fd: number) => {
     const file = openFiles[fd];
     if (!file) { const err = new Error('File not open'); throw err; }
+    if (USE_CACHE) {
+        await commitWrites(file);
+    }
+    console.warn(`${file.path} closing`);
     file.db.close();
     delete openFiles[fd];
 };
@@ -541,11 +571,11 @@ const listDirEntries = async (path: string) => {
     return entries;
 };
 
-const lockCacheBlocks = async (file: typeof openFiles[0], from: number, to: number, shared: boolean): Promise<ThreadSafeLock[]> => {
-    const cacheLocks: Array<ThreadSafeLock> = [];
+const lockBlocks = async (file: typeof openFiles[0], from: number, to: number, shared: boolean): Promise<ThreadSafeLock2[]> => {
+    const cacheLocks: Array<ThreadSafeLock2> = [];
     // Lock the blocks we'll be reading/writing
     for (let i = from; i <= to; i++) {
-        cacheLocks.push(await ThreadSafe.lock(`${file.db.name}-block${i}`, { shared }));
+        cacheLocks.push(await ThreadSafe2.lock(`${file.db.name}-block${i}`, shared));
     }
     return cacheLocks;
 };
@@ -576,16 +606,17 @@ const write = async (fd: number, buffer: Buffer|TypedArray, offset:number, lengt
         end.offset = file.stat.blksize;
     }
 
-    const cacheLocks: Array<ThreadSafeLock> = USE_CACHE
-        ? await lockCacheBlocks(file, start.block, end.block, false)
-        : [];
+    // const blockLocks: Array<ThreadSafeLock2> = USE_CACHE
+    //     ? await lockBlocks(file, start.block, end.block, false)
+    //     : [];
+    const blockLocks = await lockBlocks(file, start.block, end.block, false);
 
     // Create transaction
-    const tx = file.db.transaction(['data','stat'], 'readwrite');
-    const dataStore = tx.objectStore('data');
+    // const tx = file.db.transaction(['data','stat'], 'readwrite');
+    // const dataStore = tx.objectStore('data');
 
     // Fetch blocks and modify data
-    const blocks = await loadBlocks(file, dataStore, start.block, end.block, true);
+    const blocks = await loadBlocks(file, start.block, end.block, true);
     let bytesWritten = 0;
     for (let blockNr = start.block; blockNr <= end.block; blockNr++) {
         const block = new Uint8Array(blocks[blockNr]);
@@ -596,10 +627,10 @@ const write = async (fd: number, buffer: Buffer|TypedArray, offset:number, lengt
     }
 
     // Write data back to the db
-    const sizeChanged = await writeBlocks(file, dataStore, blocks);
+    const sizeChanged = await writeBlocks(file, blocks);
 
     // Update file stats
-    const statStore = tx.objectStore('stat');
+    // const statStore = tx.objectStore('stat');
     const statUpdates: Partial<FileStat> = { mtime: new Date() };
 
     if (position + length > file.stat.size) {
@@ -614,14 +645,12 @@ const write = async (fd: number, buffer: Buffer|TypedArray, offset:number, lengt
     }
     
     // Write new file stats
-    await writeFileStats(file, statStore, statUpdates);
+    await writeFileStat(file, statUpdates);
 
-    await commitTransaction(tx);
+    // await commitTransaction(tx);
 
-    if (USE_CACHE) {
-        // Release locks
-        cacheLocks.forEach(lock => lock.release());
-    }
+    // Release locks
+    blockLocks.forEach(lock => lock.release());
 
     return { bytesWritten, buffer };
 }
@@ -642,19 +671,16 @@ const truncate = async (fd: number, len: number) => {
     const file = openFiles[fd];
     if (!file) { throw new Error('File not open'); }
 
-    // Create transaction
-    const tx = file.db.transaction(['data','stat'], 'readwrite');
-    
-    // Update file stats
-    const statStore = tx.objectStore('stat');
-    file.stat = await readFileStats(statStore);
+    file.stat = await readFileStat(file);
 
     if (file.stat.size === len) { 
         // Filesize stays as it is
         return; 
     }
 
-    const store = tx.objectStore('data');
+    // Create transaction
+    // const tx = file.db.transaction('data', 'readwrite');
+    // const store = tx.objectStore('data');
     const statUpdates: Partial<FileStat> = { size: len, mtime: new Date() };
     
     if (file.stat.size < len) {
@@ -664,14 +690,20 @@ const truncate = async (fd: number, len: number) => {
             to.block--;
             to.offset = file.stat.blksize;
         }
-        const promises = [];
+        // const promises = [];
+        // let promise: Promise<void>;
         const emptyBlock = new ArrayBuffer(file.stat.blksize);
         DEBUG_MODE && console.warn(`truncate: file grows, adding blocks ${file.stat.blocks} to ${to.block}`);
+        const blocks: { [blockNr: number]: ArrayBuffer } = {};
         for (let blockNr = file.stat.blocks; blockNr <= to.block; blockNr++) {
-            const p = set(store, blockNr, emptyBlock);
-            promises.push(p);
+            // const p = set(store, blockNr, emptyBlock);
+            // promises.push(p);
+            // promise = set(store, blockNr, emptyBlock); // overwrite last promise
+            blocks[blockNr] = emptyBlock;
         }
-        await Promise.all(promises);
+        // await Promise.all(promises);
+        // await promise; // await last promise only
+        await writeBlocks(file, blocks);
 
         statUpdates.blocks = to.block + 1;
     }
@@ -681,6 +713,11 @@ const truncate = async (fd: number, len: number) => {
 
         // Create cursor from start block to the end
         DEBUG_MODE && console.warn(`truncate: file shrinks, removing blocks ${from.block} to ${file.stat.blocks-1}`);
+        
+        // Create transaction
+        const tx = file.db.transaction('data', 'readwrite');
+        const store = tx.objectStore('data');
+
         await new Promise<void>((resolve, reject) => {
             const cursorRequest = store.openCursor(IDBKeyRange.lowerBound(from.block));
             cursorRequest.onsuccess = async () => {
@@ -713,14 +750,16 @@ const truncate = async (fd: number, len: number) => {
             cursorRequest.onerror = event => reject(event.target);
         });
         statUpdates.blocks = len === 0 ? 0 : from.block + 1;
-    }
 
-    // Update stats
-    await writeFileStats(file, statStore, statUpdates);
+        await commitTransaction(tx);
+    }
 
     DEBUG_MODE && console.warn(`truncated file ${file.db.name} to ${len} bytes, is now ${file.stat.blocks} blocks`);
 
-    await commitTransaction(tx);
+    // await commitTransaction(tx);
+
+    // Update stat
+    await writeFileStat(file, statUpdates);
 };
 
 /**
@@ -748,23 +787,23 @@ const read = async (fd: number, buffer: Buffer|TypedArray, offset:number, length
         end.offset = file.stat.blksize;
     }
 
-    const cacheLocks: Array<ThreadSafeLock> = USE_CACHE
-        ? await lockCacheBlocks(file, start.block, end.block, true)
-        : [];
+    // const blockLocks: Array<ThreadSafeLock2> = USE_CACHE
+    //     ? await lockBlocks(file, start.block, end.block, true)
+    //     : [];
+
+    const blockLocks = await lockBlocks(file, start.block, end.block, true);
 
     // Create transaction
-    const tx = file.db.transaction(['data','stat'], 'readonly');
-    file.stat = await readFileStats(tx.objectStore('stat'));
-    const store = tx.objectStore('data');
+    // const tx = file.db.transaction(['data','stat'], 'readonly');
+    file.stat = await readFileStat(file); //, tx.objectStore('stat')
+    // const store = tx.objectStore('data');
 
     // Fetch blocks
-    const blocks = await loadBlocks(file, store, start.block, end.block, false);
-    await commitTransaction(tx);
+    const blocks = await loadBlocks(file, start.block, end.block, false);
+    // await commitTransaction(tx);
 
-    if (USE_CACHE) {
-        // Release locks
-        cacheLocks.forEach(lock => lock.release());
-    }
+    // Release locks
+    blockLocks.forEach(lock => lock.release());
 
     // Copy read data to buffer
     let bytesRead = 0;
@@ -802,15 +841,34 @@ const displayArrayBuffer = (buffer: ArrayBuffer) => {
     return '[' + arr.join(',') + (len < buffer.byteLength ? ',..' : '') + ']';
 }
 
-const loadBlocks = async (file: typeof openFiles[0], store: IDBObjectStore, start: number, end: number, addMissingBlocks: boolean = false) => {
-    // TODO: get blocks from cache if available
+const loadBlocks = async (file: typeof openFiles[0], start: number, end: number, addMissingBlocks: boolean = false) => {
     const blocks:{ [blockNr: number]: ArrayBuffer } = {};
+
+    const lookupLocks = new Map<number, ThreadSafeLock2>();
+    const releaseLookupLock = (blockNr: number) => {
+        const lock = lookupLocks.get(blockNr);
+        lock.release();
+        lookupLocks.delete(blockNr);
+    };
+    if (USE_CACHE) {
+        // Prevent multiple simultanious db lookups for uncached items later on
+        for (let i = start; i <= end; i++) {
+            const lock = await ThreadSafe2.lock(`${file.path}-lookup-${i}`, false);
+            lookupLocks.set(i, lock);
+        }
+    }
 
     if (USE_CACHE) {
         const load = [];
         for (let i = start; i <= end; i++) {
-            if (file.cache.has(i)) {
+            if (file.uncommitted.blocks.has(i)) {
+                blocks[i] = file.uncommitted.blocks.get(i);
+                releaseLookupLock(i);
+                // console.warn(`${file.db.name} Got block ${i} from uncommitted:`, displayArrayBuffer(blocks[i]));
+            }
+            else if (file.cache.has(i)) {
                 blocks[i] = file.cache.get(i);
+                releaseLookupLock(i);
                 // console.warn(`${file.db.name} Got block ${i} from cache:`, displayArrayBuffer(blocks[i]));
             }
             else {
@@ -822,11 +880,16 @@ const loadBlocks = async (file: typeof openFiles[0], store: IDBObjectStore, star
             return blocks;
         }
 
+        DEBUG_MODE && console.warn(`${file.path}: cache miss on blocks ${load.join(',')} of requested ${start}-${end}`);
+
         // Read non-cached blocks from db
         start = load[0];
         end = load.slice(-1)[0];
     }
     
+    const tx = file.db.transaction('data', 'readonly');
+    const store = tx.objectStore('data');
+
     // console.warn(`${file.db.name} Getting blocks ${start}-${end} from db`);
     await new Promise<{ [blockNr: number]: ArrayBuffer }>((resolve, reject) => {
         const cursorRequest = store.openCursor(IDBKeyRange.bound(start, end));
@@ -842,6 +905,10 @@ const loadBlocks = async (file: typeof openFiles[0], store: IDBObjectStore, star
         };
         cursorRequest.onerror = event => reject(event.target);
     });
+    // TODO: Fetch the missing blocks simulatiously with .get instead of cursor above?
+
+    await commitTransaction(tx);
+
     if (addMissingBlocks) {
         for (let i = start; i <= end; i++) {
             if (!(i in blocks)) { 
@@ -851,7 +918,59 @@ const loadBlocks = async (file: typeof openFiles[0], store: IDBObjectStore, star
             }
         }
     }
+
+    // Release remaining lookup locks
+    lookupLocks.forEach(lock => lock.release());
+
     return blocks;
+};
+
+const scheduleCommit = (file: typeof openFiles[0]) => {
+    file.uncommitted.timeout && clearTimeout(file.uncommitted.timeout);
+    if (file.uncommitted.blocks.size > MAX_UNCOMMITTED_BLOCKS) {
+        // Commit NOW
+        return commitWrites(file);
+    }
+    else {
+        file.uncommitted.timeout = setTimeout(commitWrites, COMMIT_TIMEOUT, file);
+    }
+};
+
+const commitWrites = async (file: typeof openFiles[0]) => {
+    // Commit blocks
+    const lock = await ThreadSafe2.lock(file.db.name + '-commit');
+    const totalBlocks = file.uncommitted.blocks.size;
+    const blocks: { [blockNr: number]: ArrayBuffer } = {};
+    file.uncommitted.blocks.forEach((block, nr) => {
+        blocks[nr] = block;
+    });
+    file.uncommitted.blocks.clear();
+
+    try {
+        const promises = [];
+        // const tx = file.db.transaction(['data', 'stat'], 'readwrite');
+        if (Object.keys(file.uncommitted.stat).length > 0) {
+            DEBUG_MODE && console.warn(`${file.path}: committing stat`);
+            // const store = tx.objectStore('stat');
+            const p = writeFileStat(file, file.uncommitted.stat, true);
+            promises.push(p);
+            file.uncommitted.stat = {};
+        }
+        // const store = tx.objectStore('data');
+        if (totalBlocks > 0) {
+            DEBUG_MODE && console.warn(`${file.path}: committing ${totalBlocks} blocks`);
+            const p = writeBlocks(file, blocks, true);
+            promises.push(p);
+            await Promise.all(promises);
+        }
+        // await commitTransaction(tx);
+    }
+    catch (err) {
+        throw new Error(`CRITICAL: Failed to commit ${totalBlocks} blocks to ${file.db.name}: ${err.message}`);
+    }
+    finally {
+        lock.release();
+    }
 };
 
 /**
@@ -861,58 +980,100 @@ const loadBlocks = async (file: typeof openFiles[0], store: IDBObjectStore, star
  * @param blocks 
  * @returns whether blocks were added and file metadata should be updated
  */
-const writeBlocks = async (file: typeof openFiles[0], store: IDBObjectStore, blocks: { [blockNr: number]: ArrayBuffer }) => {
-    const blockNrs = Object.keys(blocks).map(p => +p);
+const writeBlocks = async (file: typeof openFiles[0], blocks: { [blockNr: number]: ArrayBuffer }, commit: boolean = false) => {
+    const blockNrs = Object.keys(blocks).map(p => +p).sort();
     if (blockNrs.length === 0) {
         debugger;
     }
     const start = blockNrs[0], end = blockNrs.slice(-1)[0];
     
     // console.warn(`${file.db.name} writing block(s) ${blockNrs.join(',')}`);
-    if (USE_CACHE) {
+    if (USE_CACHE && !commit) {
         // update cache
         blockNrs.forEach(nr => {
+            // Add to uncommitted data
+            file.uncommitted.blocks.set(nr, blocks[nr]);
+
             // console.warn(`(write) ${file.db.name} updating cache for block ${nr}:`, displayArrayBuffer(blocks[nr]));
-            file.cache.set(nr, blocks[nr]);
-        });
-        // TODO: use debounce to commit later - requires own transaction
-    }
-
-    // Update existing blocks with cursor
-    const p = new Promise<void>((resolve, reject) => {
-        let pending = blockNrs.length;
-        const handleSuccess = () => { if (--pending === 0) { resolve(); } };
-        const cursorRequest = store.openCursor(IDBKeyRange.bound(start, end));
-        cursorRequest.onsuccess = () => {
-            // console.warn('(write) cursor.onsuccess');
-            const cursor = cursorRequest.result;
-            if (blockNrs.length === 0 || !cursor) { return resolve(); }    
-            const nr = cursor.key as number;
-            const blockIndex = blockNrs.indexOf(nr);
-            if (blockIndex >= 0) {
-                const data = blocks[nr];
-                // console.warn(`(write) ${file.db.name} updating db (cursor) for block ${nr}:`, displayArrayBuffer(blocks[nr]));
-                const req = cursor.update(data);
-                req.onsuccess = handleSuccess;
-                req.onerror = reject;
-                blockNrs.splice(blockIndex, 1);
+            if (file.cache.has(nr)) {
+                // Update cache
+                file.cache.set(nr, blocks[nr]);
             }
-            cursor.continue();
-        };
-        cursorRequest.onerror = event => reject(event.target);
-    });
-    await p;
-
-    // Add new blocks if there were any left
-    const addBlocks = blockNrs.length > 0;
-    if (addBlocks) {
-        const promises = blockNrs.map(nr => {
-            // console.warn(`(write) ${file.db.name} updating db (set) for block ${nr}:`, displayArrayBuffer(blocks[nr]));
-            set(store, nr, blocks[nr])
         });
-        await Promise.all(promises);
+
+        // commit later
+        return scheduleCommit(file);
     }
-    return addBlocks;
+
+    const tx = file.db.transaction('data', 'readwrite');
+    const store = tx.objectStore('data');
+
+    // // Update block ranges with cursor (DISABLED, .put on each block is faster)
+    // const updateRange = async (start: number, end: number) => {
+    //     // Update a range of blocks
+    //     await new Promise<void>((resolve, reject) => {
+    //         let pending = blockNrs.length;
+    //         const handleSuccess = () => { if (--pending === 0) { resolve(); } };
+    //         const cursorRequest = store.openCursor(IDBKeyRange.bound(start, end));
+    //         cursorRequest.onsuccess = () => {
+    //             // console.warn('(write) cursor.onsuccess');
+    //             const cursor = cursorRequest.result;
+    //             if (blockNrs.length === 0 || !cursor) { return resolve(); }    
+    //             const nr = cursor.key as number;
+    //             const blockIndex = blockNrs.indexOf(nr);
+    //             if (blockIndex >= 0) {
+    //                 const data = blocks[nr];
+    //                 // console.warn(`(write) ${file.db.name} updating db (cursor) for block ${nr}:`, displayArrayBuffer(blocks[nr]));
+    //                 const req = cursor.update(data);
+    //                 req.onsuccess = handleSuccess;
+    //                 req.onerror = reject;
+    //                 blockNrs.splice(blockIndex, 1);
+    //             }
+    //             cursor.continue();
+    //         };
+    //         cursorRequest.onerror = event => reject(event.target);
+    //     });
+    // };
+    // const ranges = blockNrs.reduce((ranges, nr) => {
+    //     if (nr > file.stat.blocks) { return ranges; }
+    //     const lastRange = ranges.slice(-1)[0];
+    //     if (!lastRange || lastRange.end + 1 !== nr) {
+    //         ranges.push({ start: nr, end: nr });
+    //     }
+    //     else {
+    //         lastRange.end = nr;
+    //     }
+    //     return ranges;
+    // }, [] as Array<{ start: number, end: number }>);
+
+    // for (let { start, end } of ranges) {
+    //     await updateRange(start, end);
+    // }
+
+    // // Add new blocks if there were any left
+    // const addBlocks = blockNrs.length > 0;
+    // if (addBlocks) {
+    //     const promises = blockNrs.map(nr => {
+    //         // console.warn(`(write) ${file.db.name} updating db (set) for block ${nr}:`, displayArrayBuffer(blocks[nr]));
+    //         set(store, nr, blocks[nr])
+    //     });
+    //     await Promise.all(promises);
+    // }
+    // return addBlocks;
+
+    const addBlocks = file.stat.blocks <= end; // blockNrs.length > 0;
+    // const promises = blockNrs.map(nr => {
+    //     // console.warn(`(write) ${file.db.name} updating db (set) for block ${nr}:`, displayArrayBuffer(blocks[nr]));
+    //     set(store, nr, blocks[nr]);
+    // });
+    // await Promise.all(promises);
+
+    // await the last promise only 
+    await blockNrs.reduce((p, nr) => set(store, nr, blocks[nr]), Promise.resolve());
+
+    await commitTransaction(tx);
+
+    return addBlocks;    
 }
 
 const exists = async (path: string) => {
@@ -931,26 +1092,49 @@ const stat = async (path: string): Promise<{ size: number, blksize: number, bloc
     const fd = await openFile(path, flags.read);
     const file = openFiles[fd];
 
-    const tx = file.db.transaction('stat', 'readonly');
-    const stat = await readFileStats(tx.objectStore('stat'));
-    await commitTransaction(tx);
+    // const tx = file.db.transaction('stat', 'readonly');
+    // const stat = await readFileStats(file, tx.objectStore('stat'));
+    // await commitTransaction(tx);
+    const stat = await readFileStat(file);
 
     await closeFile(fd);
     return stat;
 };
 
-const readFileStats = async (store: IDBObjectStore) => {
+const readFileStat = async (file: typeof openFiles[0]) => {
+    if (USE_CACHE && file.stat) {
+        return file.stat;
+    }
+    const tx = file.db.transaction('stat', 'readonly');
+    const store = tx.objectStore('stat');
+
     const stat:FileStat = { size: 0, blksize: 0, blocks: 0, birthtime: null, ctime: null, mtime: null, atime: null };
-    const promises = Object.keys(stat).map(async key => stat[key] = await get(store, key));
+    const promises = Object.keys(stat).map(async key => {
+        const val = await get(store, key);
+        if (typeof val !== 'undefined') { stat[key] = val; }
+    });
     await Promise.all(promises);
+
+    await commitTransaction(tx);
+
     return stat;
 };
 
-const writeFileStats = async (file: typeof openFiles[0], store: IDBObjectStore, stat: Partial<FileStat>) => {
+const writeFileStat = async (file: typeof openFiles[0], stat: Partial<FileStat>, commit: boolean = false) => {
     const keys = Object.keys(stat);
     file && keys.forEach(key => file.stat[key] = stat[key]);
+    if (USE_CACHE && file && !commit) {
+        keys.map(key => file.uncommitted.stat[key] = stat[key]);
+        scheduleCommit(file);
+    }
+
+    const tx = file.db.transaction('stat', 'readwrite');
+    const store = tx.objectStore('stat');
+
     const promises = keys.map(key => set(store, key, stat[key]));
     await Promise.all(promises);
+
+    await commitTransaction(tx);
 }
 
 const rename = async (oldPath: string, newPath:string) => {
