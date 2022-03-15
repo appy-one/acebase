@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ThreadSafe = void 0;
+exports.ThreadSafe2 = exports.ThreadSafeLock2 = exports.ThreadSafe = void 0;
+const acebase_core_1 = require("acebase-core");
 /** Set to true to add stack traces to achieved locks (performance impact!) */
 const DEBUG_MODE = false;
 const _lockTimeoutMsg = 'Lock "${name}" timed out! lock.release() was not called in a timely fashion';
@@ -79,10 +80,9 @@ class ThreadSafe {
                 },
                 name: options.name,
                 stack: DEBUG_MODE ? (new Error()).stack : 'not available',
-                _timeout: null,
+                _timeout: setTimeout(timeoutHandler, options.timeout, options.critical),
                 _queue: []
             };
-            lock._timeout = setTimeout(timeoutHandler, options.timeout, options.critical);
             _threadSafeLocks.set(target, lock);
             return Promise.resolve(lock);
         }
@@ -103,4 +103,80 @@ class ThreadSafe {
     }
 }
 exports.ThreadSafe = ThreadSafe;
+/**
+ * New locking mechasnism that supports exclusive or shared locking
+ */
+class ThreadSafeLock2 extends acebase_core_1.SimpleEventEmitter {
+    constructor(target, shared) {
+        super();
+        this.target = target;
+        this.shares = 0;
+        this.queue = [];
+        this._shared = shared;
+        this.achieved = new Date();
+    }
+    get shared() { return this._shared; }
+    release() {
+        if (this.shared && this.shares > 0) {
+            this.shares--;
+        }
+        else if (this.queue.length > 0) {
+            const next = this.queue.shift();
+            this._shared = next.shared;
+            next.grant();
+            if (next.shared) {
+                // Also grant other pending shared requests
+                while (this.queue.length > 0 && this.queue[0].shared) {
+                    this.queue.shift().grant();
+                }
+            }
+        }
+        else {
+            // No more shares, no queue: this lock can be now be released entirely
+            this.emitOnce('released');
+        }
+    }
+    async request(shared) {
+        if (this.shared && shared) {
+            // Grant!
+            this.shares++;
+        }
+        else {
+            // Add to queue, wait until granted
+            let grant;
+            const promise = new Promise(resolve => { grant = resolve; });
+            this.queue.push({ shared, grant });
+            await promise;
+        }
+    }
+}
+exports.ThreadSafeLock2 = ThreadSafeLock2;
+const locks2 = new Map();
+class ThreadSafe2 {
+    /**
+     *
+     * @param target Target object to lock. Do not use object references!
+     * @param options Locking options
+     * @returns returns a lock
+     */
+    static async lock(target, shared = false) {
+        const timeout = 60 * 1000;
+        if (!locks2.has(target)) {
+            // New lock
+            const lock = new ThreadSafeLock2(target, shared);
+            locks2.set(target, lock);
+            lock.once('released', () => {
+                locks2.delete(target);
+            });
+            return lock;
+        }
+        else {
+            // Existing lock
+            const lock = locks2.get(target);
+            await lock.request(shared);
+            return lock;
+        }
+    }
+}
+exports.ThreadSafe2 = ThreadSafe2;
 //# sourceMappingURL=thread-safe.js.map
