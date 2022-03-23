@@ -93,6 +93,19 @@ describe('string index', () => {
 
     }, 60000);
 
+    it('path can start with wildcard', async () => {
+        // Created for issue https://github.com/appy-one/acebase/issues/86
+
+        await db.indexes.create("*/media", "timestamp");
+
+        const postSnapshots = await db.query("*/media")
+            .take(100)
+            .sort("timestamp", false)
+            .get();
+
+    }, 60000);
+
+
     it('without included columns', async () => {
         // Build
         await db.indexes.create('meteorites', 'name');
