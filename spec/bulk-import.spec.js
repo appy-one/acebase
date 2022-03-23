@@ -28,7 +28,7 @@ describe('bulk import', () => {
         const path = '';
         const log = console.log.bind(console);
         const frac = (n, total) => `${n} of ${total}`;
-        const numStargazerRows = 3_000_000;
+        const numStargazerRows = 3 * 1000 * 1000;
         const processLines = async (path, callback) => {
             // Generate 1 CSV line item
             const data = new Array(50).fill('12345678901234').join('\t');
@@ -41,7 +41,7 @@ describe('bulk import', () => {
         
         let giantObj = {};
         await processLines(path + '/data.tsv', async (line, num) => {
-            if (num % 10_000 === 0) {
+            if (num % 10000 === 0) {
                 log('on line', frac(num, numStargazerRows))
                 // log('putting batch in database:')
                 await db.ref('gazers').update(giantObj)

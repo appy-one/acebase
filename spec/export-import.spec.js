@@ -29,7 +29,7 @@ describe('export/import', () => {
         const obj = { 
             text: 'Checking typesafety',
             date: new Date(),
-            binary: new TextEncoder().encode('binary data'),
+            binary: new Uint8Array([98, 105, 110, 97, 114, 121, 32, 100, 97, 116, 97]), // TextEncoder().encode('binary data'),
             reference: new PathReference('some/other/data')
         };
         await ref.set(obj);

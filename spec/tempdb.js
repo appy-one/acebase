@@ -21,7 +21,16 @@ module.exports = {
 
             // Remove database
             const dbdir = `${__dirname}/${dbname}.acebase`;
-            await pfs.rmdir(dbdir, { recursive: true });
+
+            if (process.versions.node.split('.')[0] < 12) {
+                // console.error(`Node ${process.version} cannot remove temp database directory ${dbdir}. Remove it manually!`);
+                const files = await pfs.readdir(dbdir);
+                await Promise.all(files.map(file => pfs.rm(dbdir + '/' + file)));
+                await pfs.rmdir(dbdir);
+            }
+            else {
+                await pfs.rmdir(dbdir, { recursive: true });
+            }
         }
 
         return { db, removeDB };

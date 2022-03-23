@@ -14,7 +14,9 @@ const removeDB = async (db) => {
 
     // Remove database
     const dbdir = `${db.api.storage.settings.path}/${db.name}.acebase`;
-    await pfs.rmdir(dbdir, { recursive: true });
+    const files = await pfs.readdir(dbdir);
+    await Promise.all(files.map(file => pfs.rm(dbdir + '/' + file)));
+    await pfs.rmdir(dbdir);
 }
 
 describe('constructor', () => {
