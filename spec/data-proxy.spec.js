@@ -8,6 +8,9 @@ describe('DataProxy', () => {
     it('Proxy1', async() => {
         const { db, removeDB } = await createTempDB();
 
+        // Use AceBase's own basic Observable shim because rxjs is not installed
+        db.setObservable('shim');
+
         const delay = () => new Promise(resolve => setTimeout(resolve, 1000));
 
         const ref = db.ref('observable_chats/chat3');
