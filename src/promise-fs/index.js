@@ -295,14 +295,24 @@ class pfs {
      */
     static rmdir(path, options) {
         return new Promise((resolve, reject) => {
-            fs.rmdir(path, options, (err) => {
+            const callback = (err) => {
                 if (err) {
                     reject(err);
                 }
                 else {
                     resolve();
                 }
-            });
+            };
+            if (+process.versions.node.split('.')[0] < 12) {
+                // Node.js did not support options before v12
+                if (typeof options !== 'undefined') {
+                    throw new Error(`rmdir options not supported in NodeJS ${process.version}`);
+                }
+                fs.rmdir(path, callback);
+            }
+            else {
+                fs.rmdir(path, options, callback);
+            }
         });
     }
     /**

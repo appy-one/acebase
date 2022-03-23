@@ -1683,7 +1683,7 @@ class Storage extends SimpleEventEmitter {
                 }
             }
             else if (typeof data === 'object') {
-                data = new TextDecoder().decode(data);
+                data = Utils.decodeString(data);
             }
             if (append) {
                 state.data += data;

@@ -259,10 +259,20 @@ export abstract class pfs {
      */
     static rmdir(path: string|Buffer|fs.PathLike, options?: { maxRetries?: number, recursive?: boolean, retryDelay?: number }): Promise<void> {
         return new Promise((resolve, reject) => {
-            fs.rmdir(path, options, (err) => {
+            const callback = (err) => {
                 if (err) { reject(err); }
                 else { resolve(); }
-            });
+            };
+            if (+process.versions.node.split('.')[0] < 12) {
+                // Node.js did not support options before v12
+                if (typeof options !== 'undefined') {
+                    throw new Error(`rmdir options not supported in NodeJS ${process.version}`);
+                }
+                fs.rmdir(path, callback);
+            }
+            else {
+                fs.rmdir(path, options, callback);
+            }
         });
     }
 
