@@ -29,6 +29,7 @@ class AceBaseStorageSettings extends StorageSettings {
      * @param {number} [settings.pageSize=1024] page size in records, defaults to 1024 (recommended). Max is 65536
      * @param {'data'|'transaction'|'auth'} [settings.type='data'] type of database content. Determines the name of the file within the .acebase directory
      * @param {AceBaseTransactionLogSettings} [settings.transactions] settings to use for transaction logging
+     * @param {boolean} [settings.readOnly] Whether to open the database file in readonly mode
      */
     constructor(settings) {
         super(settings);
@@ -36,13 +37,14 @@ class AceBaseStorageSettings extends StorageSettings {
         this.recordSize = settings.recordSize || 128;
         this.pageSize = settings.pageSize || 1024;
         this.type = settings.type || 'data';
+        this.readOnly = settings.readOnly === true;
         this.transactions = new AceBaseTransactionLogSettings(settings.transactions);
     }
 }
 
 class AceBaseTransactionLogSettings {
     /**
-     * ALPHA functionality - logs mutations made to a separate database file so they can be retrieved later
+     * BETA functionality - logs mutations made to a separate database file so they can be retrieved later
      * for database syncing / replication. Implementing this into acebase itself will allow the current 
      * sync implementation in acebase-client to become better: it can simply request a mutations stream from
      * the server after disconnects by passing a cursor or timestamp, instead of downloading whole nodes before
@@ -130,6 +132,11 @@ class AceBaseStorage extends Storage {
         let fd = null;
 
         const writeData = async (fileIndex, buffer, offset = 0, length = -1) => {
+            if (settings.readOnly) {
+                const err = new Error(`Cannot write to readonly database ${name}`);
+                err.code = 'EPERM'; // This is what NodeJS would throw below
+                throw err;
+            }
             if (buffer.constructor === Uint8Array) { //buffer instanceof Uint8Array) {
                 // If the passsed buffer is of type Uint8Array (which is essentially the same as Buffer),
                 // convert it to a Buffer instance or fs.write will FAIL.
@@ -761,7 +768,7 @@ class AceBaseStorage extends Storage {
                 throw err;
             };
 
-            this.file = fd = await pfs.open(filename, 'r+', 0).catch(err => {
+            this.file = fd = await pfs.open(filename, settings.readOnly === true ? 'r' : 'r+', 0).catch(err => {
                 handleError(err, `Failed to open database file`);
             });
 
@@ -854,82 +861,87 @@ class AceBaseStorage extends Storage {
             return fd;
         };
 
-        // Open or create database 
-        fs.exists(filename, async (exists) => {
-            if (exists) {
-                // Open
-                openDatabaseFile(false);
-            }
-            else if (!this.ipc.isMaster) {
-                // Prevent race condition - let master process create database, poll for existance
-                const poll = () => {
-                    setTimeout(async () => {
-                        exists = await pfs.exists(filename);
-                        if (exists) { openDatabaseFile(); }
-                        else { poll(); }
-                    }, 10); // Wait 10ms before trying again
-                }
-                poll();
-            }
-            else {
-                // Create the file with 64 byte header (settings etc), KIT, FST & root record
-                const version = 1;
-                const headerBytes = 64;
-                const flags = 0; // When implementing settings.fst2 ? 0x2 : 0x0;
+        const createDatabaseFile = async () => {
+            // Create the file with 64 byte header (settings etc), KIT, FST & root record
+            const version = 1;
+            const headerBytes = 64;
+            const flags = 0; // When implementing settings.fst2 ? 0x2 : 0x0;
 
-                let stats = new Uint8Array([
-                    version,    // Version nr
-                    flags,      // flags: [r,r,r,r,r,r,FST2,LOCK]
-                    0,0,0,0,    // Root record pageNr (32 bits)
-                    0,0,        // Root record recordNr (16 bits)
-                    settings.recordSize >> 8 & 0xff,
-                    settings.recordSize & 0xff,
-                    settings.pageSize >> 8 & 0xff,
-                    settings.pageSize & 0xff,
-                    settings.maxInlineValueSize >> 8 & 0xff,
-                    settings.maxInlineValueSize & 0xff
-                ]);
-                let header = concatTypedArrays(descriptor, stats);
-                let padding = new Uint8Array(headerBytes - header.length);
-                padding.fill(0);
-                header = concatTypedArrays(header, padding);
-                
-                // Create object Key Index Table (KIT) to allow very small record creation.
-                // key_index uses 2 bytes, so max 65536 keys could technically be indexed.
-                // Using an average key length of 7 characters, the index would become 
-                // 7 chars + 1 delimiter * 65536 keys = 520KB. That would be total overkill.
-                // The table should be at most 64KB so that means approx 8192 keys can 
-                // be indexed. With shorter keys, this will be more. With longer keys, less.
-                let kit = new Uint8Array(65536 - header.length);
-                kit.fill(0);
-                let uint8 = concatTypedArrays(header, kit);
+            let stats = new Uint8Array([
+                version,    // Version nr
+                flags,      // flags: [r,r,r,r,r,r,FST2,LOCK]
+                0,0,0,0,    // Root record pageNr (32 bits)
+                0,0,        // Root record recordNr (16 bits)
+                settings.recordSize >> 8 & 0xff,
+                settings.recordSize & 0xff,
+                settings.pageSize >> 8 & 0xff,
+                settings.pageSize & 0xff,
+                settings.maxInlineValueSize >> 8 & 0xff,
+                settings.maxInlineValueSize & 0xff
+            ]);
+            let header = concatTypedArrays(descriptor, stats);
+            let padding = new Uint8Array(headerBytes - header.length);
+            padding.fill(0);
+            header = concatTypedArrays(header, padding);
+            
+            // Create object Key Index Table (KIT) to allow very small record creation.
+            // key_index uses 2 bytes, so max 65536 keys could technically be indexed.
+            // Using an average key length of 7 characters, the index would become 
+            // 7 chars + 1 delimiter * 65536 keys = 520KB. That would be total overkill.
+            // The table should be at most 64KB so that means approx 8192 keys can 
+            // be indexed. With shorter keys, this will be more. With longer keys, less.
+            let kit = new Uint8Array(65536 - header.length);
+            let uint8 = concatTypedArrays(header, kit);
 
-                // Create empty 64KB FST ("Free space table")
-                // Each FST record is 8 bytes:
-                //    Page nr: 4 bytes
-                //    Record start nr: 2 bytes
-                //    Record end nr: 2 bytes 
-                // Using a 64KB FST (minus 64B header size) allows 8184 entries: (65536-64) / 8
-                // Defragmentation should kick in when FST is becoming full!
-                let fst = new Uint8Array(65536);
-                fst.fill(0);
-                uint8 = concatTypedArrays(uint8, fst);
+            // Create empty 64KB FST ("Free space table")
+            // Each FST record is 8 bytes:
+            //    Page nr: 4 bytes
+            //    Record start nr: 2 bytes
+            //    Record end nr: 2 bytes 
+            // Using a 64KB FST (minus 64B header size) allows 8184 entries: (65536-64) / 8
+            // Defragmentation should kick in when FST is becoming full!
+            let fst = new Uint8Array(65536);
+            uint8 = concatTypedArrays(uint8, fst);
 
-                const dir = filename.slice(0, filename.lastIndexOf('/'));
-                if (dir !== '.') {
-                    await pfs.mkdir(dir).catch(err => {
-                        if (err.code !== 'EEXIST') { throw err; }
-                    });
-                }
-                
-                await pfs.writeFile(filename, Buffer.from(uint8.buffer)); 
-                await openDatabaseFile(true);
-                // Now create the root record
-                await Node.set(this, '', {});
-                this.rootRecord.exists = true;
-                this.emitOnce('ready');
+            const dir = filename.slice(0, filename.lastIndexOf('/'));
+            if (dir !== '.') {
+                await pfs.mkdir(dir).catch(err => {
+                    if (err.code !== 'EEXIST') { throw err; }
+                });
             }
-        });
+            
+            await pfs.writeFile(filename, Buffer.from(uint8.buffer)); 
+            await openDatabaseFile(true);
+            // Now create the root record
+            await Node.set(this, '', {});
+            this.rootRecord.exists = true;
+            this.emitOnce('ready');
+        };
+
+        // Open or create database
+        const exists = fs.existsSync(filename);
+        if (exists) {
+            // Open
+            openDatabaseFile(false);
+        }
+        else if (settings.readOnly) {
+            throw new Error(`Cannot create readonly database "${name}"`);
+        }
+        else if (!this.ipc.isMaster) {
+            // Prevent race condition - let master process create database, poll for existance
+            const poll = () => {
+                setTimeout(async () => {
+                    const exists = await pfs.exists(filename);
+                    if (exists) { openDatabaseFile(); }
+                    else { poll(); }
+                }, 10); // Wait 10ms before trying again
+            }
+            poll();
+        }
+        else {
+            // Create new file
+            createDatabaseFile();
+        }
 
         this.ipc.once('exit', code => {
             // Close database file
@@ -976,6 +988,10 @@ class AceBaseStorage extends Storage {
         if (!context.acebase_cursor) { throw new Error('context.acebase_cursor must have been set'); }
         if (mutations.list.length === 0) {
             // There were no changes, nothing to log.
+            return;
+        }
+        if (path.startsWith('__')) {
+            // Don't log mutations on private paths
             return;
         }
         if (this.type === 'data') {
@@ -1106,6 +1122,8 @@ class AceBaseStorage extends Storage {
                 const load = (() => {
                     /**
                      * When to include a mutation & what data to include.
+                     * - mutation.path starts with __ (private path)
+                     *      - ignore
                      * - filterPath === null if no filter paths were on the same trail as mutation.path
                      *      - eg: filterPaths on ["books/book1", "books/book2"], mutation.path === "books/book3"
                      *      - ignore
@@ -1121,6 +1139,9 @@ class AceBaseStorage extends Storage {
                      *      - if filterPath has wildcard (*, $var) keys, repeat following step recursively:
                      *      - use target (trailing) data in mutation value (value/books/book1/title) or null
                      */
+                    if (mutation.path.startsWith('__')) {
+                        return 'none';
+                    }
                     if (mutation.timestamp < since || filterPath === null) {
                         return 'none';
                     }
