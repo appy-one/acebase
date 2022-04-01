@@ -1,4 +1,4 @@
-const { Api, ID } = require('acebase-core');
+const { Api, ID, PathInfo } = require('acebase-core');
 const { StorageSettings, NodeNotFoundError } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
@@ -143,17 +143,13 @@ class LocalApi extends Api {
             matches.sort((a,b) => {
                 const compare = (i) => {
                     const o = query.order[i];
-                    let left = a.val[o.key];
-                    let right = b.val[o.key];
-                    // if (typeof left !== typeof right) {
-                    //     // Wow. Using 2 different types in your data, AND sorting on it. 
-                    //     // compare the types instead of their values ;-)
-                    //     left = typeof left;
-                    //     right = typeof right;
-                    // }
-                    if (typeof left === 'undefined' && typeof right !== 'undefined') { return o.ascending ? -1 : 1; }
-                    if (typeof left !== 'undefined' && typeof right === 'undefined') { return o.ascending ? 1 : -1; }
-                    if (typeof left === 'undefined' && typeof right === 'undefined') { return 0; }
+                    const trailKeys = PathInfo.getPathKeys(o.key);
+                    let left = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? key[val] : null, a.val);
+                    let right = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? key[val] : null, b.val);
+                    
+                    if (left === null) { return right === null ? 0 : o.ascending ? -1 : 1; }
+                    if (right === null) { return o.ascending ? 1 : -1; }
+                    
                     // TODO: add collation options using Intl.Collator. Note this also has to be implemented in the matching engines (inclusing indexes)
                     // See discussion https://github.com/appy-one/acebase/discussions/27
                     if (left == right) {
