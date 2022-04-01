@@ -77,16 +77,34 @@ export interface IPCClientSettings {
     /** Role of the IPC Client. There can only be 1 `master`, all other need to be a `worker`. */
     role: 'master'|'worker'
 }
+
+/**
+ * BETA functionality - logs mutations made to a separate database file so they can be retrieved later
+ * for database syncing / replication. Implementing this into acebase itself will allow the current 
+ * sync implementation in acebase-client to become better: it can simply request a mutations stream from
+ * the server after disconnects by passing a cursor or timestamp, instead of downloading whole nodes before
+ * applying local changes. This will also enable horizontal scaling: replication with remote db instances
+ * becomes possible.
+ * 
+ * Still under development, disabled by default. See transaction-logs.spec.js for tests
+ */
 export abstract class TransactionLogSettings {
+    /** Whether to log transactions or not */
     log?: boolean;
+    /** Max age of transactions to keep in logfile. Set to 0 to disable cleaning up and keep all transactions */
     maxAge?: number;
+    /** Whether `update` or `set` operations should not wait until the log item is written. Default is false (do wait) */
     noWait?: boolean;
 }
 
 export class AceBaseStorageSettings extends StorageSettings {
     constructor(settings: AceBaseStorageSettings);
+    /** record size in bytes, defaults to 128 (recommended) */
     recordSize?: number;
+    /** page size in records, defaults to 1024 (recommended) */
     pageSize?: number;
+    /** Whether to open the database file in readonly mode  */
+    readOnly?: boolean;
 }
 
 export class SQLiteStorageSettings extends StorageSettings {
