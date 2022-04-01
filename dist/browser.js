@@ -1866,6 +1866,7 @@ class DataReference {
                 callbacks.splice(callbacks.indexOf(cb), 1);
                 this.db.api.unsubscribe(this.path, event, cb.ourCallback);
                 // Call cancelCallbacks
+                this.db.debug.error(`Subscription "${event}" on path "/${this.path}" canceled because of an error: ${err.message}`);
                 eventPublisher.cancel(err.message);
             };
             let authorized = this.db.api.subscribe(this.path, event, cb.ourCallback, { newOnly: advancedOptions.newOnly, cancelCallback: cancelSubscription, syncFallback: advancedOptions.syncFallback });
@@ -3548,17 +3549,30 @@ exports.SchemaDefinition = SchemaDefinition;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleCache = void 0;
 const utils_1 = require("./utils");
+const calculateExpiryTime = (expirySeconds) => expirySeconds > 0 ? Date.now() + (expirySeconds * 1000) : Infinity;
 /**
  * Simple cache implementation that retains immutable values in memory for a limited time.
  * Immutability is enforced by cloning the stored and retrieved values. To change a cached value, it will have to be `set` again with the new value.
  */
 class SimpleCache {
-    constructor(expirySeconds) {
+    constructor(options) {
+        var _a;
         this.enabled = true;
-        this.expirySeconds = expirySeconds;
+        if (typeof options === 'number') {
+            // Old signature: only expirySeconds given
+            options = { expirySeconds: options };
+        }
+        options.cloneValues = options.cloneValues !== false;
+        if (typeof options.expirySeconds !== 'number' && typeof options.maxEntries !== 'number') {
+            throw new Error(`Either expirySeconds or maxEntries must be specified`);
+        }
+        this.options = options;
         this.cache = new Map();
-        setInterval(() => { this.cleanUp(); }, 60 * 1000); // Cleanup every minute
+        // Cleanup every minute
+        const interval = setInterval(() => { this.cleanUp(); }, 60 * 1000);
+        (_a = interval.unref) === null || _a === void 0 ? void 0 : _a.call(interval);
     }
+    get size() { return this.cache.size; }
     has(key) {
         if (!this.enabled) {
             return false;
@@ -3573,10 +3587,32 @@ class SimpleCache {
         if (!entry) {
             return null;
         } // if (!entry || entry.expires <= Date.now()) { return null; }
-        return utils_1.cloneObject(entry.value);
+        entry.expires = calculateExpiryTime(this.options.expirySeconds);
+        entry.accessed = Date.now();
+        return this.options.cloneValues ? utils_1.cloneObject(entry.value) : entry.value;
     }
     set(key, value) {
-        this.cache.set(key, { value: utils_1.cloneObject(value), expires: Date.now() + (this.expirySeconds * 1000) });
+        if (this.options.maxEntries > 0 && this.cache.size >= this.options.maxEntries && !this.cache.has(key)) {
+            // console.warn(`* cache limit ${this.options.maxEntries} reached: ${this.cache.size}`);
+            // Remove an expired item or the one that was accessed longest ago
+            let oldest = null;
+            const now = Date.now();
+            for (let [key, entry] of this.cache.entries()) {
+                if (entry.expires <= now) {
+                    // Found an expired item. Remove it now and stop
+                    this.cache.delete(key);
+                    oldest = null;
+                    break;
+                }
+                if (!oldest || entry.accessed < oldest.accessed) {
+                    oldest = { key, accessed: entry.accessed };
+                }
+            }
+            if (oldest !== null) {
+                this.cache.delete(oldest.key);
+            }
+        }
+        this.cache.set(key, { value: this.options.cloneValues ? utils_1.cloneObject(value) : value, added: Date.now(), accessed: Date.now(), expires: calculateExpiryTime(this.options.expirySeconds) });
     }
     remove(key) {
         this.cache.delete(key);
@@ -4532,22 +4568,17 @@ function decodeString(buffer) {
         return decoder.decode(buf);
     }
     else if (typeof Buffer === 'function') {
-        // Node.js
-        if (buffer instanceof Buffer) {
-            return buffer.toString('utf-8');
+        // Node.js (v10 and below)
+        if (buffer instanceof Array) {
+            buffer = Uint8Array.from(buffer); // convert to typed array
         }
-        else if (buffer instanceof Array) {
-            const typedArray = Uint8Array.from(buffer);
-            const buf = Buffer.from(typedArray.buffer, typedArray.byteOffset, typedArray.byteOffset + typedArray.byteLength);
-            return buf.toString('utf-8');
+        if (!(buffer instanceof Buffer) && 'buffer' in buffer && buffer.buffer instanceof ArrayBuffer) {
+            buffer = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength); // Convert typed array to node.js Buffer
         }
-        else if ('buffer' in buffer && buffer['buffer'] instanceof ArrayBuffer) {
-            const buf = Buffer.from(buffer['buffer'], buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-            return buf.toString('utf-8');
-        }
-        else {
+        if (!(buffer instanceof Buffer)) {
             throw new Error(`Unsupported buffer argument`);
         }
+        return buffer.toString('utf-8');
     }
     else {
         // Older browsers. Manually decode!
@@ -5216,10 +5247,10 @@ class AceBaseLocalSettings extends AceBaseBaseSettings {
 
         // Copy IPC and transaction settings to storage settings
         if (typeof options.ipc === 'object') {
-            options.storage.ipc = options.ipc;
+            this.storage.ipc = options.ipc;
         }
         if (typeof options.transactions === 'object') {
-            options.storage.transactions = options.transactions;
+            this.storage.transactions = options.transactions;
         }
     }
 }
@@ -5407,7 +5438,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 
 module.exports = { AceBase, AceBaseLocalSettings };
 },{"./api-local":29,"./storage-custom":39,"acebase-core":12}],29:[function(require,module,exports){
-const { Api, ID } = require('acebase-core');
+const { Api, ID, PathInfo } = require('acebase-core');
 const { StorageSettings, NodeNotFoundError } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
@@ -5552,17 +5583,13 @@ class LocalApi extends Api {
             matches.sort((a,b) => {
                 const compare = (i) => {
                     const o = query.order[i];
-                    let left = a.val[o.key];
-                    let right = b.val[o.key];
-                    // if (typeof left !== typeof right) {
-                    //     // Wow. Using 2 different types in your data, AND sorting on it. 
-                    //     // compare the types instead of their values ;-)
-                    //     left = typeof left;
-                    //     right = typeof right;
-                    // }
-                    if (typeof left === 'undefined' && typeof right !== 'undefined') { return o.ascending ? -1 : 1; }
-                    if (typeof left !== 'undefined' && typeof right === 'undefined') { return o.ascending ? 1 : -1; }
-                    if (typeof left === 'undefined' && typeof right === 'undefined') { return 0; }
+                    const trailKeys = PathInfo.getPathKeys(o.key);
+                    let left = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? key[val] : null, a.val);
+                    let right = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? key[val] : null, b.val);
+                    
+                    if (left === null) { return right === null ? 0 : o.ascending ? -1 : 1; }
+                    if (right === null) { return o.ascending ? 1 : -1; }
+                    
                     // TODO: add collation options using Intl.Collator. Note this also has to be implemented in the matching engines (inclusing indexes)
                     // See discussion https://github.com/appy-one/acebase/discussions/27
                     if (left == right) {
@@ -8706,7 +8733,7 @@ class CustomStorage extends Storage {
 
                 // Delete all child nodes that were stored in their own record, but are being removed 
                 // Also delete nodes that are being moved from a dedicated record to inline
-                const movingNodes = keys.filter(key => key in mainNode.value); // moving from dedicated to inline value
+                const movingNodes = newIsObjectOrArray ? keys.filter(key => key in mainNode.value) : []; // moving from dedicated to inline value
                 const deleteDedicatedKeys = changes.delete.concat(movingNodes);
                 const deletePromises = deleteDedicatedKeys.map(key => {
                     if (isArray) { key = parseInt(key); }
@@ -9107,11 +9134,13 @@ class CustomStorage extends Storage {
                                 const mergePossible = typeof parent[key] === typeof nodeValue && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeType);
                                 if (!mergePossible) {
                                     // Ignore the value in the child record, see issue #20: "Assertion failed: Merging child values can only be done if existing and current values are both an array or object"
-                                    this.debug.error(`The value stored in node "${otherNode.path}" cannot be merged with the parent node, value will be ignored. This error should disappear once the target node value is updated. See issue #20 for more information`);
+                                    this.debug.error(`The value stored in node "${otherNode.path}" cannot be merged with the parent node, value will be ignored. This error should disappear once the target node value is updated. See issue #20 for more information`, { path, parent, key, nodeType, nodeValue });
                                 }
                                 else {
                                     Object.keys(nodeValue).forEach(childKey => {
-                                        console.assert(!(childKey in parent[key]), 'child key is in parent value already?! HOW?!');
+                                        if (childKey in parent[key]) {
+                                            throw new Error( `Custom storage merge error: child key "${childKey}" is in parent value already! Make sure the get/childrenOf/descendantsOf methods of the custom storage class return values that can be modified by AceBase without affecting the stored source`);
+                                        }
                                         parent[key][childKey] = nodeValue[childKey];
                                     });
                                 }
@@ -11077,7 +11106,7 @@ class Storage extends SimpleEventEmitter {
                 }
             }
             else if (typeof data === 'object') {
-                data = new TextDecoder().decode(data);
+                data = Utils.decodeString(data);
             }
             if (append) {
                 state.data += data;
