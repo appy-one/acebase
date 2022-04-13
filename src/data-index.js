@@ -238,7 +238,7 @@ class DataIndex {
     async delete() {
         const idx = await this._getTree('exclusive');
         await idx.close();
-        const filePath = `${this.storage.settings.path}/${this.storage.name}.acebase/${this.fileName}`;
+        const filePath = this.fileName; // `${this.storage.settings.path}/${this.storage.name}.acebase/${this.fileName}`;
         await pfs.rm(filePath);
         this.state = DataIndex.STATE.REMOVED;
         idx.release();
