@@ -48,7 +48,7 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
         // Setup console logging
         this.debug = new debug_1.DebugLogger(options.logLevel, `[${dbname}]`);
         // Enable/disable logging with colors
-        simple_colors_1.SetColorsEnabled(options.logColors);
+        (0, simple_colors_1.SetColorsEnabled)(options.logColors);
         // ASCI art: http://patorjk.com/software/taag/#p=display&f=Doom&t=AceBase
         const logoStyle = [simple_colors_1.ColorStyle.magenta, simple_colors_1.ColorStyle.bold];
         const logo = '     ___          ______                ' + '\n' +
@@ -97,7 +97,7 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
      * @param {Observable} Observable Implementation to use
      */
     setObservable(Observable) {
-        optional_observable_1.setObservable(Observable);
+        (0, optional_observable_1.setObservable)(Observable);
     }
     /**
      * Creates a reference to a node
@@ -140,12 +140,20 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
              * @param {string} path path to the container node
              * @param {string} key name of the key to index every container child node
              * @param {object} [options] any additional options
-             * @param {string} [options.type] special index type, such as 'fulltext', or 'geo'
+             * @param {string} [options.type] type of index to create, such as `fulltext`, `geo`, `array` or `normal` (default)
              * @param {string[]} [options.include] keys to include in the index. Speeds up sorting on these columns when the index is used (and dramatically increases query speed when .take(n) is used in addition)
+             * @param {boolean} [options.rebuild] whether to rebuild the index if it exists already
+             * @param {string} [options.textLocale] If the indexed values are strings, which default locale to use
              * @param {object} [options.config] additional index-specific configuration settings
              */
             create: (path, key, options) => {
                 return this.api.createIndex(path, key, options);
+            },
+            /**
+             * Deletes an existing index from the database
+             */
+            delete: async (filePath) => {
+                return this.api.deleteIndex(filePath);
             }
         };
     }
@@ -201,6 +209,7 @@ class Api {
     /** Creates an index on key for all child nodes at path */
     createIndex(path, key, options) { throw new NotImplementedError('createIndex'); }
     getIndexes() { throw new NotImplementedError('getIndexes'); }
+    deleteIndex(filePath) { throw new NotImplementedError('deleteIndex'); }
     setSchema(path, schema) { throw new NotImplementedError('setSchema'); }
     getSchema(path) { throw new NotImplementedError('getSchema'); }
     getSchemas() { throw new NotImplementedError('getSchemas'); }
@@ -296,7 +305,7 @@ exports.ascii85 = {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const pad_1 = require("../pad");
-const env = typeof window === 'object' ? window : self, globalCount = Object.keys(env).length, mimeTypesLength = navigator.mimeTypes ? navigator.mimeTypes.length : 0, clientId = pad_1.default((mimeTypesLength +
+const env = typeof window === 'object' ? window : self, globalCount = Object.keys(env).length, mimeTypesLength = navigator.mimeTypes ? navigator.mimeTypes.length : 0, clientId = (0, pad_1.default)((mimeTypesLength +
     navigator.userAgent.length).toString(36) +
     globalCount.toString(36), 4);
 function fingerprint() {
@@ -324,7 +333,7 @@ const fingerprint_1 = require("./fingerprint");
 const pad_1 = require("./pad");
 var c = 0, blockSize = 4, base = 36, discreteValues = Math.pow(base, blockSize);
 function randomBlock() {
-    return pad_1.default((Math.random() *
+    return (0, pad_1.default)((Math.random() *
         discreteValues << 0)
         .toString(base), blockSize);
 }
@@ -345,11 +354,11 @@ function cuid(timebias = 0) {
     // - at '2059/05/25 19:38:27.456', timestamp will become 1 character larger!
     timestamp = (new Date().getTime() + timebias).toString(base), 
     // Prevent same-machine collisions.
-    counter = pad_1.default(safeCounter().toString(base), blockSize), 
+    counter = (0, pad_1.default)(safeCounter().toString(base), blockSize), 
     // A few chars to generate distinct ids for different
     // clients (so different computers are far less
     // likely to generate the same id)
-    print = fingerprint_1.default(), 
+    print = (0, fingerprint_1.default)(), 
     // Grab some more chars from Math.random()
     random = randomBlock() + randomBlock();
     return letter + timestamp + counter + print + random;
@@ -504,7 +513,7 @@ class LiveDataProxy {
             }
             // Add current (new) values to mutations
             mutations.forEach(mutation => {
-                mutation.value = utils_1.cloneObject(getTargetValue(cache, mutation.target));
+                mutation.value = (0, utils_1.cloneObject)(getTargetValue(cache, mutation.target));
             });
             // Run local onMutation & onChange callbacks in the next tick
             process_1.default.nextTick(() => {
@@ -587,7 +596,7 @@ class LiveDataProxy {
         };
         const flagOverwritten = (target) => {
             if (!mutationQueue.find(m => RelativeNodeTarget.areEqual(m.target, target))) {
-                mutationQueue.push({ target, previous: utils_1.cloneObject(getTargetValue(cache, target)) });
+                mutationQueue.push({ target, previous: (0, utils_1.cloneObject)(getTargetValue(cache, target)) });
             }
             // schedule database updates
             scheduleSync();
@@ -624,8 +633,8 @@ class LiveDataProxy {
                     // All mutations are on children/descendants of our target
                     // Construct new & previous values by combining cache and snapshot
                     const currentValue = getTargetValue(cache, target);
-                    newValue = utils_1.cloneObject(currentValue);
-                    previousValue = utils_1.cloneObject(newValue);
+                    newValue = (0, utils_1.cloneObject)(currentValue);
+                    previousValue = (0, utils_1.cloneObject)(newValue);
                     mutations.forEach(mutation => {
                         // mutation.target is relative to proxy root
                         const trailKeys = mutation.target.slice(target.length);
@@ -692,7 +701,7 @@ class LiveDataProxy {
                     return subscribe;
                 }
                 // Try to load Observable
-                const Observable = optional_observable_1.getObservable();
+                const Observable = (0, optional_observable_1.getObservable)();
                 return new Observable(subscribe);
             }
             else if (flag === 'transaction') {
@@ -797,7 +806,7 @@ class LiveDataProxy {
             const oldVal = cache, newVal = snap.val();
             cache = newVal;
             // Compare old and new values
-            const mutations = utils_1.getMutations(oldVal, newVal);
+            const mutations = (0, utils_1.getMutations)(oldVal, newVal);
             if (mutations.length === 0) {
                 return; // Nothing changed
             }
@@ -1234,9 +1243,9 @@ function createProxy(context) {
                     //     // Create a copy to unfreeze it
                     //     value = cloneObject(value);
                     // }
-                    value = utils_1.cloneObject(value); // Fix #10, always clone objects so changes made through the proxy won't change the original object (and vice versa)
+                    value = (0, utils_1.cloneObject)(value); // Fix #10, always clone objects so changes made through the proxy won't change the original object (and vice versa)
                 }
-                if (utils_1.valuesAreEqual(value, target[prop])) { //if (compareValues(value, target[prop]) === 'identical') { // (typeof value !== 'object' && target[prop] === value) {
+                if ((0, utils_1.valuesAreEqual)(value, target[prop])) { //if (compareValues(value, target[prop]) === 'identical') { // (typeof value !== 'object' && target[prop] === value) {
                     // not changing the actual value, ignore
                     return true;
                 }
@@ -1369,7 +1378,7 @@ class OrderedCollectionProxy {
      * @returns
      */
     getArrayObservable() {
-        const Observable = optional_observable_1.getObservable();
+        const Observable = (0, optional_observable_1.getObservable)();
         return new Observable(subscriber => {
             const subscription = this.getObservable().subscribe(value => {
                 const newArray = this.getArray();
@@ -2114,7 +2123,7 @@ class DataReference {
         if (this.isWildcardPath) {
             throw new Error(`Cannot observe wildcard path "/${this.path}"`);
         }
-        const Observable = optional_observable_1.getObservable();
+        const Observable = (0, optional_observable_1.getObservable)();
         return new Observable(observer => {
             let cache, resolved = false;
             let promise = this.get(options).then(snap => {
@@ -2720,7 +2729,7 @@ class ID {
     }
     static generate() {
         // Could also use https://www.npmjs.com/package/pushid for Firebase style 20 char id's
-        return cuid_1.default(timeBias).slice(1); // Cuts off the always leading 'c'
+        return (0, cuid_1.default)(timeBias).slice(1); // Cuts off the always leading 'c'
         // return uuid62.v1();
     }
 }
@@ -2874,7 +2883,7 @@ class ObservableShim {
 }
 exports.ObservableShim = ObservableShim;
 
-},{"rxjs":41}],15:[function(require,module,exports){
+},{"rxjs":27}],15:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PartialArray = void 0;
@@ -3589,7 +3598,7 @@ class SimpleCache {
         } // if (!entry || entry.expires <= Date.now()) { return null; }
         entry.expires = calculateExpiryTime(this.options.expirySeconds);
         entry.accessed = Date.now();
-        return this.options.cloneValues ? utils_1.cloneObject(entry.value) : entry.value;
+        return this.options.cloneValues ? (0, utils_1.cloneObject)(entry.value) : entry.value;
     }
     set(key, value) {
         if (this.options.maxEntries > 0 && this.cache.size >= this.options.maxEntries && !this.cache.has(key)) {
@@ -3612,7 +3621,7 @@ class SimpleCache {
                 this.cache.delete(oldest.key);
             }
         }
-        this.cache.set(key, { value: this.options.cloneValues ? utils_1.cloneObject(value) : value, added: Date.now(), accessed: Date.now(), expires: calculateExpiryTime(this.options.expirySeconds) });
+        this.cache.set(key, { value: this.options.cloneValues ? (0, utils_1.cloneObject)(value) : value, added: Date.now(), accessed: Date.now(), expires: calculateExpiryTime(this.options.expirySeconds) });
     }
     remove(key) {
         this.cache.delete(key);
@@ -3655,6 +3664,7 @@ const ColorCode = {
     grey: 90,
     // Bright colors:
     brightRed: 91,
+    // TODO, other bright colors
 };
 const BgColorCode = {
     bgBlack: 40,
@@ -3667,6 +3677,7 @@ const BgColorCode = {
     bgWhite: 47,
     bgGrey: 100,
     bgBrightRed: 101,
+    // TODO, other bright colors
 };
 const ResetCode = {
     all: 0,
@@ -4116,7 +4127,7 @@ exports.Transport = {
                 val: ser.val.value
             };
         }
-        obj = utils_1.cloneObject(obj); // Make sure we don't alter the original object
+        obj = (0, utils_1.cloneObject)(obj); // Make sure we don't alter the original object
         const process = (obj, mappings, prefix) => {
             if (obj instanceof partial_array_1.PartialArray) {
                 mappings[prefix] = "array";
@@ -4330,7 +4341,7 @@ function process(db, mappings, path, obj, action) {
         // will become plain objects without functions, and we can restore
         // the original object's values if any mappings were processed.
         // This will also prevent circular references
-        obj = utils_1.cloneObject(obj);
+        obj = (0, utils_1.cloneObject)(obj);
         if (changes.length > 0) {
             // Restore the changes made to the original object
             changes.forEach(change => {
@@ -4850,7 +4861,9 @@ function defer(fn) {
 exports.defer = defer;
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"./data-snapshot":9,"./partial-array":15,"./path-reference":17,"./process":18,"buffer":41}],27:[function(require,module,exports){
+},{"./data-snapshot":9,"./partial-array":15,"./path-reference":17,"./process":18,"buffer":27}],27:[function(require,module,exports){
+
+},{}],28:[function(require,module,exports){
 const { SimpleCache } = require('acebase-core');
 const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
@@ -5230,7 +5243,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { BrowserAceBase };
-},{"./acebase-local":28,"./storage-custom":39,"acebase-core":12}],28:[function(require,module,exports){
+},{"./acebase-local":29,"./storage-custom":40,"acebase-core":12}],29:[function(require,module,exports){
 const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
 const { LocalApi } = require('./api-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('./storage-custom');
@@ -5437,7 +5450,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":29,"./storage-custom":39,"acebase-core":12}],29:[function(require,module,exports){
+},{"./api-local":30,"./storage-custom":40,"acebase-core":12}],30:[function(require,module,exports){
 const { Api, ID, PathInfo } = require('acebase-core');
 const { StorageSettings, NodeNotFoundError } = require('./storage');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
@@ -6338,6 +6351,15 @@ class LocalApi extends Api {
         return Promise.resolve(this.storage.indexes.list());
     }
 
+    /**
+     * Deletes an existing index from the database
+     * @param {string} filePath 
+     * @returns 
+     */
+    async deleteIndex(filePath) {
+        return this.storage.indexes.delete(filePath);
+    }
+
     async reflect(path, type, args) {
         args = args || {};
         const getChildren = async (path, limit = 50, skip = 0, from = null) => {
@@ -6393,8 +6415,9 @@ class LocalApi extends Api {
                 const nodeInfo = await Node.getInfo(this.storage, path, { include_child_count: args.child_count === true });
                 info.key = typeof nodeInfo.key !== 'undefined' ? nodeInfo.key : nodeInfo.index;
                 info.exists = nodeInfo.exists;
-                info.type = nodeInfo.valueTypeName;
+                info.type = nodeInfo.exists ? nodeInfo.valueTypeName : undefined;
                 info.value = nodeInfo.value;
+                info.address = typeof nodeInfo.address === 'object' && 'pageNr' in nodeInfo.address ? { pageNr: nodeInfo.address.pageNr, recordNr: nodeInfo.address.recordNr } : undefined;
                 let isObjectOrArray = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
                 if (args.child_count === true) {
                     // set child count instead of enumerating
@@ -6468,7 +6491,7 @@ class LocalApi extends Api {
 }
 
 module.exports = { LocalApi };
-},{"./data-index":37,"./node":36,"./storage":40,"./storage-acebase":37,"./storage-custom":39,"./storage-mssql":37,"./storage-sqlite":37,"acebase-core":12}],30:[function(require,module,exports){
+},{"./data-index":38,"./node":37,"./storage":41,"./storage-acebase":38,"./storage-custom":40,"./storage-mssql":38,"./storage-sqlite":38,"acebase-core":12}],31:[function(require,module,exports){
 /**
    ________________________________________________________________________________
    
@@ -6514,7 +6537,7 @@ window.acebase = acebase;
 window.AceBase = BrowserAceBase;
 // Expose classes for module imports:
 module.exports = acebase;
-},{"./acebase-browser":27,"./acebase-local":28,"./storage-custom":39,"acebase-core":12}],31:[function(require,module,exports){
+},{"./acebase-browser":28,"./acebase-local":29,"./storage-custom":40,"acebase-core":12}],32:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IPCPeer = void 0;
@@ -6650,7 +6673,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
 }
 exports.IPCPeer = IPCPeer;
 
-},{"./ipc":32,"acebase-core":12}],32:[function(require,module,exports){
+},{"./ipc":33,"acebase-core":12}],33:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
@@ -7152,7 +7175,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock":34,"acebase-core":12}],33:[function(require,module,exports){
+},{"../node-lock":35,"acebase-core":12}],34:[function(require,module,exports){
 const { getValueTypeName } = require('./node-value-types');
 const { PathInfo } = require('acebase-core');
 
@@ -7214,7 +7237,7 @@ class NodeInfo {
 }
 
 module.exports = { NodeInfo };
-},{"./node-value-types":35,"acebase-core":12}],34:[function(require,module,exports){
+},{"./node-value-types":36,"acebase-core":12}],35:[function(require,module,exports){
 const { PathInfo, ID } = require('acebase-core');
 
 const DEBUG_MODE = false;
@@ -7569,7 +7592,7 @@ class NodeLock {
 }
 
 module.exports = { NodeLocker, NodeLock };
-},{"acebase-core":12}],35:[function(require,module,exports){
+},{"acebase-core":12}],36:[function(require,module,exports){
 const { PathReference } = require('acebase-core');
 
 const VALUE_TYPES = {
@@ -7625,7 +7648,7 @@ function getValueType(value) {
 }
 
 module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType, getValueType };
-},{"acebase-core":12}],36:[function(require,module,exports){
+},{"acebase-core":12}],37:[function(require,module,exports){
 const { Storage } = require('./storage');
 const { NodeInfo } = require('./node-info');
 const { VALUE_TYPES } = require('./node-value-types');
@@ -7942,9 +7965,9 @@ module.exports = {
     NodeChange,
     NodeChangeTracker
 };
-},{"./node-info":33,"./node-value-types":35,"./storage":40}],37:[function(require,module,exports){
+},{"./node-info":34,"./node-value-types":36,"./storage":41}],38:[function(require,module,exports){
 // Not supported in current environment
-},{}],38:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pfs = void 0;
@@ -7954,7 +7977,7 @@ class pfs {
 }
 exports.pfs = pfs;
 
-},{}],39:[function(require,module,exports){
+},{}],40:[function(require,module,exports){
 const { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils } = require('acebase-core');
 const { compareValues } = Utils;
 const { NodeInfo } = require('./node-info');
@@ -9420,7 +9443,7 @@ module.exports = {
     ICustomStorageNodeMetaData,
     ICustomStorageNode
 }
-},{"./node-info":33,"./node-lock":34,"./node-value-types":35,"./storage":40,"acebase-core":12}],40:[function(require,module,exports){
+},{"./node-info":34,"./node-lock":35,"./node-value-types":36,"./storage":41,"acebase-core":12}],41:[function(require,module,exports){
 const { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, ColorStyle, SchemaDefinition } = require('acebase-core');
 const { VALUE_TYPES } = require('./node-value-types');
 const { NodeInfo } = require('./node-info');
@@ -9737,15 +9760,26 @@ class Storage extends SimpleEventEmitter {
                 }
             },
 
-            async delete(index) {
+            /**
+             * Deletes an index from the database
+             * @param {string} fileName 
+             */
+            async delete(fileName) {
+                const index = await this.remove(fileName);
                 await index.delete();
                 storage.ipc.sendNotification({ type: 'index.deleted', fileName: index.fileName, path: index.path, keys: index.key });
             },
 
+            /**
+             * Removes an index from the list. Does not delete the actual file, `delete` does that!
+             * @param {string} fileName 
+             * @returns returns the removed index
+             */
             async remove(fileName) {
                 const index = _indexes.find(index => index.fileName === fileName);
                 if (!index) { throw new Error(`Index ${fileName} not found`); }
                 _indexes.splice(_indexes.indexOf(index), 1);
+                return index;
             },
 
             async close() {
@@ -11662,7 +11696,5 @@ module.exports = {
     SchemaValidationError,
     IWriteNodeResult
 };
-},{"./data-index":37,"./ipc":31,"./node-info":33,"./node-value-types":35,"./promise-fs":38,"acebase-core":12}],41:[function(require,module,exports){
-
-},{}]},{},[30])(30)
+},{"./data-index":38,"./ipc":32,"./node-info":34,"./node-value-types":36,"./promise-fs":39,"acebase-core":12}]},{},[31])(31)
 });
