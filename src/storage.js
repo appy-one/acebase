@@ -314,15 +314,26 @@ class Storage extends SimpleEventEmitter {
                 }
             },
 
-            async delete(index) {
+            /**
+             * Deletes an index from the database
+             * @param {string} fileName 
+             */
+            async delete(fileName) {
+                const index = await this.remove(fileName);
                 await index.delete();
                 storage.ipc.sendNotification({ type: 'index.deleted', fileName: index.fileName, path: index.path, keys: index.key });
             },
 
+            /**
+             * Removes an index from the list. Does not delete the actual file, `delete` does that!
+             * @param {string} fileName 
+             * @returns returns the removed index
+             */
             async remove(fileName) {
                 const index = _indexes.find(index => index.fileName === fileName);
                 if (!index) { throw new Error(`Index ${fileName} not found`); }
                 _indexes.splice(_indexes.indexOf(index), 1);
+                return index;
             },
 
             async close() {
