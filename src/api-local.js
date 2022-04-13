@@ -898,6 +898,15 @@ class LocalApi extends Api {
         return Promise.resolve(this.storage.indexes.list());
     }
 
+    /**
+     * Deletes an existing index from the database
+     * @param {string} filePath 
+     * @returns 
+     */
+    async deleteIndex(filePath) {
+        return this.storage.indexes.delete(filePath);
+    }
+
     async reflect(path, type, args) {
         args = args || {};
         const getChildren = async (path, limit = 50, skip = 0, from = null) => {
@@ -953,8 +962,9 @@ class LocalApi extends Api {
                 const nodeInfo = await Node.getInfo(this.storage, path, { include_child_count: args.child_count === true });
                 info.key = typeof nodeInfo.key !== 'undefined' ? nodeInfo.key : nodeInfo.index;
                 info.exists = nodeInfo.exists;
-                info.type = nodeInfo.valueTypeName;
+                info.type = nodeInfo.exists ? nodeInfo.valueTypeName : undefined;
                 info.value = nodeInfo.value;
+                info.address = typeof nodeInfo.address === 'object' && 'pageNr' in nodeInfo.address ? { pageNr: nodeInfo.address.pageNr, recordNr: nodeInfo.address.recordNr } : undefined;
                 let isObjectOrArray = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
                 if (args.child_count === true) {
                     // set child count instead of enumerating
