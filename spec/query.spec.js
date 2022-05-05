@@ -251,3 +251,71 @@ describe('Query with take/skip', () => {
     }, 30e3);
 
 });
+
+describe('Wildcard query', () => {
+    /** @type {AceBase} */
+    let db;
+    /** @type {{() => Promise<void>}} */
+    let removeDB;
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+    });
+
+    afterAll(async () => {
+        await removeDB();
+    });
+
+    it('wildcards need an index', async () => {
+        // Created for discussion 92: https://github.com/appy-one/acebase/discussions/92
+        // Changed schema to be users/uid/messages/messageid
+        // To test: npx jasmine ./spec/query.spec.js --filter="wildcards"
+        
+        // Insert data without index
+        await db.ref("users/user1/messages").push({ text: "First message" });
+        await db.ref("users/user2/messages").push({ text: "Second message" });
+        await db.ref("users/user1/messages").push({ text: "Third message" });
+
+        try {
+            await db.query("users/$username/messages").count();
+            fail('Should not be allowed');
+        }
+        catch(err) {
+            // Expected, scattered data query requires an index
+        }
+
+        // Remove data
+        await db.root.update({ users: null });
+
+        // Create an index on {key} (key of each message) and try again
+        await db.indexes.create('users/$username/messages', '{key}');
+        await db.ref("users/user1/messages").push({ text: "First message" });
+        await db.ref("users/user2/messages").push({ text: "Second message" });
+        await db.ref("users/user1/messages").push({ text: "Third message" });
+
+        try {
+            // Query with filter matching all 
+            const snaps = await db.query("users/$username/messages").filter('{key}', '!=', '').get();
+            expect(snaps.length).toBe(3);
+
+            let msgcount = await db.query("users/$username/messages").filter('{key}', '!=', '').count();
+            expect(msgcount).toBe(3);
+        }
+        catch(err) {
+            fail('Should be allowed');
+        }
+
+        try {
+            // Query without filter, index should automatically be selected with filter matching all 
+            const snaps = await db.query("users/$username/messages").get();
+            expect(snaps.length).toBe(3);
+
+            let msgcount = await db.query("users/$username/messages").count();
+            expect(msgcount).toBe(3);
+        }
+        catch(err) {
+            fail('Should be allowed');
+        }
+    }, 60e3); // increased timeout for debugging
+
+})

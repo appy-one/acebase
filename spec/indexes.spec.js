@@ -85,7 +85,7 @@ describe('string index', () => {
             }
         });
 
-        // Query me
+        // Query BigRock
         const snaps = await db.query('meteorites')
             .filter('meta/id', '==', 'bigrock')
             .get();
@@ -151,7 +151,7 @@ describe('string index', () => {
 
         expect(snaps.length).toEqual(952);
         expect(stats.length).toEqual(1);
-        expect([952, 953].includes(stats[0].stats.result)).toBeTrue();
+        expect([952, 953].includes(stats[0].stats.result)).toBeTrue(); // stats[0] will contain index stats for first filter which might have "BigRock" in the results (which are filtered out by 2nd filter)
     }, 60000);
 
     afterAll(async () => {

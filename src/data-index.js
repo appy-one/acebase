@@ -147,7 +147,8 @@ class DataIndex {
 
         this.state = DataIndex.STATE.INIT;
         this.storage = storage;
-        this.path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
+        const pathKeys = PathInfo.getPathKeys(path).map(key => typeof key === 'string' && key.startsWith('$') ? '*' : key);
+        this.path = (new PathInfo(pathKeys)).path; // path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
         this.key = key;
         this.caseSensitive = options.caseSensitive === true;
         this.textLocale = options.textLocale || "en";

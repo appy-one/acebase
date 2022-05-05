@@ -36,7 +36,7 @@ describe('export/import', () => {
 
         let json = '';
         await ref.export(str => json += str);
-        expect(json).toEqual(`{"text":"Checking typesafety","date":{".type":"Date",".val":"${obj.date.toISOString()}"},"binary":{".type":"Buffer",".val":"<~@VK^gEd8d<@<>o~>"},"reference":{".type":"PathReference",".val":"some/other/data"}}`);
+        expect(json).toEqual(`{"text":"Checking typesafety","date":{".type":"date",".val":"${obj.date.toISOString()}"},"binary":{".type":"binary",".val":"<~@VK^gEd8d<@<>o~>"},"reference":{".type":"reference",".val":"some/other/data"}}`);
 
         // Now import again
         let index = 0;

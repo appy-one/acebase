@@ -27,7 +27,7 @@ describe('JSON data export', () => {
         expect(serialized.name).toEqual(obj.name);
         expect(serialized.country).toEqual(obj.country);
         expect(serialized.points).toEqual(obj.points);
-        expect(serialized.created).toEqual({ '.type': 'Date', '.val': obj.created.toISOString() });
+        expect(serialized.created).toEqual({ '.type': 'date', '.val': obj.created.toISOString() });
     });
 
     it('should allow not to be typesafe', async () => {

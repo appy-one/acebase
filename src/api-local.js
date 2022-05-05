@@ -225,10 +225,23 @@ class LocalApi extends Api {
             });                
         };
 
-        const isWildcardPath = path.includes('*');
+        const pathInfo = PathInfo.get(path);
+        const isWildcardPath = pathInfo.keys.some(key => key === '*' || key.toString().startsWith('$')); // path.includes('*');
 
         const availableIndexes = this.storage.indexes.get(path);
         const usingIndexes = [];
+        if (isWildcardPath) {
+            if (availableIndexes.length === 0) {
+                // Wildcard paths require data to be indexed
+                const err = new Error(`Query on wildcard path "/${path}" requires an index`);
+                return Promise.reject(err);
+            }
+            if (query.filters.length === 0) {
+                // Filterless query on wildcard path. Use first available index with filter on non-null key value (all results)
+                const index = availableIndexes.filter(index => index.type === 'normal')[0];
+                query.filters.push({ key: index.key, op: '!=', compare: null });
+            }
+        }
 
         // Check if there are path specific indexes
         // eg: index on "users/$uid/posts", key "$uid", including "title" (or key "title", including "$uid")

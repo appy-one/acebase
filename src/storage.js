@@ -158,7 +158,7 @@ class Storage extends SimpleEventEmitter {
                 if (!this.supported) {
                     throw new Error(`Indexes are not supported in current environment because it requires Node.js fs`)
                 }
-                path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
+                // path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
                 const rebuild = options && options.rebuild === true;
                 const indexType = (options && options.type) || 'normal';
                 let includeKeys = (options && options.include) || [];
@@ -219,13 +219,12 @@ class Storage extends SimpleEventEmitter {
              * @returns {DataIndex[]}
              */
             get(path, key = null) {
-                const matchesNamedWildcardPath = index => {
-                    if (!index.path.includes('$')) { return false; }
-                    const pattern = '^' + index.path.replace(/\$[a-z0-9_]+/gi, '[a-z0-9_]+|\\*') + '$';
-                    const re = new RegExp(pattern, 'i');
-                    return re.test(path);
-                };
-                return _indexes.filter(index => (index.path === path || matchesNamedWildcardPath(index)) && (key === null || key === index.key));
+                if (path.includes('$')) {
+                    // Replace $variables in path with * wildcards
+                    const pathKeys = PathInfo.getPathKeys(path).map(key => typeof key === 'string' && key.startsWith('$') ? '*' : key);
+                    path = (new PathInfo(pathKeys)).path;
+                }
+                return _indexes.filter(index => index.path === path && (key === null || key === index.key));
             },
 
             /**
@@ -815,6 +814,8 @@ class Storage extends SimpleEventEmitter {
         removeNulls(newTopEventData);
         
         // Trigger all index updates
+        // TODO: Let indexes subscribe to "mutations" event, saves a lot of work because we are preparing
+        // before/after copies of the relevant data here, and then the indexes go check what data changed...
         const indexUpdates = [];
         indexes.map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
         .sort((a, b) => {
@@ -863,7 +864,7 @@ class Storage extends SimpleEventEmitter {
                 let trailPath = '';
                 while (trailKeys.length > 0) {
                     let subKey = trailKeys.shift();
-                    if (subKey === '*') {
+                    if (subKey === '*' || subKey.startsWith('$')) {
                         // Recursion needed
                         let allKeys = oldValue === null ? [] : Object.keys(oldValue);
                         newValue !== null && Object.keys(newValue).forEach(key => {
@@ -1572,7 +1573,7 @@ class Storage extends SimpleEventEmitter {
             if (type === VALUE_TYPES.DATETIME) {
                 val = `"${val.toISOString()}"`;
                 if (options.type_safe) {
-                    val = `{".type":"Date",".val":${val}}`;
+                    val = `{".type":"date",".val":${val}}`; // Previously: "Date"
                 }
             }
             else if (type === VALUE_TYPES.STRING) {
@@ -1587,13 +1588,13 @@ class Storage extends SimpleEventEmitter {
             else if (type === VALUE_TYPES.BINARY) {
                 val = `"${escape(ascii85.encode(val))}"`; // TODO: use base64 instead, no escaping needed
                 if (options.type_safe) {
-                    val = `{".type":"Buffer",".val":${val}}`;
+                    val = `{".type":"binary",".val":${val}}`; // Previously: "Buffer"
                 }
             }
             else if (type === VALUE_TYPES.REFERENCE) {
                 val = `"${val.path}"`;
                 if (options.type_safe) {
-                    val = `{".type":"PathReference",".val":${val}}`;
+                    val = `{".type":"reference",".val":${val}}`; // Previously: "PathReference"
                 }
             }
             return val;
@@ -1845,8 +1846,13 @@ class Storage extends SimpleEventEmitter {
             const type = obj['.type'];
             let val = obj['.val'];
             switch (type) {
-                case 'Date': val = new Date(val); break;
+                case 'Date':
+                case 'date': {
+                    val = new Date(val); 
+                    break;
+                }
                 case 'Buffer': 
+                case 'binary': {
                     val = unescape(val);
                     if (val.startsWith('<~')) {
                         // Ascii85 encoded
@@ -1857,9 +1863,12 @@ class Storage extends SimpleEventEmitter {
                         throw new Error(`Import error: Unexpected encoding for value for value at path "/${path}"`);
                     }
                     break;
-                case 'PathReference': 
+                }
+                case 'PathReference':
+                case 'reference': {
                     val = new PathReference(val);
                     break;
+                }
                 default:
                     throw new Error(`Import error: Unsupported type "${type}" for value at path "/${path}"`);
             }
