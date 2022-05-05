@@ -2819,7 +2819,7 @@ function getObservable() {
         return _observable;
     }
     try {
-        const { Observable } = require('rxjs');
+        const { Observable } = require('rxjs'); // fails in ESM module, need an elegant way to handle this. Can't use dynamic import() because it 1) requires Node 12+ and 2) causes Webpack build to fail if rxjs is not installed
         if (!Observable) {
             throw new Error('not loaded');
         }
@@ -3466,9 +3466,6 @@ function checkType(path, type, value, partial, trailKeys) {
     if (value === null) {
         return ok;
     }
-    if (typeof value !== type.typeOf) {
-        return { ok: false, reason: `path "${path}" must be typeof ${type.typeOf}` };
-    }
     if (type.instanceOf === Object && (typeof value !== 'object' || value instanceof Array || value instanceof Date)) {
         return { ok: false, reason: `path "${path}" must be an object collection` };
     }
@@ -3477,6 +3474,9 @@ function checkType(path, type, value, partial, trailKeys) {
     }
     if ('value' in type && value !== type.value) {
         return { ok: false, reason: `path "${path}" must be value: ${type.value}` };
+    }
+    if (typeof value !== type.typeOf) {
+        return { ok: false, reason: `path "${path}" must be typeof ${type.typeOf}` };
     }
     if (type.instanceOf === Array && type.genericTypes && !value.every(v => type.genericTypes.some(t => checkType(path, t, v, false).ok))) {
         return { ok: false, reason: `every array value of path "${path}" must match one of the specified types` };
@@ -3513,7 +3513,7 @@ class SchemaDefinition {
             //         street: String
             //     }
             // };
-            // Resulting ts: "{name:string,born:Date,instrument:'guitar'|'piano',address?:{street:string}"
+            // Resulting ts: "{name:string,born:Date,instrument:'guitar'|'piano',address?:{street:string}}"
             const toTS = obj => {
                 return '{' + Object.keys(obj)
                     .map(key => {
@@ -4073,24 +4073,58 @@ const utils_1 = require("./utils");
 const ascii85_1 = require("./ascii85");
 const path_info_1 = require("./path-info");
 const partial_array_1 = require("./partial-array");
+/**
+ * There are now 2 different serialization methods for transporting values.
+ *
+ * v1:
+ * The original version (v1) created an object with "map" and "val" properties.
+ * The "map" property was made optional in v1.14.1 so they won't be present for values needing no serializing
+ *
+ * v2:
+ * The new version replaces serialized values inline by objects containing ".type" and ".val" properties.
+ * This serializing method was introduced by `export` and `import` methods because they use streaming and
+ * are unable to prepare type mappings up-front. This format is smaller in transmission (in many cases),
+ * and easier to read and process.
+ *
+ * original: { "date": (some date) }
+ * v1 serialized: { "map": { "date": "date" }, "val": { date: "2022-04-22T07:49:23Z" } }
+ * v2 serialized: { "date": { ".type": "date", ".val": "2022-04-22T07:49:23Z" } }
+ *
+ * original: (some date)
+ * v1 serialized: { "map": "date", "val": "2022-04-22T07:49:23Z" }
+ * v2 serialized: { ".type": "date", ".val": "2022-04-22T07:49:23Z" }
+ * comment: top level value that need serializing is wrapped in an object with ".type" and ".val". v1 is smaller in this case
+ *
+ * original: 'some string'
+ * v1 serialized: { "map": {}, "val": "some string" }
+ * v2 serialized: "some string"
+ * comment: primitive types such as strings don't need serializing and are returned as is in v2
+ *
+ * original: { "date": (some date), "text": "Some string" }
+ * v1 serialized: { "map": { "date": "date" }, "val": { date: "2022-04-22T07:49:23Z", "text": "Some string" } }
+ * v2 serialized: { "date": { ".type": "date", ".val": "2022-04-22T07:49:23Z" }, "text": "Some string" }
+ */
 exports.Transport = {
     deserialize(data) {
-        if (data.map === null || typeof data.map === "undefined") {
+        if (data.map === null || typeof data.map === 'undefined') {
+            if (typeof data.val === 'undefined') {
+                throw new Error(`serialized value must have a val property`);
+            }
             return data.val;
         }
         const deserializeValue = (type, val) => {
-            if (type === "date") {
+            if (type === 'date') {
                 // Date was serialized as a string (UTC)
                 return new Date(val);
             }
-            else if (type === "binary") {
+            else if (type === 'binary') {
                 // ascii85 encoded binary data
                 return ascii85_1.ascii85.decode(val);
             }
-            else if (type === "reference") {
+            else if (type === 'reference') {
                 return new path_reference_1.PathReference(val);
             }
-            else if (type === "regexp") {
+            else if (type === 'regexp') {
                 return new RegExp(val.pattern, val.flags);
             }
             else if (type === 'array') {
@@ -4098,7 +4132,7 @@ exports.Transport = {
             }
             return val;
         };
-        if (typeof data.map === "string") {
+        if (typeof data.map === 'string') {
             // Single value
             return deserializeValue(data.map, data.val);
         }
@@ -4106,7 +4140,7 @@ exports.Transport = {
             const type = data.map[path];
             const keys = path_info_1.PathInfo.getPathKeys(path);
             let parent = data;
-            let key = "val";
+            let key = 'val';
             let val = data.val;
             keys.forEach(k => {
                 key = k;
@@ -4117,20 +4151,38 @@ exports.Transport = {
         });
         return data.val;
     },
+    detectSerializeVersion(data) {
+        if (typeof data !== 'object' || data === null) {
+            // This can only be v2, which allows primitive types to bypass serializing
+            return 2;
+        }
+        if ('map' in data && 'val' in data) {
+            return 1;
+        }
+        else if ('val' in data) {
+            // If it's v1, 'val' will be the only key in the object because serialize2 adds ".version": 2 to the object to prevent confusion.
+            if (Object.keys(data).length > 1) {
+                return 2;
+            }
+            return 1;
+        }
+        return 2;
+    },
     serialize(obj) {
+        var _a;
         // Recursively find dates and binary data
-        if (obj === null || typeof obj !== "object" || obj instanceof Date || obj instanceof ArrayBuffer || obj instanceof path_reference_1.PathReference) {
+        if (obj === null || typeof obj !== 'object' || obj instanceof Date || obj instanceof ArrayBuffer || obj instanceof path_reference_1.PathReference || obj instanceof RegExp) {
             // Single value
-            const ser = this.serialize({ value: obj });
+            const ser = exports.Transport.serialize({ value: obj });
             return {
-                map: ser.map.value,
+                map: (_a = ser.map) === null || _a === void 0 ? void 0 : _a.value,
                 val: ser.val.value
             };
         }
         obj = (0, utils_1.cloneObject)(obj); // Make sure we don't alter the original object
         const process = (obj, mappings, prefix) => {
             if (obj instanceof partial_array_1.PartialArray) {
-                mappings[prefix] = "array";
+                mappings[prefix] = 'array';
             }
             Object.keys(obj).forEach(key => {
                 const val = obj[key];
@@ -4138,33 +4190,165 @@ exports.Transport = {
                 if (val instanceof Date) {
                     // serialize date to UTC string
                     obj[key] = val.toISOString();
-                    mappings[path] = "date";
+                    mappings[path] = 'date';
                 }
                 else if (val instanceof ArrayBuffer) {
                     // Serialize binary data with ascii85
                     obj[key] = ascii85_1.ascii85.encode(val); //ascii85.encode(Buffer.from(val)).toString();
-                    mappings[path] = "binary";
+                    mappings[path] = 'binary';
                 }
                 else if (val instanceof path_reference_1.PathReference) {
                     obj[key] = val.path;
-                    mappings[path] = "reference";
+                    mappings[path] = 'reference';
                 }
                 else if (val instanceof RegExp) {
                     // Queries using the 'matches' filter with a regular expression can now also be used on remote db's
                     obj[key] = { pattern: val.source, flags: val.flags };
-                    mappings[path] = "regexp";
+                    mappings[path] = 'regexp';
                 }
-                else if (typeof val === "object" && val !== null) {
+                else if (typeof val === 'object' && val !== null) {
                     process(val, mappings, path);
                 }
             });
         };
         const mappings = {};
-        process(obj, mappings, "");
-        return {
-            map: mappings,
-            val: obj
+        process(obj, mappings, '');
+        const serialized = { val: obj };
+        if (Object.keys(mappings).length > 0) {
+            serialized.map = mappings;
+        }
+        return serialized;
+    },
+    serialize2(obj) {
+        // Recursively find data that needs serializing
+        const getSerializedValue = (val) => {
+            if (val instanceof Date) {
+                // serialize date to UTC string
+                return {
+                    '.type': 'date',
+                    '.val': val.toISOString()
+                };
+            }
+            else if (val instanceof ArrayBuffer) {
+                // Serialize binary data with ascii85
+                return {
+                    '.type': 'binary',
+                    '.val': ascii85_1.ascii85.encode(val)
+                };
+            }
+            else if (val instanceof path_reference_1.PathReference) {
+                return {
+                    '.type': 'reference',
+                    '.val': val.path
+                };
+            }
+            else if (val instanceof RegExp) {
+                // Queries using the 'matches' filter with a regular expression can now also be used on remote db's
+                return {
+                    '.type': 'regexp',
+                    '.val': `/${val.source}/${val.flags}` // new: shorter
+                    // '.val': {
+                    //     pattern: val.source,
+                    //     flags: val.flags
+                    // }
+                };
+            }
+            else if (typeof val === 'object' && val !== null) {
+                if (val instanceof Array) {
+                    const copy = [];
+                    for (let i = 0; i < val.length; i++) {
+                        copy[i] = getSerializedValue(val[i]);
+                    }
+                    return copy;
+                }
+                else {
+                    const copy = {}; //val instanceof Array ? [] : {} as SerializedValueV2;
+                    if (val instanceof partial_array_1.PartialArray) {
+                        // Mark the object as partial ("sparse") array
+                        copy['.type'] = 'array';
+                    }
+                    for (const prop in val) {
+                        copy[prop] = getSerializedValue(val[prop]);
+                    }
+                    return copy;
+                }
+            }
+            else {
+                // Primitive value. Don't serialize
+                return val;
+            }
         };
+        const serialized = getSerializedValue(obj);
+        if (typeof serialized === 'object' && 'val' in serialized && Object.keys(serialized).length === 1) {
+            // acebase-core v1.14.1 made the 'map' property optional.
+            // This v2 serialized object might be confused with a v1 without mappings, because it only has a "val" property
+            // To prevent this, mark the serialized object with version 2
+            serialized['.version'] = 2;
+        }
+        return serialized;
+    },
+    deserialize2(data) {
+        if (typeof data !== 'object' || data === null) {
+            // primitive value, not serialized
+            return data;
+        }
+        switch (data['.type']) {
+            case undefined: {
+                // No type given: this is a plain object or array
+                if (data instanceof Array) {
+                    // Plain array, deserialize items into a copy
+                    const copy = [];
+                    const arr = data;
+                    for (let i = 0; i < arr.length; i++) {
+                        copy.push(exports.Transport.deserialize2(arr[i]));
+                    }
+                    return copy;
+                }
+                else {
+                    // Plain object, deserialize properties into a copy
+                    const copy = {};
+                    const obj = data;
+                    for (const prop in obj) {
+                        copy[prop] = exports.Transport.deserialize2(obj[prop]);
+                    }
+                    return copy;
+                }
+            }
+            case 'array': {
+                // partial ("sparse") array, deserialize children into a copy
+                const copy = {};
+                for (const index in data) {
+                    copy[index] = exports.Transport.deserialize2(data[index]);
+                }
+                delete copy['.type'];
+                return new partial_array_1.PartialArray(copy);
+            }
+            case 'date': {
+                // Date was serialized as a string (UTC)
+                const val = data['.val'];
+                return new Date(val);
+            }
+            case 'binary': {
+                // ascii85 encoded binary data
+                const val = data['.val'];
+                return ascii85_1.ascii85.decode(val);
+            }
+            case 'reference': {
+                const val = data['.val'];
+                return new path_reference_1.PathReference(val);
+            }
+            case 'regexp': {
+                const val = data['.val'];
+                if (typeof val === 'string') {
+                    // serialized as '/(pattern)/flags'
+                    const match = /^\/(.*)\/([a-z]+)$/.exec(val);
+                    return new RegExp(match[1], match[2]);
+                }
+                // serialized as object with pattern & flags properties
+                return new RegExp(val.pattern, val.flags);
+            }
+        }
+        throw new Error(`Unknown data type "${data['.type']}" in serialized value`);
     }
 };
 
@@ -4653,8 +4837,8 @@ function concatTypedArrays(a, b) {
 }
 exports.concatTypedArrays = concatTypedArrays;
 function cloneObject(original, stack) {
-    const { DataSnapshot } = require('./data-snapshot'); // Don't move to top, because data-snapshot requires this script (utils)
-    if (original instanceof DataSnapshot) {
+    var _a;
+    if (((_a = original === null || original === void 0 ? void 0 : original.constructor) === null || _a === void 0 ? void 0 : _a.name) === 'DataSnapshot') {
         throw new TypeError(`Object to clone is a DataSnapshot (path "${original.ref.path}")`);
     }
     const checkAndFixTypedArray = obj => {
@@ -4861,7 +5045,7 @@ function defer(fn) {
 exports.defer = defer;
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"./data-snapshot":9,"./partial-array":15,"./path-reference":17,"./process":18,"buffer":27}],27:[function(require,module,exports){
+},{"./partial-array":15,"./path-reference":17,"./process":18,"buffer":27}],27:[function(require,module,exports){
 
 },{}],28:[function(require,module,exports){
 const { SimpleCache } = require('acebase-core');
@@ -5678,10 +5862,23 @@ class LocalApi extends Api {
             });                
         };
 
-        const isWildcardPath = path.includes('*');
+        const pathInfo = PathInfo.get(path);
+        const isWildcardPath = pathInfo.keys.some(key => key === '*' || key.toString().startsWith('$')); // path.includes('*');
 
         const availableIndexes = this.storage.indexes.get(path);
         const usingIndexes = [];
+        if (isWildcardPath) {
+            if (availableIndexes.length === 0) {
+                // Wildcard paths require data to be indexed
+                const err = new Error(`Query on wildcard path "/${path}" requires an index`);
+                return Promise.reject(err);
+            }
+            if (query.filters.length === 0) {
+                // Filterless query on wildcard path. Use first available index with filter on non-null key value (all results)
+                const index = availableIndexes.filter(index => index.type === 'normal')[0];
+                query.filters.push({ key: index.key, op: '!=', compare: null });
+            }
+        }
 
         // Check if there are path specific indexes
         // eg: index on "users/$uid/posts", key "$uid", including "title" (or key "title", including "$uid")
@@ -9604,7 +9801,7 @@ class Storage extends SimpleEventEmitter {
                 if (!this.supported) {
                     throw new Error(`Indexes are not supported in current environment because it requires Node.js fs`)
                 }
-                path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
+                // path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
                 const rebuild = options && options.rebuild === true;
                 const indexType = (options && options.type) || 'normal';
                 let includeKeys = (options && options.include) || [];
@@ -9665,13 +9862,12 @@ class Storage extends SimpleEventEmitter {
              * @returns {DataIndex[]}
              */
             get(path, key = null) {
-                const matchesNamedWildcardPath = index => {
-                    if (!index.path.includes('$')) { return false; }
-                    const pattern = '^' + index.path.replace(/\$[a-z0-9_]+/gi, '[a-z0-9_]+|\\*') + '$';
-                    const re = new RegExp(pattern, 'i');
-                    return re.test(path);
-                };
-                return _indexes.filter(index => (index.path === path || matchesNamedWildcardPath(index)) && (key === null || key === index.key));
+                if (path.includes('$')) {
+                    // Replace $variables in path with * wildcards
+                    const pathKeys = PathInfo.getPathKeys(path).map(key => typeof key === 'string' && key.startsWith('$') ? '*' : key);
+                    path = (new PathInfo(pathKeys)).path;
+                }
+                return _indexes.filter(index => index.path === path && (key === null || key === index.key));
             },
 
             /**
@@ -10261,6 +10457,8 @@ class Storage extends SimpleEventEmitter {
         removeNulls(newTopEventData);
         
         // Trigger all index updates
+        // TODO: Let indexes subscribe to "mutations" event, saves a lot of work because we are preparing
+        // before/after copies of the relevant data here, and then the indexes go check what data changed...
         const indexUpdates = [];
         indexes.map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
         .sort((a, b) => {
@@ -10309,7 +10507,7 @@ class Storage extends SimpleEventEmitter {
                 let trailPath = '';
                 while (trailKeys.length > 0) {
                     let subKey = trailKeys.shift();
-                    if (subKey === '*') {
+                    if (subKey === '*' || subKey.startsWith('$')) {
                         // Recursion needed
                         let allKeys = oldValue === null ? [] : Object.keys(oldValue);
                         newValue !== null && Object.keys(newValue).forEach(key => {
@@ -11018,7 +11216,7 @@ class Storage extends SimpleEventEmitter {
             if (type === VALUE_TYPES.DATETIME) {
                 val = `"${val.toISOString()}"`;
                 if (options.type_safe) {
-                    val = `{".type":"Date",".val":${val}}`;
+                    val = `{".type":"date",".val":${val}}`; // Previously: "Date"
                 }
             }
             else if (type === VALUE_TYPES.STRING) {
@@ -11033,13 +11231,13 @@ class Storage extends SimpleEventEmitter {
             else if (type === VALUE_TYPES.BINARY) {
                 val = `"${escape(ascii85.encode(val))}"`; // TODO: use base64 instead, no escaping needed
                 if (options.type_safe) {
-                    val = `{".type":"Buffer",".val":${val}}`;
+                    val = `{".type":"binary",".val":${val}}`; // Previously: "Buffer"
                 }
             }
             else if (type === VALUE_TYPES.REFERENCE) {
                 val = `"${val.path}"`;
                 if (options.type_safe) {
-                    val = `{".type":"PathReference",".val":${val}}`;
+                    val = `{".type":"reference",".val":${val}}`; // Previously: "PathReference"
                 }
             }
             return val;
@@ -11291,8 +11489,13 @@ class Storage extends SimpleEventEmitter {
             const type = obj['.type'];
             let val = obj['.val'];
             switch (type) {
-                case 'Date': val = new Date(val); break;
+                case 'Date':
+                case 'date': {
+                    val = new Date(val); 
+                    break;
+                }
                 case 'Buffer': 
+                case 'binary': {
                     val = unescape(val);
                     if (val.startsWith('<~')) {
                         // Ascii85 encoded
@@ -11303,9 +11506,12 @@ class Storage extends SimpleEventEmitter {
                         throw new Error(`Import error: Unexpected encoding for value for value at path "/${path}"`);
                     }
                     break;
-                case 'PathReference': 
+                }
+                case 'PathReference':
+                case 'reference': {
                     val = new PathReference(val);
                     break;
+                }
                 default:
                     throw new Error(`Import error: Unsupported type "${type}" for value at path "/${path}"`);
             }
