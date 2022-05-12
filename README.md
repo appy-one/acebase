@@ -2213,12 +2213,9 @@ What can you help me with?
 
 ## Sponsoring
 
-If you use AceBase, let me know! Also, please consider supporting its development by sponsoring the project, buying me a coffee or sending a donation.
+If you use AceBase, please consider supporting its development by [sponsoring](https://github.com/sponsors/appy-one) the project, buying me a [coffee](https://www.buymeacoffee.com/appyone) or sending a [donation](https://paypal.me/theappyone). 
+If you are employed, ask your supervisor to sponsor AceBase and any other open source projects you use.
 
-* [Sponsor](https://github.com/sponsors/appy-one)
-* [Buy me a coffee](https://www.buymeacoffee.com/appyone)
-* [Donate with PayPal](https://paypal.me/theappyone)
-* BTC address: 3EgetGDnG9vvfJzjLYdKwWvZpHwePKNJYc
+[![Sponsor AceBase](sponsor.svg)](https://github.com/sponsors/appy-one)
 
-You rock! 🎸
 Thanks, Ewout
