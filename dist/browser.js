@@ -13,10 +13,10 @@ exports.AceBaseBase = exports.AceBaseBaseSettings = void 0;
     \_| |_/\___\___\____/ \__,_|___/\___|
                         realtime database
                                      
-   Copyright 2018 by Ewout Stortenbeker (me@appy.one)
+   Copyright 2018-2022 by Ewout Stortenbeker (me@appy.one)
    Published under MIT license
 
-   See docs at https://www.npmjs.com/package/acebase
+   See docs at https://github.com/appy-one/acebase
    ________________________________________________________________________________
   
 */
@@ -34,6 +34,7 @@ class AceBaseBaseSettings {
         this.logLevel = options.logLevel || 'log';
         this.logColors = typeof options.logColors === 'boolean' ? options.logColors : true;
         this.info = typeof options.info === 'string' ? options.info : undefined;
+        this.sponsor = typeof options.sponsor === 'boolean' ? options.sponsor : false;
     }
 }
 exports.AceBaseBaseSettings = AceBaseBaseSettings;
@@ -58,8 +59,11 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
             '   | | | | (_|  __/ |_/ / (_| \\__ \\  __/' + '\n' +
             '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|';
         const info = (options.info ? ''.padStart(40 - options.info.length, ' ') + options.info + '\n' : '');
-        this.debug.write(logo.colorize(logoStyle));
-        info && this.debug.write(info.colorize(simple_colors_1.ColorStyle.magenta));
+        if (!options.sponsor) {
+            // if you are a sponsor, you can switch off the "AceBase banner ad"
+            this.debug.write(logo.colorize(logoStyle));
+            info && this.debug.write(info.colorize(simple_colors_1.ColorStyle.magenta));
+        }
         // Setup type mapping functionality
         this.types = new type_mappings_1.TypeMappings(this);
         this.once("ready", () => {
@@ -5101,6 +5105,7 @@ class BrowserAceBase extends AceBase {
      * @param {boolean} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
      * @param {number} [settings.cacheSeconds=60] How many seconds to keep node info in memory, to speed up IndexedDB performance.
      * @param {number} [settings.lockTimeout=120] timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+     * @param {boolean} [settings.sponsor=false] You can turn this on if you are a sponsor
      */
     static WithIndexedDB(dbname, settings) {
 
@@ -5156,7 +5161,7 @@ class BrowserAceBase extends AceBase {
                 return new IndexedDBStorageTransaction(context, target);
             }
         });
-        const acebase = new BrowserAceBase(dbname, { multipleTabs: settings.multipleTabs, logLevel: settings.logLevel, storage: storageSettings });
+        const acebase = new BrowserAceBase(dbname, { multipleTabs: settings.multipleTabs, logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
         const ipc = acebase.api.storage.ipc;
         ipc.on('notification', async notification => {
             const message = notification.data;
@@ -5435,7 +5440,7 @@ const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } 
 class AceBaseLocalSettings extends AceBaseBaseSettings {
     /**
      * 
-     * @param {{ logLevel: 'verbose'|'log'|'warn'|'error', storage: import('./storage').StorageSettings, ipc: import('./storage').IPCClientSettings, transactions: import('..').TransactionLogSettings }} options 
+     * @param {AceBaseBaseSettings & { storage: import('./storage').StorageSettings, ipc: import('./storage').IPCClientSettings, transactions: import('..').TransactionLogSettings }} options 
      */
     constructor(options) {
         super(options);
@@ -5499,6 +5504,7 @@ class AceBase extends AceBaseBase {
      * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
      * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
      * @param {boolean} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
+     * @param {boolean} [settings.sponsor=false] You can turn this on if you are a sponsor
      */
     static WithLocalStorage(dbname, settings) {
 
@@ -5529,7 +5535,7 @@ class AceBase extends AceBaseBase {
                 return Promise.resolve(transaction);
             }
         });
-        const db = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
+        const db = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
         db.settings.ipcEvents = settings.multipleTabs === true;
 
         return db;
@@ -6700,10 +6706,10 @@ module.exports = { LocalApi };
     \_| |_/\___\___\____/ \__,_|___/\___|
                         realtime database
 
-   Copyright 2018 by Ewout Stortenbeker (me@appy.one)   
+   Copyright 2018-2022 by Ewout Stortenbeker (me@appy.one)   
    Published under MIT license
 
-   See docs at https://www.npmjs.com/package/acebase
+   See docs at https://github.com/appy-one/acebase
    ________________________________________________________________________________
 
 */
