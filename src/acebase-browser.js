@@ -51,6 +51,7 @@ class BrowserAceBase extends AceBase {
      * @param {boolean} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
      * @param {number} [settings.cacheSeconds=60] How many seconds to keep node info in memory, to speed up IndexedDB performance.
      * @param {number} [settings.lockTimeout=120] timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+     * @param {boolean} [settings.sponsor=false] You can turn this on if you are a sponsor
      */
     static WithIndexedDB(dbname, settings) {
 
@@ -106,7 +107,7 @@ class BrowserAceBase extends AceBase {
                 return new IndexedDBStorageTransaction(context, target);
             }
         });
-        const acebase = new BrowserAceBase(dbname, { multipleTabs: settings.multipleTabs, logLevel: settings.logLevel, storage: storageSettings });
+        const acebase = new BrowserAceBase(dbname, { multipleTabs: settings.multipleTabs, logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
         const ipc = acebase.api.storage.ipc;
         ipc.on('notification', async notification => {
             const message = notification.data;

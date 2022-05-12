@@ -5,7 +5,7 @@ const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } 
 class AceBaseLocalSettings extends AceBaseBaseSettings {
     /**
      * 
-     * @param {{ logLevel: 'verbose'|'log'|'warn'|'error', storage: import('./storage').StorageSettings, ipc: import('./storage').IPCClientSettings, transactions: import('..').TransactionLogSettings }} options 
+     * @param {AceBaseBaseSettings & { storage: import('./storage').StorageSettings, ipc: import('./storage').IPCClientSettings, transactions: import('..').TransactionLogSettings }} options 
      */
     constructor(options) {
         super(options);
@@ -69,6 +69,7 @@ class AceBase extends AceBaseBase {
      * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
      * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
      * @param {boolean} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
+     * @param {boolean} [settings.sponsor=false] You can turn this on if you are a sponsor
      */
     static WithLocalStorage(dbname, settings) {
 
@@ -99,7 +100,7 @@ class AceBase extends AceBaseBase {
                 return Promise.resolve(transaction);
             }
         });
-        const db = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings });
+        const db = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
         db.settings.ipcEvents = settings.multipleTabs === true;
 
         return db;
