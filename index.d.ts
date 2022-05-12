@@ -30,8 +30,9 @@ export class AceBase extends acebasecore.AceBaseBase {
      * @param settings.multipleTabs Whether to enable cross-tab synchronization
      * @param settings.cacheSeconds How many seconds to keep node info in memory, to speed up IndexedDB performance.
      * @param settings.lockTimeout timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+     * @param settings.sponsor You can turn this on if you are a sponsor. See https://github.com/appy-one/acebase/discussions/100 for more info
      */
-    static WithIndexedDB(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error'; removeVoidProperties?: boolean; maxInlineValueSize?: number; multipleTabs?: boolean; cacheSeconds?: number; lockTimeout?: number }): AceBase;
+    static WithIndexedDB(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error'; removeVoidProperties?: boolean; maxInlineValueSize?: number; multipleTabs?: boolean; cacheSeconds?: number; lockTimeout?: number, sponsor?: boolean }): AceBase;
 
     /**
      * Creates an AceBase database instance using LocalStorage or SessionStorage as storage engine. When running in non-browser environments, set
@@ -45,15 +46,27 @@ export class AceBase extends acebasecore.AceBaseBase {
      * @param settings.maxInlineValueSize Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Default is 50.
      * @param settings.multipleTabs Whether to enable cross-tab synchronization
      * @param settings.lockTimeout timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+     * @param settings.sponsor You can turn this on if you are a sponsor. See https://github.com/appy-one/acebase/discussions/100 for more info
      */    
-    static WithLocalStorage(dbname: string, settings: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean, provider?: any, removeVoidProperties?: boolean, maxInlineValueSize?: number, multipleTabs?: boolean, lockTimeout?: number }): AceBase
+    static WithLocalStorage(dbname: string, settings: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean, provider?: any, removeVoidProperties?: boolean, maxInlineValueSize?: number, multipleTabs?: boolean, lockTimeout?: number, sponsor?: boolean }): AceBase
 }
 
 export interface AceBaseLocalSettings {
-    logLevel?: 'verbose'|'log'|'warn'|'error';
+    /**
+     * What level to use for console logging.
+     * @default 'log'
+     */
+     logLevel?: 'verbose'|'log'|'warn'|'error';
+    /** Whether to use colors in the console logs output */
+    logColors?: boolean;
+    /** Optional storage settings */
     storage?: StorageSettings;
+    /** Settings for optional transaction logging */
     transactions?: TransactionLogSettings;
-    ipc?: IPCClientSettings
+    /** IPC settings if you are using AceBase in pm2 or cloud-based clusters */
+    ipc?: IPCClientSettings;
+    /** You can turn this on if you are a sponsor. See https://github.com/appy-one/acebase/discussions/100 for more info */
+    sponsor?: boolean;
 }
 
 export abstract class StorageSettings {
@@ -61,8 +74,8 @@ export abstract class StorageSettings {
     removeVoidProperties?: boolean;
     path?: string;
     /**@deprecated Moved to main settings */
-    ipc?: IPCClientSettings
-    lockTimeout?: number
+    ipc?: IPCClientSettings;
+    lockTimeout?: number;
 }
 
 export interface IPCClientSettings {
