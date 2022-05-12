@@ -9,10 +9,10 @@
     \_| |_/\___\___\____/ \__,_|___/\___|
                         realtime database
                                      
-   Copyright 2018 by Ewout Stortenbeker (me@appy.one)   
+   Copyright 2018-2022 by Ewout Stortenbeker (me@appy.one)   
    Published under MIT license
 
-   See docs at https://www.npmjs.com/package/acebase
+   See docs at https://github.com/appy-one/acebase
    ________________________________________________________________________________
   
 */
