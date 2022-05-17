@@ -94,12 +94,12 @@ describe('Keys', () => {
         await expectAsync(p).toBeResolved();
     });
 
-    it('should be case insensitive', async () => {
+    it('should be case sensitive', async () => {
 
-        const lowercase = { key: 'caseinsensitive', value: 'the key has lowercase chars' };
-        const camelcase = { key: 'caseInsensitive', value: 'the key has camelCase chars' };
-        const pascalcase = { key: 'CaseInsensitive', value: 'the key has PascalCase chars' };
-        const uppercase = { key: 'CASEINSENSITIVE', value: 'the key has UPPERCASE chars' };
+        const lowercase = { key: 'casesensitive', value: 'the key has lowercase chars' };
+        const camelcase = { key: 'caseSensitive', value: 'the key has camelCase chars' };
+        const pascalcase = { key: 'CaseSensitive', value: 'the key has PascalCase chars' };
+        const uppercase = { key: 'CASESENSITIVE', value: 'the key has UPPERCASE chars' };
 
         await db.ref(lowercase.key).set(lowercase.value);
         await db.ref(camelcase.key).set(camelcase.value);

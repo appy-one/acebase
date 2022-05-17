@@ -337,9 +337,7 @@ const fingerprint_1 = require("./fingerprint");
 const pad_1 = require("./pad");
 var c = 0, blockSize = 4, base = 36, discreteValues = Math.pow(base, blockSize);
 function randomBlock() {
-    return (0, pad_1.default)((Math.random() *
-        discreteValues << 0)
-        .toString(base), blockSize);
+    return (0, pad_1.default)((Math.random() * discreteValues << 0).toString(base), blockSize);
 }
 function safeCounter() {
     c = c < discreteValues ? c : 0;
