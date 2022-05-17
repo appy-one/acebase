@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="https://github.com/appy-one/acebase/blob/master/logo.png?raw=true" alt="AceBase realtime database">
+    <img src="https://github.com/appy-one/acebase/blob/806bc6e78920c1d735ae96fc8eb818f338ceb00a/logo.png?raw=true" alt="AceBase realtime database">
 </p>
 
 # AceBase realtime database
@@ -2216,6 +2216,12 @@ What can you help me with?
 If you use AceBase, please consider supporting its development by [sponsoring](https://github.com/sponsors/appy-one) the project, buying me a [coffee](https://www.buymeacoffee.com/appyone) or sending a [donation](https://paypal.me/theappyone). 
 If you are employed, ask your supervisor to sponsor AceBase and any other open source projects you use.
 
-[![Sponsor AceBase](sponsor.svg)](https://github.com/sponsors/appy-one)
+[![Sponsor AceBase](img/sponsor.svg)](https://github.com/sponsors/appy-one)
 
 Thanks, Ewout
+
+## Share
+
+Please tell others about AceBase!
+
+[![Sponsor AceBase](img/tweet.svg)](https://twitter.com/intent/tweet?button=&url=https://github.com/appy-one/acebase&text=I%27m+using+@AcebaseRealtime+in+my+project+to+make+my+life+easier!&button=)
