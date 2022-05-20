@@ -1096,7 +1096,7 @@ class Storage extends SimpleEventEmitter {
             eventSubscriptions.filter(sub => ['mutated', 'mutations', 'notify_mutated', 'notify_mutations'].includes(sub.type))
             .forEach(sub => {
                 // Get the target data this subscription is interested in
-                let currentPath = path;
+                let currentPath = topEventPath;
                 let trailPath = sub.eventPath.slice(currentPath.length).replace(/^\//, '');
                 let trailKeys = PathInfo.getPathKeys(trailPath);
                 let oldValue = topEventData, newValue = newTopEventData;
