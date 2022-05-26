@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 
 export type TypedArray = Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | BigUint64Array | BigInt64Array
+const nodeVersion = process.versions.node.split('.').reduce((v, n, i) => (v[i === 0 ? 'major' : i === 1 ? 'minor' : 'patch'] = +n, v), { major: 0, minor: 0, patch: 0 });
 
 export abstract class pfs {
     static get hasFileSystem() { return typeof fs === 'object' && 'open' in fs; }
@@ -250,7 +251,9 @@ export abstract class pfs {
      * @param path 
      * @returns returns a promise that resolves once the file has been removed
      */
-    static rm(path: string|Buffer|fs.PathLike) { return this.unlink(path); }
+    static rm(path: string|Buffer|fs.PathLike) {
+        return this.unlink(path); 
+    }
 
     /**
      * Asynchronously removes a file or symbolic link
@@ -263,12 +266,15 @@ export abstract class pfs {
                 if (err) { reject(err); }
                 else { resolve(); }
             };
-            if (+process.versions.node.split('.')[0] < 12) {
+            const hasRecursiveOption = options?.recursive === true;
+            if (nodeVersion.major < 12) {
                 // Node.js did not support options before v12
-                if (typeof options !== 'undefined') {
-                    throw new Error(`rmdir options not supported in NodeJS ${process.version}`);
-                }
+                if (hasRecursiveOption) { throw new Error(`rmdir options not supported in NodeJS ${process.version}`); }
                 fs.rmdir(path, callback);
+            }
+            else if (hasRecursiveOption && (nodeVersion.major > 14 || (nodeVersion.major === 14 && nodeVersion.minor >= 14))) {
+                // Node.js v14.14.0+ deprecated recursive on rmdir, now expects calls to rm instead
+                fs.rm(path, options, callback);
             }
             else {
                 fs.rmdir(path, options, callback);
