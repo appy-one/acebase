@@ -226,27 +226,27 @@ describe('Query with take/skip', () => {
 
     // Indexed:
 
-    it('load first 100 sort letter by a-z (non-indexed)', async () => {
+    it('load first 100 sort letter by a-z (indexed)', async () => {
         await db.query("sort_indexed").sort("letter", true).take(100).get();
     }, 30e3);
 
-    it('load second 100 sort letter by a-z (non-indexed)', async () => {
+    it('load second 100 sort letter by a-z (indexed)', async () => {
         await db.query("sort_indexed").sort("letter", true).skip(100).take(100).get();
     }, 30e3);
 
-    it('load third 100 sort letter by a-z (non-indexed)', async () => {
+    it('load third 100 sort letter by a-z (indexed)', async () => {
         await db.query("sort_indexed").sort("letter", true).skip(200).take(100).get();
     }, 30e3);
 
-    it('load first 100 sort letter by z-a (non-indexed)', async () => {
+    it('load first 100 sort letter by z-a (indexed)', async () => {
         await db.query("sort_indexed").sort("letter", false).take(100).get();
     }, 30e3);
 
-    it('load second 100 sort letter by z-a (non-indexed)', async () => {
+    it('load second 100 sort letter by z-a (indexed)', async () => {
         await db.query("sort_indexed").sort("letter", false).skip(100).take(100).get();
     }, 30e3);
 
-    it('load third 100 sort letter by z-a (non-indexed)', async () => {
+    it('load third 100 sort letter by z-a (indexed)', async () => {
         await db.query("sort_indexed").sort("letter", false).skip(200).take(100).get();
     }, 30e3);
 
