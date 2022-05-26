@@ -56,5 +56,9 @@ describe('bulk import', () => {
             // const str = tail.join(','); // MUCH SLOWER?!!!
             giantObj[head] = tail //str //obj //tail
         });
+
+        // Add last batch
+        await db.ref('gazers').update(giantObj);
+
     }, 24 * 60 * 60 * 1000)
 });
