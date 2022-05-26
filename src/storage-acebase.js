@@ -1664,8 +1664,8 @@ class AceBaseStorage extends Storage {
             }
         }
 
-        const cacheable = options.no_cache !== true && options.include_child_count !== true;
-        if (cacheable) {
+        const allowCachedInfo = options.no_cache !== true && options.include_child_count !== true;
+        if (allowCachedInfo) {
             // Check if the info has been cached
             let cachedInfo = this.nodeCache.find(path, true);
             if (cachedInfo) {
@@ -1726,9 +1726,7 @@ class AceBaseStorage extends Storage {
             if (options.include_child_count) {
                 childInfo.childCount = await getChildCount(childInfo);
             }
-            if (cacheable) {
-                this.updateCache(false, childInfo, false); // TODO: check if nodeReader has done it already?
-            }
+            this.updateCache(false, childInfo, false); // Always cache lookups
             
             return childInfo;
         }
