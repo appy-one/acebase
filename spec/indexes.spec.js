@@ -71,6 +71,7 @@ describe('string index', () => {
         expect(results.length).toBe(3);
 
         const meteorites = results.getValues();
+        // This fails occasionally, has to be investigated:
         expect(meteorites[0].name).toBe('Alessandria');
         expect(meteorites[1].name).toBe('Bahjoi');
         expect(meteorites[2].name).toBe('Sołtmany');
