@@ -24,19 +24,24 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
         super(storage, peerId, dbname);
         this.masterPeerId = masterPeerId;
         this.ipcType = 'node.cluster';
+        /** Adds an event handler to a Node.js EventEmitter that is automatically removed upon IPC exit */
+        const bindEventHandler = (target, event, handler) => {
+            target.addListener(event, handler);
+            this.on('exit', () => target.removeListener(event, handler));
+        };
         // Setup process exit handler
-        process.on('SIGINT', () => {
+        bindEventHandler(process, 'SIGINT', () => {
             this.exit();
         });
         if (cluster.isMaster) {
-            cluster.on('online', worker => {
+            bindEventHandler(cluster, 'online', (worker) => {
                 // A new worker is started
                 // Do not add yet, wait for "hello" message - a forked process might not use the same db
-                worker.on('error', err => {
+                bindEventHandler(worker, 'error', err => {
                     storage.debug.error(`Caught worker error:`, err);
                 });
             });
-            cluster.on('exit', worker => {
+            bindEventHandler(cluster, 'exit', (worker) => {
                 // A worker has shut down
                 if (this.peers.find(peer => peer.id === worker.id.toString())) {
                     // Worker apparently did not have time to say goodbye, 
@@ -67,10 +72,10 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
             return super.handleMessage(message);
         };
         if (cluster.isMaster) {
-            cluster.on('message', (worker, message) => handleMessage(message));
+            bindEventHandler(cluster, 'message', (worker, message) => handleMessage(message));
         }
         else {
-            cluster.worker.on('message', handleMessage);
+            bindEventHandler(cluster.worker, 'message', handleMessage);
         }
         // if (!cluster.isMaster) {
         //     // Add master peer. Do we have to?

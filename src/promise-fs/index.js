@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pfs = void 0;
 const fs = require("fs");
+const nodeVersion = process.versions.node.split('.').reduce((v, n, i) => (v[i === 0 ? 'major' : i === 1 ? 'minor' : 'patch'] = +n, v), { major: 0, minor: 0, patch: 0 });
 class pfs {
     static get hasFileSystem() { return typeof fs === 'object' && 'open' in fs; }
     static get fs() { return fs; }
@@ -287,7 +288,9 @@ class pfs {
      * @param path
      * @returns returns a promise that resolves once the file has been removed
      */
-    static rm(path) { return this.unlink(path); }
+    static rm(path) {
+        return this.unlink(path);
+    }
     /**
      * Asynchronously removes a file or symbolic link
      * @param path
@@ -303,12 +306,17 @@ class pfs {
                     resolve();
                 }
             };
-            if (+process.versions.node.split('.')[0] < 12) {
+            const hasRecursiveOption = (options === null || options === void 0 ? void 0 : options.recursive) === true;
+            if (nodeVersion.major < 12) {
                 // Node.js did not support options before v12
-                if (typeof options !== 'undefined') {
+                if (hasRecursiveOption) {
                     throw new Error(`rmdir options not supported in NodeJS ${process.version}`);
                 }
                 fs.rmdir(path, callback);
+            }
+            else if (hasRecursiveOption && (nodeVersion.major > 14 || (nodeVersion.major === 14 && nodeVersion.minor >= 14))) {
+                // Node.js v14.14.0+ deprecated recursive on rmdir, now expects calls to rm instead
+                fs.rm(path, options, callback);
             }
             else {
                 fs.rmdir(path, options, callback);
