@@ -845,6 +845,10 @@ class AceBaseStorage extends Storage {
             this.settings.recordSize = header[index] << 8 | header[index+1];
             this.settings.pageSize = header[index+2] << 8 | header[index+3];
             this.settings.maxInlineValueSize = header[index+4] << 8 | header[index+5];
+            // Fix issue #110: (see https://github.com/appy-one/acebase/issues/110)
+            if (this.settings.recordSize === 0) { this.settings.recordSize = 65536; }
+            if (this.settings.pageSize === 0) { this.settings.pageSize = 65536; }
+            if (this.settings.maxInlineValueSize === 0) { this.settings.maxInlineValueSize = 65536; }
 
             const intro = ColorStyle.dim;
             this.debug.log(`Database "${name}" details:`.colorize(intro));
@@ -913,7 +917,7 @@ class AceBaseStorage extends Storage {
             await pfs.writeFile(filename, Buffer.from(uint8.buffer)); 
             await openDatabaseFile(true);
             // Now create the root record
-            await Node.set(this, '', {});
+            await this.setNode('', {});
             this.rootRecord.exists = true;
             this.emitOnce('ready');
         };
@@ -1109,7 +1113,7 @@ class AceBaseStorage extends Storage {
             // const filterPathInfo = PathInfo.get(filter.path || '');
             const check = async key => {
                 checkQueue.push(key);
-                const mutation = await this.getNodeValue(`history/${key}`, { tid, include: ['path', 'updated', 'deleted', 'type', 'timestamp'] }); // Not including 'value' 
+                const { value: mutation } = await this.getNode(`history/${key}`, { tid, include: ['path', 'updated', 'deleted', 'type', 'timestamp'] }); // Not including 'value' 
                 mutation.keys = mutation.updated.concat(mutation.deleted);
                 const mutationPathInfo = PathInfo.get(mutation.path);
                 
@@ -1156,7 +1160,7 @@ class AceBaseStorage extends Storage {
 
                 if (load !== 'none') {
                     const valueKey = 'value' + (load === 'target' ? (mutation.path.length === 0 ? '/' : '') + filterPath.slice(mutation.path.length) : '');
-                    const tx = await this.getNodeValue(`history/${key}`, { tid, include: ['context', 'mutations', valueKey] }); // , ...loadKeys
+                    const { value: tx } = await this.getNode(`history/${key}`, { tid, include: ['context', 'mutations', valueKey] }); // , ...loadKeys
 
                     let targetPath = mutation.path, targetValue = tx.value, targetOp = mutation.type;
                     if (typeof targetValue === 'undefined') {
@@ -1525,7 +1529,7 @@ class AceBaseStorage extends Storage {
         const start = async (callback, isAsync = false) => {
             const tid = this.createTid(); //ID.generate();
             let canceled = false;
-            const lock = await this.nodeLocker.lock(path, tid, false, `Node.getChildren "/${path}"`);
+            const lock = await this.nodeLocker.lock(path, tid, false, `storage.getChildren "/${path}"`);
             try {
                 const nodeInfo = await this.getNodeInfo(path, { tid });
                 if (!nodeInfo.exists) {
@@ -1570,12 +1574,13 @@ class AceBaseStorage extends Storage {
      * @param {string[]} [options.exclude] child paths to exclude
      * @param {boolean} [options.child_objects] whether to include child objects and arrays
      * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {Promise<{ revision: string, value: any}>}
+     * @returns {Promise<{ revision: string, value: any, cursor?: string }>}
      */
     async getNode(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
-        const tid = options.tid || this.createTid(); // ID.generate();
-        const lock = await this.nodeLocker.lock(path, tid, false, `Node.getValue "/${path}"`);
+        const tid = options.tid || this.createTid();
+        const lock = await this.nodeLocker.lock(path, tid, false, `storage.getNode "/${path}"`);
         try {
+            const cursor = this.transactionLoggingEnabled ? ID.generate() : undefined;
             const nodeInfo = await this.getNodeInfo(path, { tid });
             let value = nodeInfo.value;
             if (!nodeInfo.exists) {
@@ -1587,7 +1592,8 @@ class AceBaseStorage extends Storage {
             }
             return {
                 revision: null, // TODO: implement (or maybe remove from other storage backends because we're not using it anywhere)
-                value
+                value,
+                cursor
             };
         }
         catch(err) {
@@ -1622,15 +1628,44 @@ class AceBaseStorage extends Storage {
         options = options || {};
         options.no_cache = options.no_cache === true;
         options.allow_expand = false; // Don't use yet! // options.allow_expand !== false;
+        const tid = options.tid || this.createTid();
+
+        const getChildCount = async (nodeInfo) => {
+            let childCount = 0;
+            if ([VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(nodeInfo.valueType) && nodeInfo.address) {
+                // Get number of children
+                const childLock = await this.nodeLocker.lock(path, tid, false, `storage.getNodeInfo "/${path}"`);
+                try {
+                    const childReader = new NodeReader(this, nodeInfo.address, childLock, true);
+                    childCount = await childReader.getChildCount();
+                }
+                finally {
+                    childLock.release(`storage.getNodeInfo: done with path "/${path}"`);
+                }
+            }
+            return childCount;
+        };
 
         if (path === '') {
-            if (!this.rootRecord.exists) {
-                return new NodeInfo({ path, exists: false });
+            // Root record requires a little different strategy
+            const rootLock = await this.nodeLocker.lock('', tid, false, `storage.getNodeInfo "/"`);
+            try {
+                if (!this.rootRecord.exists) {
+                    return new NodeInfo({ path, exists: false });
+                }
+                const info = new NodeInfo({ path, address: this.rootRecord.address, exists: true, type: VALUE_TYPES.OBJECT });
+                if (options.include_child_count) {
+                    info.childCount = await getChildCount(info);
+                }
+                return info;
             }
-            return new NodeInfo({ path, address: this.rootRecord.address, exists: true, type: VALUE_TYPES.OBJECT });
+            finally {
+                rootLock.release();
+            }
         }
 
-        if (!options.include_child_count) {
+        const cacheable = options.no_cache !== true && options.include_child_count !== true;
+        if (cacheable) {
             // Check if the info has been cached
             let cachedInfo = this.nodeCache.find(path, true);
             if (cachedInfo) {
@@ -1642,10 +1677,9 @@ class AceBaseStorage extends Storage {
         // Cache miss. Find it by reading parent node
         const pathInfo = PathInfo.get(path);
         const parentPath = pathInfo.parentPath;
-        const tid = options.tid || this.createTid();
 
         // Achieve a read lock on the parent node and read it
-        let lock = await this.nodeLocker.lock(parentPath, tid, false, `Node.getInfo "/${parentPath}"`);
+        let lock = await this.nodeLocker.lock(parentPath, tid, false, `storage.getNodeInfo "/${parentPath}"`);
         try {
             // We have a lock, check if the lookup has been cached by another "thread" in the meantime. 
             let childInfo = this.nodeCache.find(path, true);
@@ -1690,21 +1724,11 @@ class AceBaseStorage extends Storage {
             }
 
             if (options.include_child_count) {
-                childInfo.childCount = 0;
-                if ([VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(childInfo.valueType) && childInfo.address) {
-                    // Get number of children
-                    const childLock = await this.nodeLocker.lock(path, tid, false, `Node.getInfo "/${path}"`);
-                    try {
-                        const childReader = new NodeReader(this, childInfo.address, childLock, true);
-                        childInfo.childCount = await childReader.getChildCount();
-                    }
-                    finally {
-                        childLock.release(`Node.getInfo: done with path "/${path}"`);
-                    }
-                }
+                childInfo.childCount = await getChildCount(childInfo);
             }
-            // lock.release(`Node.getInfo: done with path "/${parentPath}"`);
-            this.updateCache(false, childInfo, false); // Don't have to, nodeReader will have done it already
+            if (cacheable) {
+                this.updateCache(false, childInfo, false); // TODO: check if nodeReader has done it already?
+            }
             
             return childInfo;
         }
@@ -1713,7 +1737,7 @@ class AceBaseStorage extends Storage {
             throw err;
         }
         finally {
-            lock.release(`Node.getInfo: done with path "/${parentPath}"`);
+            lock.release(`storage.getNodeInfo: done with path "/${parentPath}"`);
         }
     }
 
@@ -1744,7 +1768,7 @@ class AceBaseStorage extends Storage {
     /**
      * Delegates to legacy update method that handles everything
      * @param {string} path
-     * @param {any} value
+     * @param {any} updates
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions

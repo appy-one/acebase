@@ -513,12 +513,27 @@ class DataIndex {
             await headerStats.updateTreeLength(treeStatistics.byteLength);
             await pfs.close(fd);
 
-            // rename new file, overwriting the old file
-            await pfs.rename(newIndexFile, this.fileName);
+            const renameFile = async (retry = 0) => {
+                try {
+                    // rename new file, overwriting the old file
+                    await pfs.rename(newIndexFile, this.fileName);
+                }
+                catch(err) {
+                    // Occasionally getting EPERM "operation not permitted" errors lately with Node 16. 
+                    // Fix: try again after 100ms, up to 10 times
+                    if (err.code === 'EPERM' && retry < 10) {
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        return renameFile(retry+1);
+                    }
+                    throw err;
+                }
+            };
+            await renameFile();
             this.state = DataIndex.STATE.READY;
             idx.release();
         }
         catch(err) {
+            this.storage.debug.error(`Index rebuild error: `, err);
             this.state = DataIndex.STATE.ERROR;
             this._buildError = err;
             idx.release();
@@ -551,7 +566,7 @@ class DataIndex {
                 this.storage.debug.verbose(`Could not update index ${this.description}: ${err.message}`.colorize(ColorStyle.yellow));
 
                 if (retry > 0 && opsCount === operations.length) {
-                    throw new Error(`DEV ERROR: unable to process operations because tree was rebuilt, and that didn't help?!`);
+                    throw new Error(`DEV ERROR: unable to process operations because tree was rebuilt, and that didn't help?! --> ${err.stack}`);
                 }
 
                 await this._rebuild(idx); // rebuild calls idx.close() and .release()
@@ -1047,7 +1062,7 @@ class DataIndex {
                     const getChildren = async () => {
                         let children = [];
 
-                        await Node.getChildren(this.storage, path)
+                        await this.storage.getChildren(path)
                         .next(child => {
                             let keyOrIndex = typeof child.index === 'number' ? child.index : child.key;
                             if (!child.address || child.type !== Node.VALUE_TYPES.OBJECT) { //if (child.storageType !== "record" || child.valueType !== VALUE_TYPES.OBJECT) {
@@ -1059,7 +1074,7 @@ class DataIndex {
                         })
                         .catch(reason => {
                             // Record doesn't exist? No biggy
-                            this.storage.debug.warn(`Could not load record "/${path}": ${reason.message}`);
+                            this.storage.debug.warn(`Could not get children of "/${path}": ${reason.message}`);
                         })
 
                         // Iterate through the children in batches of max n nodes
@@ -1134,8 +1149,8 @@ class DataIndex {
                                         const keyPromises = [];
                                         const seenKeys = gotNamedWildcardKeys.slice();
 
-                                        // NEW: Use getNodeValue to get data, enables indexing of subkeys
-                                        const obj = await this.storage.getNodeValue(childPath, { include: keyFilter, tid });
+                                        // NEW: Use getNode to get data, enables indexing of subkeys
+                                        const { value: obj } = await this.storage.getNode(childPath, { include: keyFilter, tid });
                                         keyFilter.forEach(key => {
                                             // What can be indexed? 
                                             // strings, numbers, booleans, dates, undefined
@@ -1159,32 +1174,6 @@ class DataIndex {
                                             addValue(key, val);
                                         });
 
-                                        // await Node.getChildren(this.storage, childPath, keyFilter)
-                                        // .next(childInfo => {
-                                        //     // What can be indexed? 
-                                        //     // strings, numbers, booleans, dates, undefined
-                                        //     seenKeys.push(childInfo.key);
-                                        //     if (childInfo.key === this.key && !allowedKeyValueTypes.includes(childInfo.valueType)) {
-                                        //         // Key value isn't allowed to be this type, mark it as null so it won't be indexed
-                                        //         keyValue = null;
-                                        //         return;
-                                        //     }
-                                        //     else if (childInfo.key !== this.key && !indexableTypes.includes(childInfo.valueType)) {
-                                        //         // Metadata that can't be indexed because it has the wrong type
-                                        //         return;
-                                        //     }
-                                        //     // Index this value
-                                        //     if (childInfo.address) {
-                                        //         const p = Node.getValue(this.storage, childInfo.address.path, { tid })
-                                        //             .then(value => {
-                                        //                 addValue(childInfo.key, value);
-                                        //             });
-                                        //         keyPromises.push(p);
-                                        //     }
-                                        //     else {
-                                        //         addValue(childInfo.key, childInfo.value);
-                                        //     }
-                                        // });
                                         // If the key value wasn't present, set it to undefined (so it'll be indexed)
                                         if (!seenKeys.includes(this.key)) { keyValue = undefined; }
                                         await Promise.all(keyPromises);

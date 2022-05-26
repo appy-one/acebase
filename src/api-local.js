@@ -55,57 +55,111 @@ class LocalApi extends Api {
         this.storage.subscriptions.remove(path, event, callback);
     }
 
-    set(path, value, options = { suppress_events: false, context: null }) {
-        return Node.update(this.storage, path, value, { merge: false, suppress_events: options.suppress_events, context: options.context });
+    /**
+     * Creates a new node or overwrites an existing node
+     * @param {Storage} storage 
+     * @param {string} path 
+     * @param {any} value Any value will do. If the value is small enough to be stored in a parent record, it will take care of it
+     * @param {object} [options]
+     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
+     * @param {any} [options.context=null] Context to be passed along with data events
+     * @returns {Promise<{ cursor?: string }>} returns a promise with the new cursor (if transaction logging is enabled)
+     */
+    async set(path, value, options = { suppress_events: false, context: null }) {
+        const cursor = await this.storage.setNode(path, value, { suppress_events: options.suppress_events, context: options.context });
+        return { cursor };
     }
 
-    update(path, updates, options = { suppress_events: false, context: null }) {
-        return Node.update(this.storage, path, updates, { merge: true, suppress_events: options.suppress_events, context: options.context });
+    /**
+     * Updates an existing node, or creates a new node.
+     * @param {Storage} storage 
+     * @param {string} path 
+     * @param {any} updates
+     * @param {object} [options]
+     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
+     * @param {any} [options.context=null] Context to be passed along with data events
+     * @returns {Promise<{ cursor?: string }>} returns a promise with the new cursor (if transaction logging is enabled)
+     */    
+    async update(path, updates, options = { suppress_events: false, context: null }) {
+        const cursor = await this.storage.updateNode(path, updates, { suppress_events: options.suppress_events, context: options.context });
+        return { cursor };
     }
 
     get transactionLoggingEnabled() {
         return this.storage.settings.transactions && this.storage.settings.transactions.log === true;
     }
 
+    /**
+     * Gets the value of a node
+     * @param {Storage} storage 
+     * @param {string} path 
+     * @param {object} [options] when omitted retrieves all nested data. If include is set to an array of keys it will only return those children. If exclude is set to an array of keys, those values will not be included
+     * @param {string[]} [options.include] keys to include
+     * @param {string[]} [options.exclude] keys to exclude
+     * @param {boolean} [options.child_objects=true] whether to include child objects
+     * @returns {Promise<{ value: any, context: any, cursor?: string }>}
+     */    
     async get(path, options) {
-        const context = {};
-        if (this.transactionLoggingEnabled) {
-            context.acebase_cursor = ID.generate();
+        // const context = {};
+        // if (this.transactionLoggingEnabled) {
+        //     context.acebase_cursor = ID.generate();
+        // }
+        if (!options) { options = {}; }
+        if (typeof options.include !== "undefined" && !(options.include instanceof Array)) {
+            throw new TypeError(`options.include must be an array of key names`);
         }
-        const value = await Node.getValue(this.storage, path, options);
-        return { value, context };
+        if (typeof options.exclude !== "undefined" && !(options.exclude instanceof Array)) {
+            throw new TypeError(`options.exclude must be an array of key names`);
+        }
+        if (["undefined","boolean"].indexOf(typeof options.child_objects) < 0) {
+            throw new TypeError(`options.child_objects must be a boolean`);
+        }
+        const node = await this.storage.getNode(path, options);
+        return { value: node.value, context: { acebase_cursor: node.cursor }, cursor: node.cursor };
     }
 
-    transaction(path, callback, options = { suppress_events: false, context: null }) {
-        return Node.transaction(this.storage, path, callback, { suppress_events: options.suppress_events, context: options.context });
+    /**
+     * Performs a transaction on a Node
+     * @param {Storage} storage 
+     * @param {string} path 
+     * @param {(currentValue: any) => Promise<any>} callback callback is called with the current value. The returned value (or promise) will be used as the new value. When the callbacks returns undefined, the transaction will be canceled. When callback returns null, the node will be removed.
+     * @param {any} [options]
+     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
+     * @param {any} [options.context=null]
+     * @returns {Promise<{ cursor?: string }>} returns a promise with the new cursor (if transaction logging is enabled)
+     */
+    async transaction(path, callback, options = { suppress_events: false, context: null }) {
+        const cursor = await this.storage.transactNode(path, callback, { suppress_events: options.suppress_events, context: options.context });
+        return { cursor };
     }
 
-    exists(path) {
-        return Node.exists(this.storage, path);
+    async exists(path) {
+        const nodeInfo = await this.storage.getNodeInfo(path);
+        return nodeInfo.exists;
     }
 
-    query2(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined }) {
-        /*
+    // query2(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined }) {
+    //     /*
         
-        Now that we're using indexes to filter data and order upon, each query requires a different strategy
-        to get the results the quickest.
+    //     Now that we're using indexes to filter data and order upon, each query requires a different strategy
+    //     to get the results the quickest.
 
-        So, we'll analyze the query first, build a strategy and then execute the strategy
+    //     So, we'll analyze the query first, build a strategy and then execute the strategy
 
-        Analyze stage:
-        - what path is being queried (wildcard path or single parent)
-        - which indexes are available for the path
-        - which indexes can be used for filtering
-        - which indexes can be used for sorting
-        - is take/skip used to limit the result set
+    //     Analyze stage:
+    //     - what path is being queried (wildcard path or single parent)
+    //     - which indexes are available for the path
+    //     - which indexes can be used for filtering
+    //     - which indexes can be used for sorting
+    //     - is take/skip used to limit the result set
         
-        Strategy stage:
-        - chain index filtering
-        - ....
+    //     Strategy stage:
+    //     - chain index filtering
+    //     - ....
 
-        TODO!
-        */
-    }
+    //     TODO!
+    //     */
+    // }
 
     /**
      * 
@@ -183,8 +237,9 @@ class LocalApi extends Api {
                 const batch = batches.shift();
                 return Promise.all(batch.map(item => {
                     const { path, index } = item;
-                    return Node.getValue(this.storage, path, options)
-                    .then(val => {
+                    return this.storage.getNode(path, options)
+                    .then(node => {
+                        const val = node.value;
                         if (val === null) { 
                             // Record was deleted, but index isn't updated yet?
                             this.storage.debug.warn(`Indexed result "/${path}" does not have a record!`);
@@ -583,7 +638,7 @@ class LocalApi extends Api {
                 ? { include: query.order.map(order => order.key) }
                 : { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
 
-            return Node.getChildren(this.storage, path, indexKeyFilter)
+            return this.storage.getChildren(path, { keyFilter: indexKeyFilter })
             .next(child => {
                 if (child.type === Node.VALUE_TYPES.OBJECT) { // if (child.valueType === VALUE_TYPES.OBJECT) {
                     if (!child.address) {
@@ -599,15 +654,15 @@ class LocalApi extends Api {
                     // large, this will go very wrong.
                     // queue.push({ path: child.path });
 
-                    const p = Node.matches(this.storage, child.address.path, tableScanFilters)
+                    const p = this.storage.matchNode(child.address.path, tableScanFilters)
                     .then(isMatch => {
                         if (!isMatch) { return null; }
 
                         const childPath = child.address.path;
                         if (options.snapshots || query.order.length > 0) {
-                            return Node.getValue(this.storage, childPath, childOptions).then(val => {
-                                return { path: childPath, val };
-                            });                                
+                            return this.storage.getNode(childPath, childOptions).then(node => {
+                                return { path: childPath, val: node.value };
+                            });
                         }
                         else {
                             return { path: childPath };
@@ -785,21 +840,21 @@ class LocalApi extends Api {
                                         }
                                         return keys;
                                     }, []);
-                                    return Node.getValue(this.storage, path, { include: keysToLoad })
-                                    .then(val => {
-                                        if (val === null) { return false; }
-                                        return indexFilters.every(filter => filter.index.test(val, filter.op, filter.compare));
-                                    })
-                                }
+                                    return this.storage.getNode(path, { include: keysToLoad })
+                                    .then(node => {
+                                        if (node.value === null) { return false; }
+                                        return indexFilters.every(filter => filter.index.test(node.value, filter.op, filter.compare));
+                                    });
+                                };
                                 if (simpleFilters.length > 0) {
-                                    return Node.matches(this.storage, path, simpleFilters)
+                                    return this.storage.matchNode(path, simpleFilters)
                                     .then(isMatch => {
                                         if (isMatch) {
                                             if (indexFilters.length === 0) { return true; }
                                             return checkIndexFilters();
                                         }
                                         return false;
-                                    })
+                                    });
                                 }
                                 else {
                                     return checkIndexFilters();
@@ -823,8 +878,8 @@ class LocalApi extends Api {
                                 };
                                 if (options.snapshots) {
                                     const loadOptions = { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
-                                    return this.storage.getNodeValue(path, loadOptions)
-                                    .then(gotValue);
+                                    return this.storage.getNode(path, loadOptions)
+                                    .then(node => gotValue(node.value));
                                 }
                                 else {
                                     return gotValue(newValue);
@@ -928,7 +983,7 @@ class LocalApi extends Api {
             if (['null','undefined'].includes(from)) { from = null; }
             const children = [];
             let n = 0, stop = false, more = false; //stop = skip + limit, 
-            await Node.getChildren(this.storage, path)
+            await this.storage.getChildren(path)
             .next(childInfo => {
                 if (stop) {
                     // Stop 1 child too late on purpose to make sure there's more
@@ -972,7 +1027,7 @@ class LocalApi extends Api {
                         list: []
                     }
                 };
-                const nodeInfo = await Node.getInfo(this.storage, path, { include_child_count: args.child_count === true });
+                const nodeInfo = await this.storage.getNodeInfo(path, { include_child_count: args.child_count === true });
                 info.key = typeof nodeInfo.key !== 'undefined' ? nodeInfo.key : nodeInfo.index;
                 info.exists = nodeInfo.exists;
                 info.type = nodeInfo.exists ? nodeInfo.valueTypeName : undefined;

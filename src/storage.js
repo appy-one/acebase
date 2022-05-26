@@ -722,7 +722,8 @@ class Storage extends SimpleEventEmitter {
             if (topEventPath === '' && typeof valueOptions.include === 'undefined') {
                 this.debug.warn(`WARNING: One or more value event listeners on the root node are causing the entire database value to be read to facilitate change tracking. Using "value", "notify_value", "child_changed" and "notify_child_changed" events on the root node are a bad practice because of the significant performance impact. Use "mutated" or "mutations" events instead`);
             }
-            currentValue = await this.getNodeValue(topEventPath, valueOptions);
+            const node = await this.getNode(topEventPath, valueOptions);
+            currentValue = node.value;
         }
 
         topEventData = currentValue;
@@ -1157,6 +1158,7 @@ class Storage extends SimpleEventEmitter {
     }
 
     /**
+     * @deprecated Use `getNode` instead
      * Gets a node's value by delegating to getNode, returning only the value
      * @param {string} path 
      * @param {object} [options] optional options that can limit the amount of (sub)data being loaded, and any other implementation specific options for recusrsive calls
@@ -1166,7 +1168,7 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @returns {Promise<any>}
      */
-    async getNodeValue(path, options) {
+    async getNodeValue(path, options = {}) {
         const node = await this.getNode(path, options);
         return node.value;
     }
@@ -1179,7 +1181,7 @@ class Storage extends SimpleEventEmitter {
      * @param {string[]} [options.exclude] child paths to exclude
      * @param {boolean} [options.child_objects] whether to inlcude child objects and arrays
      * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {Promise<{ revision?: string, value: any}>}
+     * @returns {Promise<{ revision?: string, value: any, cursor?: string }>}
      */
     // eslint-disable-next-line no-unused-vars
     getNode(path, options) {
@@ -1220,7 +1222,7 @@ class Storage extends SimpleEventEmitter {
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @param {any} [options.context] context info used by the client
-     * @returns {Promise<void>}
+     * @returns {Promise<string|void>} Returns a new cursor if transaction logging is enabled
      */
     // eslint-disable-next-line no-unused-vars
     setNode(path, value, options) {
@@ -1235,7 +1237,7 @@ class Storage extends SimpleEventEmitter {
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @param {any} [options.context] context info used by the client
-     * @returns {Promise<void>}
+     * @returns {Promise<string|void>} Returns a new cursor if transaction logging is enabled
      */
     // eslint-disable-next-line no-unused-vars
     updateNode(path, updates, options) {
@@ -1252,7 +1254,7 @@ class Storage extends SimpleEventEmitter {
      * @param {string} [options.tid] optional transaction id for node locking purposes
      * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
      * @param {any} [options.context] context info used by the client
-     * @returns {Promise<void>}
+     * @returns {Promise<string|void>} Returns a new cursor if transaction logging is enabled
      */
     async transactNode(path, callback, options = { no_lock: false, suppress_events: false, context: null }) {
         const useFakeLock = options && options.no_lock === true;
@@ -1292,8 +1294,8 @@ class Storage extends SimpleEventEmitter {
             if (changed) {
                 throw new NodeRevisionError(`Node changed`);
             }
-            const result = await this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid, suppress_events: options.suppress_events, context: options.context });
-            return result;
+            const cursor = await this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid, suppress_events: options.suppress_events, context: options.context });
+            return cursor;
         }
         catch (err) {
             if (err instanceof NodeRevisionError) {
@@ -1320,8 +1322,6 @@ class Storage extends SimpleEventEmitter {
      */
     matchNode(path, criteria, options = { tid: undefined }) {
 
-        // TODO: Try implementing nested property matching, eg: filter('address/city', '==', 'Amsterdam')
-        
         const tid = (options && options.tid) || ID.generate();
 
         /**
@@ -1454,8 +1454,8 @@ class Storage extends SimpleEventEmitter {
                         }
                         else if (child.valueType === VALUE_TYPES.ARRAY && ["contains","!contains"].indexOf(f.op) >= 0) {
                             // TODO: refactor to use child stream
-                            const p = this.getNodeValue(child.path, { tid })
-                            .then(arr => {
+                            const p = this.getNode(child.path, { tid })
+                            .then(({ value: arr }) => {
                                 // const i = arr.indexOf(f.compare);
                                 // return { key: child.key, isMatch: (i >= 0 && f.op === "contains") || (i < 0 && f.op === "!contains") };
         
@@ -1477,9 +1477,9 @@ class Storage extends SimpleEventEmitter {
                             proceed = true;
                         }
                         else if (child.valueType === VALUE_TYPES.STRING) {
-                            const p = this.getNodeValue(child.path, { tid })
-                            .then(val => {
-                                return { key: child.key, isMatch: this.test(val, f.op, f.compare) };
+                            const p = this.getNode(child.path, { tid })
+                            .then(node => {
+                                return { key: child.key, isMatch: this.test(node.value, f.op, f.compare) };
                             });
                             promises.push(p);
                             proceed = true;
@@ -1609,8 +1609,8 @@ class Storage extends SimpleEventEmitter {
         else if (nodeInfo.type === VALUE_TYPES.ARRAY) { objStart = '['; objEnd = ']'; }
         else {
             // Node has no children, get and export its value
-            const value = await this.getNodeValue(path);
-            const val = stringifyValue(nodeInfo.type, value);
+            const node = await this.getNode(path);
+            const val = stringifyValue(nodeInfo.type, node.value);
             return write(val);
         }
 
