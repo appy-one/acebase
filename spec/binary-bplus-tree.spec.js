@@ -234,9 +234,9 @@ describe('Unique Binary B+Tree', () => {
 
             it('with "!between" operator', async () => {
                 // Find custom range of keys (before and after given indexes)
-                let [startIndex, endIndex] = [Math.floor(Math.random() * (keys.length-1)), Math.floor(Math.random() * (keys.length-1))].sort((a,b) => a < b ? -1 : 1);                
-                let expectedKeys = keys.slice(0, startIndex).concat(keys.slice(endIndex));  // eg: expect [1,2,7,8,9] for indexes 2 and 6 of keys [1,2,3,4,5,6,7,8,9]
-                let firstKey = keys[startIndex], lastKey = keys[endIndex-1];                // eg: 3 and 5
+                let [startIndex, endIndex] = [Math.floor(Math.random() * keys.length), Math.floor(Math.random() * keys.length)].sort((a,b) => a-b); // eg: [2,6]
+                let expectedKeys = keys.filter((key, index) => index < startIndex || index > endIndex); // eg: expect [1,2, 7,8,9] for indexes 2 and 6 of keys [1,2,3,4,5,6,7,8,9]
+                let firstKey = keys[startIndex], lastKey = keys[endIndex];                // eg: 3 and 6
                 
                 let result = await tree.search('!between', [firstKey, lastKey], options);
                 checkResults(result, expectedKeys, `!between "${firstKey}" and "${lastKey}": expecting ${expectedKeys.length} results`);
