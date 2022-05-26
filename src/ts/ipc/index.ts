@@ -14,6 +14,11 @@ interface INodeIPCMessage extends IMessage {
     dbname: string
 }
 
+interface EventEmitterLike {
+    addListener(event: string, handler: (...args: any[]) => any): any;
+    removeListener(event: string, handler: (...args: any[]) => any): any;
+}
+
 /**
  * Node cluster functionality - enables vertical scaling with forked processes. AceBase will enable IPC at startup, so
  * any forked process will communicate database changes and events automatically. Locking of resources will be done by
@@ -35,21 +40,27 @@ export class IPCPeer extends AceBaseIPCPeer {
         this.masterPeerId = masterPeerId;
         this.ipcType = 'node.cluster';
 
+        /** Adds an event handler to a Node.js EventEmitter that is automatically removed upon IPC exit */
+        const bindEventHandler = (target: EventEmitterLike, event: string, handler: (...args: any[]) => any) => {
+            target.addListener(event, handler);
+            this.on('exit', () => target.removeListener(event, handler));
+        };
+
         // Setup process exit handler
-        process.on('SIGINT', () => {
+        bindEventHandler(process, 'SIGINT', () => {
             this.exit();
         });
         
         if (cluster.isMaster) {
-            cluster.on('online', worker => {
+            bindEventHandler(cluster, 'online', (worker: cluster.Worker) => {
                 // A new worker is started
                 // Do not add yet, wait for "hello" message - a forked process might not use the same db
-                worker.on('error', err => {
+                bindEventHandler(worker, 'error', err => {
                     storage.debug.error(`Caught worker error:`, err);
                 });
             });
 
-            cluster.on('exit', worker => {
+            bindEventHandler(cluster, 'exit', (worker: cluster.Worker) => {
                 // A worker has shut down
                 if (this.peers.find(peer => peer.id === worker.id.toString())) {
                     // Worker apparently did not have time to say goodbye, 
@@ -62,7 +73,7 @@ export class IPCPeer extends AceBaseIPCPeer {
             });
         }
 
-        const handleMessage = (message:INodeIPCMessage) => {
+        const handleMessage = (message: INodeIPCMessage) => {
             if (typeof message !== 'object') {
                  // Ignore non-object IPC messages
                 return; 
@@ -84,10 +95,10 @@ export class IPCPeer extends AceBaseIPCPeer {
         };
 
         if (cluster.isMaster) {
-            cluster.on('message', (worker: cluster.Worker, message:INodeIPCMessage) => handleMessage(message));
+            bindEventHandler(cluster, 'message', (worker: cluster.Worker, message: INodeIPCMessage) => handleMessage(message));
         }
         else {
-            cluster.worker.on('message', handleMessage);
+            bindEventHandler(cluster.worker, 'message', handleMessage);
         }
 
         // if (!cluster.isMaster) {
@@ -96,7 +107,7 @@ export class IPCPeer extends AceBaseIPCPeer {
         // }
 
         // Send hello to other peers
-        const helloMsg:IHelloMessage = { type: 'hello', from: this.id, data: undefined };
+        const helloMsg: IHelloMessage = { type: 'hello', from: this.id, data: undefined };
         this.sendMessage(helloMsg);
     }
 
