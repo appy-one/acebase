@@ -109,7 +109,7 @@ describe('Query', () => {
         const wait = async (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
         const fiveStarBooks = {}; // local query result set
-        const snaps = await db.query('books')
+        const query = db.query('books')
             .filter('rating', '==', 5)
             .on('add', match => {
                 // add book to results
@@ -122,8 +122,8 @@ describe('Query', () => {
             .on('remove', match => {
                 // remove book from results
                 delete fiveStarBooks[match.ref.key];
-            })
-            .get();
+            });
+        const snaps = await query.get();
 
         // Add current query results to our local result set
         snaps.forEach(snap => {
@@ -162,6 +162,14 @@ describe('Query', () => {
         await matchRef1.update({ rating: 5 });
         await wait(10); // Wait few ms
         expect(countBooks()).toBe(1);
+
+        // Stop query
+        await query.stop();
+
+        // Change the rating so it doesn't match anymore
+        await matchRef1.update({ rating: 4 });
+        await wait(10); // Wait few ms
+        expect(countBooks()).toBe(1); // Should not have received a callback because of previous .stop()
     });
 
     afterAll(async () => {

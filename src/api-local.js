@@ -180,7 +180,7 @@ class LocalApi extends Api {
      * @param {boolean} [options.monitor.change=false] monitor changed children that still match this query
      * @param {boolean} [options.monitor.remove=false] monitor children that don't match this query anymore
      * @ param {(event:string, path: string, value?: any) => boolean} [options.monitor.callback] NEW (BETA) callback with subscription to enable monitoring of new matches
-     * @returns {Promise<{ results: object[]|string[]>, context: any }} returns a promise that resolves with matching data or paths in `results`
+     * @returns {Promise<{ results: object[]|string[]>, context: any, stop(): Promise<void> }} returns a promise that resolves with matching data or paths in `results`
      */
     query(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: event => {} }) {
         // TODO: Refactor to async
@@ -767,6 +767,7 @@ class LocalApi extends Api {
             if (options.monitor === true) {
                 options.monitor = { add: true, change: true, remove: true };
             }
+            let stop = async () => {};
             if (typeof options.monitor === 'object' && (options.monitor.add || options.monitor.change || options.monitor.remove)) {
                 // TODO: Refactor this to use 'mutations' event instead of 'notify_child_*'
 
@@ -786,6 +787,7 @@ class LocalApi extends Api {
                     this.unsubscribe(ref.path, 'child_added', childAddedCallback);
                     this.unsubscribe(ref.path, 'notify_child_removed', childRemovedCallback);
                 };
+                stop = async() => { stopMonitoring(); };
                 const childChangedCallback = (err, path, newValue, oldValue) => {
                     const wasMatch = matchedPaths.includes(path);
 
@@ -943,7 +945,7 @@ class LocalApi extends Api {
                 }
             }
         
-            return { results: matches, context };
+            return { results: matches, context, stop };
         });
     }
 
