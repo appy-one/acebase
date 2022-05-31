@@ -38,6 +38,11 @@ class DetailedError extends Error {
         }
         return err.code === code; 
     }
+
+    static hasErrorCode(err, code) {
+        if (!(err instanceof DetailedError)) { return false; }
+        return err.hasErrorCode(code);
+    }
 }
 
 module.exports = { DetailedError };

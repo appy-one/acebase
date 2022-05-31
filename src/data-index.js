@@ -686,7 +686,7 @@ class DataIndex {
     }
 
     async _lock(mode = 'exclusive') {
-        return ThreadSafe.lock(this.fileName, { shared: mode === 'shared' });
+        return ThreadSafe.lock(this.fileName, { shared: mode === 'shared' }); //, timeout: 15 * 60000 (for debugging)
     }
 
     async count(op, val) {
