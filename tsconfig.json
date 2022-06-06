@@ -5,7 +5,8 @@
         "module": "CommonJS",
         "listEmittedFiles": true,
         "outDir": "src",
-        "sourceMap": true
+        "sourceMap": true,
+        "declaration": true,
     },
     "exclude": [
         "node_modules"
