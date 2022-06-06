@@ -10123,6 +10123,7 @@ class Storage extends SimpleEventEmitter {
                 try {
                     const index = await DataIndex.readFromFile(storage, fileName);
                     _indexes.push(index);
+                    return index;
                 }
                 catch(err) {
                     storage.debug.error(err);
@@ -11952,7 +11953,7 @@ class Storage extends SimpleEventEmitter {
     /**
      * Gets currently active schema definition for the specified path
      * @param {string} path
-     * @returns { path: string, schema: string|Object, text: string }
+     * @returns {{ path: string, schema: string|Object, text: string }}
      */
     getSchema(path) {
         const item = this._schemas.find(item => item.path === path);
@@ -12024,7 +12025,7 @@ class Storage extends SimpleEventEmitter {
             /**
              * @param {string} path
              * @param {any} value 
-             * @param {Array<string|numer>} trailKeys 
+             * @param {Array<string|number>} trailKeys 
              * @returns {{ ok: boolean, reason?: string }}
              */
             const check = (path, value, trailKeys) => {
