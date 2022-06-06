@@ -159,3 +159,38 @@ describe('string index', () => {
         await removeDB();
     });
 });
+
+describe('Date index', () => {
+    /** @type {AceBase} */
+    let db, removeDB;
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB({ config: (options) => { options.logLevel = 'warn' }}));
+    });
+
+    it('does not cause stack overflow', async () => {
+        // Created for issue https://github.com/appy-one/acebase/issues/114
+
+        console.log('[indexing issue #114] Generating large dates collection...');
+
+        // Generate 10K dates
+        const MS_PER_DAY = 24 * 60 * 60 * 1000;
+        const collection = {};
+        for (let i = 0; i < 10000; i++) {
+            collection[ID.generate()] = { date: new Date(i * MS_PER_DAY) };
+        }
+        await db.ref('dates').set(collection);
+
+        console.log('[indexing issue #114] Creating index..'); 
+
+        // Create index
+        await db.indexes.create('dates', 'date');
+
+        console.log('[indexing issue #114] Success!'); 
+
+    }, 60e3);
+
+    afterAll(async () => {
+        await removeDB();
+    });
+});
