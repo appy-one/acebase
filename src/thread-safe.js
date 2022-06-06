@@ -11,7 +11,7 @@ class ThreadSafe {
      * @param {string} [options.name='unnamed lock'] name of the lock, good for debugging purposes
      * @param {boolean} [options.shared=false] if this lock is allowed to be shared with others also requesting a shared lock. Requested lock will be exclusive otherwise (default)
      * @param {any} [options.target] if you are using a string to uniquely identify the locking target, you can pass the actual object target with this option; lock.target will be set to this value instead.
-     * @returns {Promise<{ achieved: Date, release: () => void, target: any, name: string }}
+     * @returns {Promise<{ achieved: Date, release: () => void, target: any, name: string }>}
      */
     static lock(target, options = { timeout: 60000 * 15, critical: true, name: 'unnamed lock', shared: false }) {
         if (typeof options !== 'object') { options = {}; }
