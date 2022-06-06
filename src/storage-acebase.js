@@ -24,7 +24,7 @@ class IAppliedMutations {}
 class AceBaseStorageSettings extends StorageSettings {
     /**
      * 
-     * @param {AceBaseStorageSettings} settings 
+     * @param {object} settings 
      * @param {number} [settings.recordSize=128] record size in bytes, defaults to 128 (recommended). Max is 65536
      * @param {number} [settings.pageSize=1024] page size in records, defaults to 1024 (recommended). Max is 65536
      * @param {'data'|'transaction'|'auth'} [settings.type='data'] type of database content. Determines the name of the file within the .acebase directory
