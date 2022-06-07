@@ -1060,12 +1060,75 @@ class CustomStorage extends Storage {
                     // });
                 }
 
-                // const includeCheck = options.include && options.include.length > 0
-                //     ? new RegExp('^' + options.include.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
-                //     : null;
-                // const excludeCheck = options.exclude && options.exclude.length > 0
-                //     ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
-                //     : null;
+                const isArray = targetNode.type === VALUE_TYPES.ARRAY;
+                /**
+                 * Convert include & exclude filters to PathInfo instances for easier handling
+                 * @param {string[]} arr 
+                 * @returns {PathInfo[]}
+                 */
+                const convertFilterArray = (arr) => {
+                    const isNumber = key => /^[0-9]+$/.test(key);
+                    return arr.map(path => PathInfo.get(isArray && isNumber(path) ? `[${path}]` : path));
+                };
+                const includeFilter = options.include ? convertFilterArray(options.include) : [];
+                const excludeFilter = options.exclude ? convertFilterArray(options.exclude) : [];
+
+                /**
+                 * Apply include filters to prevent unwanted properties stored inline to be added.
+                 * 
+                 * Removes properties that are not on the trail of any include filter, but were loaded because they are
+                 * stored inline in the parent node. 
+                 * 
+                 * Example:
+                 * data of `"users/someuser/posts/post1"`: `{ title: 'My first post', posted: (date), history: {} }`
+                 * code: `db.ref('users/someuser').get({ include: ['posts/*\/title'] })`
+                 * descPath: `"users/someuser/posts/post1"`,
+                 * trailKeys: `["posts", "post1"]`,
+                 * includeFilter[0]: `["posts", "*", "title"]`
+                 * properties `posted` and `history` must be removed from the object
+                 * 
+                 * @param {string} descPath 
+                 * @param {ICustomStorageNode} node 
+                 */
+                 const applyFiltersOnInlineData = (descPath, node) => {
+                    if ([VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type) && includeFilter.length > 0) {
+                        const trailKeys = PathInfo.getPathKeys(descPath).slice(pathInfo.keys.length);
+                        const checkPathInfo = new PathInfo(trailKeys);
+                        const remove = [];
+                        const includes = includeFilter.filter(info => info.isDescendantOf(checkPathInfo));
+                        if (includes.length > 0) {
+                            const isArray = node.type === VALUE_TYPES.ARRAY;
+                            remove.push(...Object.keys(node.value).map(key => isArray ? +key : key)); // Mark all at first
+                            for (let info of includes) {
+                                const targetProp = info.keys[trailKeys.length];
+                                if (typeof targetProp === 'string' && (targetProp === '*' || targetProp.startsWith('$'))) {
+                                    remove.splice(0);
+                                    break;
+                                }
+                                const index = remove.indexOf(targetProp);
+                                index >= 0 && remove.splice(index, 1);
+                            }
+                        }
+                        const hasIncludeOnChild = includeFilter.some(info => info.isChildOf(checkPathInfo));
+                        const hasExcludeOnChild = excludeFilter.some(info => info.isChildOf(checkPathInfo));
+                        if (hasExcludeOnChild && !hasIncludeOnChild) {
+                            // do not remove children that are NOT in direct exclude filters (which includes them again)
+                            const excludes = excludeFilter.filter(info => info.isChildOf(checkPathInfo));
+                            for (let i = 0; i < remove.length; i++) {
+                                if (!excludes.find(info => info.equals(remove[i]))) {
+                                    remove.splice(i, 1);
+                                    i--;
+                                }
+                            }
+                        }
+                        // remove.length > 0 && this.debug.log(`Remove properties:`, remove);
+                        for (let key of remove) {
+                            delete node.value[key];
+                        }
+                    }
+                };
+
+                applyFiltersOnInlineData(path, targetNode);
 
                 let checkExecuted = false;
                 const includeDescendantCheck = (descPath, metadata) => {
@@ -1077,14 +1140,14 @@ class CustomStorage extends Storage {
                     if (!filtered) { return true; }
 
                     // Apply include & exclude filters
-                    let checkPath = descPath.slice(path.length);
-                    if (checkPath[0] === '/') { checkPath = checkPath.slice(1); }
-                    const checkPathInfo = new PathInfo(checkPath);
-                    let include = (options.include && options.include.length > 0 
-                        ? options.include.some(k => checkPathInfo.equals(k) || checkPathInfo.isDescendantOf(k))
-                        : true) 
-                        && (options.exclude && options.exclude.length > 0
-                        ? !options.exclude.some(k => checkPathInfo.equals(k) || checkPathInfo.isDescendantOf(k))
+                    const descPathKeys = PathInfo.getPathKeys(descPath);
+                    const trailKeys = descPathKeys.slice(pathInfo.keys.length);
+                    const checkPathInfo = new PathInfo(trailKeys);
+                    let include = (includeFilter.length > 0
+                        ? includeFilter.some(info => checkPathInfo.isOnTrailOf(info))
+                        : true)
+                        && (excludeFilter.length > 0
+                        ? !excludeFilter.some(info => info.equals(checkPathInfo) || info.isAncestorOf(checkPathInfo))
                         : true);
 
                     // Apply child_objects filter. If metadata is not loaded, we can only skip deeper descendants here - any child object that does get through will be ignored by addDescendant
@@ -1105,6 +1168,7 @@ class CustomStorage extends Storage {
                  * @param {ICustomStorageNode} node 
                  */
                 const addDescendant = (descPath, node) => {
+                    // console.warn(`Adding descendant "${descPath}"`);
                     if (!checkExecuted) {
                         throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
                     }
@@ -1113,6 +1177,10 @@ class CustomStorage extends Storage {
                         // which is ok because doing that might drastically improve performance in client code. Skip it now.
                         return true;
                     }
+
+                    // Apply include filters to prevent unwanted properties stored inline to be added
+                    applyFiltersOnInlineData(descPath, node);
+
                     // Process the value
                     this._processReadNodeValue(node);
                     
@@ -1199,7 +1267,7 @@ class CustomStorage extends Storage {
                     throw new Error(`multiple records found for non-object value!`);
                 }
 
-                // Post process filters to remove any data that got though because they were
+                // Post process filters to remove any data that got through because they were
                 // not stored in dedicated records. This will happen with smaller values because
                 // they are stored inline in their parent node.
                 // eg:
@@ -1249,7 +1317,7 @@ class CustomStorage extends Storage {
             if (!options.transaction) {
                 // transaction was created by us, commit
                 await transaction.commit();
-            }            
+            }
             return node;
         }
         catch (err) {
