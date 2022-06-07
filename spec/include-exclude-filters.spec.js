@@ -49,6 +49,7 @@ describe('Include/exclude filters', () => {
         expect(typeof user.instruments).toBe('object');
         expect(user.instruments.instrument1).toEqual({ type: 'guitar' });
         expect(user.instruments.instrument2).toEqual({ type: 'drums' });
-        expect(user.instruments.instrument3).toEqual({ type: 'piano' });        
+        expect(user.instruments.instrument3).toEqual({ type: 'piano' });
     });
+
 });
