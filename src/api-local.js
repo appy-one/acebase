@@ -174,13 +174,12 @@ class LocalApi extends Api {
      * @param {string[]} [options.include] when using snapshots, keys or relative paths to include in result data
      * @param {string[]} [options.exclude] when using snapshots, keys or relative paths to exclude from result data
      * @param {boolean} [options.child_objects] when using snapshots, whether to include child objects in result data
-     * @param {(event: { name: string, [key]: any }) => void} [options.eventHandler]
+     * @param {(event: { name: string, [key: string]: any }) => void} [options.eventHandler]
      * @param {object} [options.monitor] NEW (BETA) monitor changes
      * @param {boolean} [options.monitor.add=false] monitor new matches (either because they were added, or changed and now match the query)
      * @param {boolean} [options.monitor.change=false] monitor changed children that still match this query
      * @param {boolean} [options.monitor.remove=false] monitor children that don't match this query anymore
-     * @ param {(event:string, path: string, value?: any) => boolean} [options.monitor.callback] NEW (BETA) callback with subscription to enable monitoring of new matches
-     * @returns {Promise<{ results: object[]|string[]>, context: any, stop(): Promise<void> }} returns a promise that resolves with matching data or paths in `results`
+     * @returns {Promise<{ results: object[]|string[], context: any, stop(): Promise<void> }>} returns a promise that resolves with matching data or paths in `results`
      */
     query(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: event => {} }) {
         // TODO: Refactor to async
@@ -198,8 +197,8 @@ class LocalApi extends Api {
                 const compare = (i) => {
                     const o = query.order[i];
                     const trailKeys = PathInfo.getPathKeys(o.key);
-                    let left = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? key[val] : null, a.val);
-                    let right = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? key[val] : null, b.val);
+                    let left = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, a.val);
+                    let right = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, b.val);
                     
                     if (left === null) { return right === null ? 0 : o.ascending ? -1 : 1; }
                     if (right === null) { return o.ascending ? 1 : -1; }
@@ -257,11 +256,12 @@ class LocalApi extends Api {
                             if (!stepsExecuted.skipped && results.length > query.skip + Math.abs(query.take)) {
                                 // we can toss a value! sort, toss last one 
                                 sortMatches(results);
-                                if (query.take < 0) { 
-                                    results.shift(); // toss first value
+                                const ascending = query.take >= 0 ? query.order[0].ascending : !query.order[0].ascending;
+                                if (ascending) { 
+                                    results.pop(); // Ascending sort order, toss last value
                                 }
                                 else {
-                                    results.pop(); // toss last value
+                                    results.shift(); // Descending, toss first value
                                 }
                             }
                         }
@@ -496,22 +496,31 @@ class LocalApi extends Api {
             query.take = 100;
         }
 
-        if (query.filters.length === 0 && query.order.length > 0 && query.order[0].index) {
+        if (query.order.length > 0 && query.order[0].index) {
+            /** @type {DataIndex} */
             const sortIndex = query.order[0].index;
-            this.storage.debug.log(`Using index for sorting: ${sortIndex.description}`);
-            let ascending = query.take < 0 ? !query.order[0].ascending : query.order[0].ascending;
-            const promise = sortIndex.take(query.skip, Math.abs(query.take), ascending)
-            .then(results => {
-                options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
-                if (results.hints.length > 0) {
-                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: sortIndex.description, hints: results.hints });
-                }
-                return results;
-            });
-            indexScanPromises.push(promise);
-            stepsExecuted.skipped = true;
-            stepsExecuted.taken = true;
-            stepsExecuted.sorted = true;
+            const ascending = query.take < 0 ? !query.order[0].ascending : query.order[0].ascending;
+            if (query.filters.length === 0) {
+                this.storage.debug.log(`Using index for sorting: ${sortIndex.description}`);
+                const promise = sortIndex.take(query.skip, Math.abs(query.take), ascending)
+                .then(results => {
+                    options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
+                    if (results.hints.length > 0) {
+                        options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: sortIndex.description, hints: results.hints });
+                    }
+                    return results;
+                });
+                indexScanPromises.push(promise);
+                stepsExecuted.skipped = true;
+                stepsExecuted.taken = true;
+                stepsExecuted.sorted = true;
+            }
+            else if (query.filters.every(f => [sortIndex.key, ...sortIndex.includeKeys].includes(f.key))) {
+                // TODO: If an index can be used for sorting, and all filter keys are included in its metadata: query the index!
+                // Implement:
+                // sortIndex.query(query.filters);
+                // etc
+            }
         }
 
         return Promise.all(indexScanPromises)
@@ -630,7 +639,7 @@ class LocalApi extends Api {
                 indexKeyFilter = indexedResults.map(result => result.key);
             }
             // const queue = [];
-            const promises = [];
+            // const promises = [];
             let matches = [];
             let preliminaryStop = false;
             const loadPartialData = query.order.length > 0;
@@ -638,7 +647,16 @@ class LocalApi extends Api {
                 ? { include: query.order.map(order => order.key) }
                 : { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
 
-            return this.storage.getChildren(path, { keyFilter: indexKeyFilter })
+            const batch = {
+                promises: [],
+                add(promise) {
+                    this.promises.push(promise);
+                    if (this.promises.length >= 1000) {
+                        return Promise.all(this.promises.splice(0));
+                    }
+                }
+            };
+            return this.storage.getChildren(path, { keyFilter: indexKeyFilter, async: true })
             .next(child => {
                 if (child.type === Node.VALUE_TYPES.OBJECT) { // if (child.valueType === VALUE_TYPES.OBJECT) {
                     if (!child.address) {
@@ -685,16 +703,18 @@ class LocalApi extends Api {
                                     // No query order set, we can stop after 'take' + 'skip' results
                                     preliminaryStop = true; // Flags the loop that no more nodes have to be checked
                                 }
-                                if (query.take < 0) {
-                                    matches.shift(); // toss first value
+                                const ascending = query.take >= 0 ? query.order[0].ascending : !query.order[0].ascending;
+                                if (ascending) {
+                                    matches.pop(); // ascending sort order, toss last value
                                 }
                                 else {
-                                    matches.pop(); // toss last value
+                                    matches.shift(); // descending, toss first value
                                 }
                             }
                         }
                     });
-                    promises.push(p);
+                    return batch.add(p); // If this returns a promise, child iteration should pause automatically
+                    // promises.push(p);
                 }
             })
             .catch(reason => {
@@ -707,7 +727,7 @@ class LocalApi extends Api {
             .then(() => {
                 // Done iterating all children, wait for all match promises to resolve
 
-                return Promise.all(promises)
+                return Promise.all(batch.promises)
                 .then(() => {
                     stepsExecuted.preDataLoaded = loadPartialData;
                     stepsExecuted.dataLoaded = !loadPartialData;
