@@ -1151,7 +1151,8 @@ class Storage extends SimpleEventEmitter {
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string[]|number[]} [options.keyFilter] specify the child keys to get callbacks for, skips .next callbacks for other keys
      * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {{ next(child: NodeInfo) => Promise<void>}} returns a generator object that calls .next for each child until the .next callback returns false
+     * @param {boolean} [options.async] whether to use an async/await flow for each `.next` call
+     * @returns {{ next: (callback: (child: NodeInfo) => boolean) => Promise<boolean>}} returns a generator object that calls .next for each child until the .next callback returns false
      */
     // eslint-disable-next-line no-unused-vars
     getChildren(path, options) {

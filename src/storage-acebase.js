@@ -1511,18 +1511,21 @@ class AceBaseStorage extends Storage {
      * @param {object} [options] optional options used by implementation for recursive calls
      * @param {string[]|number[]} [options.keyFilter] specify the child keys to get callbacks for, skips .next callbacks for other keys
      * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {{ next((child: NodeInfo) => boolean) => Promise<boolean>}} returns a generator object that calls .next for each child until the .next callback returns false
+     * @param {boolean} [options.async] whether to use an async/await flow for each `.next` call
+     * @returns {{ next: (callback: (child: NodeInfo) => boolean) => Promise<boolean>}} returns a generator object that calls .next for each child until the .next callback returns false
      */
-    getChildren(path, options = { keyFilter: undefined, tid: undefined }) {
-        options = options || {};
+    getChildren(path, options = { keyFilter: undefined, tid: undefined, async: false }) {
+        if (typeof options.async !== 'boolean') {
+            options.async = false;
+        }
         const generator = {
             /**
              * 
              * @param {(child: NodeInfo) => boolean} valueCallback callback function to run for each child. Return false to stop iterating
              * @oldparam {(child: { key?: string, index?: number, valueType: number, value?: any }) => boolean} valueCallback callback function to run for each child. Return false to stop iterating
-             * @returns {Promise<bool>} returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
+             * @returns {Promise<boolean>} returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
              */
-            async next(valueCallback, useAsync = false) {
+            async next(valueCallback, useAsync = options.async) {
                 return start(valueCallback, useAsync);
             }
         };
