@@ -686,8 +686,8 @@ class DataIndex {
         }
     }
 
-    async _lock(mode = 'exclusive') {
-        return ThreadSafe.lock(this.fileName, { shared: mode === 'shared' }); //, timeout: 15 * 60000 (for debugging)
+    async _lock(mode = 'exclusive', timeout = 60000) {
+        return ThreadSafe.lock(this.fileName, { shared: mode === 'shared', timeout }); //, timeout: 15 * 60000 (for debugging)
     }
 
     async count(op, val) {
@@ -1638,7 +1638,7 @@ class DataIndex {
 
         const startTime = Date.now();
         let lock;
-        return this._lock('exclusive')
+        return this._lock('exclusive', 24 * 60 * 60 * 1000) // Allow 24hrs to build the index max
         .then(l => {
             lock = l;
             return createBuildFile();
