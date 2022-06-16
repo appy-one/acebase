@@ -5169,7 +5169,7 @@ class BinaryBPlusTree {
              
                     if (isLast) {
                         // gt connection
-                        let key = typeof child === 'object'
+                        let key = typeof child === 'object' && 'gtMaxKey' in child
                             ? child.gtMaxKey // child is node
                             : arr[index+1]; // child is leaf start key
                         currentNode.gtMaxKey = key;
@@ -5183,7 +5183,7 @@ class BinaryBPlusTree {
                     }
                     else {
                         // lt connection
-                        let key = typeof child === 'object'
+                        let key = typeof child === 'object' && 'gtMaxKey' in child
                             ? child.gtMaxKey // child is node
                             : arr[index+1]; // child is leaf start key
                         currentNode.entries.push({ key, ltChildIndex: index });

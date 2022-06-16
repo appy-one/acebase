@@ -168,7 +168,7 @@ describe('Date index', () => {
         ({ db, removeDB } = await createTempDB({ config: (options) => { options.logLevel = 'warn' }}));
     });
 
-    it('does not cause stack overflow', async () => {
+    it('is built properly', async () => {
         // Created for issue https://github.com/appy-one/acebase/issues/114
 
         console.log('[indexing issue #114] Generating large dates collection...');
@@ -188,6 +188,13 @@ describe('Date index', () => {
 
         console.log('[indexing issue #114] Success!'); 
 
+        // Test index by querying it
+        console.log('[indexing issue #117] Checking index'); 
+
+        const count = await db.query('dates').filter('date', '<', new Date(MS_PER_DAY * 100)).count();
+        expect(count).toBe(100);
+
+        console.log('[indexing issue #117] Check ok!');
     }, 60e3);
 
     afterAll(async () => {
