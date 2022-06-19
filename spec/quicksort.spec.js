@@ -85,4 +85,10 @@ describe('quicksort', () => {
         console.log(`Fast quicksort (${Math.round(totals.quick)}ms) vs native (${Math.round(totals.native)}ms) performance: fast quicksort is ${percFaster}% faster (${multiplier}x as fast)`);
         expect(totals.quick).toBeLessThan(totals.native);
     });
+
+    it('does not loop infinitely #118', async () => {
+        // Created for issue #118 (fastQuickSort() infinite loop when arr.length = 1)
+        // Execution hung before fixing this is v1.21.6
+        quickSort([0]);
+    });
 });

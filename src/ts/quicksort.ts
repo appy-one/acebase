@@ -14,6 +14,10 @@
  * @returns 
  */
 export default function fastQuickSort<T = any>(arr: T[], compareFn: (a: T, b: T) => number = (a, b) => (a as unknown as number) - (b as unknown as number)) {
+    if (arr.length <= 1) {
+        // No sorting needed, fixes #118
+        return arr;
+    }
     const stack = [];
     let entry = [
         0,
