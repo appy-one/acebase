@@ -16,6 +16,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
  * @returns
  */
 function fastQuickSort(arr, compareFn = (a, b) => a - b) {
+    if (arr.length <= 1) {
+        // No sorting needed, fixes #118
+        return arr;
+    }
     const stack = [];
     let entry = [
         0,
