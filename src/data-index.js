@@ -3492,7 +3492,7 @@ function _getGeoHash(obj) {
     return geohash;
 }
 
-// Berekent welke hashes (van verschillende precisies) er in een straal liggen vanaf middelpunt
+// Calculates which hashes (of different precisions) are within the radius of a point
 function _hashesInRadius(lat, lon, radiusM, precision) {
 
     const isInCircle = (checkLat, checkLon, lat, lon, radiusM) => {
