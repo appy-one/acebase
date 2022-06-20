@@ -104,19 +104,19 @@ function _sortCompare(val1, val2) {
     return 0;
 }
 
-const _numberRegex = /^[1-9][0-9]*$/;
-/**
- * @param {string} str 
- * @returns {boolean}
- */
-function _isIntString(str) {
-    return typeof str === 'string' && _numberRegex.test(str);
-}
+// const _numberRegex = /^[1-9][0-9]*$/;
+// /**
+//  * @param {string} str 
+//  * @returns {boolean}
+//  */
+// function _isIntString(str) {
+//     return typeof str === 'string' && _numberRegex.test(str);
+// }
 
-function _normalizeKey(key) {
-    key = _getComparibleValue(key);
-    return key === null ? null : key.toString();
-}
+// function _normalizeKey(key) {
+//     key = _getComparibleValue(key);
+//     return key === null ? null : key.toString();
+// }
 
 /**
  * 
@@ -127,18 +127,18 @@ function _compareBinary(val1, val2) {
     return val1.length === val2.length && val1.every((byte, index) => val2[index] === byte);
 }
 
-/**
- * 
- * @param {number[]} val1 
- * @param {number[]} val2 
- */
-function _compareBinaryDetails(val1, val2) {
-    let smaller = val1.length < val1.length ? val1 : val2;
-    return smaller.reduce((arr, current, index) => {
-        if (val1[index] !== val2[index]) { arr.push({ index, val1: val1[index], val2: val2[index] }); }
-        return arr;
-    }, []);
-}
+// /**
+//  * 
+//  * @param {number[]} val1 
+//  * @param {number[]} val2 
+//  */
+// function _compareBinaryDetails(val1, val2) {
+//     let smaller = val1.length < val1.length ? val1 : val2;
+//     return smaller.reduce((arr, current, index) => {
+//         if (val1[index] !== val2[index]) { arr.push({ index, val1: val1[index], val2: val2[index] }); }
+//         return arr;
+//     }, []);
+// }
 
 const _maxSignedNumber = Math.pow(2, 31) - 1;
 function _writeSignedNumber (bytes, index, offset, debugName) {
