@@ -1,12 +1,12 @@
-/// <reference types="@types/jasmine" />
-const { DataReference, DataSnapshotsArray, DataReferencesArray, DataReferenceQuery, ObjectCollection } = require("acebase-core");
-const { AceBase, ID } = require("..");
-const { createTempDB } = require("./tempdb");
+/// <reference types='@types/jasmine' />
+const { DataReference, DataSnapshotsArray, DataReferencesArray, DataReferenceQuery, ObjectCollection } = require('acebase-core');
+const { AceBase, ID } = require('..');
+const { createTempDB } = require('./tempdb');
 
 describe('Query', () => {
     /** @type {AceBase} */
     let db;
-    /** @type {{() => Promise<void>}} */
+    /** @type {{(): Promise<void>}} */
     let removeDB;
 
     /** @type {DataReference} */
@@ -19,15 +19,15 @@ describe('Query', () => {
         ({ db, removeDB } = await createTempDB());
         moviesRef = db.ref('movies');
 
-        const movies = require("./dataset/movies.json");
+        const movies = require('./dataset/movies.json');
         await moviesRef.set(ObjectCollection.from(movies));
 
         tests.push({ 
-            query: moviesRef.query().filter("year", "between", [1995, 2010]).filter("rating", ">=", 7).filter("genres", "!contains", ["sci-fi", "fantasy"]),
-            expect: movies.filter(movie => movie.year >= 1995 && movie.year <= 2010 && movie.rating >= 7 && movie.genres.every(g => !["sci-fi", "fantasy"].includes(g)))
+            query: moviesRef.query().filter('year', 'between', [1995, 2010]).filter('rating', '>=', 7).filter('genres', '!contains', ['sci-fi', 'fantasy']),
+            expect: movies.filter(movie => movie.year >= 1995 && movie.year <= 2010 && movie.rating >= 7 && movie.genres.every(g => !['sci-fi', 'fantasy'].includes(g)))
         }, { 
-            query: moviesRef.query().filter("genres", "contains", ["action"]),
-            expect: movies.filter(movie => movie.genres.includes("action"))
+            query: moviesRef.query().filter('genres', 'contains', ['action']),
+            expect: movies.filter(movie => movie.genres.includes('action'))
         });
     });
     
@@ -182,7 +182,7 @@ describe('Query with take/skip', () => {
 
     /** @type {AceBase} */
     let db;
-    /** @type {{() => Promise<void>}} */
+    /** @type {{(): Promise<void>}} */
     let removeDB;
 
     beforeAll(async () => {
@@ -194,11 +194,11 @@ describe('Query with take/skip', () => {
         }
 
         // create non-indexed collection
-        await db.ref("sort").update(updates);
+        await db.ref('collection').update(updates);
         
         // create indexed collection
-        await db.indexes.create("sort_indexed", "letter");  // | Swap these to
-        await db.ref("sort_indexed").update(updates);       // | improve performance
+        await db.indexes.create('indexed_collection', 'letter');  // | Swap these to
+        await db.ref('indexed_collection').update(updates);       // | improve performance
 
     }, 60e3);
 
@@ -209,61 +209,125 @@ describe('Query with take/skip', () => {
     // Non-indexed:
 
     it('load first 100 sort letter by a-z (non-indexed)', async () => {
-        await db.query("sort").sort("letter", true).take(100).get();
+        const results = await db.query('collection').sort('letter', true).take(100).get();
+        expect(results.length).toBe(100);
     }, 30e3);
 
     it('load second 100 sort letter by a-z (non-indexed)', async () => {
-        await db.query("sort").sort("letter", true).skip(100).take(100).get();
+        const results = await db.query('collection').sort('letter', true).skip(100).take(100).get();
+        expect(results.length).toBe(100);
     }, 30e3);
 
     it('load third 100 sort letter by a-z (non-indexed)', async () => {
-        await db.query("sort").sort("letter", true).skip(200).take(100).get();
+        const results = await db.query('collection').sort('letter', true).skip(200).take(100).get();
+        expect(results.length).toBe(100);
     }, 30e3);
 
     it('load first 100 sort letter by z-a (non-indexed)', async () => {
-        await db.query("sort").sort("letter", false).take(100).get();
+        const results = await db.query('collection').sort('letter', false).take(100).get();
+        expect(results.length).toBe(100);
     }, 30e3);
 
     it('load second 100 sort letter by z-a (non-indexed)', async () => {
-        await db.query("sort").sort("letter", false).skip(100).take(100).get();
+        const results = await db.query('collection').sort('letter', false).skip(100).take(100).get();
+        expect(results.length).toBe(100);
     }, 30e3);
 
     it('load third 100 sort letter by z-a (non-indexed)', async () => {
-        await db.query("sort").sort("letter", false).skip(200).take(100).get();
+        const results = await db.query('collection').sort('letter', false).skip(200).take(100).get();
+        expect(results.length).toBe(100);
     }, 30e3);
 
     // Indexed:
 
     it('load first 100 sort letter by a-z (indexed)', async () => {
-        await db.query("sort_indexed").sort("letter", true).take(100).get();
+        const results = await db.query('indexed_collection').sort('letter', true).take(100).get();
+        expect(results.length).toBe(100);
     }, 30e3);
 
     it('load second 100 sort letter by a-z (indexed)', async () => {
-        await db.query("sort_indexed").sort("letter", true).skip(100).take(100).get();
+        const results = await db.query('indexed_collection').sort('letter', true).skip(100).take(100).get();
+        expect(results.length).toBe(100);
     }, 30e3);
 
     it('load third 100 sort letter by a-z (indexed)', async () => {
-        await db.query("sort_indexed").sort("letter", true).skip(200).take(100).get();
+        const results = await db.query('indexed_collection').sort('letter', true).skip(200).take(100).get();
+        expect(results.length).toBe(100);
     }, 30e3);
 
     it('load first 100 sort letter by z-a (indexed)', async () => {
-        await db.query("sort_indexed").sort("letter", false).take(100).get();
+        const results = await db.query('indexed_collection').sort('letter', false).take(100).get();
+        expect(results.length).toBe(100);
     }, 30e3);
 
     it('load second 100 sort letter by z-a (indexed)', async () => {
-        await db.query("sort_indexed").sort("letter", false).skip(100).take(100).get();
+        const results = await db.query('indexed_collection').sort('letter', false).skip(100).take(100).get();
+        expect(results.length).toBe(100);
     }, 30e3);
 
     it('load third 100 sort letter by z-a (indexed)', async () => {
-        await db.query("sort_indexed").sort("letter", false).skip(200).take(100).get();
+        const results = await db.query('indexed_collection').sort('letter', false).skip(200).take(100).get();
+        expect(results.length).toBe(100);
     }, 30e3);
 
+    it('without sort', async() => {
+        // skip/take without sort, created for #119
+        const results = await db.query('collection').skip(200).take(100).get();
+        expect(results.length).toBe(100);
+    });
+
+});
+
+describe('Query with take/skip #120', () => {
+    // Based on https://github.com/appy-one/acebase/issues/120
+
+    /** @type {AceBase} */
+    let db;
+    /** @type {{(): Promise<void>}} */
+    let removeDB;
+    /** @type Array<{ id: string; title: string; year: number }> */
+    let movies;
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+
+        movies = require('./dataset/movies.json');
+        const collection = ObjectCollection.from(movies)
+
+        // Create unindexed collection
+        await db.ref('movies').set(collection);
+
+        // Create indexed collection
+        await db.ref('indexed_movies').set(collection);
+        await db.indexes.create('indexed_movies', 'year');
+    }, 60e3);
+
+    afterAll(async () => {
+        await removeDB();
+    });
+
+    it('skip unindexed', async () => {
+        const skip = 10, take = 5;
+        const query = db.query('movies').sort('year', false).take(take).skip(skip);
+        const results = await query.get(); //({ include: ['id', 'title', 'year'] })
+        const check = movies.sort((a, b) => b.year - a.year).slice(skip, skip + take);
+        expect(results.getValues()).toEqual(check);
+    });
+
+    it('skip indexed', async () => {
+        const skip = 10, take = 5;
+        const query = db.query('indexed_movies').sort('year', false).take(take).skip(skip);
+        const results = await query.get(); //({ include: ['id', 'title', 'year'] })
+        const check = movies.sort((a, b) => b.year - a.year).slice(skip, skip + take);
+        expect(results.getValues()).toEqual(check);
+    });
+    
 });
 
 describe('Wildcard query', () => {
     /** @type {AceBase} */
     let db;
-    /** @type {{() => Promise<void>}} */
+    /** @type {{(): Promise<void>}} */
     let removeDB;
 
     beforeAll(async () => {
@@ -277,15 +341,15 @@ describe('Wildcard query', () => {
     it('wildcards need an index', async () => {
         // Created for discussion 92: https://github.com/appy-one/acebase/discussions/92
         // Changed schema to be users/uid/messages/messageid
-        // To test: npx jasmine ./spec/query.spec.js --filter="wildcards"
+        // To test: npx jasmine ./spec/query.spec.js --filter='wildcards'
         
         // Insert data without index
-        await db.ref("users/user1/messages").push({ text: "First message" });
-        await db.ref("users/user2/messages").push({ text: "Second message" });
-        await db.ref("users/user1/messages").push({ text: "Third message" });
+        await db.ref('users/user1/messages').push({ text: 'First message' });
+        await db.ref('users/user2/messages').push({ text: 'Second message' });
+        await db.ref('users/user1/messages').push({ text: 'Third message' });
 
         try {
-            await db.query("users/$username/messages").count();
+            await db.query('users/$username/messages').count();
             fail('Should not be allowed');
         }
         catch(err) {
@@ -297,16 +361,16 @@ describe('Wildcard query', () => {
 
         // Create an index on {key} (key of each message) and try again
         await db.indexes.create('users/$username/messages', '{key}');
-        await db.ref("users/user1/messages").push({ text: "First message" });
-        await db.ref("users/user2/messages").push({ text: "Second message" });
-        await db.ref("users/user1/messages").push({ text: "Third message" });
+        await db.ref('users/user1/messages').push({ text: 'First message' });
+        await db.ref('users/user2/messages').push({ text: 'Second message' });
+        await db.ref('users/user1/messages').push({ text: 'Third message' });
 
         try {
             // Query with filter matching all 
-            const snaps = await db.query("users/$username/messages").filter('{key}', '!=', '').get();
+            const snaps = await db.query('users/$username/messages').filter('{key}', '!=', '').get();
             expect(snaps.length).toBe(3);
 
-            let msgcount = await db.query("users/$username/messages").filter('{key}', '!=', '').count();
+            let msgcount = await db.query('users/$username/messages').filter('{key}', '!=', '').count();
             expect(msgcount).toBe(3);
         }
         catch(err) {
@@ -315,10 +379,10 @@ describe('Wildcard query', () => {
 
         try {
             // Query without filter, index should automatically be selected with filter matching all 
-            const snaps = await db.query("users/$username/messages").get();
+            const snaps = await db.query('users/$username/messages').get();
             expect(snaps.length).toBe(3);
 
-            let msgcount = await db.query("users/$username/messages").count();
+            let msgcount = await db.query('users/$username/messages').count();
             expect(msgcount).toBe(3);
         }
         catch(err) {
