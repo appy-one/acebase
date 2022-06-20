@@ -1,7 +1,7 @@
 // TODO: Rename to NodeInfoCache
 
-const { NodeInfo } = require('./node-info');
-const { PathInfo } = require('acebase-core');
+import { NodeInfo } from "./node-info";
+import { PathInfo } from 'acebase-core';
 
 const SECOND = 1000;
 const MINUTE = 60000;
@@ -9,13 +9,14 @@ const MINUTE = 60000;
 const DEBUG_MODE = false;
 const CACHE_TIMEOUT = DEBUG_MODE ? 5 * MINUTE : MINUTE;
 
-class NodeCacheEntry {
+export class NodeCacheEntry {
+    nodeInfo: NodeInfo;
+    pathInfo: PathInfo;
+    created: number;
+    updated: number;
+    expires: number;
 
-    /**
-     * 
-     * @param {NodeInfo} nodeInfo 
-     */
-    constructor(nodeInfo) {
+    constructor(nodeInfo: NodeInfo) {
         this.nodeInfo = nodeInfo;
         this.pathInfo = PathInfo.get(nodeInfo.path);
         this.created = Date.now();
@@ -26,31 +27,28 @@ class NodeCacheEntry {
         this.expires = (this.updated || this.created) + NodeCache.CACHE_DURATION;
     }
 
-    /**
-     * 
-     * @param {NodeInfo} nodeInfo 
-     */
-    update(nodeInfo) {
+    update(nodeInfo: NodeInfo) {
         this.nodeInfo = nodeInfo;
         this.updated = Date.now();
         this.keepAlive();
     }
 }
 
-class NodeCache {
+/**
+ * Isolated cache, this enables using multiple databases each with their own cache
+ */
+export class NodeCache {
     static get CACHE_DURATION() { return CACHE_TIMEOUT; }
 
-    constructor() {
-        // Isolated cache, this enables using multiple databases each with their own cache
+    private _cleanupTimeout: NodeJS.Timeout = null;
+    private _cache = new Map<string, NodeCacheEntry>();
 
-        /** @type {NodeJS.Timeout} */
-        this. _cleanupTimeout = null;
-        /** @type {Map<string, NodeCacheEntry>} */
-        this._cache = new Map(); //{ };
-        this._announcements = new Map(); // For announced lookups, will bind subsequent .find calls to a promise that resolves once the cache item is set
-    }
+    /**
+     *  For announced lookups, will bind subsequent .find calls to a promise that resolves once the cache item is set
+     */
+    private _announcements = new Map<string, { resolve: (nodeInfo: NodeInfo) => void; reject: (reason: any) => void; promise: Promise<NodeInfo> }>();
 
-    _assertCleanupTimeout() {
+    private _assertCleanupTimeout() {
         if (this._cleanupTimeout === null) {
             this._cleanupTimeout = setTimeout(() => {
                 this.cleanup();
@@ -67,7 +65,7 @@ class NodeCache {
         }
     }
 
-    announce(path) {
+    announce(path: string) {
         let announcement = this._announcements.get(path);
         if (!announcement) {
             announcement = {
@@ -75,7 +73,7 @@ class NodeCache {
                 reject: null,
                 promise: null
             }
-            announcement.promise = new Promise((resolve, reject) => {
+            announcement.promise = new Promise<NodeInfo>((resolve, reject) => {
                 announcement.resolve = resolve;
                 announcement.reject = reject;
             });
@@ -85,10 +83,10 @@ class NodeCache {
 
     /**
      * Updates or adds a NodeAddress to the cache
-     * @param {NodeInfo} nodeInfo 
      */
-    update(nodeInfo) {
+    update(nodeInfo: NodeInfo) {
         if (!(nodeInfo instanceof NodeInfo)) {
+            // For legacy .js callers
             throw new TypeError(`nodeInfo must be an instance of NodeInfo`);
         }
         if (nodeInfo.path === "") {
@@ -116,11 +114,8 @@ class NodeCache {
 
     /**
      * Invalidates a node and (optionally) its children by removing them from cache
-     * @param {string} path 
-     * @param {boolean|{ [key]: 'delete'|'invalidate'>} recursive
-     * @param {string} reason 
      */
-    invalidate(path, recursive, reason) {
+    invalidate(path: string, recursive: boolean | { [key: string]: 'delete'|'invalidate' }, reason: string) {
         const entry = this._cache.get(path);
         const pathInfo = PathInfo.get(path);
         if (entry) {
@@ -134,14 +129,10 @@ class NodeCache {
                     if (typeof recursive === 'object') {
                         // invalidate selected child keys only
                         const key = entry.pathInfo.keys[pathInfo.keys.length];
-                        const child = recursive[key];// recursive.find(child => child.key === key);
-                        if (child) {
-                            if (child.action === 'delete') { 
-                                this.update(new NodeInfo({ path: cachedPath, exists: false }));
-                            }
-                            else { 
-                                this._cache.delete(cachedPath); 
-                            }
+                        const action = recursive[key];// recursive.find(child => child.key === key);
+                        switch (action) {
+                            case 'delete': this.update(new NodeInfo({ path: cachedPath, exists: false })); break;
+                            case 'invalidate': this._cache.delete(cachedPath); break;
                         }
                     }
                     else {
@@ -169,14 +160,12 @@ class NodeCache {
                 entry.nodeInfo.exists = false;
                 entry.nodeInfo.value = null;
                 delete entry.nodeInfo.type;
-                delete entry.nodeInfo.valueType;
                 entry.updated = Date.now();
                 entry.keepAlive();
                 // this.update(new NodeInfo({ path: cachedPath, exists: false }));
             }
         });
     }
-
     cleanup() {
         const now = Date.now();
         const entriesBefore = this._cache.size;
@@ -196,20 +185,20 @@ class NodeCache {
 
     /**
      * Finds cached NodeInfo for a given path. Returns null if the info is not found in cache
-     * @param {string} path 
-     * @returns {NodeInfo|Promise<NodeInfo>|null} cached info, a promise, or null
+     * @returns returns cached info, a promise, or null
      */
-    find(path, checkAnnounced = false) {
+    find(path: string, checkAnnounced = false): NodeInfo|Promise<NodeInfo> {
         if (checkAnnounced === true) {
             const announcement = this._announcements.get(path);
             if (announcement) {
-                let resolve;
-                const p = new Promise(rs => { resolve = rs; });
-                announcement.promise = announcement.promise.then(info => {
-                    resolve(info);
-                    return info;
-                });
-                return p;
+                // let resolve;
+                // const p = new Promise<NodeInfo>(rs => { resolve = rs; });
+                // announcement.promise = announcement.promise.then(info => {
+                //     resolve(info);
+                //     return info;
+                // });
+                // return p;
+                return announcement.promise;
             }
         }
         let entry = this._cache.get(path) || null;
@@ -243,5 +232,3 @@ class NodeCache {
     //     }
     // }
 }
-
-module.exports = { NodeCache, NodeCacheEntry };

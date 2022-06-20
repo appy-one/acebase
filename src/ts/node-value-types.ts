@@ -1,6 +1,6 @@
-const { PathReference } = require('acebase-core');
+import { PathReference } from 'acebase-core';
 
-const VALUE_TYPES = {
+export const VALUE_TYPES = {
     // Native types:
     OBJECT: 1,
     ARRAY: 2,
@@ -14,7 +14,7 @@ const VALUE_TYPES = {
     REFERENCE: 9        // Absolute or relative path to other node
 };
 
-function getValueTypeName(valueType) {
+export function getValueTypeName(valueType) {
     switch (valueType) {
         case VALUE_TYPES.ARRAY: return 'array';
         case VALUE_TYPES.BINARY: return 'binary';
@@ -29,7 +29,7 @@ function getValueTypeName(valueType) {
     }
 }
 
-function getNodeValueType(value) {
+export function getNodeValueType(value) {
     if (value instanceof Array) { return VALUE_TYPES.ARRAY; }
     else if (value instanceof PathReference) { return VALUE_TYPES.REFERENCE; }
     else if (value instanceof ArrayBuffer) { return VALUE_TYPES.BINARY; }
@@ -39,7 +39,7 @@ function getNodeValueType(value) {
     throw new Error(`Invalid value for standalone node: ${value}`);
 }
 
-function getValueType(value) {
+export function getValueType(value) {
     if (value instanceof Array) { return VALUE_TYPES.ARRAY; }
     else if (value instanceof PathReference) { return VALUE_TYPES.REFERENCE; }
     else if (value instanceof ArrayBuffer) { return VALUE_TYPES.BINARY; }
@@ -51,5 +51,3 @@ function getValueType(value) {
     else if (typeof value === 'boolean') { return VALUE_TYPES.BOOLEAN; }
     throw new Error(`Unknown value type: ${value}`);
 }
-
-module.exports = { VALUE_TYPES, getValueTypeName, getNodeValueType, getValueType };

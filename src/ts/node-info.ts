@@ -1,19 +1,18 @@
-const { getValueTypeName } = require('./node-value-types');
-const { PathInfo } = require('acebase-core');
+import { getValueTypeName } from './node-value-types';
+import { PathInfo } from 'acebase-core';
+import { NodeAddress } from './node-address';
 
-class NodeInfo {
-    /** {path?: string, type?: number, key?: string, index?: number, exists?: boolean, address?: NodeAddress, value?: any }
-     * @param {object} info 
-     * @param {string} [info.path]
-     * @param {number} [info.type]
-     * @param {string} [info.key]
-     * @param {number} [info.index]
-     * @param {boolean} [info.exists]
-     * @param {NodeAddress} [info.address]
-     * @param {any} [info.value]
-     * @param {number} [info.childCount]
-     */
-    constructor(info) {
+export class NodeInfo {
+    path?: string;
+    type?: number;
+    index?: number;
+    key?: string;
+    exists?: boolean;
+    address?: NodeAddress;
+    value?: any;
+    childCount?: number;
+
+    constructor(info: Partial<NodeInfo>) {
         this.path = info.path;
         this.type = info.type;
         this.index = info.index;
@@ -57,5 +56,3 @@ class NodeInfo {
         }
     }
 }
-
-module.exports = { NodeInfo };

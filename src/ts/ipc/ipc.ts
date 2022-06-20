@@ -319,7 +319,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
                 const request = message as IMoveLockRequestMessage;
                 const result: ILockResponseMessage = { type: 'lock-result', id: request.id, from: this.id, to: request.from, ok: true, data: undefined };
                 try {
-                    let movedLock: NodeLock;
+                    let movedLock: IAceBaseIPCLock;
                     // const lock = this._locks.get(request.data.id);
                     const lockRequest = this._locks.find(r => r.lock?.id === request.data.id);
                     if (request.data.move_to === 'parent') {

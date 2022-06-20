@@ -1,13 +1,8 @@
-class NodeAddress {
-    /**
-     * @param {string} path 
-     * @param {number} pageNr 
-     * @param {number} recordNr 
-     */
-    constructor(path, pageNr, recordNr) {
-        this.path = path;
-        this.pageNr = pageNr;
-        this.recordNr = recordNr;
+export class NodeAddress {
+    constructor(
+        public readonly path: string, 
+        public readonly pageNr: number, 
+        public readonly recordNr: number) {
     }
 
     toString() {
@@ -16,18 +11,14 @@ class NodeAddress {
 
     /**
      * Compares this address to another address
-     * @param {NodeAddress} address 
      */
-    equals(address) {
+    equals(address: NodeAddress) {
         return this.path === address.path && this.pageNr === address.pageNr && this.recordNr === address.recordNr;
     }
 }
 
-class RemovedNodeAddress extends NodeAddress {
-    /**
-     * @param {string} path 
-     */
-    constructor(path) {
+export class RemovedNodeAddress extends NodeAddress {
+    constructor(path: string) {
         super(path, null, null);
     }
 
@@ -37,11 +28,8 @@ class RemovedNodeAddress extends NodeAddress {
 
     /**
      * Compares this address to another address
-     * @param {NodeAddress} address 
      */
-    equals(address) {
+    equals(address: NodeAddress) {
         return address instanceof RemovedNodeAddress && this.path === address.path;
     }
 }
-
-module.exports = { NodeAddress, RemovedNodeAddress };
