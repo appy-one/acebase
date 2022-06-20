@@ -1,19 +1,51 @@
+
+/** Set to true to add stack traces to achieved locks (performance impact!) */
+const DEBUG_MODE = false;
+
 const _lockTimeoutMsg = 'Lock "${name}" timed out! lock.release() was not called in a timely fashion';
 const _lockWaitTimeoutMsg = 'Lock "${name}" wait time expired, failed to lock target';
-const _threadSafeLocks = new Map();
-class ThreadSafe {
+
+export interface ThreadSafeLockOptions {
+    /** max amount of ms the target is allowed to be locked (and max time to wait to get it), default is 60000 (60s) */
+    timeout?: number; 
+    /** flag that indicates whether this lock does critical work, canceling queued lock requests if this lock is not released in time */
+    critical?: boolean; 
+    /** name of the lock, good for debugging purposes */
+    name?: string; 
+    /**  if this lock is allowed to be shared with others also requesting a shared lock. Requested lock will be exclusive otherwise (default) */
+    shared?: boolean; 
+    /** if you are using a string to uniquely identify the locking target, you can pass the actual object target with this option; lock.target will be set to this value instead. */
+    target?: any
+}
+
+interface ThreadSafeLockQueueItem {
+    resolve: (lock: ThreadSafeLock) => void;
+    reject: (err: Error) => void;
+    waitTimeout: NodeJS.Timeout;
+    options: ThreadSafeLockOptions
+}
+
+export interface ThreadSafeLock {
+    achieved: Date;
+    release: () => void;
+    target: any;
+    name: string;
+    _timeout: NodeJS.Timeout;
+    _queue: ThreadSafeLockQueueItem[];
+    /** If DEBUG_MODE is enabled: contains stack trace of ThreadSafe.lock call */
+    stack: string
+}
+
+const _threadSafeLocks = new Map<any, ThreadSafeLock>();
+
+export abstract class ThreadSafe {
     /**
      * 
-     * @param {any} target Target object to lock. Do not use object references!
-     * @param {object} [options]
-     * @param {number} [options.timeout=60000] max amount of ms the target is allowed to be locked (and max time to wait to get it), default is 60000 (60s) 
-     * @param {boolean} [options.critical=true] flag that indicates whether this lock does critical work, canceling queued lock requests if this lock is not released in time
-     * @param {string} [options.name='unnamed lock'] name of the lock, good for debugging purposes
-     * @param {boolean} [options.shared=false] if this lock is allowed to be shared with others also requesting a shared lock. Requested lock will be exclusive otherwise (default)
-     * @param {any} [options.target] if you are using a string to uniquely identify the locking target, you can pass the actual object target with this option; lock.target will be set to this value instead.
-     * @returns {Promise<{ achieved: Date, release: () => void, target: any, name: string }>}
+     * @param target Target object to lock. Do not use object references!
+     * @param options Locking options
+     * @returns returns a lock
      */
-    static lock(target, options = { timeout: 60000 * 15, critical: true, name: 'unnamed lock', shared: false }) {
+    static lock(target: any, options: ThreadSafeLockOptions = { timeout: 60000 * 15, critical: true, name: 'unnamed lock', shared: false }): Promise<ThreadSafeLock> {
         if (typeof options !== 'object') { options = {}; }
         if (typeof options.timeout !== 'number') { options.timeout = 60 * 1000; }
         if (typeof options.critical !== 'boolean') { options.critical = true; }
@@ -34,8 +66,7 @@ class ThreadSafe {
             console.error(_lockTimeoutMsg.replace('${name}', lock.name)); 
 
             // Copy lock object so we can alter the original's release method to throw an exception
-            let copy = {};
-            Object.assign(copy, lock);
+            let copy: ThreadSafeLock = Object.assign({}, lock);
             let originalName = lock.name;
             lock.release = () => {
                 throw new Error(`Cannot release lock "${originalName}" because it timed out earlier`);
@@ -66,7 +97,7 @@ class ThreadSafe {
             lock.target = item.options.target || target;
             lock.achieved = new Date();
             lock.name = item.options.name;
-            lock.stack = (new Error()).stack;
+            lock.stack = DEBUG_MODE ? (new Error()).stack : 'not available';
             item.resolve(lock);
         };
 
@@ -79,7 +110,7 @@ class ThreadSafe {
                     next();
                 },
                 name: options.name,
-                stack: (new Error()).stack,
+                stack: DEBUG_MODE ? (new Error()).stack : 'not available',
                 _timeout: null,
                 _queue: []
             };
@@ -89,7 +120,7 @@ class ThreadSafe {
         }
         else {
             // Add to queue
-            return new Promise((resolve, reject) => {
+            return new Promise<ThreadSafeLock>((resolve, reject) => {
                 const waitTimeout = setTimeout(() => { 
                     lock._queue.splice(lock._queue.indexOf(item), 1); 
                     if (lock._queue.length === 0) {
@@ -97,12 +128,10 @@ class ThreadSafe {
                     }
                     reject(_lockWaitTimeoutMsg.replace('${name}', options.name)); 
                 }, options.timeout);
-                const item = { resolve, reject, waitTimeout, options };
+                const item: ThreadSafeLockQueueItem = { resolve, reject, waitTimeout, options };
                 lock._queue.push(item);
             });
         }
 
     }
 }
-
-module.exports = ThreadSafe;
