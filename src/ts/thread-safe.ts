@@ -1,3 +1,4 @@
+import { SimpleEventEmitter } from "acebase-core";
 
 /** Set to true to add stack traces to achieved locks (performance impact!) */
 const DEBUG_MODE = false;
@@ -132,5 +133,83 @@ export abstract class ThreadSafe {
             });
         }
 
+    }
+}
+
+/**
+ * New locking mechasnism that supports exclusive or shared locking
+ */
+ export class ThreadSafeLock2 extends SimpleEventEmitter {
+    readonly achieved: Date;
+    private shares: number = 0;
+    private queue: Array<{ shared: boolean; grant(): void }> = [];
+    private _shared: boolean;
+    public get shared() { return this._shared; }
+    constructor(public readonly target: any, shared: boolean) {
+        super();
+        this._shared = shared;
+        this.achieved = new Date();
+    }
+    release() {
+        if (this.shared && this.shares > 0) { 
+            this.shares--; 
+        }
+        else if (this.queue.length > 0) {
+            const next = this.queue.shift();
+            this._shared = next.shared;
+            next.grant();
+            if (next.shared) {
+                // Also grant other pending shared requests
+                while (this.queue.length > 0 && this.queue[0].shared) {
+                    this.queue.shift().grant();
+                }
+            }
+        }
+        else {
+            // No more shares, no queue: this lock can be now be released entirely
+            this.emitOnce('released');
+        }
+    }
+    async request(shared: boolean): Promise<void> {
+        if (this.shared && shared) {
+            // Grant!
+            this.shares++;
+        }
+        else {
+            // Add to queue, wait until granted
+            let grant: () => void;
+            const promise = new Promise<void>(resolve => { grant = resolve; });
+            this.queue.push({ shared, grant });
+            await promise;
+        }
+    }
+}
+
+const locks2 = new Map<any, ThreadSafeLock2>();
+
+export abstract class ThreadSafe2 {
+    /**
+     * 
+     * @param target Target object to lock. Do not use object references!
+     * @param options Locking options
+     * @returns returns a lock
+     */
+     static async lock(target: any, shared: boolean = false): Promise<ThreadSafeLock2> {
+        const timeout = 60 * 1000;
+        if (!locks2.has(target)) {
+            // New lock
+            const lock = new ThreadSafeLock2(target, shared);
+            locks2.set(target, lock);
+            lock.once('released', () => {
+                locks2.delete(target);
+            })
+            return lock;
+        }
+        else {
+            // Existing lock
+            const lock = locks2.get(target);
+            await lock.request(shared);
+            return lock;
+        }
     }
 }
