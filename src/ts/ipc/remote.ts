@@ -19,7 +19,7 @@ export interface RemoteIPCServerConfig {
     dbname: string, 
     host?: string, 
     port: number, 
-    ssl: boolean,
+    ssl?: boolean,
     token?: string,
     role: 'master'|'worker',
 }

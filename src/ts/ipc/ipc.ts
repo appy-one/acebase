@@ -383,7 +383,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
      * Acquires a lock. If this peer is a worker, it will request the lock from the master
      * @param details 
      */
-     protected async lock(details:ILockRequestData): Promise<IAceBaseIPCLock> { // With methods release(), moveToParent() etc
+     public async lock(details:ILockRequestData): Promise<IAceBaseIPCLock> { // With methods release(), moveToParent() etc
 
         if (this._exiting) {
             // Peer is exiting. Do we have an existing lock with requested tid? If not, deny request.
