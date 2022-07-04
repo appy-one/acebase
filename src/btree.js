@@ -1,5 +1,5 @@
 const { Utils } = require('acebase-core');
-const { numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
+const { numberToBytes, bytesToNumber, bigintToBytes, bytesToBigint, encodeString, decodeString } = Utils;
 const { ThreadSafe } = require('./thread-safe');
 const { DetailedError } = require('./detailed-error');
 const { pfs } = require('./promise-fs');
@@ -11,7 +11,8 @@ const KEY_TYPE = {
     STRING: 1,
     NUMBER: 2,
     BOOLEAN: 3,
-    DATE: 4
+    DATE: 4,
+    BIGINT: 5
 };
 
 const FLAGS = {
@@ -1261,7 +1262,7 @@ class BPlusTree {
         let keyData = bytes.slice(index, index + keyLength); // [];
         index += keyLength;
 
-        if (keyType === KEY_TYPE.NUMBER || keyType === KEY_TYPE.DATE) {
+        if ([KEY_TYPE.NUMBER, KEY_TYPE.BIGINT, KEY_TYPE.DATE].includes(keyType)) {
             keyData = Array.from(keyData);
         }
 
@@ -1282,6 +1283,10 @@ class BPlusTree {
                     keyData.push(...[0,0,0,0,0,0,0,0].slice(keyData.length));
                 }
                 key = bytesToNumber(keyData);
+                break;
+            }
+            case KEY_TYPE.BIGINT: {
+                key = bytesToBigint(keyData);
                 break;
             }
             case KEY_TYPE.BOOLEAN: {
@@ -1319,6 +1324,11 @@ class BPlusTree {
                 while (keyBytes[keyBytes.length-1] === 0) { keyBytes.pop(); }
                 break;
             }
+            case 'bigint': {
+                keyType = KEY_TYPE.BIGINT;
+                keyBytes = bigintToBytes(key);
+                break;
+            }            
             case 'boolean': {
                 keyType = KEY_TYPE.BOOLEAN;
                 keyBytes = [key ? 1 : 0];
@@ -6647,6 +6657,11 @@ class BinaryBPlusTreeBuilder {
                 keyBytes = numberToBytes(key);
                 // Remove trailing 0's to reduce size for smaller and integer values
                 while (keyBytes[keyBytes.length-1] === 0) { keyBytes.pop(); }
+                break;
+            }
+            case 'bigint': {
+                keyType = KEY_TYPE.BIGINT;
+                keyBytes = bigintToBytes(key);
                 break;
             }
             case 'boolean': {
