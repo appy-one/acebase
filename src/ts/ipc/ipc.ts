@@ -573,7 +573,7 @@ export interface IAceBaseIPCLock {
     comment: string
     expires: number
     state: string
-    release(): Promise<void>
+    release(comment?: string): Promise<void>
     moveToParent(): Promise<IAceBaseIPCLock>
 }
 
