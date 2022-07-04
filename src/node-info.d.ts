@@ -10,6 +10,6 @@ export declare class NodeInfo {
     childCount?: number;
     constructor(info: Partial<NodeInfo>);
     get valueType(): number;
-    get valueTypeName(): "object" | "string" | "number" | "array" | "boolean" | "date" | "binary" | "reference";
+    get valueTypeName(): "object" | "string" | "number" | "array" | "boolean" | "date" | "binary" | "reference" | "bigint";
     toString(): string;
 }

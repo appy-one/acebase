@@ -9,11 +9,13 @@ exports.VALUE_TYPES = {
     NUMBER: 3,
     BOOLEAN: 4,
     STRING: 5,
+    BIGINT: 7,
     // Custom types:
     DATETIME: 6,
-    // DOCUMENT: 7,     // JSON/XML documents that are contained entirely within the stored node
     BINARY: 8,
-    REFERENCE: 9 // Absolute or relative path to other node
+    REFERENCE: 9, // Absolute or relative path to other node
+    // Future:
+    // DOCUMENT: 10,     // JSON/XML documents that are contained entirely within the stored node
 };
 function getValueTypeName(valueType) {
     switch (valueType) {
@@ -25,6 +27,7 @@ function getValueTypeName(valueType) {
         case exports.VALUE_TYPES.OBJECT: return 'object';
         case exports.VALUE_TYPES.REFERENCE: return 'reference';
         case exports.VALUE_TYPES.STRING: return 'string';
+        case exports.VALUE_TYPES.BIGINT: return 'bigint';
         // case VALUE_TYPES.DOCUMENT: return 'document';
         default: 'unknown';
     }
@@ -46,6 +49,9 @@ function getNodeValueType(value) {
     }
     else if (typeof value === 'object') {
         return exports.VALUE_TYPES.OBJECT;
+    }
+    else if (typeof value === 'bigint') {
+        return exports.VALUE_TYPES.BIGINT;
     }
     throw new Error(`Invalid value for standalone node: ${value}`);
 }
@@ -75,6 +81,9 @@ function getValueType(value) {
     }
     else if (typeof value === 'boolean') {
         return exports.VALUE_TYPES.BOOLEAN;
+    }
+    else if (typeof value === 'bigint') {
+        return exports.VALUE_TYPES.BIGINT;
     }
     throw new Error(`Unknown value type: ${value}`);
 }

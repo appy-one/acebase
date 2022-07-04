@@ -54,7 +54,7 @@ export declare abstract class AceBaseIPCPeer extends SimpleEventEmitter {
      * Acquires a lock. If this peer is a worker, it will request the lock from the master
      * @param details
      */
-    protected lock(details: ILockRequestData): Promise<IAceBaseIPCLock>;
+    lock(details: ILockRequestData): Promise<IAceBaseIPCLock>;
     private _requests;
     private request;
     protected abstract sendMessage(message: IMessage): any;
@@ -89,7 +89,7 @@ export interface IAceBaseIPCLock {
     comment: string;
     expires: number;
     state: string;
-    release(): Promise<void>;
+    release(comment?: string): Promise<void>;
     moveToParent(): Promise<IAceBaseIPCLock>;
 }
 export declare type AceBaseSubscribeCallback = (error: Error, path: string, newValue: any, oldValue: any, eventContext: any) => void;

@@ -4799,7 +4799,7 @@ exports.TypeMappings = TypeMappings;
 (function (Buffer){(function (){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.defer = exports.getChildValues = exports.getMutations = exports.compareValues = exports.ObjectDifferences = exports.valuesAreEqual = exports.cloneObject = exports.concatTypedArrays = exports.decodeString = exports.encodeString = exports.bytesToNumber = exports.numberToBytes = void 0;
+exports.defer = exports.getChildValues = exports.getMutations = exports.compareValues = exports.ObjectDifferences = exports.valuesAreEqual = exports.cloneObject = exports.concatTypedArrays = exports.decodeString = exports.encodeString = exports.bytesToBigint = exports.bigintToBytes = exports.bytesToNumber = exports.numberToBytes = void 0;
 const path_reference_1 = require("./path-reference");
 const process_1 = require("./process");
 const partial_array_1 = require("./partial-array");
@@ -4811,13 +4811,8 @@ function numberToBytes(number) {
 }
 exports.numberToBytes = numberToBytes;
 function bytesToNumber(bytes) {
-    //if (bytes.length !== 8) { throw "passed value must contain 8 bytes"; }
-    if (bytes.length < 8) {
+    if (bytes.length !== 8) {
         throw new TypeError("must be 8 bytes");
-        // // Pad with zeroes
-        // let padding = new Uint8Array(8 - bytes.length);
-        // for(let i = 0; i < padding.length; i++) { padding[i] = 0; }
-        // bytes = concatTypedArrays(bytes, padding);
     }
     const bin = new Uint8Array(bytes);
     const view = new DataView(bin.buffer);
@@ -4825,6 +4820,96 @@ function bytesToNumber(bytes) {
     return nr;
 }
 exports.bytesToNumber = bytesToNumber;
+// export function bigintToBytes(number: bigint): number[] {
+//     const arr = [];
+//     const negative = number < 0n;
+//     if (negative) { 
+//         number = 0n - number;
+//     }
+//     const bitmask = (2n ** 64n) - 1n;
+//     while (number > 0n) {
+//         const n = number & bitmask;
+//         const bytes = new Uint8Array(8);
+//         const view = new DataView(bytes.buffer);
+//         view.setBigUint64(0, n);
+//         arr.push(...bytes);
+//         number = number >> 64n;
+//     }
+//     if (arr[0] >= 128) {
+//         // The sign bit is used for the value itself, we have to add 8 more bytes
+//         arr.unshift(negative ? 128 : 0, 0, 0, 0, 0, 0, 0, 0);
+//     }
+//     else if (negative) {
+//         // Set the sign bit to 1
+//         arr[0] += 128;
+//     }
+//     return arr;
+// }
+// export function bytesToBigint(bytes: number[]): bigint {
+//     if ((bytes.length % 8) > 0) {
+//         throw new TypeError("must be multiples of 8 bytes");
+//     }
+//     const shift = 2n ** 64n;
+//     let nr = 0n;
+//     let first = true, negative = false;
+//     while (bytes.length > 0) {
+//         if (first) {
+//             if (bytes[0] >= 128) {
+//                 // Remove the sign bit
+//                 negative = true;
+//                 bytes[0] -= 128;
+//             }
+//             first = false;
+//         }
+//         const bin = new Uint8Array(bytes);
+//         const view = new DataView(bin.buffer);
+//         const number = view.getBigUint64(0);
+//         nr = (nr << 64n) + number;
+//         bytes = bytes.slice(8);
+//     }
+//     if (negative) {
+//         nr = 0n - nr;
+//     }
+//     return nr;
+// }
+const big = {
+    zero: BigInt(0),
+    one: BigInt(1),
+    two: BigInt(2),
+    eight: BigInt(8),
+    ff: BigInt(0xff),
+};
+function bigintToBytes(number) {
+    if (typeof number !== 'bigint') {
+        throw new Error('number must be a bigint');
+    }
+    const bytes = [];
+    const negative = number < big.zero;
+    while (number !== (negative ? -big.one : big.zero)) {
+        const byte = Number(number & big.ff);
+        bytes.push(byte);
+        number = number >> big.eight;
+    }
+    return bytes.reverse();
+}
+exports.bigintToBytes = bigintToBytes;
+function bytesToBigint(bytes) {
+    const negative = bytes[0] >= 128;
+    let number = big.zero;
+    if (negative) {
+        bytes[0] -= 128;
+    }
+    for (const b of bytes) {
+        number = (number << big.eight) + BigInt(b);
+    }
+    if (negative) {
+        // Invert the bits
+        const bits = (BigInt(bytes.length) * big.eight) - big.one;
+        number = -(big.two ** bits) + number;
+    }
+    return number;
+}
+exports.bytesToBigint = bytesToBigint;
 /**
  * Converts a string to a utf-8 encoded Uint8Array
  */
@@ -7185,11 +7270,13 @@ exports.VALUE_TYPES = {
     NUMBER: 3,
     BOOLEAN: 4,
     STRING: 5,
+    BIGINT: 7,
     // Custom types:
     DATETIME: 6,
-    // DOCUMENT: 7,     // JSON/XML documents that are contained entirely within the stored node
     BINARY: 8,
-    REFERENCE: 9 // Absolute or relative path to other node
+    REFERENCE: 9, // Absolute or relative path to other node
+    // Future:
+    // DOCUMENT: 10,     // JSON/XML documents that are contained entirely within the stored node
 };
 function getValueTypeName(valueType) {
     switch (valueType) {
@@ -7201,6 +7288,7 @@ function getValueTypeName(valueType) {
         case exports.VALUE_TYPES.OBJECT: return 'object';
         case exports.VALUE_TYPES.REFERENCE: return 'reference';
         case exports.VALUE_TYPES.STRING: return 'string';
+        case exports.VALUE_TYPES.BIGINT: return 'bigint';
         // case VALUE_TYPES.DOCUMENT: return 'document';
         default: 'unknown';
     }
@@ -7222,6 +7310,9 @@ function getNodeValueType(value) {
     }
     else if (typeof value === 'object') {
         return exports.VALUE_TYPES.OBJECT;
+    }
+    else if (typeof value === 'bigint') {
+        return exports.VALUE_TYPES.BIGINT;
     }
     throw new Error(`Invalid value for standalone node: ${value}`);
 }
@@ -7251,6 +7342,9 @@ function getValueType(value) {
     }
     else if (typeof value === 'boolean') {
         return exports.VALUE_TYPES.BOOLEAN;
+    }
+    else if (typeof value === 'bigint') {
+        return exports.VALUE_TYPES.BIGINT;
     }
     throw new Error(`Unknown value type: ${value}`);
 }
@@ -9952,7 +10046,15 @@ class IWriteNodeResult {}
  */
 
 /**
+ * @typedef TransactionLogSettings
+ * @property {boolean} [log]
+ * @property {number} [maxAge]
+ * @property {boolean} [noWait]
+ */
+
+/**
  * @typedef IStorageSettings
+ * @property {'error'|'verbose'|'log'|'warn'} [logLevel='log']
  * @property {number} [maxInlineValueSize=50] in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
  * @property {boolean} [removeVoidProperties=false] Instead of throwing errors on undefined values, remove the properties automatically. Default is false
  * @property {string} [path="."] Target path to store database files in, default is '.'
@@ -9960,6 +10062,7 @@ class IWriteNodeResult {}
  * @property {string} [type] optional type of storage class - will be used by AceBaseStorage to create different db files in the future (data, transaction, auth etc)
  * @property {IPCClientSettings} [ipc] External IPC server configuration. You need this if you are running multiple AceBase processes using the same database files in a pm2 or cloud-based cluster so the individual processes can communicate with each other.
  * @property {number} [lockTimeout=120] timeout setting for read /and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+ * @property {TransactionLogSettings} [transactions]
 */
 
 /**
@@ -9970,21 +10073,23 @@ class StorageSettings {
 
     /**
      * 
-     * @param {IStorageSettings} settings 
+     * @param {Partial<IStorageSettings>} settings 
      */
     constructor(settings) {
         settings = settings || {};
+        /** @type {number} */
         this.maxInlineValueSize = typeof settings.maxInlineValueSize === 'number' ? settings.maxInlineValueSize : 50;
         this.removeVoidProperties = settings.removeVoidProperties === true;
         /** @type {string} */
         this.path = settings.path || '.';
         if (this.path.endsWith('/')) { this.path = this.path.slice(0, -1); }
-        /** @type {string} */
+        /** @type {'error'|'verbose'|'log'|'warn'} */
         this.logLevel = settings.logLevel || 'log';
         this.info = settings.info || 'realtime database';
         this.type = settings.type || 'data';
         this.ipc = settings.ipc;
         this.lockTimeout = typeof settings.lockTimeout === 'number' ? settings.lockTimeout : 120;
+        this.transactions = typeof settings.transactions === 'object' ? settings.transactions : { log: false };
     }
 }
 
@@ -10010,7 +10115,7 @@ class Storage extends SimpleEventEmitter {
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
         if (settings.ipc) {
             if (typeof settings.ipc.port !== 'number') {
-                throw new Error(`IPC port number must be a number`);
+                throw new Error('IPC port number must be a number');
             }
             if (!['master','worker'].includes(settings.ipc.role)) {
                 throw new Error(`IPC client role must be either "master" or "worker", not "${settings.ipc.role}"`);
@@ -10068,11 +10173,11 @@ class Storage extends SimpleEventEmitter {
              * @param {string} [options.type] special index to create: 'array', 'fulltext' or 'geo'
              * @param {string[]} [options.include] keys to include in index
              * @param {object} [options.config] additional index-specific configuration settings 
-             * @returns {Promise<DataIndex>}
+             * @returns {Promise<DataIndex?>}
              */
             async create(path, key, options = { rebuild: false, type: undefined, include: undefined }) { //, refresh = false) {
                 if (!this.supported) {
-                    throw new Error(`Indexes are not supported in current environment because it requires Node.js fs`)
+                    throw new Error('Indexes are not supported in current environment because it requires Node.js fs')
                 }
                 // path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
                 const rebuild = options && options.rebuild === true;
@@ -10104,12 +10209,13 @@ class Storage extends SimpleEventEmitter {
                     }
                 });
 
+                /** @type {DataIndex} */
                 const index = existingIndex || (() => {
                     switch (indexType) {
                         case 'array': return new ArrayIndex(storage, path, key, { include: options.include, config: options.config });
                         case 'fulltext': return new FullTextIndex(storage, path, key, { include: options.include, config: options.config });
                         case 'geo': return new GeoIndex(storage, path, key, { include: options.include, config: options.config });
-                        default: return new DataIndex(storage, path, key, { include: options.include, config: options.config });
+                        default: return new DataIndex(storage, path, key, { include: options.include }); //, config: options.config 
                     }
                 })();
                 if (!existingIndex) {
@@ -10131,7 +10237,7 @@ class Storage extends SimpleEventEmitter {
             /**
              * Returns indexes at a path, or a specific index on a key in that path
              * @param {string} path 
-             * @param {string} [key=null] 
+             * @param {string|null} [key=null] 
              * @returns {DataIndex[]}
              */
             get(path, key = null) {
@@ -10227,6 +10333,7 @@ class Storage extends SimpleEventEmitter {
                 }
                 catch(err) {
                     storage.debug.error(err);
+                    return null;
                 }
             },
 
@@ -10287,8 +10394,8 @@ class Storage extends SimpleEventEmitter {
             /**
              * Removes 1 or more subscriptions from a node
              * @param {string} path - Path to the node to remove the subscription from
-             * @param {string} type - Type of subscription(s) to remove (optional: if omitted all types will be removed)
-             * @param {Function} callback - Callback to remove (optional: if omitted all of the same type will be removed)
+             * @param {string} [type] - Type of subscription(s) to remove (optional: if omitted all types will be removed)
+             * @param {Function} [callback] - Callback to remove (optional: if omitted all of the same type will be removed)
              */
             remove: (path, type = undefined, callback = undefined) => {
                 let pathSubs = _subs[path];
@@ -10314,7 +10421,7 @@ class Storage extends SimpleEventEmitter {
             /**
              * Gets all subscribers at given path that need the node's previous value when a change is triggered
              * @param {string} path 
-             * @returns {Array<{ type: string, path: string }>}
+             * @returns {Array<{ type: string; eventPath: string; dataPath: string; subscriptionPath: string }>}
              */
             getValueSubscribersForPath(path) {
                 // Subscribers that MUST have the entire previous value of a node before updating:
@@ -10332,20 +10439,20 @@ class Storage extends SimpleEventEmitter {
                         let pathSubs = _subs[subscriptionPath];
                         const eventPath = PathInfo.fillVariables(subscriptionPath, path);
                         pathSubs
-                        .filter(sub => !sub.type.startsWith("notify_")) // notify events don't need additional value loading
+                        .filter(sub => !sub.type.startsWith('notify_')) // notify events don't need additional value loading
                         .forEach(sub => {
                             let dataPath = null;
-                            if (sub.type === "value") { // ["value", "notify_value"].includes(sub.type)
+                            if (sub.type === 'value') { // ["value", "notify_value"].includes(sub.type)
                                 dataPath = eventPath;
                             }
-                            else if (["mutated", "mutations"].includes(sub.type) && pathInfo.isDescendantOf(eventPath)) { //["mutated", "notify_mutated"].includes(sub.type)
+                            else if (['mutated', 'mutations'].includes(sub.type) && pathInfo.isDescendantOf(eventPath)) { //["mutated", "notify_mutated"].includes(sub.type)
                                 dataPath = path; // Only needed data is the properties being updated in the targeted path
                             }
-                            else if (sub.type === "child_changed" && path !== eventPath) { // ["child_changed", "notify_child_changed"].includes(sub.type)
+                            else if (sub.type === 'child_changed' && path !== eventPath) { // ["child_changed", "notify_child_changed"].includes(sub.type)
                                 let childKey = PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey);
                             }
-                            else if (["child_added", "child_removed"].includes(sub.type) && pathInfo.isChildOf(eventPath)) { //["child_added", "child_removed", "notify_child_added", "notify_child_removed"]
+                            else if (['child_added', 'child_removed'].includes(sub.type) && pathInfo.isChildOf(eventPath)) { //["child_added", "child_removed", "notify_child_added", "notify_child_removed"]
                                 let childKey = PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey);
                             }
@@ -10362,6 +10469,7 @@ class Storage extends SimpleEventEmitter {
             /**
              * Gets all subscribers at given path that could possibly be invoked after a node is updated
              * @param {string} path 
+             * @returns {Array<{ type: string; eventPath: string; dataPath: string; subscriptionPath: string }>}
              */
             getAllSubscribersForPath(path) {
                 const pathInfo = PathInfo.get(path);
@@ -10377,20 +10485,20 @@ class Storage extends SimpleEventEmitter {
 
                         pathSubs.forEach(sub => {
                             let dataPath = null;
-                            if (sub.type === "value" || sub.type === "notify_value") { 
+                            if (sub.type === 'value' || sub.type === 'notify_value') { 
                                 dataPath = eventPath; 
                             }
-                            else if (["child_changed", "notify_child_changed"].includes(sub.type)) { 
+                            else if (['child_changed', 'notify_child_changed'].includes(sub.type)) { 
                                 let childKey = path === eventPath || pathInfo.isAncestorOf(eventPath) 
-                                    ? "*" 
+                                    ? '*' 
                                     : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey);
                             }
-                            else if (["mutated", "mutations", "notify_mutated", "notify_mutations"].includes(sub.type)) { 
+                            else if (['mutated', 'mutations', 'notify_mutated', 'notify_mutations'].includes(sub.type)) { 
                                 dataPath = path;
                             }
                             else if (
-                                ["child_added", "child_removed", "notify_child_added", "notify_child_removed"].includes(sub.type) 
+                                ['child_added', 'child_removed', 'notify_child_added', 'notify_child_removed'].includes(sub.type) 
                                 && (
                                     pathInfo.isChildOf(eventPath) 
                                     || path === eventPath 
@@ -10398,7 +10506,7 @@ class Storage extends SimpleEventEmitter {
                                 )
                             ) { 
                                 let childKey = path === eventPath || pathInfo.isAncestorOf(eventPath) 
-                                    ? "*" 
+                                    ? '*' 
                                     : PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = PathInfo.getChildPath(eventPath, childKey); //NodePath(subscriptionPath).childPath(childKey); 
                             }
@@ -10455,10 +10563,10 @@ class Storage extends SimpleEventEmitter {
      * @param {any} value 
      */
     valueFitsInline(value) {
-        if (typeof value === "number" || typeof value === "boolean" || value instanceof Date) {
+        if (typeof value === 'number' || typeof value === 'boolean' || value instanceof Date) {
             return true;
         }
-        else if (typeof value === "string") {
+        else if (typeof value === 'string') {
             if (value.length > this.settings.maxInlineValueSize) { return false; }
             // if the string has unicode chars, its byte size will be bigger than value.length
             const encoded = encodeString(value);
@@ -10471,16 +10579,16 @@ class Storage extends SimpleEventEmitter {
             return encoded.length < this.settings.maxInlineValueSize;
         }
         else if (value instanceof ArrayBuffer) {
-            return value.length < this.settings.maxInlineValueSize;
+            return value.byteLength < this.settings.maxInlineValueSize;
         }
         else if (value instanceof Array) {
             return value.length === 0;
         }
-        else if (typeof value === "object") {
+        else if (typeof value === 'object') {
             return Object.keys(value).length === 0;
         }
         else {
-            throw new TypeError(`What else is there?`);
+            throw new TypeError('What else is there?');
         }
     }
 
@@ -10494,7 +10602,7 @@ class Storage extends SimpleEventEmitter {
      */
     // eslint-disable-next-line no-unused-vars
     _writeNode(path, value, options) {
-        throw new Error(`This method must be implemented by subclass`);
+        throw new Error('This method must be implemented by subclass');
     }
 
     /**
@@ -10578,7 +10686,7 @@ class Storage extends SimpleEventEmitter {
      */
     async _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true, suppress_events: false, context: null, impact: null }) {
         options = options || {};
-        if (!options.tid && !options.transaction) { throw new Error(`_writeNodeWithTracking MUST be executed with a tid OR transaction!`); }
+        if (!options.tid && !options.transaction) { throw new Error('_writeNodeWithTracking MUST be executed with a tid OR transaction!'); }
         options.merge = options.merge === true;
 
         // Does the value meet schema requirements?
@@ -10606,6 +10714,7 @@ class Storage extends SimpleEventEmitter {
                 const trailKeys = pathKeys.slice(eventPathKeys.length);
                 let currentValue = topEventData;
                 while (trailKeys.length > 0 && currentValue !== null) {
+                    /** @type {string|number} trailKeys.shift() as string|number */
                     const childKey = trailKeys.shift();
                     currentValue = typeof currentValue === 'object' && childKey in currentValue ? currentValue[childKey] : null;
                 }
@@ -10637,7 +10746,7 @@ class Storage extends SimpleEventEmitter {
                 valueOptions.include = keysFilter;
             }
             if (topEventPath === '' && typeof valueOptions.include === 'undefined') {
-                this.debug.warn(`WARNING: One or more value event listeners on the root node are causing the entire database value to be read to facilitate change tracking. Using "value", "notify_value", "child_changed" and "notify_child_changed" events on the root node are a bad practice because of the significant performance impact. Use "mutated" or "mutations" events instead`);
+                this.debug.warn('WARNING: One or more value event listeners on the root node are causing the entire database value to be read to facilitate change tracking. Using "value", "notify_value", "child_changed" and "notify_child_changed" events on the root node are a bad practice because of the significant performance impact. Use "mutated" or "mutations" events instead');
             }
             const node = await this.getNode(topEventPath, valueOptions);
             currentValue = node.value;
@@ -10685,6 +10794,7 @@ class Storage extends SimpleEventEmitter {
             }
             modifiedData = newTopEventData;
             while (trailKeys.length > 0) {
+                /** @type {string|number} trailKeys.shift() as string|number */
                 let childKey = trailKeys.shift();
                 // Create shallow copy of object at target
                 if (!options.merge && trailKeys.length === 0) {
@@ -10781,8 +10891,9 @@ class Storage extends SimpleEventEmitter {
                 let results = [];
                 let trailPath = '';
                 while (trailKeys.length > 0) {
+                    /** @type {string|number} trailKeys.shift() as string|number */
                     let subKey = trailKeys.shift();
-                    if (subKey === '*' || subKey.startsWith('$')) {
+                    if (typeof subKey === 'string' && (subKey === '*' || subKey.startsWith('$'))) {
                         // Recursion needed
                         let allKeys = oldValue === null ? [] : Object.keys(oldValue);
                         newValue !== null && Object.keys(newValue).forEach(key => {
@@ -10826,20 +10937,20 @@ class Storage extends SimpleEventEmitter {
             if (type.startsWith('notify_')) {
                 type = type.slice('notify_'.length);
             }
-            if (type === "mutated") {
+            if (type === 'mutated') {
                 return; // Ignore here, requires different logic
             }
-            else if (type === "child_changed" && (oldValue === null || newValue === null)) {
+            else if (type === 'child_changed' && (oldValue === null || newValue === null)) {
                 trigger = false;
             }
-            else if (type === "value" || type === "child_changed") {
+            else if (type === 'value' || type === 'child_changed') {
                 let changes = compareValues(oldValue, newValue);
                 trigger = changes !== 'identical';
             }
-            else if (type === "child_added") {
+            else if (type === 'child_added') {
                 trigger = oldValue === null && newValue !== null;
             }
-            else if (type === "child_removed") {
+            else if (type === 'child_removed') {
                 trigger = oldValue !== null && newValue === null;
             }
 
@@ -10850,6 +10961,7 @@ class Storage extends SimpleEventEmitter {
                 console.assert(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
                 pathKeys[index] = variable.value;
             });
+            /** @type {string} pathKeys.reduce<string>(..) */
             const dataPath = pathKeys.reduce((path, key) => PathInfo.getChildPath(path, key), '');
             trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
         };
@@ -10911,7 +11023,7 @@ class Storage extends SimpleEventEmitter {
         };
 
         // Add mutations to result (only if transaction logging is enabled)
-        if (this.transactionLoggingEnabled && this.settings.type !== 'transaction') {
+        if (transactionLoggingEnabled && this.settings.type !== 'transaction') {
             result.mutations = (() => {
                 const trailPath = path.slice(topEventPath.length).replace(/^\//, '');
                 const trailKeys = PathInfo.getPathKeys(trailPath);
@@ -11072,7 +11184,7 @@ class Storage extends SimpleEventEmitter {
      */
     // eslint-disable-next-line no-unused-vars
     getChildren(path, options) {
-        throw new Error(`This method must be implemented by subclass`);
+        throw new Error('This method must be implemented by subclass');
     }
 
     /**
@@ -11103,7 +11215,7 @@ class Storage extends SimpleEventEmitter {
      */
     // eslint-disable-next-line no-unused-vars
     getNode(path, options) {
-        throw new Error(`This method must be implemented by subclass`);
+        throw new Error('This method must be implemented by subclass');
     }
 
     /**
@@ -11116,7 +11228,7 @@ class Storage extends SimpleEventEmitter {
      */
     // eslint-disable-next-line no-unused-vars
     getNodeInfo(path, options) {
-        throw new Error(`This method must be implemented by subclass`);
+        throw new Error('This method must be implemented by subclass');
     }
 
     // /**
@@ -11144,7 +11256,7 @@ class Storage extends SimpleEventEmitter {
      */
     // eslint-disable-next-line no-unused-vars
     setNode(path, value, options) {
-        throw new Error(`This method must be implemented by subclass`);
+        throw new Error('This method must be implemented by subclass');
     }
 
     /**
@@ -11159,7 +11271,7 @@ class Storage extends SimpleEventEmitter {
      */
     // eslint-disable-next-line no-unused-vars
     updateNode(path, updates, options) {
-        throw new Error(`This method must be implemented by subclass`);
+        throw new Error('This method must be implemented by subclass');
     }
 
     /**
@@ -11210,7 +11322,7 @@ class Storage extends SimpleEventEmitter {
                 this.subscriptions.remove(path, 'notify_value', changeCallback)
             }
             if (changed) {
-                throw new NodeRevisionError(`Node changed`);
+                throw new NodeRevisionError('Node changed');
             }
             const cursor = await this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid, suppress_events: options.suppress_events, context: options.context });
             return cursor;
@@ -11350,10 +11462,10 @@ class Storage extends SimpleEventEmitter {
             const promises = [];
             const isMatch = criteria.every(f => {
                 let proceed = true;
-                if (f.op === "!exists" || (f.op === "==" && (typeof f.compare === 'undefined' || f.compare === null))) { 
+                if (f.op === '!exists' || (f.op === '==' && (typeof f.compare === 'undefined' || f.compare === null))) { 
                     proceed = !child.exists;
                 }
-                else if (f.op === "exists" || (f.op === "!=" && (typeof f.compare === 'undefined' || f.compare === null))) {
+                else if (f.op === 'exists' || (f.op === '!=' && (typeof f.compare === 'undefined' || f.compare === null))) {
                     proceed = child.exists;
                 }
                 else if (!child.exists) {
@@ -11361,8 +11473,8 @@ class Storage extends SimpleEventEmitter {
                 }
                 else {
                     if (child.address) {
-                        if (child.valueType === VALUE_TYPES.OBJECT && ["has","!has"].indexOf(f.op) >= 0) {
-                            const op = f.op === "has" ? "exists" : "!exists";
+                        if (child.valueType === VALUE_TYPES.OBJECT && ['has','!has'].indexOf(f.op) >= 0) {
+                            const op = f.op === 'has' ? 'exists' : '!exists';
                             const p = checkNode(child.path, [{ key: f.compare, op }])
                             .then(isMatch => {
                                 return { key: child.key, isMatch };
@@ -11370,7 +11482,7 @@ class Storage extends SimpleEventEmitter {
                             promises.push(p);
                             proceed = true;
                         }
-                        else if (child.valueType === VALUE_TYPES.ARRAY && ["contains","!contains"].indexOf(f.op) >= 0) {
+                        else if (child.valueType === VALUE_TYPES.ARRAY && ['contains','!contains'].indexOf(f.op) >= 0) {
                             // TODO: refactor to use child stream
                             const p = this.getNode(child.path, { tid })
                             .then(({ value: arr }) => {
@@ -11378,7 +11490,7 @@ class Storage extends SimpleEventEmitter {
                                 // return { key: child.key, isMatch: (i >= 0 && f.op === "contains") || (i < 0 && f.op === "!contains") };
         
                                 const isMatch = 
-                                    f.op === "contains"
+                                    f.op === 'contains'
                                         // "contains"
                                         ? f.compare instanceof Array
                                             ? f.compare.every(val => arr.includes(val)) // Match if ALL of the passed values are in the array
@@ -11406,13 +11518,13 @@ class Storage extends SimpleEventEmitter {
                             proceed = false;
                         }
                     }
-                    else if (child.type === VALUE_TYPES.OBJECT && ["has","!has"].indexOf(f.op) >= 0) {
+                    else if (child.type === VALUE_TYPES.OBJECT && ['has','!has'].indexOf(f.op) >= 0) {
                         const has = f.compare in child.value;
-                        proceed = (has && f.op === "has") || (!has && f.op === "!has");
+                        proceed = (has && f.op === 'has') || (!has && f.op === '!has');
                     }
-                    else if (child.type === VALUE_TYPES.ARRAY && ["contains","!contains"].indexOf(f.op) >= 0) {
+                    else if (child.type === VALUE_TYPES.ARRAY && ['contains','!contains'].indexOf(f.op) >= 0) {
                         const contains = child.value.indexOf(f.compare) >= 0;
-                        proceed = (contains && f.op === "contains") || (!contains && f.op === "!contains");
+                        proceed = (contains && f.op === 'contains') || (!contains && f.op === '!contains');
                     }
                     else {
                         let ret = this.test(child.value, f.op, f.compare);
@@ -11433,40 +11545,40 @@ class Storage extends SimpleEventEmitter {
     }
 
     test(val, op, compare) {
-        if (op === "<") { return val < compare; }
-        if (op === "<=") { return val <= compare; }
-        if (op === "==") { return val === compare; }
-        if (op === "!=") { return val !== compare; }
-        if (op === ">") { return val > compare; }
-        if (op === ">=") { return val >= compare; }
-        if (op === "in") { return compare.indexOf(val) >= 0; }
-        if (op === "!in") { return compare.indexOf(val) < 0; }
-        if (op === "like" || op === "!like") {
+        if (op === '<') { return val < compare; }
+        if (op === '<=') { return val <= compare; }
+        if (op === '==') { return val === compare; }
+        if (op === '!=') { return val !== compare; }
+        if (op === '>') { return val > compare; }
+        if (op === '>=') { return val >= compare; }
+        if (op === 'in') { return compare.indexOf(val) >= 0; }
+        if (op === '!in') { return compare.indexOf(val) < 0; }
+        if (op === 'like' || op === '!like') {
             const pattern = '^' + compare.replace(/[-[\]{}()+.,\\^$|#\s]/g, '\\$&').replace(/\?/g, '.').replace(/\*/g, '.*?') + '$';
             const re = new RegExp(pattern, 'i');
             const isMatch = re.test(val.toString());
-            return op === "like" ? isMatch : !isMatch;
+            return op === 'like' ? isMatch : !isMatch;
         }
-        if (op === "matches") {
+        if (op === 'matches') {
             return compare.test(val.toString());
         }
-        if (op === "!matches") {
+        if (op === '!matches') {
             return !compare.test(val.toString());
         }
-        if (op === "between") {
+        if (op === 'between') {
             return val >= compare[0] && val <= compare[1];
         }
-        if (op === "!between") {
+        if (op === '!between') {
             return val < compare[0] || val > compare[1];
         }
-        if (op === "has" || op === "!has") {
+        if (op === 'has' || op === '!has') {
             const has = typeof val === 'object' && compare in val;
-            return op === "has" ? has : !has;
+            return op === 'has' ? has : !has;
         }
-        if (op === "contains" || op === "!contains") {
+        if (op === 'contains' || op === '!contains') {
             // TODO: rename to "includes"?
             const includes = typeof val === 'object' && val instanceof Array && val.includes(compare);
-            return op === "contains" ? includes : !includes;
+            return op === 'contains' ? includes : !includes;
         }
         return false;
     }
@@ -11474,12 +11586,12 @@ class Storage extends SimpleEventEmitter {
     /**
      * Export a specific path's data to a stream
      * @param {string} path
-     * @param {(str: string) => void|Promise<void> | { write(str: string) => void|Promise<void>}} write function that writes to a stream, or stream object that has a write method that (optionally) returns a promise the export needs to wait for before continuing
+     * @param {(str: string) => void|Promise<void> | { write(str: string): void|Promise<void>}} write function that writes to a stream, or stream object that has a write method that (optionally) returns a promise the export needs to wait for before continuing
      * @returns {Promise<void>} returns a promise that resolves once all data is exported
      */
     async exportNode(path, write, options = { format: 'json', type_safe: true }) {
         if (options && options.format !== 'json') {
-            throw new Error(`Only json output is currently supported`);
+            throw new Error('Only json output is currently supported');
         }
         if (typeof write !== 'function') {
             // Using the "old" stream argument. Use its write method for backward compatibility
@@ -11498,10 +11610,10 @@ class Storage extends SimpleEventEmitter {
                 val = `"${escape(val)}"`;
             }
             else if (type === VALUE_TYPES.ARRAY) {
-                val = `[]`;
+                val = '[]';
             }
             else if (type === VALUE_TYPES.OBJECT) {
-                val = `{}`;
+                val = '{}';
             }
             else if (type === VALUE_TYPES.BINARY) {
                 val = `"${escape(ascii85.encode(val))}"`; // TODO: use base64 instead, no escaping needed
@@ -11513,6 +11625,13 @@ class Storage extends SimpleEventEmitter {
                 val = `"${val.path}"`;
                 if (options.type_safe) {
                     val = `{".type":"reference",".val":${val}}`; // Previously: "PathReference"
+                }
+            }
+            else if (type === VALUE_TYPES.BIGINT) {
+                 // Unfortnately, JSON.parse does not support 0n bigint json notation 
+                val = `"${val}"`;
+                if (options.type_safe) {
+                    val = `{".type":"bigint",".val":${val}}`;
                 }
             }
             return val;
@@ -11609,7 +11728,7 @@ class Storage extends SimpleEventEmitter {
                     throw new Error(`Unexpected EOF at index ${state.offset + state.data.length}`);
                 }
                 else {
-                    throw new Error(`Unable to read data from stream`);
+                    throw new Error('Unable to read data from stream');
                 }
             }
             else if (typeof data === 'object') {
@@ -11640,7 +11759,7 @@ class Storage extends SimpleEventEmitter {
                 await readNextChunk(true);
             }
             if (state.index + length > state.data.length) {
-                throw new Error(`Not enough data available from stream`);
+                throw new Error('Not enough data available from stream');
             }
         };
         const consumeToken = async token => {
@@ -11728,7 +11847,7 @@ class Storage extends SimpleEventEmitter {
             let str = '';
             let i = state.index;
             // Read until non-number character is encountered
-            const nrChars = ['-','0','1','2','3','4','5','6','7','8','9','.','e','b','f','x'];
+            const nrChars = ['-','0','1','2','3','4','5','6','7','8','9','.','e','b','f','x','o','n']; // b: 0b110101, x: 0x3a, o: 0o01, n: 29723n, e: 10e+23, f: ?
             while (nrChars.includes(state.data[i])) {
                 i++;
                 if (i >= state.data.length) {
@@ -11739,7 +11858,7 @@ class Storage extends SimpleEventEmitter {
             }
             str += state.data.slice(state.index, i);
             state.index = i;
-            const nr = str.includes('.') ? parseFloat(str) : parseInt(str);
+            const nr = str.endsWith('n') ? BigInt(str.slice(0, -1)) : str.includes('.') ? parseFloat(str) : parseInt(str);
             return nr;
         };
         const readValue = async () => {
@@ -11785,6 +11904,10 @@ class Storage extends SimpleEventEmitter {
                 case 'PathReference':
                 case 'reference': {
                     val = new PathReference(val);
+                    break;
+                }
+                case 'bigint': {
+                    val = BigInt(val);
                     break;
                 }
                 default:
@@ -12027,7 +12150,7 @@ class Storage extends SimpleEventEmitter {
      */
     setSchema(path, schema) {
         if (typeof schema === 'undefined') {
-            throw new TypeError(`schema argument must be given`);
+            throw new TypeError('schema argument must be given');
         }
         if (schema === null) {
             // Remove previously set schema on path
@@ -12073,9 +12196,9 @@ class Storage extends SimpleEventEmitter {
      * Validates the schemas of the node being updated and its children
      * @param {string} path path being written to
      * @param {any} value the new value, or updates to current value
-     * @param {any} [options] 
+     * @param {object} [options] 
      * @param {boolean} [options.updates] If an existing node is being updated (merged), this will only enforce schema rules set on properties being updated.
-     * @returns {{ ok: boolean, reason?: string }}
+     * @returns {{ ok: true }|{ ok: false; reason: string }}
      * @example
      * // define schema for each tag of each user post:
      * db.schema.set(
