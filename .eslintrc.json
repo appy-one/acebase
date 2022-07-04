@@ -11,7 +11,8 @@
     },
     "rules": {
         "no-unused-vars": "warn",
-        "no-constant-condition": ["error", { "checkLoops": false }]
+        "no-constant-condition": ["error", { "checkLoops": false }],
+        "quotes":["error", "single", { "avoidEscape": true }]
     },
     "ignorePatterns": ["**/*.spec.js"]
 }
