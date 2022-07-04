@@ -64,13 +64,13 @@ function _createRecordPointer(wildcards, key) { //, address) {
 
 function _parseRecordPointer(path, recordPointer) {
     if (recordPointer.length === 0) {
-        throw new Error(`Invalid record pointer length`);
+        throw new Error('Invalid record pointer length');
     }
     const wildcardsLength = recordPointer[0];
     let wildcards = [];
     let index = 1;
     for (let i = 0; i < wildcardsLength; i++) {
-        let wildcard = "";
+        let wildcard = '';
         let length = recordPointer[index];
         for (let j = 0; j < length; j++) {
             wildcard += String.fromCharCode(recordPointer[index+j+1]);
@@ -79,7 +79,7 @@ function _parseRecordPointer(path, recordPointer) {
         index += length + 1;
     }
     const keyLength = recordPointer[index];
-    let key = "";
+    let key = '';
     for(let i = 0; i < keyLength; i++) {
         key += String.fromCharCode(recordPointer[index+i+1]);
     }
@@ -152,7 +152,7 @@ class DataIndex {
         this.path = (new PathInfo(pathKeys)).path; // path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
         this.key = key;
         this.caseSensitive = options.caseSensitive === true;
-        this.textLocale = options.textLocale || "en";
+        this.textLocale = options.textLocale || 'en';
         this.textLocaleKey = options.textLocaleKey;
         this.includeKeys = options.include || [];
         // this.enableReverseLookup = false;
@@ -161,7 +161,7 @@ class DataIndex {
         this._updateQueue = [];
     
         /**
-         * @type {Map<string, Map<any, BinaryBPlusTreeLeafEntry>}
+         * @type {Map<string, Map<any, BinaryBPlusTreeLeafEntry>>}
          */
         this._cache = new Map();
         this.setCacheTimeout(60, true); // 1 minute query cache
@@ -253,6 +253,12 @@ class DataIndex {
         idx.release();
     }
 
+    /**
+     * Reads an existing index from a file
+     * @param {Storage} storage Used storage engine
+     * @param {string} fileName 
+     * @returns {Promise<DataIndex>}
+     */
     static async readFromFile(storage, fileName) {
         // Read an index from file
         const filePath = fileName.includes('/') ? fileName : `${storage.settings.path}/${storage.name}.acebase/${fileName}`;
@@ -534,7 +540,7 @@ class DataIndex {
             idx.release();
         }
         catch(err) {
-            this.storage.debug.error(`Index rebuild error: `, err);
+            this.storage.debug.error('Index rebuild error: ', err);
             this.state = DataIndex.STATE.ERROR;
             this._buildError = err;
             idx.release();
@@ -573,7 +579,7 @@ class DataIndex {
                 await this._rebuild(idx); // rebuild calls idx.close() and .release()
 
                 // Process left-over operations
-                this.storage.debug.verbose(`Index was rebuilt, retrying pending operations`);
+                this.storage.debug.verbose('Index was rebuilt, retrying pending operations');
                 idx = await this._getTree('exclusive');
                 await go(retry + 1);
                 return true; // "rebuilt"
@@ -953,7 +959,7 @@ class DataIndex {
      */
     async build(options) {
         if ([DataIndex.STATE.BUILD, DataIndex.STATE.REBUILD].includes(this.state)) {
-            throw new Error(`Index is already being built`);
+            throw new Error('Index is already being built');
         }
         this.state = this.state === DataIndex.STATE.READY
             ? DataIndex.STATE.REBUILD  // Existing index file has to be overwritten in the last phase
@@ -962,7 +968,7 @@ class DataIndex {
         const path = this.path;
         const wildcardNames = path.match(/\*|\$[a-z0-9_]+/gi) || [];
         // const hasWildcards = wildcardNames.length > 0;
-        const wildcardsPattern = '^' + path.replace(/\*|\$[a-z0-9_]+/gi, "([a-z0-9_]+)") + '/';
+        const wildcardsPattern = '^' + path.replace(/\*|\$[a-z0-9_]+/gi, '([a-z0-9_]+)') + '/';
         const wildcardRE = new RegExp(wildcardsPattern, 'i');
         // let treeBuilder = new BPlusTreeBuilder(false, FILL_FACTOR, this.allMetadataKeys); //(30, false);
         // let idx; // Once using binary file to write to
@@ -1668,7 +1674,7 @@ class DataIndex {
             const headerStats = { 
                 written: false, 
                 updateTreeLength: () => { 
-                    throw new Error(`header hasn't been written yet`); 
+                    throw new Error('header hasn\'t been written yet'); 
                 },
                 length: DISK_BLOCK_SIZE
             };
@@ -1742,7 +1748,7 @@ class DataIndex {
     }
 
     // eslint-disable-next-line no-unused-vars
-    test(obj, op, val) { throw new Error(`test method must be overridden by subclass`); }
+    test(obj, op, val) { throw new Error('test method must be overridden by subclass'); }
 
     /**
      * 
@@ -1793,7 +1799,7 @@ class DataIndex {
                 bytes.push(4);
                 // value_length:
                 if (value.length > 0xffff) {
-                    throw new Error(`Array is too large to store. Max length is 0xffff`)
+                    throw new Error('Array is too large to store. Max length is 0xffff')
                 }
                 bytes.push((value.length >> 8) & 0xff);
                 bytes.push(value.length & 0xff);
@@ -2014,7 +2020,7 @@ class DataIndex {
                 bytes.push(4);
                 // value_length:
                 if (value.length > 0xffff) {
-                    throw new Error(`Array is too large to store. Max length is 0xffff`)
+                    throw new Error('Array is too large to store. Max length is 0xffff')
                 }
                 bytes.push((value.length >> 8) & 0xff);
                 bytes.push(value.length & 0xff);
@@ -2280,7 +2286,7 @@ class IndexQueryResults extends Array {
             compare = null; // compare with null so <, <=, > etc will get the right results
         }
         if (op === 'exists' || op === '!exists') {
-            op = op === 'exists' ? "!=" : "==";
+            op = op === 'exists' ? '!=' : '==';
             compare = null;
         }
         const filtered = this.filter(result => {
@@ -2632,13 +2638,13 @@ class WordInfo {
 class TextInfo {
     static get locales() {
         return {
-            "default": {
+            'default': {
                 pattern: '[A-Za-z0-9\']+',
                 flags: 'gmi'
             },
-            "en": {
+            'en': {
                 // English stoplist from https://gist.github.com/sebleier/554280
-                stoplist: ["i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours", "yourself", "yourselves", "he", "him", "his", "himself", "she", "her", "hers", "herself", "it", "its", "itself", "they", "them", "their", "theirs", "themselves", "what", "which", "who", "whom", "this", "that", "these", "those", "am", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "having", "do", "does", "did", "doing", "a", "an", "the", "and", "but", "if", "or", "because", "as", "until", "while", "of", "at", "by", "for", "with", "about", "against", "between", "into", "through", "during", "before", "after", "above", "below", "to", "from", "up", "down", "in", "out", "on", "off", "over", "under", "again", "further", "then", "once", "here", "there", "when", "where", "why", "how", "all", "any", "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "s", "t", "can", "will", "just", "don", "should", "now"]
+                stoplist: ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now']
             },
             /**
              * 
@@ -2679,7 +2685,7 @@ class TextInfo {
      */
     constructor(text, options) {
         // this.text = text; // Be gone later...
-        this.locale = options.locale || "en";
+        this.locale = options.locale || 'en';
         const localeSettings = TextInfo.locales.get(this.locale);
         let pattern = localeSettings.pattern;
         if (options.pattern && options.pattern instanceof RegExp) {
@@ -2826,6 +2832,10 @@ class FullTextIndex extends DataIndex {
      * @param {string} path 
      * @param {string} key 
      * @param {object} options 
+     * @param {boolean} [options.caseSensitive=false] if strings in the index should be indexed case-sensitive. defaults to false
+     * @param {string} [options.textLocale="en"] locale to use when comparing case insensitive string values. Can be a language code ("nl", "en" etc), or LCID ("en-us", "en-au" etc). Defaults to English ("en")
+     * @param {string} [options.textLocaleKey] to allow multiple languages to be indexed, you can specify the name of the key in the source records that contains the locale. When this key is not present in the data, the specified textLocale will be used as default. Eg with textLocaleKey: 'locale', 1 record might contain { text: 'Hello World', locale: 'en' } (text will be indexed with English locale), and another { text: 'Hallo Wereld', locale: 'nl' } (Dutch locale)
+     * @param {string[]} [options.include] other keys' data to include in the index, for faster sorting topN (.limit.order) query results
      * @param {object} [options.config]
      * @param {(word: string, locale:string) => string} [options.config.transform] callback function that transforms (or filters) words being indexed
      * @param {string[]} [options.config.blacklist] words to be ignored
@@ -3690,7 +3700,7 @@ class GeoIndex extends DataIndex {
 
         if (op === 'geo:nearby') {
             if (typeof val.lat !== 'number' || typeof val.long !== 'number' || typeof val.radius !== 'number') {
-                throw new Error(`geo:nearby query must supply an object with properties .lat, .long and .radius`);
+                throw new Error('geo:nearby query must supply an object with properties .lat, .long and .radius');
             }
             const stats = new IndexQueryStats('geo_nearby_query', val, true);
 
@@ -3754,7 +3764,7 @@ class FullTextIndexQueryHint extends IndexQueryHint {
                 return `Word "${this.value}" was ignored because it is either blacklisted, occurs in a stoplist, or did not match other criteria such as minimum (wildcard) word length`;
             }
             default: {
-                return `Uknown hint`;
+                return 'Uknown hint';
             }
         }
     }
@@ -3778,7 +3788,7 @@ class ArrayIndexQueryHint extends IndexQueryHint {
                 return `Value ${val} does not occur in the index, you might want to remove it from your query`;
             }
             default: {
-                return `Uknown hint`;
+                return 'Uknown hint';
             }
         }
     }
