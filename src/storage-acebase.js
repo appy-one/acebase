@@ -1,8 +1,8 @@
 const fs = require('fs');
 const { pfs } = require('./promise-fs');
 const { ID, PathInfo, PathReference, Utils, ColorStyle, PartialArray } = require('acebase-core');
-const { concatTypedArrays, bytesToNumber, numberToBytes, encodeString, decodeString, cloneObject } = Utils;
-const { Node, NodeChangeTracker, NodeChange } = require('./node');
+const { concatTypedArrays, bytesToNumber, bytesToBigint, numberToBytes, bigintToBytes, encodeString, decodeString, cloneObject } = Utils;
+const { NodeChangeTracker, NodeChange } = require('./node');
 const { NodeAddress } = require('./node-address');
 const { NodeCache } = require('./node-cache');
 const { NodeInfo } = require('./node-info');
@@ -77,13 +77,13 @@ class AceBaseStorage extends Storage {
         super(name, settings);
 
         if (settings.maxInlineValueSize > 64) {
-            throw new Error("maxInlineValueSize cannot be larger than 64"); // This is technically not possible because we store inline length with 6 bits: range = 0 to 2^6-1 = 0 - 63 // NOTE: lengths are stored MINUS 1, because an empty value is stored as tiny value, so "a"'s stored inline length is 0, allowing values up to 64 bytes
+            throw new Error('maxInlineValueSize cannot be larger than 64'); // This is technically not possible because we store inline length with 6 bits: range = 0 to 2^6-1 = 0 - 63 // NOTE: lengths are stored MINUS 1, because an empty value is stored as tiny value, so "a"'s stored inline length is 0, allowing values up to 64 bytes
         }
         if (settings.recordSize > 65536) {
-            throw new Error("recordSize cannot be larger than 65536"); // Technically not possible because setting in db is 16 bits
+            throw new Error('recordSize cannot be larger than 65536'); // Technically not possible because setting in db is 16 bits
         }
         if (settings.pageSize > 65536) {
-            throw new Error("pageSize cannot be larger than 65536"); // Technically not possible because record_nr references are 16 bits
+            throw new Error('pageSize cannot be larger than 65536'); // Technically not possible because record_nr references are 16 bits
         }
 
         this.name = name;
@@ -147,7 +147,7 @@ class AceBaseStorage extends Storage {
                 length = buffer.byteLength;
             }
             const { bytesWritten } = await pfs.write(fd, buffer, offset, length, fileIndex).catch(err => {
-                this.debug.error(`Error writing to file`, err);
+                this.debug.error('Error writing to file', err);
                 throw err;
             });
             stats.writes++;
@@ -175,11 +175,11 @@ class AceBaseStorage extends Storage {
                 // Convert a typed array such as Uint8Array to Buffer with shared memory space
                 buffer = Buffer.from(buffer.buffer);
                 if (buffer.byteOffset > 0) {
-                    throw new Error(`When using a TypedArray as buffer, its byteOffset MUST be 0.`);
+                    throw new Error('When using a TypedArray as buffer, its byteOffset MUST be 0.');
                 }
             }
             const { bytesRead } = await pfs.read(fd, buffer, offset, length, fileIndex).catch(err => {
-                this.debug.error(`Error reading record`, buffer, offset, length, fileIndex);
+                this.debug.error('Error reading record', buffer, offset, length, fileIndex);
                 this.debug.error(err);
                 throw err;
             });
@@ -193,7 +193,7 @@ class AceBaseStorage extends Storage {
         this.ipc.on('request', async message => {
             // Master functionality: handle requests from workers
 
-            console.assert(this.ipc.isMaster, `Workers should not receive requests`);
+            console.assert(this.ipc.isMaster, 'Workers should not receive requests');
             const request = message.data;
             const reply = result => {
                 // const reply = { type: 'result', id: message.id, ok: true, from: this.ipc.id, to: message.from, data: result };
@@ -326,7 +326,7 @@ class AceBaseStorage extends Storage {
 
             write() {
                 if (!storage.ipc.isMaster) {
-                    throw new Error(`DEV ERROR: KIT.write not allowed to run if it is a cluster worker!!`);
+                    throw new Error('DEV ERROR: KIT.write not allowed to run if it is a cluster worker!!');
                 }
                 // Key Index Table starts at index 64, and is 2^16 (65536) bytes long
                 const data = Buffer.alloc(this.length);
@@ -361,14 +361,14 @@ class AceBaseStorage extends Storage {
                 //     storage.debug.log(`KIT saved, ${bytesWritten} bytes written`);
                 // })
                 .catch(err => {
-                    storage.debug.error(`Error writing KIT: `, err);
+                    storage.debug.error('Error writing KIT: ', err);
                 });
             },
 
             async load() {
                 let data = Buffer.alloc(this.length);
                 const { bytesRead } = await pfs.read(fd, data, 0, data.length, this.fileIndex).catch(err => {
-                    storage.debug.error(`Error reading KIT from file: `, err);
+                    storage.debug.error('Error reading KIT from file: ', err);
                     throw err;
                 });
 
@@ -466,7 +466,7 @@ class AceBaseStorage extends Storage {
                             allocation.push({ pageNr: r.page, recordNr: r.start, length: requiredRecords });
                             let i = this.ranges.indexOf(r);
                             this.ranges.splice(i, 1);
-                            return ret(`exact_range`);
+                            return ret('exact_range');
                         }
                     
                         // Find first fitting range
@@ -474,7 +474,7 @@ class AceBaseStorage extends Storage {
                         if (r) {
                             allocation.push({ pageNr: r.page, recordNr: r.start, length: requiredRecords });
                             r.start += requiredRecords;
-                            return ret(`first_fitting`);
+                            return ret('first_fitting');
                         }
                     }
 
@@ -519,7 +519,7 @@ class AceBaseStorage extends Storage {
                         // Do use the available whole page ranges
                         for (let i = 0; i < test.wholePages; i++) {
                             let range = test.ranges[i];
-                            console.assert(range.start === 0 && range.end === recordsPerPage, `Available ranges were not sorted correctly, this range MUST be a whole page!!`);
+                            console.assert(range.start === 0 && range.end === recordsPerPage, 'Available ranges were not sorted correctly, this range MUST be a whole page!!');
                             let rangeIndex = this.ranges.indexOf(range);
                             this.ranges.splice(rangeIndex, 1);
                             allocation.push({ pageNr: range.page, recordNr: 0, length: recordsPerPage });
@@ -544,7 +544,7 @@ class AceBaseStorage extends Storage {
                         test.ranges.forEach((r, i) => {
                             let length = r.end - r.start;
                             if (length > requiredRecords) {
-                                console.assert(i === test.ranges.length - 1, "DEV ERROR: This MUST be the last range or logic is not right!")
+                                console.assert(i === test.ranges.length - 1, 'DEV ERROR: This MUST be the last range or logic is not right!')
                                 allocation.push({ pageNr: r.page, recordNr: r.start, length: requiredRecords });
                                 r.start += requiredRecords;
                                 requiredRecords = 0;
@@ -557,8 +557,8 @@ class AceBaseStorage extends Storage {
                             }
                         });
                     }
-                    console.assert(requiredRecords === 0, "DEV ERROR: requiredRecords MUST be zero now!");
-                    return ret(`scraps`);
+                    console.assert(requiredRecords === 0, 'DEV ERROR: requiredRecords MUST be zero now!');
+                    return ret('scraps');
                 },
 
                 release(ranges) {
@@ -633,7 +633,7 @@ class AceBaseStorage extends Storage {
                             this.ranges.splice(i, 1);
                         });
                         if (this.ranges.length > MAX_FST_RANGES) {
-                            throw new Error(`DEV ERROR: Still too many entries in the FST!`);
+                            throw new Error('DEV ERROR: Still too many entries in the FST!');
                         }
                     }
 
@@ -657,7 +657,7 @@ class AceBaseStorage extends Storage {
                     this.bytesUsed = index;
 
                     const promise = writeData(this.fileIndex, data, 0, bytesToWrite).catch(err => {
-                        storage.debug.error(`Error writing FST: `, err);
+                        storage.debug.error('Error writing FST: ', err);
                     });
                     const writes = [promise];
                     if (updatedPageCount === true) {
@@ -673,7 +673,7 @@ class AceBaseStorage extends Storage {
                 async load() {
                     let data = Buffer.alloc(this.length);
                     const { bytesRead } = await pfs.read(fd, data, 0, data.length, this.fileIndex).catch(err => {
-                        storage.debug.error(`Error reading FST from file`);
+                        storage.debug.error('Error reading FST from file');
                         storage.debug.error(err);
                         throw err;
                     })
@@ -708,7 +708,7 @@ class AceBaseStorage extends Storage {
             recordNr: 0,
             exists: false,
             get address() {
-                return new NodeAddress("", this.pageNr, this.recordNr);
+                return new NodeAddress('', this.pageNr, this.recordNr);
             },
             
             /**
@@ -718,7 +718,7 @@ class AceBaseStorage extends Storage {
              */
             async update (address, fromIPC = false) {
                 // Root address changed
-                console.assert(address.path === "");
+                console.assert(address.path === '');
                 if (address.pageNr === this.pageNr && address.recordNr === this.recordNr) {
                     // No need to update
                     return;
@@ -764,12 +764,12 @@ class AceBaseStorage extends Storage {
                         // ...
                     });
                 }
-                this.emit("error", err);
+                this.emit('error', err);
                 throw err;
             };
 
             this.file = fd = await pfs.open(filename, settings.readOnly === true ? 'r' : 'r+', 0).catch(err => {
-                handleError(err, `Failed to open database file`);
+                handleError(err, 'Failed to open database file');
             });
 
             // const logfile = fs.openSync(`${this.settings.path}/${this.name}.acebase/log`, 'as');
@@ -779,7 +779,7 @@ class AceBaseStorage extends Storage {
     
             const data = Buffer.alloc(64);
             const { bytesRead } = await pfs.read(fd, data, 0, data.length, 0).catch(err => {
-                handleError(err, `Could not read database header`);
+                handleError(err, 'Could not read database header');
             });
 
             // Cast Buffer to Uint8Array
@@ -795,13 +795,13 @@ class AceBaseStorage extends Storage {
                 return true;
             }
             if (bytesRead < 64 || !hasAceBaseDescriptor()) {
-                return handleError(`unsupported_db`, `This is not a supported database file`); 
+                return handleError('unsupported_db', 'This is not a supported database file'); 
             }
             
             // Version should be 1
             let index = descriptor.length;
             if (header[index] !== 1) {
-                return handleError(`unsupported_db`, `This database version is not supported, update your source code`);
+                return handleError('unsupported_db', 'This database version is not supported, update your source code');
             }
             index++;
             
@@ -852,7 +852,7 @@ class AceBaseStorage extends Storage {
 
             const intro = ColorStyle.dim;
             this.debug.log(`Database "${name}" details:`.colorize(intro));
-            this.debug.log(`- Type: AceBase binary`.colorize(intro));
+            this.debug.log('- Type: AceBase binary'.colorize(intro));
             this.debug.log(`- Record size: ${this.settings.recordSize} bytes`.colorize(intro));
             this.debug.log(`- Page size: ${this.settings.pageSize} records (${this.settings.pageSize * this.settings.recordSize} bytes)`.colorize(intro));
             this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize} bytes`.colorize(intro));
@@ -951,7 +951,7 @@ class AceBaseStorage extends Storage {
             // Close database file
             this.debug.log(`Closing db ${this.ipc.dbname}`);
             pfs.close(this.file).catch(err => {
-                this.debug.error(`Could not close database:`, err);
+                this.debug.error('Could not close database:', err);
             });
         });
     }
@@ -1002,7 +1002,7 @@ class AceBaseStorage extends Storage {
             return this.txStorage.logMutation(type, path, value, context, mutations);
         }
         else if (this.type !== 'transaction') {
-            throw new Error(`Wrong database type`);
+            throw new Error('Wrong database type');
         }
 
         if (value === null) {
@@ -1041,10 +1041,10 @@ class AceBaseStorage extends Storage {
                 // if (info.exists) {
                 //     throw new Error('Another transaction using the same cursor found');
                 // }
-                await this._updateNode(`history`, { [cursor]: item }, { merge: true, _internal: true });
+                await this._updateNode('history', { [cursor]: item }, { merge: true, _internal: true });
             }
             catch(err) {
-                this.debug.error(`Failed to add to transaction log: `, err);
+                this.debug.error('Failed to add to transaction log: ', err);
             }
         };
 
@@ -1070,7 +1070,7 @@ class AceBaseStorage extends Storage {
             return this.txStorage.getMutations(filter);
         }
         else if (this.type !== 'transaction') {
-            throw new Error(`Wrong database type`);
+            throw new Error('Wrong database type');
         }
         if (!this.isReady) {
             await this.once('ready');
@@ -1086,7 +1086,7 @@ class AceBaseStorage extends Storage {
 
         // Check if cursor is not too old
         if (since !== 0 && cursor < this.oldestValidCursor) {
-            throw new Error(`Cursor too old`);
+            throw new Error('Cursor too old');
         }
 
         if (!filter.for || filter.for.length === 0) {
@@ -1100,7 +1100,7 @@ class AceBaseStorage extends Storage {
         }).map(item => item.path);
 
         const tid = this.createTid(); //ID.generate();
-        const lock = await this.nodeLocker.lock('history', tid, false, `getMutations`);
+        const lock = await this.nodeLocker.lock('history', tid, false, 'getMutations');
         try {
             const checkQueue = [];
             let mutations = [];
@@ -1608,7 +1608,7 @@ class AceBaseStorage extends Storage {
                 // TODO: release acebase-cli with ability to do that
             }
             else {
-                this.debug.error(`DEBUG THIS: getNode error:`, err);
+                this.debug.error('DEBUG THIS: getNode error:', err);
             }
             throw err;
         }
@@ -1651,7 +1651,7 @@ class AceBaseStorage extends Storage {
 
         if (path === '') {
             // Root record requires a little different strategy
-            const rootLock = await this.nodeLocker.lock('', tid, false, `storage.getNodeInfo "/"`);
+            const rootLock = await this.nodeLocker.lock('', tid, false, 'storage.getNodeInfo "/"');
             try {
                 if (!this.rootRecord.exists) {
                     return new NodeInfo({ path, exists: false });
@@ -1734,7 +1734,7 @@ class AceBaseStorage extends Storage {
             return childInfo;
         }
         catch(err) {
-            this.debug.error(`DEBUG THIS: getNodeInfo error`, err);
+            this.debug.error('DEBUG THIS: getNodeInfo error', err);
             throw err;
         }
         finally {
@@ -1815,7 +1815,7 @@ class AceBaseStorage extends Storage {
             return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
         }
 
-        if (path !== "" && this.valueFitsInline(value)) {
+        if (path !== '' && this.valueFitsInline(value)) {
             // Simple value, update parent instead
             return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
         }
@@ -1829,7 +1829,7 @@ class AceBaseStorage extends Storage {
         try {
 
             const nodeInfo = await this.getNodeInfo(path, { tid });
-            if (!nodeInfo.exists && path !== "") {
+            if (!nodeInfo.exists && path !== '') {
                 // Node doesn't exist, update parent instead
                 lock = await lock.moveToParent();
                 return await this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
@@ -2008,7 +2008,7 @@ class NodeAllocation {
      */
     static fromAdresses(records) {
         if (records.length === 0) { 
-            throw new Error(`Cannot create allocation for 0 addresses`); 
+            throw new Error('Cannot create allocation for 0 addresses'); 
         }
         let range = new StorageAddressRange(records[0].pageNr, records[0].recordNr, 1);
         let ranges = [range];
@@ -2061,7 +2061,7 @@ class NodeAllocation {
                 i--;
             }
         }
-        console.assert(this.totalAddresses === total, `the amount of addresses changed during normalization`);
+        console.assert(this.totalAddresses === total, 'the amount of addresses changed during normalization');
     }
 }
 
@@ -2100,7 +2100,7 @@ class RecordInfo {
      * @param {number} headerLength 
      * @param {number} lastRecordLength 
      * @param {number} bytesPerRecord
-     * @param {Uint8Array} startData
+     * @param {Uint8Array} [startData]
      */
     constructor(path, hasKeyIndex, valueType, allocation, headerLength, lastRecordLength, bytesPerRecord, startData) {
         this.path = path;
@@ -2111,6 +2111,9 @@ class RecordInfo {
         this.lastRecordLength = lastRecordLength;
         this.bytesPerRecord = bytesPerRecord;
         this.startData = startData;
+        this.lastChunkSize = -1;
+        this.fileIndex = -1;
+        this.timestamp = -1;
     }
 
     get totalByteLength() {
@@ -2155,7 +2158,7 @@ class NodeReader {
      */
     constructor(storage, address, lock, updateCache = false, stack = {}) { //stack = []
         if (!(address instanceof NodeAddress)) {
-            throw new TypeError(`address argument must be a NodeAddress`);
+            throw new TypeError('address argument must be a NodeAddress');
         }
         this.storage = storage;
         this.address = address;
@@ -2299,14 +2302,14 @@ class NodeReader {
      * @returns {Promise<any>} - returns the stored object, array or string
      */
     async getValue(options = { include: undefined, exclude: undefined, child_objects: true, no_cache: false }) {
-        if (typeof options.include !== "undefined" && !(options.include instanceof Array)) {
-            throw new TypeError(`options.include must be an array of key names`);
+        if (typeof options.include !== 'undefined' && !(options.include instanceof Array)) {
+            throw new TypeError('options.include must be an array of key names');
         }
-        if (typeof options.exclude !== "undefined" && !(options.exclude instanceof Array)) {
-            throw new TypeError(`options.exclude must be an array of key names`);
+        if (typeof options.exclude !== 'undefined' && !(options.exclude instanceof Array)) {
+            throw new TypeError('options.exclude must be an array of key names');
         }
-        if (["undefined","boolean"].indexOf(typeof options.child_objects) < 0) {
-            throw new TypeError(`options.child_objects must be a boolean`);
+        if (['undefined','boolean'].indexOf(typeof options.child_objects) < 0) {
+            throw new TypeError('options.child_objects must be a boolean');
         }
 
         this._assertLock();
@@ -2437,7 +2440,7 @@ class NodeReader {
                         obj[isArray ? child.index : child.key] = val;
                     }
                     catch (reason) {
-                        this.storage.debug.error(`NodeReader.getValue:child error: `, reason);
+                        this.storage.debug.error('NodeReader.getValue:child error: ', reason);
                         throw reason;
                     }
                     finally {
@@ -2465,7 +2468,7 @@ class NodeReader {
                             const childValuePromise = loadChildValue(child);
                             promises.push(childValuePromise);
                         }
-                        else if (typeof child.value !== "undefined") {
+                        else if (typeof child.value !== 'undefined') {
                             obj[keyOrIndex] = child.value;
                         }
                         else {
@@ -2757,7 +2760,7 @@ class NodeReader {
             index += 2;
             if (isRemoved) {
                 if (!REMOVED_CHILD_DATA_IMPLEMENTED) {
-                    throw new Error("corrupt: removed child data isn't implemented yet");
+                    throw new Error('corrupt: removed child data isn\'t implemented yet');
                 }
                 // NOTE: will not happen yet because record saving currently rewrites
                 // whole records on updating. Adding new/updated data to the end of a 
@@ -2771,11 +2774,12 @@ class NodeReader {
             else if (isTinyValue) {
                 if (child.type === VALUE_TYPES.BOOLEAN) { child.value = tinyValue === 1; }
                 else if (child.type === VALUE_TYPES.NUMBER) { child.value = tinyValue; }
-                else if (child.type === VALUE_TYPES.STRING) { child.value = ""; }
+                else if (child.type === VALUE_TYPES.BIGINT) { child.value = BigInt(tinyValue); }
+                else if (child.type === VALUE_TYPES.STRING) { child.value = ''; }
                 else if (child.type === VALUE_TYPES.ARRAY) { child.value = []; }
                 else if (child.type === VALUE_TYPES.OBJECT) { child.value = {}; }
                 else if (child.type === VALUE_TYPES.BINARY) { child.value = new ArrayBuffer(0); }
-                else if (child.type === VALUE_TYPES.REFERENCE) { child.value = new PathReference(""); }
+                else if (child.type === VALUE_TYPES.REFERENCE) { child.value = new PathReference(''); }
                 else { throw new Error(`Tiny value deserialization method missing for value type ${child.type}`); }
             }
             else if (isInlineValue) {
@@ -2783,13 +2787,14 @@ class NodeReader {
                 assert(length);
                 const bytes = binary.slice(index, index + length);
                 if (child.type === VALUE_TYPES.NUMBER) { child.value = bytesToNumber(bytes); }
+                else if (child.type === VALUE_TYPES.BIGINT) { child.value = bytesToBigint(bytes); }
                 else if (child.type === VALUE_TYPES.STRING) {
                     child.value = decodeString(bytes); // textDecoder.decode(Uint8Array.from(bytes)); 
                 }
                 else if (child.type === VALUE_TYPES.DATETIME) { let time = bytesToNumber(bytes); child.value = new Date(time); }
                 //else if (type === VALUE_TYPES.ID) { value = new ID(bytes); }
-                else if (child.type === VALUE_TYPES.ARRAY) { throw new Error(`Inline array deserialization not implemented`); }
-                else if (child.type === VALUE_TYPES.OBJECT) { throw new Error(`Inline object deserialization not implemented`); }
+                else if (child.type === VALUE_TYPES.ARRAY) { throw new Error('Inline array deserialization not implemented'); }
+                else if (child.type === VALUE_TYPES.OBJECT) { throw new Error('Inline object deserialization not implemented'); }
                 else if (child.type === VALUE_TYPES.BINARY) { child.value = new Uint8Array(bytes).buffer; }
                 else if (child.type === VALUE_TYPES.REFERENCE) { 
                     const path = decodeString(bytes); // textDecoder.decode(Uint8Array.from(bytes));
@@ -2803,13 +2808,13 @@ class NodeReader {
             else if (isRecordValue) {
                 // Record address
                 assert(6);
-                if (typeof binary.buffer === "undefined") {
+                if (typeof binary.buffer === 'undefined') {
                     binary = new Uint8Array(binary);
                 }
                 const view = new DataView(binary.buffer, binary.byteOffset + index, 6);
                 const pageNr = view.getUint32(0);
                 const recordNr = view.getUint16(4);
-                const childPath = isArray ? `${this.address.path}[${child.index}]` : this.address.path === "" ? child.key : `${this.address.path}/${child.key}`;
+                const childPath = isArray ? `${this.address.path}[${child.index}]` : this.address.path === '' ? child.key : `${this.address.path}/${child.key}`;
                 child.address = new NodeAddress(childPath, pageNr, recordNr);
 
                 // Cache anything that comes along
@@ -2819,13 +2824,13 @@ class NodeReader {
                 }
 
                 if (child.address && child.address.equals(this.address)) {
-                    throw new Error(`Circular reference in record data`);
+                    throw new Error('Circular reference in record data');
                 }
 
                 index += 6;
             }
             else {
-                throw new Error("corrupt");
+                throw new Error('corrupt');
             }
 
             //child.file.length = index - startIndex;
@@ -2873,7 +2878,7 @@ class NodeReader {
                                 const keyLength = (binary[index] & 127) + 1;
                                 index++;
                                 assert(keyLength);
-                                let key = "";
+                                let key = '';
                                 for(let i = 0; i < keyLength; i++) {
                                     key += String.fromCharCode(binary[index + i]);
                                 }
@@ -3133,8 +3138,8 @@ class NodeReader {
     }
 
     getChildTree() {
-        if (this.recordInfo === null) { throw new Error(`record info hasn't been read yet`); }
-        if (!this.recordInfo.hasKeyIndex) { throw new Error(`record has no key index tree`); }
+        if (this.recordInfo === null) { throw new Error('record info hasn\'t been read yet'); }
+        if (!this.recordInfo.hasKeyIndex) { throw new Error('record has no key index tree'); }
         return new BinaryBPlusTree(
             this._treeDataReader.bind(this), 
             1024 * 100, // 100KB reads/writes
@@ -3153,8 +3158,8 @@ class NodeReader {
  * @returns {Promise<{ recordMoved: boolean, recordInfo: RecordInfo, deallocate: NodeAllocation }>}
  */
  async function _mergeNode(storage, nodeInfo, updates, lock) {
-    if (typeof updates !== "object") {
-        throw new TypeError(`updates parameter must be an object`);
+    if (typeof updates !== 'object') {
+        throw new TypeError('updates parameter must be an object');
     }
 
     let nodeReader = new NodeReader(storage, nodeInfo.address, lock, false);
@@ -3324,7 +3329,7 @@ class NodeReader {
             const childPath = pathInfo.childPath(change.keyOrIndex); //PathInfo.getChildPath(nodeInfo.path, change.keyOrIndex);
             if (change.oldValue !== null) {
                 let kvp = _serializeValue(storage, childPath, change.keyOrIndex, change.oldValue, null);
-                console.assert(kvp instanceof SerializedKeyValue, `return value must be of type SerializedKeyValue, it cannot be a Promise!`);
+                console.assert(kvp instanceof SerializedKeyValue, 'return value must be of type SerializedKeyValue, it cannot be a Promise!');
                 let bytes = _getValueBytes(kvp);
                 change.oldValue = bytes;
             }
@@ -3386,7 +3391,7 @@ class NodeReader {
                 storage.debug.log(`Could not update tree for "/${nodeInfo.path}"${retry > 0 ? ` (retry ${retry})` : ''}: ${err.message}, ${err.codes}`.colorize(ColorStyle.yellow));
                 
                 if (err.hasErrorCode && err.hasErrorCode('tree-full-no-autogrow')) {
-                    storage.debug.verbose(`Tree needs more space`);
+                    storage.debug.verbose('Tree needs more space');
 
                     const growBytes = Math.ceil(tree.info.byteLength * 0.1); // grow 10%
                     const bytesRequired = tree.info.byteLength + growBytes;
@@ -3424,7 +3429,7 @@ class NodeReader {
                 else {
                     // Failed to update the binary data, we need to recreate the whole tree
                     // console.log(err);
-                    storage.debug.verbose(`Tree needs rebuild`);
+                    storage.debug.verbose('Tree needs rebuild');
                     fixHistory.push({ err, fix: 'rebuild' });
 
                     // NEW: Rebuild tree to a temp file
@@ -3595,8 +3600,11 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
         return _write(storage, path, valueType, buffer.length, keyTree, reader, currentRecordInfo);
     };
 
-    if (typeof value === "string") {
+    if (typeof value === 'string') {
         return write(VALUE_TYPES.STRING, encodeString(value));
+    }
+    else if (typeof value === 'bigint') {
+        return write(VALUE_TYPES.BIGINT, bigintToBytes(value)); // better called "HugeInt" if it has to be stored in its own record!
     }
     else if (value instanceof PathReference) {
         return write(VALUE_TYPES.REFERENCE, encodeString(value.path));
@@ -3604,8 +3612,8 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
     else if (value instanceof ArrayBuffer) {
         return write(VALUE_TYPES.BINARY, new Uint8Array(value));
     }
-    else if (typeof value !== "object") {
-        throw new TypeError(`Unsupported type to store in stand-alone record`);
+    else if (typeof value !== 'object') {
+        throw new TypeError('Unsupported type to store in stand-alone record');
     }
 
     // Store array or object
@@ -3618,10 +3626,10 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
         // Store array
         const isExhaustive = Object.keys(value).every((key, i) => +key === i && value[i] !== null); // Test if there are no gaps in the array
         if (!isExhaustive) {
-            throw new Error(`Cannot store arrays with missing entries`);
+            throw new Error('Cannot store arrays with missing entries');
         }
         value.forEach((val, index) => {
-            if (typeof val === "function") {
+            if (typeof val === 'function') {
                 throw new Error(`Array at index ${index} has invalid value. Cannot store functions`);
             }
             const childPath = `${path}[${index}]`;
@@ -3649,10 +3657,10 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
 
             const childPath = PathInfo.getChildPath(path, key); // `${path}/${key}`;
             let val = value[key];
-            if (typeof val === "function" || val === null) {
+            if (typeof val === 'function' || val === null) {
                 return; // Skip functions and null values
             }
-            else if (typeof val === "undefined") {
+            else if (typeof val === 'undefined') {
                 if (storage.settings.removeVoidProperties === true) {
                     delete value[key]; // Kill the property in the passed object as well, to prevent differences in stored and working values
                     return;
@@ -3780,6 +3788,7 @@ function _getValueBytes(kvp) {
     let tinyValue = -1;
     if (kvp.type === VALUE_TYPES.BOOLEAN) { tinyValue = kvp.bool ? 1 : 0; }
     else if (kvp.type === VALUE_TYPES.NUMBER && kvp.ref >= 0 && kvp.ref <= 15 && Math.floor(kvp.ref) === kvp.ref) { tinyValue = kvp.ref; }
+    else if (kvp.type === VALUE_TYPES.BIGINT && kvp.ref >= BigInt(0) && kvp.ref <= BigInt(15)) { tinyValue = Number(kvp.ref); }
     else if (kvp.type === VALUE_TYPES.STRING && kvp.binary && kvp.binary.length === 0) { tinyValue = 0; }
     else if (kvp.type === VALUE_TYPES.ARRAY && kvp.ref.length === 0) { tinyValue = 0; }
     else if (kvp.type === VALUE_TYPES.OBJECT && Object.keys(kvp.ref).length === 0) { tinyValue = 0; }
@@ -3824,10 +3833,10 @@ function _getValueBytes(kvp) {
  * @param {string|number} keyOrIndex
  * @param {any} val 
  * @param {string} parentTid 
- * @returns {SerializedKeyValue}
+ * @returns {SerializedKeyValue|Promise<SerializedKeyValue>}
  */
 function _serializeValue (storage, path, keyOrIndex, val, parentTid) {
-    const missingTidMessage = `Need to create a new record, but the parentTid is not given`;
+    const missingTidMessage = 'Need to create a new record, but the parentTid is not given';
     const create = (details) => {
         if (typeof keyOrIndex === 'number') {
             details.index = keyOrIndex;
@@ -3892,7 +3901,7 @@ function _serializeValue (storage, path, keyOrIndex, val, parentTid) {
             return create({ type: VALUE_TYPES.REFERENCE, binary: encoded });
         }
     }
-    else if (typeof val === "object") {
+    else if (typeof val === 'object') {
         if (Object.keys(val).length === 0) {
             // Empty object (has no properties), can be stored inline
             return create({ type: VALUE_TYPES.OBJECT, bytes: [] });
@@ -3904,16 +3913,20 @@ function _serializeValue (storage, path, keyOrIndex, val, parentTid) {
             return create({ type: VALUE_TYPES.OBJECT, record: recordInfo.address });
         });
     }
-    else if (typeof val === "number") {
+    else if (typeof val === 'number') {
         const bytes = numberToBytes(val);
         return create({ type: VALUE_TYPES.NUMBER, bytes });
     }
-    else if (typeof val === "boolean") {
+    else if (typeof val === 'bigint') {
+        const bytes = bigintToBytes(val);
+        return create({ type: VALUE_TYPES.BIGINT, bytes });
+    }
+    else if (typeof val === 'boolean') {
         return create({ type: VALUE_TYPES.BOOLEAN, bool: val });
     }
     else {
         // This is a string or something we don't know how to serialize
-        if (typeof val !== "string") {
+        if (typeof val !== 'string') {
             // Not a string, convert to one
             val = val.toString();
         }
@@ -3944,10 +3957,10 @@ function _serializeValue (storage, path, keyOrIndex, val, parentTid) {
  * @param {number} length 
  * @param {boolean} hasKeyTree 
  * @param {(length: number) => Uint8Array|number[]|Promise<Uint8Array|number[]>} reader
- * @param {RecordInfo} currentRecordInfo
+ * @param {RecordInfo} [currentRecordInfo]
  * @returns {Promise<RecordInfo>}
  */
-async function _write(storage, path, type, length, hasKeyTree, reader, currentRecordInfo = undefined) {
+async function _write(storage, path, type, length, hasKeyTree, reader, currentRecordInfo) {
     // Record layout:
     // record           := record_header, record_data
     // record_header    := record_info, value_type, chunk_table, last_record_len
@@ -4015,7 +4028,7 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
     //
 
     const bytesPerRecord = storage.settings.recordSize;
-    let headerByteLength, totalBytes, requiredRecords, lastChunkSize;
+    let headerByteLength = 0, totalBytes = 0, requiredRecords = 0, lastChunkSize = 0;
 
     const calculateStorageNeeds = (nrOfChunks) => {
         // Calculate amount of bytes and records needed
@@ -4095,7 +4108,7 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
             offset += 9;
         }
         else {
-            throw "Unsupported range type";
+            throw 'Unsupported range type';
         }
     });
     headerView.setUint8(offset, 0);             // ct_type 0 (end of CT), 1 byte
@@ -4118,7 +4131,7 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
             dataBytes = Uint8Array.from(dataBytes);
         }
         else if (!(dataBytes instanceof Uint8Array)) {
-            throw new Error(`bytes must be Uint8Array or plain byte Array`);
+            throw new Error('bytes must be Uint8Array or plain byte Array');
         }
         bytesRead += dataBytes.byteLength;
         if (headerBytes) {
@@ -4132,14 +4145,14 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
         const bytesWritten = await chunkTable.ranges.reduce(async (promise, range) => {
             const fileIndex = storage.getRecordFileIndex(range.pageNr, range.recordNr);
             if (isNaN(fileIndex)) {
-                throw new Error(`fileIndex is NaN!!`);
+                throw new Error('fileIndex is NaN!!');
             }
             let bytesWritten = promise ? await promise : 0;
             const data = await readChunk(range.length * bytesPerRecord);
-            bytesWritten += data.byteLength;
+            bytesWritten += 'byteLength' in data ? data.byteLength : data.length;
             await storage.writeData(fileIndex, data);
             return bytesWritten;
-        }, null);
+        }, /** @type {Promise<number>} null as Promise<number> */ null);
 
         const chunks = chunkTable.ranges.length;
         const address = new NodeAddress(path, allocation.ranges[0].pageNr, allocation.ranges[0].recordNr);
@@ -4164,7 +4177,7 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
         }
         recordInfo.timestamp = Date.now();
 
-        if (address.path === "") {
+        if (address.path === '') {
             await storage.rootRecord.update(address); // Wait for this, the address update has to be written to file
         }
         return recordInfo;
