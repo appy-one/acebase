@@ -324,6 +324,48 @@ describe('Query with take/skip #120', () => {
     
 });
 
+describe("Query with take/sort/indexes #124", () => {
+    /** @type {AceBase} */
+    let db;
+    /** @type {{(): Promise<void>}} */
+    let removeDB;
+    /** @type Array<{ id: string; title: string; year: number }> */
+    let movies;
+
+    afterAll(async () => {
+        await removeDB();
+    });
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+
+        movies = require('./dataset/movies.json');
+        const collection = ObjectCollection.from(movies)
+
+        // Create collection
+        await db.ref('movies').set(collection);
+
+        // Create indexes
+        await db.indexes.create('movies', 'year');
+        await db.indexes.create('movies', 'title');
+    });
+
+    it('test', async () => {
+        // Query movies: filter by title, order by year (desc), take 10
+        
+        const snaps = await db.query('movies')
+            .filter('title', 'like', 'the*')
+            .sort('year', false)
+            .take(20)
+            .get();
+
+        const results = snaps.getValues();
+        const check = movies.filter(m => m.title.match(/^the/i)).sort((a, b) => b.year - a.year).slice(0, 20);
+
+        expect(results).toEqual(check);
+    }, 60 * 60 * 1000);
+});
+
 describe('Wildcard query', () => {
     /** @type {AceBase} */
     let db;
