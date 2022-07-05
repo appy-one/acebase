@@ -7869,9 +7869,9 @@ function query(api, path, query, options = { snapshots: false, include: undefine
             const sortKeys = querySort.map(o => o.key).filter(key => key !== filter.key);
             const beneficialIndexes = indexesOnKey.map(index => {
                 const availableKeys = index.includeKeys.concat(index.key);
-                const forOtherFilters = availableKeys.filter(key => otherFilterKeys.indexOf(key) >= 0);
-                const forSorting = availableKeys.filter(key => sortKeys.indexOf(key) >= 0);
-                const forBoth = forOtherFilters.concat(forSorting.filter(index => forOtherFilters.indexOf(index) < 0));
+                const forOtherFilters = availableKeys.filter(key => otherFilterKeys.includes(key));
+                const forSorting = availableKeys.filter(key => sortKeys.includes(key));
+                const forBoth = forOtherFilters.concat(forSorting.filter(index => !forOtherFilters.includes(index)));
                 const points = {
                     filters: forOtherFilters.length,
                     sorting: forSorting.length * (query.take !== 0 ? forSorting.length : 1),
@@ -7909,7 +7909,8 @@ function query(api, path, query, options = { snapshots: false, include: undefine
             usingIndexes.push({ index: filter.index, description: filter.index.description });
         }
     });
-    if (querySort.length > 0 && query.take !== 0) {
+    if (querySort.length > 0 && query.take !== 0 && queryFilters.length === 0) {
+        // Check if we can use assign an index to sorts in a filterless take & sort query
         querySort.forEach(sort => {
             if (sort.index) {
                 // Index has been assigned already
@@ -8000,7 +8001,6 @@ function query(api, path, query, options = { snapshots: false, include: undefine
         query.take = 100;
     }
     if (querySort.length > 0 && querySort[0].index) {
-        /** @type {DataIndex} */
         const sortIndex = querySort[0].index;
         const ascending = query.take < 0 ? !querySort[0].ascending : querySort[0].ascending;
         if (queryFilters.length === 0) {
@@ -8018,12 +8018,12 @@ function query(api, path, query, options = { snapshots: false, include: undefine
             stepsExecuted.taken = true;
             stepsExecuted.sorted = true;
         }
-        else if (queryFilters.every(f => [sortIndex.key, ...sortIndex.includeKeys].includes(f.key))) {
-            // TODO: If an index can be used for sorting, and all filter keys are included in its metadata: query the index!
-            // Implement:
-            // sortIndex.query(ourFilters);
-            // etc
-        }
+        // else if (queryFilters.every(f => [sortIndex.key, ...sortIndex.includeKeys].includes(f.key))) {
+        //  TODO: If an index can be used for sorting, and all filter keys are included in its metadata: query the index!
+        //  Implement:
+        //  sortIndex.query(ourFilters);
+        //  etc
+        // }
     }
     return Promise.all(indexScanPromises)
         .then(indexResultSets => {
@@ -10246,7 +10246,11 @@ class Storage extends SimpleEventEmitter {
                     const pathKeys = PathInfo.getPathKeys(path).map(key => typeof key === 'string' && key.startsWith('$') ? '*' : key);
                     path = (new PathInfo(pathKeys)).path;
                 }
-                return _indexes.filter(index => index.path === path && (key === null || key === index.key));
+                return _indexes.filter(index => 
+                    // index.state === DataIndex.STATE.READY &&
+                    index.path === path &&
+                    (key === null || key === index.key)
+                );
             },
 
             /**
