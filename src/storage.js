@@ -236,7 +236,10 @@ class Storage extends SimpleEventEmitter {
                     const pathKeys = PathInfo.getPathKeys(path).map(key => typeof key === 'string' && key.startsWith('$') ? '*' : key);
                     path = (new PathInfo(pathKeys)).path;
                 }
-                return _indexes.filter(index => index.path === path && (key === null || key === index.key));
+                return _indexes.filter(index =>
+                    index.path === path &&
+                    (key === null || key === index.key)
+                );
             },
 
             /**
