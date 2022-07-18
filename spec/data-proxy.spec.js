@@ -333,4 +333,39 @@ describe('DataProxy', () => {
         subscription.unsubscribe();
         removeDB();
     });
+
+    it('proxy with cursor', async() => {
+        const { db, removeDB } = await createTempDB({ transactionLogging: true });
+
+        const delay = () => new Promise(resolve => setTimeout(resolve, 1000));
+
+        const ref = db.ref('proxy');
+        const proxy = await ref.proxy({ defaultValue: { books: {} } });
+
+        let cursors = [];
+        proxy.on('cursor', (cursor) => {
+            console.log(`Got cursor ${cursor}`);
+            cursors.push(cursor);
+        });
+        const obj = proxy.value;
+        
+        const book1 = { title: 'New book 1!', description: 'This is my first book' },
+            book2 = { title: 'New book 2', description: 'This is my second book' },
+            book3 = { title: 'New book 3', description: 'This is my third book' }
+
+        // Add book through the proxy, considered a local mutation
+        await obj.books.push(book1);
+
+        // Add another book through a reference, considered a remote mutation
+        await ref.child('books').push(book2);
+
+        // Add another book through a reference achieved through proxy, also considered a remote mutation
+        await obj.books.getRef().push(book3);
+    
+        await delay();
+    
+        expect(cursors.length).toEqual(3);
+    
+        removeDB();
+    });    
 });
