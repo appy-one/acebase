@@ -1,4 +1,3 @@
-/// <reference types="@types/jasmine" />
 const { createTempDB } = require("./tempdb");
 const { proxyAccess, IObservableLike, ObjectCollection } = require('acebase-core');
 const util = require('util');
@@ -16,19 +15,21 @@ describe('DataProxy', () => {
         const ref = db.ref('observable_chats/chat3');
     
         const proxy1 = await ref.proxy({
-            title: {
-                text: 'General chat',
-                updated_by: 'Ewout',
-                updated: new Date()
-            },
-            created: new Date(),
-            participants: [],
-            messages: {},
-            removeMe: true
+            defaultValue: {
+                title: {
+                    text: 'General chat',
+                    updated_by: 'Ewout',
+                    updated: new Date()
+                },
+                created: new Date(),
+                participants: [],
+                messages: {},
+                removeMe: true
+            }
         });
     
         let proxy1Mutations = [];
-        proxy1.onMutation((snap, remote) => {
+        proxy1.on('mutation', (snap, remote) => {
             // console.log(`[proxy1] chat was updated ${remote ? 'outside proxy' : 'by us'} at ${snap.ref.path}: `, { current: snap.val(), previous: snap.previous() });
             proxy1Mutations.push({ remote, path: snap.ref.path, val: snap.val(), prev: snap.previous(), context: snap.context() });
             // console.log(JSON.stringify(chat));
@@ -39,7 +40,7 @@ describe('DataProxy', () => {
             console.log(`[proxy2] Got new observer value`, chat);
         });
         let proxy2Mutations = [];
-        proxy2.onMutation((snap, remote) => {
+        proxy2.on('mutation', (snap, remote) => {
             // console.log(`[proxy2] chat was updated ${remote ? 'remotely' : 'by us'} at ${snap.ref.path}: `, { current: snap.val(), previous: snap.previous() });
             proxy2Mutations.push({ remote, path: snap.ref.path, val: snap.val(), prev: snap.previous(), context: snap.context() });
         });
@@ -148,10 +149,10 @@ describe('DataProxy', () => {
         const delay = () => new Promise(resolve => setTimeout(resolve, 1000));
 
         const ref = db.ref('proxy2');
-        const proxy = await ref.proxy({ books: {} });
+        const proxy = await ref.proxy({ defaultValue: { books: {} } });
 
         let mutations = [];
-        proxy.onMutation((snap, remote) => {
+        proxy.on('mutation', (snap, remote) => {
             mutations.push({ snap, remote, val: snap.val(), context: snap.context() });
             // console.log(`Mutation on "/${snap.ref.path}" with context: `, snap.context(), snap.val());
         });
@@ -191,7 +192,7 @@ describe('DataProxy', () => {
         db.setObservable('shim');
 
         const movies = ObjectCollection.from(require('./dataset/movies.json'));
-        const proxy = await db.ref('movies').proxy(movies);
+        const proxy = await db.ref('movies').proxy({ defaultValue: movies });
 
         // Compare proxied value with original
         expect(proxy.value.valueOf()).toEqual(movies);
@@ -209,7 +210,7 @@ describe('DataProxy', () => {
         // Use AceBase's own basic Observable shim because rxjs is not installed
         db.setObservable('shim');
 
-        const proxy = await db.ref('todo').proxy({});
+        const proxy = await db.ref('todo').proxy({ defaultValue: {} });
         const todo = proxyAccess(proxy.value);
 
         // Create transaction so we can monitor when changes have been persisted
