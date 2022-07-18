@@ -1,9 +1,14 @@
-/// <reference types="@types/jasmine" />
+/// <reference types='@types/jasmine' />
+const { AceBase } = require('..');
 const { createTempDB } = require("./tempdb");
-let db, removeDB;
 const ok = { ok: true };
 
 describe('schema', () => {
+    /** @type {AceBase} */
+    let db;
+    /** @type {{(): Promise<void>}} */
+    let removeDB;
+
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
     });
@@ -215,7 +220,34 @@ describe('schema', () => {
 
         result = await db.schema.check('generic-object', 'NOT allowed');
         expect(result.ok).toBeFalse();
-    })
+    });
+
+    it('array of objects #127', async() => {
+        // Created for #127 (https://github.com/appy-one/acebase/discussions/127)
+
+        await db.schema.set('chats/$chatid',{
+            id: 'string',
+            messages:'{ message: string }[]'
+        });
+        const proxy = await db.ref('chats/chat1').proxy({ defaultValue: { id: 'chat1', messages: [] } });
+        
+        let promise = new Promise((resolve, reject) => { 
+            proxy.on('mutation', event => {
+                resolve(event);
+            });
+            proxy.on('error', error => {
+                reject(error);
+            });
+        });
+
+        const chat = proxy.value;
+        chat.messages.push({
+            message: 'hello'
+        });
+
+        await expectAsync(promise).not.toBeRejected();
+    }, 120e3);
+
     afterAll(async () => {
         await removeDB();
     });
