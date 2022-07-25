@@ -81,4 +81,4 @@ describe('Uint8ArrayBuilder', () => {
         expect(builder.data[4]).toEqual(builder.data[10]);
         expect(builder.data[5]).toEqual(builder.data[11]);
     });
-})
+});

@@ -1,11 +1,11 @@
-const { AceBase, ID } = require("..");
+const { AceBase, ID } = require('..');
 const { pfs } = require('../src/promise-fs');
 
 module.exports = {
     /**
-     * 
-     * @param {{ transactionLogging?: boolean; logLevel?: string; config?: (options: any) => void }} enable 
-     * @returns 
+     *
+     * @param {{ transactionLogging?: boolean; logLevel?: string; config?: (options: any) => void }} enable
+     * @returns
      */
     async createTempDB(enable = {}) {
         // Create temp db
@@ -37,8 +37,8 @@ module.exports = {
             else {
                 await pfs.rmdir(dbdir, { recursive: true, maxRetries: 10 });
             }
-        }
+        };
 
         return { db, removeDB };
-    }
-}
+    },
+};

@@ -1,5 +1,4 @@
-/// <reference types="@types/jasmine" />
-const { createTempDB } = require("./tempdb");
+const { createTempDB } = require('./tempdb');
 
 describe('arrays', () => {
     it('test array updates', async () => {
@@ -7,15 +6,15 @@ describe('arrays', () => {
 
         const ref = db.ref('array');
         const baseText = 'entry with a longer text so it gets saved in its own record';
-    
+
         await ref.set({
             entries: [
                 { name: `${baseText} 1` },
                 { name: `${baseText} 2` },
-                { name: `${baseText} 3` }
-            ]
+                { name: `${baseText} 3` },
+            ],
         });
-    
+
         // Get value
         let snap = await ref.get();
         let val = snap.val();
@@ -24,16 +23,16 @@ describe('arrays', () => {
         expect(val.entries[0].name).toMatch(/1$/);
         expect(val.entries[1].name).toMatch(/2$/);
         expect(val.entries[2].name).toMatch(/3$/);
-    
+
         // Now overwrite it, swapping some entries
         await ref.update({
             entries: [
                 { name: `${baseText} 3` },
                 { name: `${baseText} 1` },
                 { name: `${baseText} 2` },
-            ]
+            ],
         });
-    
+
         // Get value again
         snap = await ref.get();
         val = snap.val();
@@ -48,7 +47,7 @@ describe('arrays', () => {
             0: { name: `${baseText} 1` },
             1: { name: `${baseText} 2` },
             2: { name: `${baseText} 3` },
-            3: { name: `${baseText} 4` }
+            3: { name: `${baseText} 4` },
         });
 
         // Get value again
@@ -66,7 +65,7 @@ describe('arrays', () => {
         await ref.child('entries').child(1).update({ name: `${baseText} 3` });
         await ref.child('entries').child(2).update({ name: `${baseText} 2` });
         await ref.child('entries').child(3).update({ name: `${baseText} 1` });
-        
+
         // Get value again
         snap = await ref.get();
         val = snap.val();

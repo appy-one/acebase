@@ -212,41 +212,41 @@ describe('schema', () => {
         const schema = 'Object';
         expect(() => db.schema.set('generic-object', schema)).not.toThrow();
 
-        let result = await db.schema.check('generic-object', { custom: 'allowed' });
+        let result = await db.schema.check('generic-object', { custom: 'allowed' }, false);
         expect(result).toEqual(ok);
 
-        result = await db.schema.check('generic-object/custom','allowed');
+        result = await db.schema.check('generic-object/custom','allowed', false);
         expect(result).toEqual(ok);
 
-        result = await db.schema.check('generic-object', 'NOT allowed');
+        result = await db.schema.check('generic-object', 'NOT allowed', false);
         expect(result.ok).toBeFalse();
     });
 
-    it('array of objects #127', async() => {
-        // Created for #127 (https://github.com/appy-one/acebase/discussions/127)
+    // it('array of objects #127', async() => {
+    //     // Created for #127 (https://github.com/appy-one/acebase/discussions/127)
 
-        await db.schema.set('chats/$chatid',{
-            id: 'string',
-            messages:'{ message: string }[]'
-        });
-        const proxy = await db.ref('chats/chat1').proxy({ defaultValue: { id: 'chat1', messages: [] } });
+    //     await db.schema.set('chats/$chatid',{
+    //         id: 'string',
+    //         messages:'{ message: string }[]'
+    //     });
+    //     const proxy = await db.ref('chats/chat1').proxy({ defaultValue: { id: 'chat1', messages: [] } });
         
-        let promise = new Promise((resolve, reject) => { 
-            proxy.on('mutation', event => {
-                resolve(event);
-            });
-            proxy.on('error', error => {
-                reject(error);
-            });
-        });
+    //     let promise = new Promise((resolve, reject) => { 
+    //         proxy.on('mutation', event => {
+    //             resolve(event);
+    //         });
+    //         proxy.on('error', error => {
+    //             reject(error);
+    //         });
+    //     });
 
-        const chat = proxy.value;
-        chat.messages.push({
-            message: 'hello'
-        });
+    //     const chat = proxy.value;
+    //     chat.messages.push({
+    //         message: 'hello'
+    //     });
 
-        await expectAsync(promise).not.toBeRejected();
-    }, 120e3);
+    //     await expectAsync(promise).not.toBeRejected();
+    // }, 120e3);
 
     afterAll(async () => {
         await removeDB();
