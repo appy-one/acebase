@@ -1,5 +1,5 @@
-import { PathInfo } from "acebase-core";
-import { IPCPeer } from "./ipc";
+import { PathInfo } from 'acebase-core';
+import { IPCPeer } from './ipc';
 declare type NodeKey = string | number;
 export declare abstract class NodeLockIntention {
     /**
@@ -105,7 +105,6 @@ export declare class TransactionManager implements ITransactionManager {
     private queue;
     private locks;
     private blacklisted;
-    constructor();
     createTransaction(): Promise<Transaction>;
     requestLock(request: INodeLockRequest): Promise<NodeLockInfo>;
     releaseLock(id: LockID): Promise<void>;
@@ -118,7 +117,6 @@ export declare class TransactionManager implements ITransactionManager {
         path: string;
         intention: NodeLockIntention;
     }): boolean[];
-    private conflictsLegacy;
     private conflicts;
 }
 export declare class IPCTransactionManager extends TransactionManager {

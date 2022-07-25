@@ -38,9 +38,9 @@ export declare class NodeLocker {
         noTimeout?: boolean;
     }): Promise<NodeLock>;
     lock(lock: NodeLock): Promise<NodeLock>;
-    unlock(lockOrId: any, comment: any, processQueue?: boolean): any;
+    unlock(lockOrId: NodeLock | NodeLock['id'], comment: string, processQueue?: boolean): NodeLock;
     list(): NodeLock[];
-    isAllowed(path: any, tid: any, forWriting: any): boolean;
+    isAllowed(path: string, tid: string | number, forWriting: boolean): boolean;
 }
 export declare class NodeLock {
     private locker;
@@ -79,10 +79,6 @@ export declare class NodeLock {
      * @param {boolean} priority
      */
     constructor(locker: NodeLocker, path: string, tid: string, forWriting: boolean, priority?: boolean);
-    release(comment?: string): Promise<any>;
+    release(comment?: string): Promise<NodeLock>;
     moveToParent(): Promise<NodeLock>;
-    /**
-     * Not used? Will be removed
-     */
-    moveTo(otherPath: string, forWriting: boolean): Promise<NodeLock>;
 }

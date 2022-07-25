@@ -14,7 +14,7 @@ class NodeInfo {
         this.value = info.value;
         this.childCount = info.childCount;
         if (typeof this.path === 'string' && (typeof this.key === 'undefined' && typeof this.index === 'undefined')) {
-            let pathInfo = acebase_core_1.PathInfo.get(this.path);
+            const pathInfo = acebase_core_1.PathInfo.get(this.path);
             if (typeof pathInfo.key === 'number') {
                 this.index = pathInfo.key;
             }

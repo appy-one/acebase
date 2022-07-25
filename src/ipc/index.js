@@ -1,5 +1,4 @@
 "use strict";
-// export { NodeClusterIPCPeer as IPCPeer } from './node-cluster';
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IPCPeer = exports.RemoteIPCPeer = void 0;
 const ipc_1 = require("./ipc");
@@ -44,10 +43,10 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
             bindEventHandler(cluster, 'exit', (worker) => {
                 // A worker has shut down
                 if (this.peers.find(peer => peer.id === worker.id.toString())) {
-                    // Worker apparently did not have time to say goodbye, 
+                    // Worker apparently did not have time to say goodbye,
                     // remove the peer ourselves
                     this.removePeer(worker.id.toString());
-                    // Send "bye" message on their behalf           
+                    // Send "bye" message on their behalf
                     this.sayGoodbye(worker.id.toString());
                 }
             });
@@ -103,9 +102,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
         }
     }
     async exit(code = 0) {
-        await super.exit();
-        // process.exit(code);
-        // this.storage.debug.warn(`${this.isMaster ? 'Master' : 'Worker ' + this.id} exits`);
+        await super.exit(code);
     }
 }
 exports.IPCPeer = IPCPeer;

@@ -73,6 +73,7 @@ class TransactionManager {
         this.locks = [];
         this.blacklisted = [];
     }
+    // constructor() { }
     async createTransaction() {
         const tid = ++this.lastTid;
         const transaction = new Transaction(this, tid);
@@ -108,7 +109,7 @@ class TransactionManager {
                     this.queue.splice(i, 1);
                     grantLock();
                     resolve();
-                }
+                },
             };
             this.queue.push(queuedRequest);
             // Create timeout
@@ -142,7 +143,7 @@ class TransactionManager {
         this.processQueue();
     }
     processQueue() {
-        this.queue.forEach((item, i, queue) => {
+        this.queue.forEach((item /*, i, queue*/) => {
             const allow = this.allowLock(item.lock);
             if (allow) {
                 item.grant(); // item will be removed from the queue by grant callback
@@ -166,11 +167,11 @@ class TransactionManager {
         const reverse = this.conflicts(revLockRequest, revLockInfo);
         return [conflict, reverse];
     }
-    conflictsLegacy(request, lock) {
-        // The legacy locking allowed 1 simultanious write, and denies writes while reading.
-        // So, a requested write lock always conflicts with any other granted lock
-        return request.intention instanceof OverwriteNodeIntention || request.intention instanceof UpdateNodeIntention;
-    }
+    // private conflictsLegacy(request: INodeLockRequest, lock: NodeLockInfo) {
+    //     // The legacy locking allowed 1 simultanious write, and denies writes while reading.
+    //     // So, a requested write lock always conflicts with any other granted lock
+    //     return request.intention instanceof OverwriteNodeIntention || request.intention instanceof UpdateNodeIntention;
+    // }
     conflicts(request, lock) {
         // Returns true if the request lock conflicts with given existing lock
         if (!request.pathInfo) {
@@ -187,7 +188,7 @@ class TransactionManager {
                 return requestPath.isParentOf(lockPath) || lock.path === request.path || requestPath.isDescendantOf(lockPath);
             }
             else if (lock.intention instanceof UpdateNodeIntention) {
-                // update lock on "users/ewout/address" (keys "street", "nr"): 
+                // update lock on "users/ewout/address" (keys "street", "nr"):
                 //      deny info requests for "users/ewout/address", "users/ewout/address/street(/*)", "users/ewout/address/nr(/*)"
                 //      allow info requests for all else, eg "users/ewout/address/city"
                 return request.path === lock.path || (requestPath.isDescendantOf(lockPath) && lock.intention.keys.some(key => requestPath.isOnTrailOf(lockPath.child(key))));
@@ -372,7 +373,7 @@ class IPCTransactionManager extends TransactionManager {
                 if (request.type === 'transaction.create') {
                     const transaction = await this.createTransaction();
                     const tx = { id: transaction.id };
-                    this.ipc.replyRequest(request, { ok: true, transaction });
+                    this.ipc.replyRequest(request, { ok: true, transaction: tx });
                 }
                 else if (request.type === 'transaction.lock') {
                     const lock = await this.requestLock(request.lock);

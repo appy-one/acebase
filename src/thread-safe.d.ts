@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { SimpleEventEmitter } from "acebase-core";
+import { SimpleEventEmitter } from 'acebase-core';
 export interface ThreadSafeLockOptions {
     /** max amount of ms the target is allowed to be locked (and max time to wait to get it), default is 60000 (60s) */
     timeout?: number;

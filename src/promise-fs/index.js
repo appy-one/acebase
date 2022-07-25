@@ -386,12 +386,12 @@ class pfs {
      */
     static fdatasync(fd) {
         return new Promise((resolve, reject) => {
-            fs.fdatasync(fd, (err, stats) => {
+            fs.fdatasync(fd, (err) => {
                 if (err) {
                     reject(err);
                 }
                 else {
-                    resolve(stats);
+                    resolve();
                 }
             });
         });

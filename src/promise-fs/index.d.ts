@@ -1,4 +1,5 @@
 /// <reference types="node" />
+/// <reference types="node" />
 import * as fs from 'fs';
 export declare type TypedArray = Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | BigUint64Array | BigInt64Array;
 export declare abstract class pfs {
@@ -89,9 +90,9 @@ export declare abstract class pfs {
      * @param position specifying where to begin reading from in the file. If position is null, data will be read from the current file position, and the file position will be updated. If position is an integer, the file position will remain unchanged.
      * @returns returns a promise that resolves with the amount of bytes read and a reference to the buffer that was written to
      */
-    static read(fd: number, buffer: Buffer | TypedArray | DataView, offset?: number, length?: number, position?: number): Promise<{
+    static read<T extends Buffer | TypedArray | DataView>(fd: number, buffer: T, offset?: number, length?: number, position?: number): Promise<{
         bytesRead: number;
-        buffer: Buffer | TypedArray | DataView;
+        buffer: T;
     }>;
     /**
      * Asynchronously reads the entire contents of a file.
@@ -189,11 +190,11 @@ export declare abstract class pfs {
      * @param fd A file descriptor
      * @returns {Promise<void>} returns a promise that resolves when all data is flushed
      */
-    static fsync(fd: any): Promise<void>;
+    static fsync(fd: number): Promise<void>;
     /**
      * Asynchronous fdatasync(2) - synchronize a file's in-core state with storage device.
      * @param fd A file descriptor
      * @returns {Promise<void>} returns a promise that resolves when all data is flushed
      */
-    static fdatasync(fd: any): Promise<unknown>;
+    static fdatasync(fd: number): Promise<void>;
 }

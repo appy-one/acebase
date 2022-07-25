@@ -3,8 +3,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.query = void 0;
 const acebase_core_1 = require("acebase-core");
 const node_value_types_1 = require("./node-value-types");
-const storage_1 = require("./storage");
+const node_errors_1 = require("./node-errors");
 const data_index_1 = require("./data-index");
+// eslint-disable-next-line @typescript-eslint/no-empty-function
+const noop = () => { };
 /**
  *
  * @param storage Target storage instance
@@ -13,12 +15,12 @@ const data_index_1 = require("./data-index");
  * @param options Additional options
  * @returns Returns a promise that resolves with matching data or paths in `results`
  */
-function query(api, path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: event => { } }) {
+function query(api, path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: noop }) {
     // TODO: Refactor to async
-    if (typeof options !== "object") {
+    if (typeof options !== 'object') {
         options = {};
     }
-    if (typeof options.snapshots === "undefined") {
+    if (typeof options.snapshots === 'undefined') {
         options.snapshots = false;
     }
     const context = {};
@@ -32,8 +34,8 @@ function query(api, path, query, options = { snapshots: false, include: undefine
             const compare = (i) => {
                 const o = querySort[i];
                 const trailKeys = acebase_core_1.PathInfo.getPathKeys(o.key);
-                let left = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, a.val);
-                let right = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, b.val);
+                const left = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, a.val);
+                const right = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, b.val);
                 if (left === null) {
                     return right === null ? 0 : o.ascending ? -1 : 1;
                 }
@@ -53,32 +55,32 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                 else if (left < right) {
                     return o.ascending ? -1 : 1;
                 }
-                else if (left > right) {
-                    return o.ascending ? 1 : -1;
-                }
+                // else if (left > right) {
+                return o.ascending ? 1 : -1;
+                // }
             };
             return compare(0);
         });
     };
-    const loadResultsData = (preResults, options) => {
+    const loadResultsData = async (preResults, options) => {
         // Limit the amount of concurrent getValue calls by batching them
         if (preResults.length === 0) {
-            return Promise.resolve([]);
+            return [];
         }
         const maxBatchSize = 50;
-        let batches = [];
+        const batches = [];
         const items = preResults.map((result, index) => ({ path: result.path, index }));
         while (items.length > 0) {
-            let batchItems = items.splice(0, maxBatchSize);
+            const batchItems = items.splice(0, maxBatchSize);
             batches.push(batchItems);
         }
         const results = [];
-        const nextBatch = () => {
+        const nextBatch = async () => {
             const batch = batches.shift();
-            return Promise.all(batch.map(item => {
+            await Promise.all(batch.map(item => {
                 const { path, index } = item;
                 return api.storage.getNode(path, options)
-                    .then(node => {
+                    .then((node) => {
                     const val = node.value;
                     if (val === null) {
                         // Record was deleted, but index isn't updated yet?
@@ -94,10 +96,10 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                     else {
                         results.push(result);
                         if (!stepsExecuted.skipped && results.length > query.skip + Math.abs(query.take)) {
-                            // we can toss a value! sort, toss last one 
+                            // we can toss a value! sort, toss last one
                             sortMatches(results);
                             // const ascending = querySort.length === 0 || (query.take >= 0 ? querySort[0].ascending : !querySort[0].ascending);
-                            // if (ascending) { 
+                            // if (ascending) {
                             //     results.pop(); // Ascending sort order, toss last value
                             // }
                             // else {
@@ -107,18 +109,14 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                         }
                     }
                 });
-            }))
-                .then(() => {
-                if (batches.length > 0) {
-                    return nextBatch();
-                }
-            });
+            }));
+            if (batches.length > 0) {
+                await nextBatch();
+            }
         };
-        return nextBatch()
-            .then(() => {
-            // Got all values
-            return results;
-        });
+        await nextBatch();
+        // Got all values
+        return results;
     };
     const pathInfo = acebase_core_1.PathInfo.get(path);
     const isWildcardPath = pathInfo.keys.some(key => key === '*' || key.toString().startsWith('$')); // path.includes('*');
@@ -132,7 +130,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
         }
         if (queryFilters.length === 0) {
             // Filterless query on wildcard path. Use first available index with filter on non-null key value (all results)
-            const index = availableIndexes.filter(index => index.type === 'normal')[0];
+            const index = availableIndexes.filter((index) => index.type === 'normal')[0];
             queryFilters.push({ key: index.key, op: '!=', compare: null });
         }
     }
@@ -145,7 +143,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
     //         const pattern = '^' + index.path.replace(/(\$[a-z0-9_]+)/gi, (match, name) => `(?<${name}>[a-z0-9_]+|\\*)`) + '$';
     //         const re = new RegExp(pattern, 'i');
     //         const match = path.match(re);
-    //         const canBeUsed = index.key[0] === '$' 
+    //         const canBeUsed = index.key[0] === '$'
     //             ? match.groups[index.key] !== '*' // Index key value MUST be present in the path
     //             : null !== ourFilters.find(filter => filter.key === index.key); // Index key MUST be in a filter
     //         if (!canBeUsed) { return null; }
@@ -170,7 +168,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
             return;
         }
         // // Check if there are path indexes we can use
-        // const pathIndexesWithKey = DataIndex.validOperators.includes(filter.op) 
+        // const pathIndexesWithKey = DataIndex.validOperators.includes(filter.op)
         //     ? indexesOnPath.filter(info => info.index.key === filter.key || info.index.includeKeys.includes(filter.key))
         //     : [];
         // Check if there are indexes on this filter key
@@ -180,7 +178,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
             return index.validOperators.includes(filter.op);
         });
         if (indexesOnKey.length >= 1) {
-            // If there are multiple indexes on 1 key (happens when index includes other keys), 
+            // If there are multiple indexes on 1 key (happens when index includes other keys),
             // we should check other .filters and .order to determine the best one to use
             // TODO: Create a good strategy here...
             const otherFilterKeys = queryFilters.filter(f => f !== filter).map(f => f.key);
@@ -196,7 +194,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                     both: forBoth.length * forBoth.length,
                     get total() {
                         return this.filters + this.sorting + this.both;
-                    }
+                    },
                 };
                 return { index, points: points.total, filterKeys: forOtherFilters, sortKeys: forSorting };
             });
@@ -255,7 +253,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
         return Promise.reject(err);
     }
     // Check if the filters are using valid operators
-    const allowedTableScanOperators = ["<", "<=", "==", "!=", ">=", ">", "like", "!like", "in", "!in", "matches", "!matches", "between", "!between", "has", "!has", "contains", "!contains", "exists", "!exists"]; // DISABLED "custom" because it is not fully implemented and only works locally
+    const allowedTableScanOperators = ['<', '<=', '==', '!=', '>=', '>', 'like', '!like', 'in', '!in', 'matches', '!matches', 'between', '!between', 'has', '!has', 'contains', '!contains', 'exists', '!exists']; // DISABLED "custom" because it is not fully implemented and only works locally
     for (let i = 0; i < tableScanFilters.length; i++) {
         const f = tableScanFilters[i];
         if (!allowedTableScanOperators.includes(f.op)) {
@@ -264,8 +262,8 @@ function query(api, path, query, options = { snapshots: false, include: undefine
     }
     // Check if the available indexes are sufficient for this wildcard query
     if (isWildcardPath && tableScanFilters.length > 0) {
-        // There are unprocessed filters, which means the fields aren't indexed. 
-        // We're not going to get all data of a wildcard path to query manually. 
+        // There are unprocessed filters, which means the fields aren't indexed.
+        // We're not going to get all data of a wildcard path to query manually.
         // Indexes must be created
         const keys = tableScanFilters.reduce((keys, f) => {
             if (keys.indexOf(f.key) < 0) {
@@ -273,7 +271,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
             }
             return keys;
         }, []).map(key => `"${key}"`);
-        const err = new Error(`This wildcard path query on "/${path}" requires index(es) on key(s): ${keys.join(", ")}. Create the index(es) and retry`);
+        const err = new Error(`This wildcard path query on "/${path}" requires index(es) on key(s): ${keys.join(', ')}. Create the index(es) and retry`);
         return Promise.reject(err);
     }
     // Run queries on available indexes
@@ -312,7 +310,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
         taken: query.take === 0,
         sorted: querySort.length === 0,
         preDataLoaded: false,
-        dataLoaded: false
+        dataLoaded: false,
     };
     if (queryFilters.length === 0 && query.take === 0) {
         api.storage.debug.warn(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
@@ -400,7 +398,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                 if (!options.snapshots) {
                     return indexedResults;
                 }
-                // TODO: exclude already known key values, merge loaded with known 
+                // TODO: exclude already known key values, merge loaded with known
                 const childOptions = { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
                 return loadResultsData(indexedResults, childOptions)
                     .then(results => {
@@ -420,7 +418,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                     }
                     stepsExecuted.sorted = true;
                     if (query.skip > 0) {
-                        results = results.take < 0
+                        results = query.take < 0
                             ? results.slice(0, -query.skip)
                             : results.slice(query.skip);
                     }
@@ -443,7 +441,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                 return indexedResults;
             }
         }
-        // If we get here, this is a query on a regular path (no wildcards) with additional non-indexed filters left, 
+        // If we get here, this is a query on a regular path (no wildcards) with additional non-indexed filters left,
         // we can get child records from a single parent. Merge index results by key
         let indexKeyFilter;
         if (indexedResults.length > 0) {
@@ -464,14 +462,14 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                 if (this.promises.length >= 1000) {
                     return Promise.all(this.promises.splice(0));
                 }
-            }
+            },
         };
         return api.storage.getChildren(path, { keyFilter: indexKeyFilter, async: true })
             .next(child => {
             if (child.type === node_value_types_1.VALUE_TYPES.OBJECT) { // if (child.valueType === VALUE_TYPES.OBJECT) {
                 if (!child.address) {
-                    // Currently only happens if object has no properties 
-                    // ({}, stored as a tiny_value in parent record). In that case, 
+                    // Currently only happens if object has no properties
+                    // ({}, stored as a tiny_value in parent record). In that case,
                     // should it be matched in any query? -- That answer could be YES, when testing a property for !exists. Ignoring for now
                     return;
                 }
@@ -505,7 +503,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                         if (query.take !== 0 && matches.length > Math.abs(query.take) + query.skip) {
                             if (querySort.length > 0) {
                                 // A query order has been set. If this value falls in between it can replace some other value
-                                // matched before. 
+                                // matched before.
                                 sortMatches(matches);
                             }
                             else if (query.take > 0) {
@@ -529,7 +527,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
         })
             .catch(reason => {
             // No record?
-            if (!(reason instanceof storage_1.NodeNotFoundError)) {
+            if (!(reason instanceof node_errors_1.NodeNotFoundError)) {
                 api.storage.debug.warn(`Error getting child stream: ${reason}`);
             }
             return [];
@@ -619,7 +617,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
             const childChangedCallback = (err, path, newValue, oldValue) => {
                 const wasMatch = matchedPaths.includes(path);
                 let keepMonitoring = true;
-                // check if the properties we already have match filters, 
+                // check if the properties we already have match filters,
                 // and if we have to check additional properties
                 const checkKeys = [];
                 queryFilters.forEach(f => !checkKeys.includes(f.key) && checkKeys.push(f.key));

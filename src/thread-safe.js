@@ -38,8 +38,8 @@ class ThreadSafe {
         const timeoutHandler = (critical) => {
             console.error(_lockTimeoutMsg.replace('${name}', lock.name));
             // Copy lock object so we can alter the original's release method to throw an exception
-            let copy = Object.assign({}, lock);
-            let originalName = lock.name;
+            const copy = Object.assign({}, lock);
+            const originalName = lock.name;
             lock.release = () => {
                 throw new Error(`Cannot release lock "${originalName}" because it timed out earlier`);
             };
@@ -61,7 +61,7 @@ class ThreadSafe {
             if (lock._queue.length === 0) {
                 return _threadSafeLocks.delete(target);
             }
-            let item = lock._queue.shift();
+            const item = lock._queue.shift();
             clearTimeout(item.waitTimeout);
             lock._timeout = setTimeout(timeoutHandler, item.options.timeout, item.options.critical);
             lock.target = item.options.target || target;
@@ -81,7 +81,7 @@ class ThreadSafe {
                 name: options.name,
                 stack: DEBUG_MODE ? (new Error()).stack : 'not available',
                 _timeout: setTimeout(timeoutHandler, options.timeout, options.critical),
-                _queue: []
+                _queue: [],
             };
             _threadSafeLocks.set(target, lock);
             return Promise.resolve(lock);

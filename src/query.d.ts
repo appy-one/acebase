@@ -1,5 +1,5 @@
-import { AceBaseBase } from "acebase-core";
-import type { Api } from "acebase-core/src/api";
+import { AceBaseBase } from 'acebase-core';
+import type { Api } from 'acebase-core/src/api';
 import { Storage } from './storage';
 /**
  * TODO: import once LocalApi has been ported to TypeScript

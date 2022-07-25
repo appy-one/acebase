@@ -1,20 +1,29 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Uint8ArrayBuilder = void 0;
-function _writeByteLength(bytes, index, length) {
+exports.Uint8ArrayBuilder = exports.readSignedOffset = exports.writeSignedOffset = exports.readSignedNumber = exports.writeSignedNumber = exports.readByteLength = exports.writeByteLength = void 0;
+function writeByteLength(bytes, index, length) {
     bytes[index] = (length >> 24) & 0xff;
     bytes[index + 1] = (length >> 16) & 0xff;
     bytes[index + 2] = (length >> 8) & 0xff;
     bytes[index + 3] = length & 0xff;
     return bytes;
 }
-const _maxSignedNumber = Math.pow(2, 31) - 1;
-function _writeSignedNumber(bytes, index, offset) {
+exports.writeByteLength = writeByteLength;
+function readByteLength(bytes, index) {
+    const length = (bytes[index] << 24)
+        | (bytes[index + 1] << 16)
+        | (bytes[index + 2] << 8)
+        | bytes[index + 3];
+    return length;
+}
+exports.readByteLength = readByteLength;
+const MAX_SIGNED_NUMBER = Math.pow(2, 31) - 1;
+function writeSignedNumber(bytes, index, offset) {
     const negative = offset < 0;
     if (negative) {
         offset = -offset;
     }
-    if (offset > _maxSignedNumber) {
+    if (offset > MAX_SIGNED_NUMBER) {
         throw new Error(`reference offset to big to store in 31 bits`);
     }
     bytes[index] = ((offset >> 24) & 0x7f) | (negative ? 0x80 : 0);
@@ -23,19 +32,29 @@ function _writeSignedNumber(bytes, index, offset) {
     bytes[index + 3] = offset & 0xff;
     return bytes;
 }
-const _maxSignedOffset = Math.pow(2, 47) - 1;
+exports.writeSignedNumber = writeSignedNumber;
+function readSignedNumber(bytes, index) {
+    let nr = ((bytes[index] & 0x7f) << 24) | (bytes[index + 1] << 16) | (bytes[index + 2] << 8) | bytes[index + 3];
+    const isNegative = (bytes[index] & 0x80) > 0;
+    if (isNegative) {
+        nr = -nr;
+    }
+    return nr;
+}
+exports.readSignedNumber = readSignedNumber;
+const MAX_SIGNED_OFFSET = Math.pow(2, 47) - 1;
 // input: 2315765760
 // expected output: [0, 0, 138, 7, 200, 0]
-function _writeSignedOffset(bytes, index, offset, large = false) {
+function writeSignedOffset(bytes, index, offset, large = false) {
     if (!large) {
         // throw new Error('DEV: write large offsets only! (remove error later when successfully implemented)');
-        return _writeSignedNumber(bytes, index, offset);
+        return writeSignedNumber(bytes, index, offset);
     }
     const negative = offset < 0;
     if (negative) {
         offset = -offset;
     }
-    if (offset > _maxSignedOffset) {
+    if (offset > MAX_SIGNED_OFFSET) {
         throw new Error(`reference offset to big to store in 47 bits`);
     }
     // Bitwise operations in javascript are 32 bits, so they cannot be used on larger numbers
@@ -51,9 +70,30 @@ function _writeSignedOffset(bytes, index, offset, large = false) {
     }
     return bytes;
 }
+exports.writeSignedOffset = writeSignedOffset;
+function readSignedOffset(bytes, index, large = false) {
+    if (!large) {
+        // throw new Error('DEV: read large offsets only! (remove error later when successfully implemented)');
+        return readSignedNumber(bytes, index);
+    }
+    let offset = 0;
+    const isNegative = (bytes[index] & 0x80) > 0;
+    for (let i = 0; i < 6; i++) {
+        let b = bytes[index + i];
+        if (i === 0 && isNegative) {
+            b ^= 0x80;
+        }
+        offset += b * Math.pow(2, (5 - i) * 8);
+    }
+    if (isNegative) {
+        offset = -offset;
+    }
+    return offset;
+}
+exports.readSignedOffset = readSignedOffset;
 class Uint8ArrayBuilder {
-    // static get blockSize() { 
-    //     return 4096; 
+    // static get blockSize() {
+    //     return 4096;
     // }
     constructor(bytes = null, bufferSize = 4096) {
         /** @type {Uint8Array} */
@@ -119,7 +159,7 @@ class Uint8ArrayBuilder {
         if (typeof index !== 'number') {
             throw new Error(`no index passed to write method`);
         }
-        let grow = index + data.byteLength - this._length;
+        const grow = index + data.byteLength - this._length;
         if (grow > 0) {
             this.reserve(grow);
             this._length += grow;
@@ -154,30 +194,30 @@ class Uint8ArrayBuilder {
         this.dataView.setUint32(index, positiveNumber, false); // Use big-endian, msb first
     }
     writeUint32_old(positiveNumber, index) {
-        let bytes = _writeByteLength([], 0, positiveNumber);
+        const bytes = writeByteLength([], 0, positiveNumber);
         if (index >= 0) {
             this._data.set(bytes, index);
             return this;
         }
         return this.append(bytes);
     }
-    writeInt32(signedNumber, index = undefined) {
+    writeInt32(signedNumber, index) {
         if (typeof index !== 'number') {
             // Append
             this.reserve(4);
             index = this._length;
             this._length += 4;
         }
-        if (signedNumber > _maxSignedNumber || signedNumber < -_maxSignedNumber) {
+        if (signedNumber > MAX_SIGNED_NUMBER || signedNumber < -MAX_SIGNED_NUMBER) {
             throw new Error(`number to big to store in uint32`);
         }
-        let negative = signedNumber < 0;
+        const negative = signedNumber < 0;
         if (negative) {
             // Old method uses "signed magnitude" method for negative numbers
-            // setInt32 uses 2's complement instead. So, for negative numbers we have 
+            // setInt32 uses 2's complement instead. So, for negative numbers we have
             // to do something else to be backward compatible with old code
-            let nr = -signedNumber; // Make positive
-            let view = this.dataView;
+            const nr = -signedNumber; // Make positive
+            const view = this.dataView;
             view.setInt8(index, ((nr >> 24) & 0x7f) | (negative ? 0x80 : 0));
             view.setInt8(index + 1, (nr >> 16) & 0xff);
             view.setInt8(index + 2, (nr >> 8) & 0xff);
@@ -188,22 +228,22 @@ class Uint8ArrayBuilder {
         }
         return this;
     }
-    writeInt32_old(signedNumber, index = undefined) {
-        let bytes = _writeSignedNumber([], 0, signedNumber);
+    writeInt32_old(signedNumber, index) {
+        const bytes = writeSignedNumber([], 0, signedNumber);
         if (index >= 0) {
             this._data.set(bytes, index);
             return this;
         }
         return this.append(bytes);
     }
-    writeInt48(signedNumber, index = undefined) {
+    writeInt48(signedNumber, index) {
         if (typeof index !== 'number') {
             // Append
             this.reserve(6);
             index = this._length;
             this._length += 6;
         }
-        if (signedNumber > _maxSignedOffset || signedNumber < -_maxSignedOffset) {
+        if (signedNumber > MAX_SIGNED_OFFSET || signedNumber < -MAX_SIGNED_OFFSET) {
             throw new Error(`number to big to store in int48`);
         }
         const negative = signedNumber < 0;
@@ -226,8 +266,8 @@ class Uint8ArrayBuilder {
         // }
         return this;
     }
-    writeInt48_old(signedNumber, index = undefined) {
-        let bytes = _writeSignedOffset([], 0, signedNumber, true);
+    writeInt48_old(signedNumber, index) {
+        const bytes = writeSignedOffset([], 0, signedNumber, true);
         if (index >= 0) {
             this._data.set(bytes, index);
             return this;
@@ -252,7 +292,7 @@ class Uint8ArrayBuilder {
         if (typeof remove !== 'number') {
             remove = this.length - index;
         }
-        let removed = this._data.slice(index, index + remove);
+        const removed = this._data.slice(index, index + remove);
         if (index + remove >= this.length) {
             this._length = index;
         }

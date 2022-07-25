@@ -95,17 +95,11 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         const bye = { type: 'bye', from: forPeerId, data: undefined };
         this.sendMessage(bye);
     }
-    addPeer(id, sendReply = true, ignoreDuplicate = false) {
+    addPeer(id, sendReply = true) {
         if (this._exiting) {
             return;
         }
         const peer = this.peers.find(w => w.id === id);
-        // if (peer) {
-        //     if (!ignoreDuplicate) {
-        //         throw new Error(`We're not supposed to know this peer!`);
-        //     }
-        //     return;
-        // }
         if (!peer) {
             this.peers.push({ id, lastSeen: Date.now() });
         }
@@ -153,7 +147,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         // Add remote subscription
         const subscribeCallback = (err, path, val, previous, context) => {
             // db triggered an event, send notification to remote subscriber
-            let eventMessage = {
+            const eventMessage = {
                 type: 'event',
                 from: this.id,
                 to: peerId,
@@ -163,8 +157,8 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                     path,
                     val,
                     previous,
-                    context
-                }
+                    context,
+                },
             };
             this.sendMessage(eventMessage);
         };
@@ -183,7 +177,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
     }
     async handleMessage(message) {
         switch (message.type) {
-            case 'hello': return this.addPeer(message.from, message.to !== this.id, false);
+            case 'hello': return this.addPeer(message.from, message.to !== this.id);
             case 'bye': return this.removePeer(message.from, true);
             case 'subscribe': return this.addRemoteSubscription(message.from, message.data);
             case 'unsubscribe': return this.cancelRemoteSubscription(message.from, message.data);
@@ -217,7 +211,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                         tid: lock.tid,
                         write: lock.forWriting,
                         expires: lock.expires,
-                        comment: lock.comment
+                        comment: lock.comment,
                     };
                 }
                 catch (err) {
@@ -305,7 +299,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                         tid: movedLock.tid,
                         write: movedLock.forWriting,
                         expires: movedLock.expires,
-                        comment: movedLock.comment
+                        comment: movedLock.comment,
                     };
                 }
                 catch (err) {
@@ -382,7 +376,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                         const parentLock = await lock.moveToParent();
                         lockInfo.lock = createIPCLock(parentLock);
                         return lockInfo.lock;
-                    }
+                    },
                 };
             };
             lockInfo.lock = createIPCLock(lock);
@@ -404,7 +398,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                     comment: result.comment,
                     release: async () => {
                         const req = { type: 'unlock-request', id: acebase_core_1.ID.generate(), from: this.id, to: this.masterPeerId, data: { id: lockInfo.lock.id } };
-                        const result = await this.request(req);
+                        await this.request(req);
                         this.storage.debug.verbose(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
                         removeLock(lockInfo);
                     },
@@ -421,7 +415,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                         }
                         lockInfo.lock = createIPCLock(result);
                         return lockInfo.lock;
-                    }
+                    },
                 };
                 // this.storage.debug.log(`Worker ${this.id} received lock ${lock.id} (tid ${lock.tid}, ${lock.comment}, "/${lock.path}", ${lock.forWriting ? 'write' : 'read'})`);
                 return lockInfo.lock;

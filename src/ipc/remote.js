@@ -15,9 +15,9 @@ const ws = (() => {
 const masterPeerId = '[master]';
 const WS_CLOSE_PING_TIMEOUT = 1;
 const WS_CLOSE_PROCESS_EXIT = 2;
-const WS_CLOSE_UNAUTHORIZED = 3;
-const WS_CLOSE_WRONG_CLIENT = 4;
-const WS_CLOSE_SERVER_ERROR = 5;
+// const WS_CLOSE_UNAUTHORIZED = 3;
+// const WS_CLOSE_WRONG_CLIENT = 4;
+// const WS_CLOSE_SERVER_ERROR = 5;
 /**
  * Remote IPC using an external server. Database changes and events will be synchronized automatically.
  * Locking of resources will be done by a single master that needs to be known up front. Preferably, the master
@@ -116,7 +116,7 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
             let connected = false;
             this.ws = new ws.WebSocket(`ws${this.config.ssl ? 's' : ''}://${this.config.host || 'localhost'}:${this.config.port}/${this.config.dbname}/connect?v=${this.version}&id=${this.id}&t=${this.config.token}`); // &role=${this.config.role}
             // Handle connection success
-            this.ws.addEventListener('open', async (event) => {
+            this.ws.addEventListener('open', async ( /*event*/) => {
                 connected = true;
                 // Send any pending messages
                 this.pending.out.forEach(msg => {
@@ -158,7 +158,6 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
                         if (typeof typeof (options === null || options === void 0 ? void 0 : options.maxRetries) === 'number') {
                             retryOptions.maxRetries = options.maxRetries - 1;
                         }
-                        ;
                         const timeout = setTimeout(() => { this.connect(retryOptions); }, retryMs);
                         (_a = timeout.unref) === null || _a === void 0 ? void 0 : _a.call(timeout);
                     }
@@ -189,7 +188,7 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
                 this.ws.close(WS_CLOSE_PROCESS_EXIT);
             });
             // Handle disconnect
-            this.ws.addEventListener('close', event => {
+            this.ws.addEventListener('close', ( /*event*/) => {
                 // Disconnected. Try reconnecting immediately
                 if (!connected) {
                     return;
@@ -216,7 +215,7 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
                 }
                 else if (str.startsWith('welcome:')) {
                     // Welcome message with config
-                    let config = JSON.parse(str.slice(8));
+                    const config = JSON.parse(str.slice(8));
                     this.maxPayload = config.maxPayload;
                 }
                 else if (str.startsWith('connect:')) {
@@ -227,7 +226,7 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
                     // A peer has disconnected from the IPC server
                     const id = str.slice(11);
                     if (this.peers.find(peer => peer.id === id)) {
-                        // Peer apparently did not have time to say goodbye, 
+                        // Peer apparently did not have time to say goodbye,
                         // remove the peer ourselves
                         this.removePeer(id);
                         // Send "bye" message on their behalf
@@ -283,8 +282,8 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
             method,
             headers: {
                 'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(postData || '')
-            }
+                'Content-Length': Buffer.byteLength(postData || ''),
+            },
         };
         return await new Promise((resolve, reject) => {
             const req = http.request(options, (res) => {

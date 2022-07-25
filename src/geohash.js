@@ -24,8 +24,8 @@ const encode = function (lat, lon, precision) {
     if (typeof precision == 'undefined') {
         // refine geohash until it matches precision of supplied lat/lon
         for (let p = 1; p <= 12; p++) {
-            let hash = (0, exports.encode)(lat, lon, p);
-            let posn = (0, exports.decode)(hash);
+            const hash = (0, exports.encode)(lat, lon, p);
+            const posn = (0, exports.decode)(hash);
             if (posn.lat == lat && posn.lon == lon)
                 return hash;
         }
@@ -45,7 +45,7 @@ const encode = function (lat, lon, precision) {
     while (geohash.length < precision) {
         if (evenBit) {
             // bisect E-W longitude
-            let lonMid = (lonMin + lonMax) / 2;
+            const lonMid = (lonMin + lonMax) / 2;
             if (lon >= lonMid) {
                 idx = idx * 2 + 1;
                 lonMin = lonMid;
@@ -57,7 +57,7 @@ const encode = function (lat, lon, precision) {
         }
         else {
             // bisect N-S latitude
-            let latMid = (latMin + latMax) / 2;
+            const latMid = (latMin + latMax) / 2;
             if (lat >= latMid) {
                 idx = idx * 2 + 1;
                 latMin = latMid;
@@ -113,15 +113,15 @@ const bounds = function (geohash) {
     let latMin = -90, latMax = 90;
     let lonMin = -180, lonMax = 180;
     for (let i = 0; i < geohash.length; i++) {
-        let chr = geohash.charAt(i);
-        let idx = base32.indexOf(chr);
+        const chr = geohash.charAt(i);
+        const idx = base32.indexOf(chr);
         if (idx == -1)
             throw new Error('Invalid geohash');
         for (let n = 4; n >= 0; n--) {
-            let bitN = idx >> n & 1;
+            const bitN = idx >> n & 1;
             if (evenBit) {
                 // longitude
-                let lonMid = (lonMin + lonMax) / 2;
+                const lonMid = (lonMin + lonMax) / 2;
                 if (bitN == 1) {
                     lonMin = lonMid;
                 }
@@ -131,7 +131,7 @@ const bounds = function (geohash) {
             }
             else {
                 // latitude
-                let latMid = (latMin + latMax) / 2;
+                const latMid = (latMin + latMax) / 2;
                 if (bitN == 1) {
                     latMin = latMid;
                 }
@@ -142,7 +142,7 @@ const bounds = function (geohash) {
             evenBit = !evenBit;
         }
     }
-    let bounds = {
+    const bounds = {
         sw: { lat: latMin, lon: lonMin },
         ne: { lat: latMax, lon: lonMax },
     };
@@ -164,21 +164,21 @@ const adjacent = function (geohash, direction) {
         throw new Error('Invalid geohash');
     if ('nsew'.indexOf(direction) == -1)
         throw new Error('Invalid direction');
-    let neighbour = {
+    const neighbour = {
         n: ['p0r21436x8zb9dcf5h7kjnmqesgutwvy', 'bc01fg45238967deuvhjyznpkmstqrwx'],
         s: ['14365h7k9dcfesgujnmqp0r2twvyx8zb', '238967debc01fg45kmstqrwxuvhjyznp'],
         e: ['bc01fg45238967deuvhjyznpkmstqrwx', 'p0r21436x8zb9dcf5h7kjnmqesgutwvy'],
         w: ['238967debc01fg45kmstqrwxuvhjyznp', '14365h7k9dcfesgujnmqp0r2twvyx8zb'],
     };
-    let border = {
+    const border = {
         n: ['prxz', 'bcfguvyz'],
         s: ['028b', '0145hjnp'],
         e: ['bcfguvyz', 'prxz'],
         w: ['0145hjnp', '028b'],
     };
-    let lastCh = geohash.slice(-1); // last character of hash
+    const lastCh = geohash.slice(-1); // last character of hash
     let parent = geohash.slice(0, -1); // hash without last character
-    let type = geohash.length % 2;
+    const type = geohash.length % 2;
     // check for edge-cases which don't share common prefix
     if (border[direction][type].indexOf(lastCh) != -1 && parent !== '') {
         parent = (0, exports.adjacent)(parent, direction);

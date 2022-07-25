@@ -15,5 +15,5 @@ export declare class RemovedNodeAddress extends NodeAddress {
     /**
      * Compares this address to another address
      */
-    equals(address: NodeAddress): any;
+    equals(address: NodeAddress): boolean;
 }

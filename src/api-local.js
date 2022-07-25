@@ -4,7 +4,7 @@ const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
 const { MSSQLStorage, MSSQLStorageSettings } = require('./storage-mssql');
 const { CustomStorage, CustomStorageSettings } = require('./storage-custom');
-const { Node } = require('./node');
+const { VALUE_TYPES } = require('./node-value-types');
 const { DataIndex } = require('./data-index');
 const { query: executeQuery } = require('./query');
 
@@ -272,7 +272,7 @@ class LocalApi extends Api {
                 info.type = nodeInfo.exists ? nodeInfo.valueTypeName : undefined;
                 info.value = nodeInfo.value;
                 info.address = typeof nodeInfo.address === 'object' && 'pageNr' in nodeInfo.address ? { pageNr: nodeInfo.address.pageNr, recordNr: nodeInfo.address.recordNr } : undefined;
-                let isObjectOrArray = nodeInfo.exists && nodeInfo.address && [Node.VALUE_TYPES.OBJECT, Node.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
+                let isObjectOrArray = nodeInfo.exists && nodeInfo.address && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeInfo.type);
                 if (args.child_count === true) {
                     // set child count instead of enumerating
                     info.children = { count: isObjectOrArray ? nodeInfo.childCount : 0 };

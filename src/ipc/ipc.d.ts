@@ -39,7 +39,7 @@ export declare abstract class AceBaseIPCPeer extends SimpleEventEmitter {
      */
     exit(code?: number): Promise<any>;
     protected sayGoodbye(forPeerId: string): void;
-    protected addPeer(id: string, sendReply?: boolean, ignoreDuplicate?: boolean): void;
+    protected addPeer(id: string, sendReply?: boolean): void;
     protected removePeer(id: string, ignoreUnknown?: boolean): void;
     protected addRemoteSubscription(peerId: string, details: ISubscriptionData): void;
     protected cancelRemoteSubscription(peerId: string, details: ISubscriptionData): void;

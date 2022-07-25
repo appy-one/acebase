@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DetailedError = void 0;
+/* eslint-disable @typescript-eslint/no-this-alias */
 class DetailedError extends Error {
     /**
      *

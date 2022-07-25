@@ -8,8 +8,8 @@ export declare class DetailedError extends Error {
      * @param originalError optional original error thrown to enable stack debugging for caught-rethrown errors
      */
     constructor(code: string, message: string, originalError?: DetailedError | Error);
-    get codes(): any[];
+    get codes(): string[];
     get stacks(): string;
-    hasErrorCode(code: any): boolean;
-    static hasErrorCode(err: any, code: any): boolean;
+    hasErrorCode(code: string): boolean;
+    static hasErrorCode(err: Error, code: string): boolean;
 }

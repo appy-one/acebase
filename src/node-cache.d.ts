@@ -1,4 +1,4 @@
-import { NodeInfo } from "./node-info";
+import { NodeInfo } from './node-info';
 import { PathInfo } from 'acebase-core';
 export declare class NodeCacheEntry {
     nodeInfo: NodeInfo;
@@ -35,9 +35,9 @@ export declare class NodeCache {
     }, reason: string): void;
     /**
      * Marks the node at path, and all its descendants as deleted
-     * @param {string} path
+     * @param path
      */
-    delete(path: any): void;
+    delete(path: string): void;
     cleanup(): void;
     clear(): void;
     /**

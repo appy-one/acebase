@@ -59,7 +59,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
                         }
                     });
                     return true;
-                }
+                },
             };
             // Listen for storage events to intercept possible messages
             window.addEventListener('storage', event => {
