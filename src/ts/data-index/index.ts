@@ -1,25 +1,86 @@
-'use strict';
-const { Node } = require('./node');
-const { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryWriter, BinaryReader, BlacklistingSearchOperator } = require('./btree');
-const { PathInfo, Utils, ID, ColorStyle } = require('acebase-core');
-const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
-const Geohash = require('./geohash');
-const { pfs } = require('./promise-fs');
-const { ThreadSafe } = require('./thread-safe');
-const unidecode = require('unidecode');
-const { getValueType } = require('./node-value-types');
-const quickSort = require('./quicksort').default;
+import { PathInfo, Utils, ID, ColorStyle } from 'acebase-core';
+import unidecode from 'unidecode';
+import type { Storage } from '../storage';
+import { Node } from '../node';
+import { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryBPlusTreeLeaf, BinaryBPlusTreeLeafEntry, BinaryWriter, BinaryReader, BlacklistingSearchOperator } from '../btree';
+import * as Geohash from '../geohash';
+import { pfs } from '../promise-fs';
+import { ThreadSafe } from '../thread-safe';
+import { getValueType }  from '../node-value-types';
+import quickSort from '../quicksort';
+import { NodeEntryKeyType } from '../btree/entry-key-type';
+import { LeafEntryRecordPointer } from '../btree/leaf-entry-recordpointer';
+import { LeafEntryMetaData } from '../btree/leaf-entry-metadata';
+import { BinaryBPlusTreeTransactionOperation } from '../btree/binary-tree-transaction-operation';
+import { BPlusTreeLeafEntryValue } from '../btree/tree-leaf-entry-value';
+const { compareValues, getChildValues, numberToBytes, bigintToBytes, bytesToNumber, bytesToBigint, encodeString, decodeString } = Utils;
 
-/**
- * @typedef {import('./storage').Storage} Storage
- * @typedef {import('./btree').BinaryBPlusTreeLeaf} BinaryBPlusTreeLeaf
- * @typedef {import('./btree').BinaryBPlusTreeLeafEntry} BinaryBPlusTreeLeafEntry
- */
+type FileSystemError = Error & { code: string };
+
+type IndexableValue = NodeEntryKeyType;
+type IndexableValueOrArray = IndexableValue | IndexableValue[];
+type IndexRecordPointer = LeafEntryRecordPointer;
+type IndexMetaData = LeafEntryMetaData;
 
 const DISK_BLOCK_SIZE = 4096; // use 512 for older disks
 const FILL_FACTOR = 50; // leave room for inserts
 
-function _createRecordPointer(wildcards, key) { //, address) {
+type KnownIndexType = 'normal' | 'array' | 'fulltext' | 'geo';
+interface IndexInfo {
+    path: string;
+    key: string;
+    /** caseSensitive */
+    cs: boolean;
+    /** textLocale */
+    locale: string;
+    include: string[];
+    type: KnownIndexType;
+}
+const INDEX_INFO_VALUE_TYPE = {
+    UNDEFINED: 0,
+    STRING: 1,
+    NUMBER: 2,
+    BOOLEAN: 3,
+    ARRAY: 4,
+};
+type IndexInfoValue = undefined | string | number | boolean | Array<undefined | string | number | boolean>;
+interface IndexTreeInfo {
+    fileIndex: number;
+    byteLength: number;
+    class:  'BPlusTree';
+    version: number;
+    entries: number;
+    values: number;
+}
+interface DataIndexOptions {
+    /**
+     * if strings in the index should be indexed case-sensitive. defaults to `false`
+     * @default false
+     */
+    caseSensitive?: boolean;
+
+    /**
+     * locale to use when comparing case insensitive string values. Can be a language code (`"nl"`, `"en"` etc), or LCID (`"en-us"`, `"en-au"` etc).
+     * Defaults to English (`"en"`)
+     * @default "en"
+     */
+    textLocale?: string;
+
+    /**
+     * To allow multiple languages to be indexed, you can specify the name of the key in the source records that contains the locale.
+     * When this key is not present in the data, the specified textLocale will be used as default. Eg with textLocaleKey: 'locale',
+     * 1 record might contain `{ text: 'Hello World', locale: 'en' }` (text will be indexed with English locale), and another
+     * `{ text: 'Hallo Wereld', locale: 'nl' }` (Dutch locale)
+     */
+    textLocaleKey?: string;
+
+    /**
+     * Other keys' data to include in the index, for faster sorting topN (`.limit.order`) query results
+     */
+    include?: string[]
+}
+
+function _createRecordPointer(wildcards: string[], key: string) { //, address) {
     // binary layout:
     // record_pointer   = wildcards_info, key_info, DEPRECATED: record_location
     // wildcards_info   = wildcards_length, wildcards
@@ -36,7 +97,7 @@ function _createRecordPointer(wildcards, key) { //, address) {
     // page_nr          = 4 byte number
     // record_nr        = 2 byte number
 
-    let recordPointer = [wildcards.length]; // wildcards_length
+    const recordPointer = [wildcards.length]; // wildcards_length
     for (let i = 0; i < wildcards.length; i++) {
         const wildcard = wildcards[i];
         recordPointer.push(wildcard.length); // wildcard_length
@@ -45,7 +106,7 @@ function _createRecordPointer(wildcards, key) { //, address) {
             recordPointer.push(wildcard.charCodeAt(j));
         }
     }
-    
+
     recordPointer.push(key.length); // key_length
     // key_bytes:
     for (let i = 0; i < key.length; i++) {
@@ -62,16 +123,16 @@ function _createRecordPointer(wildcards, key) { //, address) {
     return recordPointer;
 }
 
-function _parseRecordPointer(path, recordPointer) {
+function _parseRecordPointer(path: string, recordPointer: IndexRecordPointer) {
     if (recordPointer.length === 0) {
         throw new Error('Invalid record pointer length');
     }
     const wildcardsLength = recordPointer[0];
-    let wildcards = [];
+    const wildcards = [] as string[];
     let index = 1;
     for (let i = 0; i < wildcardsLength; i++) {
         let wildcard = '';
-        let length = recordPointer[index];
+        const length = recordPointer[index];
         for (let j = 0; j < length; j++) {
             wildcard += String.fromCharCode(recordPointer[index+j+1]);
         }
@@ -88,7 +149,7 @@ function _parseRecordPointer(path, recordPointer) {
     // const pageNr = recordPointer[index] << 24 | recordPointer[index+1] << 16 | recordPointer[index+2] << 8 | recordPointer[index+3];
     // index += 4;
     // const recordNr = recordPointer[index] << 8 | recordPointer[index+1];
-    
+
     if (wildcards.length > 0) {
         let i = 0;
         path = path.replace(/\*/g, () => {
@@ -101,7 +162,6 @@ function _parseRecordPointer(path, recordPointer) {
     return { key, path: `${path}/${key}`, wildcards };
 }
 
-
 // const _debounceTimeouts = {};
 // function debounce(id, ms, callback) {
 //     if (_debounceTimeouts[id]) {
@@ -109,11 +169,11 @@ function _parseRecordPointer(path, recordPointer) {
 //     }
 //     _debounceTimeouts[id] = setTimeout(() => {
 //         delete _debounceTimeouts[id];
-//         callback(); 
+//         callback();
 //     }, ms);
 // }
 
-class DataIndex {
+export class DataIndex {
 
     static get STATE() {
         return {
@@ -123,22 +183,60 @@ class DataIndex {
             REBUILD: 'rebuild',
             ERROR: 'error',
             REMOVED: 'removed',
-            CLOSED: 'closed'
+            CLOSED: 'closed',
         };
     }
 
+    public state = DataIndex.STATE.INIT;
+
+    /**
+     * Path of the index target, with all named variables replaced by wildcard characters (*)
+     */
+    public path: string;
+
+    /**
+     * Indexed key name
+     */
+    public key: string;
+
+    public caseSensitive: boolean;
+    public textLocale: string;
+    public textLocaleKey?: string;
+    public includeKeys: string[];
+    protected indexMetadataKeys: string[];
+    private _buildError: Error = null;
+    private _updateQueue: Array<{
+        path: string;
+        oldValue: IndexableValue;
+        newValue: IndexableValue;
+        recordPointer: IndexRecordPointer;
+        metadata: IndexMetaData;
+        resolve(): void;
+        reject(err: unknown): void;
+    }>;
+    private _cache = new Map<string, Map<string, {
+        results: IndexQueryResults, //BinaryBPlusTreeLeafEntry[],
+        added: number,
+        reads: number,
+        timeout: NodeJS.Timeout,
+        extendLife(): void
+    }>>();
+    private _cacheTimeoutSettings = {
+        // default: 1 minute query cache
+        duration: 60 * 1000,
+        sliding: true,
+    };
+    private trees: {
+        [name: string]: IndexTreeInfo;
+    };
+    private _idx?: { fd: number; tree: BinaryBPlusTree };
+
+    private _fileName?: string;
+
     /**
      * Creates a new index
-     * @param {Storage} storage
-     * @param {string} path 
-     * @param {string} key 
-     * @param {object} [options]
-     * @param {boolean} [options.caseSensitive=false] if strings in the index should be indexed case-sensitive. defaults to false
-     * @param {string} [options.textLocale="en"] locale to use when comparing case insensitive string values. Can be a language code ("nl", "en" etc), or LCID ("en-us", "en-au" etc). Defaults to English ("en")
-     * @param {string} [options.textLocaleKey] to allow multiple languages to be indexed, you can specify the name of the key in the source records that contains the locale. When this key is not present in the data, the specified textLocale will be used as default. Eg with textLocaleKey: 'locale', 1 record might contain { text: 'Hello World', locale: 'en' } (text will be indexed with English locale), and another { text: 'Hallo Wereld', locale: 'nl' } (Dutch locale)
-     * @param {string[]} [options.include] other keys' data to include in the index, for faster sorting topN (.limit.order) query results
      */
-    constructor(storage, path, key, options = {}) {
+    constructor(protected storage: Storage, path: string, key: string, options: DataIndexOptions = {}) {
         if (['string','undefined'].indexOf(typeof options.include) < 0 && !(options.include instanceof Array)) {
             throw new Error(`includeKeys argument must be a string, an Array of strings, or undefined. Passed type=${typeof options.include}`);
         }
@@ -146,8 +244,6 @@ class DataIndex {
             options.include = [options.include];
         }
 
-        this.state = DataIndex.STATE.INIT;
-        this.storage = storage;
         const pathKeys = PathInfo.getPathKeys(path).map(key => typeof key === 'string' && key.startsWith('$') ? '*' : key);
         this.path = (new PathInfo(pathKeys)).path; // path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
         this.key = key;
@@ -159,13 +255,7 @@ class DataIndex {
         this.indexMetadataKeys = [];
         this._buildError = null;
         this._updateQueue = [];
-    
-        /**
-         * @type {Map<string, Map<any, BinaryBPlusTreeLeafEntry>>}
-         */
-        this._cache = new Map();
-        this.setCacheTimeout(60, true); // 1 minute query cache
-        
+
         this.trees = {
             'default': {
                 fileIndex: 0,
@@ -173,8 +263,8 @@ class DataIndex {
                 class: 'BPlusTree',
                 version: 1, // TODO: implement BinaryBPlusTree.version
                 entries: 0,
-                values: 0
-            }
+                values: 0,
+            },
         };
     }
 
@@ -182,15 +272,16 @@ class DataIndex {
         return this.includeKeys.concat(this.indexMetadataKeys);
     }
 
-    setCacheTimeout(seconds, sliding = false) {
+    setCacheTimeout(seconds: number, sliding = false) {
         this._cacheTimeoutSettings = {
             duration: seconds * 1000,
-            sliding
+            sliding,
         };
     }
 
-    cache(op, val, results) {
-        if (results === undefined) {
+    cache(op: string, param: unknown, results?: IndexQueryResults) {
+        const val = JSON.stringify(param); // Make object and array params cachable too
+        if (typeof results === 'undefined') {
             // Get from cache
             let cache;
             if (this._cache.has(op) && this._cache.get(op).has(val)) {
@@ -216,12 +307,12 @@ class DataIndex {
             //     // this.storage.debug.log(`Index ${this.description}, cache clean for ${op} "${val}"`);
             //     opCache.delete(val);
             // }
-            let scheduleClear = () => {
+            const scheduleClear = () => {
                 const timeout = setTimeout(() => opCache.delete(val), this._cacheTimeoutSettings.duration);
                 timeout.unref && timeout.unref();
                 return timeout;
-            }
-            let cache = {
+            };
+            const cache = {
                 results,
                 added: Date.now(),
                 reads: 0,
@@ -230,7 +321,7 @@ class DataIndex {
                     // this.storage.debug.log(`Index ${this.description}, cache lifetime extended for ${op} "${val}". reads: ${cache.reads}`);
                     clearTimeout(cache.timeout);
                     cache.timeout = scheduleClear();
-                }
+                },
             };
             opCache.set(val, cache);
             // this.storage.debug.log(`Index ${this.description}, cached ${results.length} results for ${op} "${val}"`);
@@ -255,11 +346,10 @@ class DataIndex {
 
     /**
      * Reads an existing index from a file
-     * @param {Storage} storage Used storage engine
-     * @param {string} fileName 
-     * @returns {Promise<DataIndex>}
+     * @param storage Used storage engine
+     * @param fileName
      */
-    static async readFromFile(storage, fileName) {
+    static async readFromFile(storage: Storage, fileName: string): Promise<DataIndex> {
         // Read an index from file
         const filePath = fileName.includes('/') ? fileName : `${storage.settings.path}/${storage.name}.acebase/${fileName}`;
         const fd = await pfs.open(filePath, pfs.flags.read);
@@ -284,7 +374,7 @@ class DataIndex {
             // Process header
             const header = Uint8Array.from(result.buffer);
             let index = 0;
-            
+
             const readKey = () => {
                 const keyLength = header[index];
                 let keyName = '';
@@ -295,16 +385,15 @@ class DataIndex {
                 index += keyLength;
                 return keyName;
             };
-            const readValue = () => {
+            const readValue = (): IndexableValueOrArray => {
                 const valueType = header[index];
                 index++;
                 let valueLength = 0;
-                if (valueType === 0) {
-                    // UNDEFINED
+                if (valueType === INDEX_INFO_VALUE_TYPE.UNDEFINED) {
                     valueLength = 0;
                 }
-                else if (valueType === 3) {
-                    // BOOLEAN has no value_length
+                else if (valueType === INDEX_INFO_VALUE_TYPE.BOOLEAN) {
+                    // boolean has no value_length
                     valueLength = 1;
                 }
                 else {
@@ -312,60 +401,60 @@ class DataIndex {
                     index += 2;
                 }
 
-                let value;
-                if (valueType === 1) {
-                    // STRING
-                    value = decodeString(header.slice(index, index+valueLength)); // textDecoder.decode(header.slice(index, index+valueLength));
+                let value: IndexableValue;
+                if (valueType === INDEX_INFO_VALUE_TYPE.STRING) {
+                    value = decodeString(header.slice(index, index+valueLength));
                 }
-                else if (valueType === 2) {
-                    // NUMBER
+                else if (valueType === INDEX_INFO_VALUE_TYPE.NUMBER) {
                     value = bytesToNumber(header.slice(index, index+valueLength));
                 }
-                else if (valueType === 3) {
-                    // BOOLEAN
+                else if (valueType === INDEX_INFO_VALUE_TYPE.BOOLEAN) {
                     value = header[index] === 1;
                 }
-                else if (valueType === 4) {
-                    // ARRAY
-                    let arr = [];
+                else if (valueType === INDEX_INFO_VALUE_TYPE.ARRAY) {
+                    const arr = [] as IndexableValue[];
                     for (let j = 0; j < valueLength; j++) {
-                        arr.push(readValue());
+                        arr.push(readValue() as IndexableValue);
                     }
                     return arr;
                 }
                 index += valueLength;
                 return value;
             };
-            const readInfo = () => {
+            const readInfo = (): IndexInfo => {
                 const infoCount = header[index];
                 index++;
-                const info = {};
+                const info = {} as IndexInfo;
                 for (let i = 0; i < infoCount; i++) {
-                    const key = readKey();                    
+                    const key = readKey();
                     const value = readValue();
-                    info[key] = value;
+                    (info as any)[key] = value;
                 }
                 return info;
             };
 
             const indexInfo = readInfo();
-            let indexOptions = { caseSensitive: indexInfo.cs, textLocale: indexInfo.locale, include: indexInfo.include };
+            const indexOptions = {
+                caseSensitive: indexInfo.cs,
+                textLocale: indexInfo.locale,
+                include: indexInfo.include,
+            };
             let dataIndex;
             switch (indexInfo.type) {
                 case 'normal': {
-                    dataIndex = new DataIndex(storage, indexInfo.path, indexInfo.key, indexOptions); 
+                    dataIndex = new DataIndex(storage, indexInfo.path, indexInfo.key, indexOptions);
                     break;
                 }
                 case 'array': {
-                    dataIndex = new ArrayIndex(storage, indexInfo.path, indexInfo.key, indexOptions); 
+                    dataIndex = new ArrayIndex(storage, indexInfo.path, indexInfo.key, indexOptions);
                     break;
                 }
                 case 'fulltext': {
-                    dataIndex = new FullTextIndex(storage, indexInfo.path, indexInfo.key, indexOptions); 
+                    dataIndex = new FullTextIndex(storage, indexInfo.path, indexInfo.key, indexOptions);
                     break;
                 }
                 case 'geo': {
-                    dataIndex = new GeoIndex(storage, indexInfo.path, indexInfo.key, indexOptions); 
+                    dataIndex = new GeoIndex(storage, indexInfo.path, indexInfo.key, indexOptions);
                     break;
                 }
                 default: {
@@ -381,7 +470,7 @@ class DataIndex {
                 // tree_name:
                 const treeName = readKey();
                 // treeName is "default"
-                const treeInfo = dataIndex.trees[treeName] = {};
+                const treeInfo = dataIndex.trees[treeName] = {} as IndexTreeInfo;
                 // file_index:
                 treeInfo.fileIndex = (header[index] << 24) | (header[index+1] << 16) | (header[index+2] << 8) | header[index+3];
                 index += 4;
@@ -405,25 +494,25 @@ class DataIndex {
         }
     }
 
-    get type() {
+    get type(): KnownIndexType {
         return 'normal';
     }
 
     get fileName() {
-        if (this._fileName) { 
+        if (this._fileName) {
             // Set by readFromFile
-            return this._fileName; 
+            return this._fileName;
         }
         const dir = `${this.storage.settings.path}/${this.storage.name}.acebase`;
         const storagePrefix = this.storage.settings.type !== 'data' ? `[${this.storage.settings.type}]-` : '';
-        const escape = key => key.replace(/\//g, '~').replace(/\*/g, '#');
+        const escape = (key: string) => key.replace(/\//g, '~').replace(/\*/g, '#');
         const escapedPath = escape(this.path);
         const escapedKey = escape(this.key);
-        const includes = this.includeKeys.length > 0 
+        const includes = this.includeKeys.length > 0
             ? ',' + this.includeKeys.map(key => escape(key)).join(',')
             : '';
         const extension = (this.type !== 'normal' ? `${this.type}.` : '') + 'idx';
-        return `${dir}/${storagePrefix}${escapedPath}-${escapedKey}${includes}.${extension}`;        
+        return `${dir}/${storagePrefix}${escapedPath}-${escapedKey}${includes}.${extension}`;
     }
 
     get description() {
@@ -436,7 +525,7 @@ class DataIndex {
         return description;
     }
 
-    _getWildcardKeys(path) {
+    _getWildcardKeys(path: string) {
         const pathKeys = PathInfo.getPathKeys(path);
         const indexKeys = PathInfo.getPathKeys(this.path);
         return indexKeys.reduce((wildcards, key, i) => {
@@ -466,36 +555,38 @@ class DataIndex {
     //     return this._updateTree(path, revLookupKey, revLookupKey, oldData, newData, metadata);
     // }
 
-    _updateTree(path, oldValue, newValue, oldRecordPointer, newRecordPointer, metadata) {
+    _updateTree(path: string, oldValue: IndexableValue, newValue: IndexableValue, oldRecordPointer: IndexRecordPointer, newRecordPointer: IndexRecordPointer, metadata: IndexMetaData) {
         const canBeIndexed = ['number','boolean','string'].indexOf(typeof newValue) >= 0 || newValue instanceof Date;
         const operations = [];
         if (oldValue !== null) {
-            let op = BinaryBPlusTree.TransactionOperation.remove(oldValue, oldRecordPointer);
+            const op = BinaryBPlusTree.TransactionOperation.remove(oldValue, oldRecordPointer);
             operations.push(op);
         }
         if (newValue !== null && canBeIndexed) {
-            let op = BinaryBPlusTree.TransactionOperation.add(newValue, newRecordPointer, metadata);
+            const op = BinaryBPlusTree.TransactionOperation.add(newValue, newRecordPointer, metadata);
             operations.push(op);
         }
 
         return this._processTreeOperations(path, operations);
     }
 
-    /**
-     * @param {{ tree: BinaryBPlusTree; close() => Promise<void>; release() => void }} idx
-     */
-    async _rebuild(idx) {
+    async _rebuild(idx: { tree: BinaryBPlusTree; close(): Promise<void>; release(): void; }) {
         // Rebuild by writing to temp file
         const newIndexFile = this.fileName + '.tmp';
         const fd = await pfs.open(newIndexFile, pfs.flags.write);
-        const treeStatistics = {};
+        const treeStatistics = {
+            byteLength: 0,
+            totalEntries: 0,
+            totalValues: 0,
+        };
         const headerStats = {
             written: false,
             length: 0,
-            promise: null
+            promise: null as Promise<unknown>,
+            updateTreeLength: undefined as (treeByteLength: number) => Promise<void>, //Awaited<ReturnType<this['_writeIndexHeader']>>['treeLengthCallback'],
         };
 
-        const writer = async (data, index) => { 
+        const writer = async (data: Buffer, index: number) => {
             if (!headerStats.written) {
                 // Write header first, or wait until done
                 if (!headerStats.promise) {
@@ -507,15 +598,15 @@ class DataIndex {
                 }
                 await headerStats.promise;
             }
-            return pfs.write(fd, data, 0, data.length, headerStats.length + index);
-        }
+            await pfs.write(fd, data, 0, data.length, headerStats.length + index);
+        };
         this.state = DataIndex.STATE.REBUILD;
         try {
             // this._fst = []; // Reset fst memory
             await idx.tree.rebuild(
-                BinaryWriter.forFunction(writer), 
-                { treeStatistics }
-            )
+                BinaryWriter.forFunction(writer),
+                { treeStatistics },
+            );
             await idx.close();
             await headerStats.updateTreeLength(treeStatistics.byteLength);
             await pfs.close(fd);
@@ -526,11 +617,11 @@ class DataIndex {
                     await pfs.rename(newIndexFile, this.fileName);
                 }
                 catch(err) {
-                    // Occasionally getting EPERM "operation not permitted" errors lately with Node 16. 
+                    // Occasionally getting EPERM "operation not permitted" errors lately with Node 16.
                     // Fix: try again after 100ms, up to 10 times
                     if (err.code === 'EPERM' && retry < 10) {
                         await new Promise(resolve => setTimeout(resolve, 100));
-                        return renameFile(retry+1);
+                        await renameFile(retry+1);
                     }
                     throw err;
                 }
@@ -548,18 +639,14 @@ class DataIndex {
         }
     }
 
-    /**
-     * @param {string} path
-     * @param {BinaryBPlusTreeTransactionOperation[]}
-     */
-    async _processTreeOperations(path, operations) {
+    async _processTreeOperations(path: string, operations: BinaryBPlusTreeTransactionOperation[]) {
         const startTime = Date.now();
         if (this._buildError) {
             throw new Error('Cannot update index because there was an error building it');
         }
         let idx = await this._getTree('exclusive');
         // const oldEntry = tree.find(keyValues.oldValue);
-        
+
         const go = async (retry = 0) => {
             const opsCount = operations.length;
             try {
@@ -605,27 +692,26 @@ class DataIndex {
         // Process all queued items
         const promises = queue.map(update => {
             return this._updateTree(update.path, update.oldValue, update.newValue, update.recordPointer, update.recordPointer, update.metadata)
-            .then(() => {
-                update.resolve(); // Resolve waiting promise
-            })
-            .catch(err => {
-                update.reject(err); // Reject waiting promise
+                .then(() => {
+                    update.resolve(); // Resolve waiting promise
+                })
+                .catch(err => {
+                    update.reject(err); // Reject waiting promise
                 // Do not throw again
-            })
+                });
         });
         await Promise.all(promises);
     }
 
-    /**
-     * 
-     * @param {string} path 
-     * @param {any} oldValue 
-     * @param {any} newValue 
-     */
-    async handleRecordUpdate(path, oldValue, newValue, indexMetadata) {
-        const getValues = (key, oldValue, newValue) => PathInfo.getPathKeys(key).reduce((values, key) => getChildValues(key, values.oldValue, values.newValue), { oldValue, newValue });
+    async handleRecordUpdate(path: string, oldValue: unknown, newValue: unknown, indexMetadata?: IndexMetaData): Promise<void> {
+        const getValues = (key: string, oldValue: unknown, newValue: unknown) =>
+            PathInfo.getPathKeys(key).reduce((values, key) =>
+                getChildValues(key, values.oldValue, values.newValue), { oldValue, newValue }) as { oldValue: IndexableValue; newValue: IndexableValue };
         const updatedKey = PathInfo.get(path).key;
-        const keyValues = this.key === '{key}' 
+        if (typeof updatedKey === 'number') {
+            throw new Error('Not implemented: updated key is a number!');
+        }
+        const keyValues = this.key === '{key}'
             ? { oldValue: oldValue === null ? null : updatedKey, newValue: newValue === null ? null : updatedKey }
             : getValues(this.key, oldValue, newValue);
 
@@ -648,16 +734,16 @@ class DataIndex {
         const wildcardKeys = this._getWildcardKeys(path);
         const recordPointer = _createRecordPointer(wildcardKeys, updatedKey);
         const metadata = (() => {
-            const obj = {};
+            const obj = {} as IndexMetaData;
             indexMetadata && Object.assign(obj, indexMetadata);
             if (typeof newValue === 'object' && newValue !== null) {
-                this.includeKeys.forEach(key => obj[key] = newValue[key]);
+                this.includeKeys.forEach(key => obj[key] = (newValue as any)[key]);
             }
             return obj;
         })();
-        
+
         if (this.state === DataIndex.STATE.ERROR) {
-            throw new Error(`Cannot update index ${this.description}: it's in the error state:`, this.buildError);
+            throw new Error(`Cannot update index ${this.description}: it's in the error state: ${this._buildError?.stack}`);
         }
         else if (this.state === DataIndex.STATE.READY) {
             // Invalidate query cache
@@ -666,26 +752,26 @@ class DataIndex {
             return await this._updateTree(path, keyValues.oldValue, keyValues.newValue, recordPointer, recordPointer, metadata);
         }
         else {
-            this.storage.debug.verbose(`Queueing index ${this.description} update for "/${path}"`)
+            this.storage.debug.verbose(`Queueing index ${this.description} update for "/${path}"`);
             // Queue the update
-            const update = { 
-                path, 
-                oldValue: keyValues.oldValue, 
-                newValue: keyValues.newValue, 
-                recordPointer, 
+            const update = {
+                path,
+                oldValue: keyValues.oldValue,
+                newValue: keyValues.newValue,
+                recordPointer,
                 metadata,
-                resolve: null,
-                reject: null
+                resolve: null as () => void,
+                reject: null as (err: unknown) => void,
             };
 
             // Create a promise that resolves once the queued item has processed
-            const p = new Promise((resolve, reject) => {
+            const p = new Promise<void>((resolve, reject) => {
                 update.resolve = resolve;
                 update.reject = reject;
             })
-            .catch(err => {
-                this.storage.debug.error(`Unable to process queued update for "/${path}" on index ${this.description}:`, err);
-            });
+                .catch(err => {
+                    this.storage.debug.error(`Unable to process queued update for "/${path}" on index ${this.description}:`, err);
+                });
 
             this._updateQueue.push(update);
             //return p; // Don't wait for p, prevents deadlock when tree is rebuilding
@@ -696,7 +782,7 @@ class DataIndex {
         return ThreadSafe.lock(this.fileName, { shared: mode === 'shared', timeout }); //, timeout: 15 * 60000 (for debugging)
     }
 
-    async count(op, val) {
+    async count(op: string, val: IndexableValueOrArray) {
         if (!this.caseSensitive) {
             // Convert to locale aware lowercase
             if (typeof val === 'string') { val = val.toLocaleLowerCase(this.textLocale); }
@@ -722,7 +808,7 @@ class DataIndex {
         return result.valueCount;
     }
 
-    async take(skip, take, ascending) {
+    async take(skip: number, take: number, ascending: boolean) {
         const cacheKey = `${skip}+${take}-${ascending ? 'asc' : 'desc'}`;
         const cache = this.cache('take', cacheKey);
         if (cache) {
@@ -735,11 +821,7 @@ class DataIndex {
         const results = new IndexQueryResults(); //[];
         results.filterKey = this.key;
         let skipped = 0;
-        /**
-         * @param {BinaryBPlusTreeLeaf} leaf 
-         * @returns 
-         */
-        const processLeaf = async (leaf) => {
+        const processLeaf = async (leaf: BinaryBPlusTreeLeaf): Promise<IndexQueryResults> => {
             if (!ascending) { leaf.entries.reverse(); }
             for (let i = 0; i < leaf.entries.length; i++) {
                 const entry = leaf.entries[i];
@@ -772,7 +854,7 @@ class DataIndex {
             else {
                 return results;
             }
-        }
+        };
         if (ascending) {
             await idx.tree.getFirstLeaf().then(processLeaf);
         }
@@ -795,15 +877,12 @@ class DataIndex {
         return DataIndex.validOperators;
     }
 
-    /**
-     * 
-     * @param {string} op 
-     * @param {any} val 
-     * @param {object} [options]
-     * @param {IndexQueryResults} [options.filter=undefined] previous results to filter upon
-     * @returns {Promise<IndexQueryResults>}
-     */
-    async query(op, val, options = { filter: undefined }) {
+    async query(op: BlacklistingSearchOperator): Promise<IndexQueryResults>;
+    async query(op: string, val: IndexableValueOrArray, options?: {
+        /** previous results to filter upon */
+        filter?: IndexQueryResults
+    }): Promise<IndexQueryResults>;
+    async query(op: string | BlacklistingSearchOperator, val?: unknown, options: { filter?: IndexQueryResults } = { }): Promise<IndexQueryResults> {
         if (!DataIndex.validOperators.includes(op) && !(op instanceof BlacklistingSearchOperator)) {
             throw new TypeError(`Cannot use operator "${op}" to query index "${this.description}"`);
         }
@@ -820,10 +899,9 @@ class DataIndex {
 
         const stats = new IndexQueryStats('query', { op, val }, true);
 
-        /** @type {BinaryBPlusTreeLeafEntry[]} */
-        let entries;
+        let entries: BinaryBPlusTreeLeafEntry[]; // ;
         const isCacheable = !(op instanceof BlacklistingSearchOperator);
-        let cache = isCacheable && this.cache(op, val);
+        const cache = isCacheable && this.cache(op, val);
         if (cache) {
             entries = cache;
         }
@@ -832,8 +910,8 @@ class DataIndex {
             const searchOptions = {
                 entries: true,
                 // filter: options.filter && options.filter.treeEntries // Don't let tree apply filter, so we can cache results before filtering ourself
-            }
-            const result = await idx.tree.search(op, val, searchOptions);
+            };
+            const result = await idx.tree.search(op, val as IndexableValue, searchOptions);
             entries = result.entries;
             idx.release();
 
@@ -847,36 +925,39 @@ class DataIndex {
 
         if (options.filter) {
             const filterStep = new IndexQueryStats(
-                'filter', { 
-                    entries: entries.length, 
-                    entryValues: entries.reduce((total, entry) => total + entry.values.length, 0), 
-                    filterValues: options.filter.values.length 
-                }, 
-                true
+                'filter', {
+                    entries: entries.length,
+                    entryValues: entries.reduce((total, entry) => total + entry.values.length, 0),
+                    filterValues: options.filter.values.length,
+                },
+                true,
             );
             stats.steps.push(filterStep);
 
-            let values = [], valueEntryIndexes = [];
+            let values = [] as BPlusTreeLeafEntryValue[];
+            const valueEntryIndexes = [] as number[];
             entries.forEach(entry => {
                 valueEntryIndexes.push(values.length);
                 values = values.concat(entry.values);
             });
-            let filterValues = options.filter.values;
+
+            type QuicklySearchableValues = Array<BPlusTreeLeafEntryValue & { rp?: string }> & { rpTree?: BPlusTree };
+            const filterValues = options.filter.values;
 
             // Pre-process recordPointers to speed up matching
-            const preProcess = (values, tree = false) => {
+            const preProcess = (values: QuicklySearchableValues, tree = false) => {
                 if (tree && values.rpTree) { return; }
 
-                let builder = tree ? new BPlusTreeBuilder(true, 100) : null;
+                const builder = tree ? new BPlusTreeBuilder(true, 100) : null;
 
                 for (let i = 0; i < values.length; i++) {
-                    let val = values[i];
+                    const val = values[i];
                     let rp = val.rp || '';
                     if (rp === '') {
                         for (let j = 0; j < val.recordPointer.length; j++) { rp += val.recordPointer[j].toString(36); }
                         val.rp = rp;
                     }
-                    
+
                     if (tree && !builder.list.has(rp)) {
                         builder.add(rp, [i]);
                     }
@@ -884,38 +965,36 @@ class DataIndex {
                 if (tree) {
                     values.rpTree = builder.create();
                 }
-            }
+            };
             // preProcess(values);
             // preProcess(filterValues);
 
             // Loop through smallest set
-            let smallestSet = filterValues.length < values.length ? filterValues : values;
-            let otherSet = smallestSet === filterValues ? values : filterValues;
-            
+            const smallestSet: QuicklySearchableValues = filterValues.length < values.length ? filterValues : values;
             preProcess(smallestSet, false);
+            const otherSet: QuicklySearchableValues = smallestSet === filterValues ? values : filterValues;
             preProcess(otherSet, true);
 
             // TODO: offload filtering from event loop to stay responsive
             for (let i = 0; i < smallestSet.length; i++) {
-                let value = smallestSet[i];
+                const value = smallestSet[i];
                 // Find in other set
-                let match = null;
-                let matchIndex;
-                
-                /** @type {BPlusTree} */
-                let tree = otherSet.rpTree;
-                let rpEntryValue = tree.find(value.rp);
+                let match = null as BPlusTreeLeafEntryValue;
+                let matchIndex: number;
+
+                const tree: BPlusTree = otherSet.rpTree;
+                const rpEntryValue = tree.find(value.rp) as BPlusTreeLeafEntryValue;
                 if (rpEntryValue) {
-                    let j = rpEntryValue.recordPointer[0];
+                    const j = rpEntryValue.recordPointer[0];
                     match = smallestSet === values ? value : otherSet[j];
-                    matchIndex = match === value ? i : j;                        
+                    matchIndex = match === value ? i : j;
                 }
 
                 if (match) {
                     const recordPointer = _parseRecordPointer(this.path, match.recordPointer);
                     const metadata = match.metadata;
-                    const entry = entries[valueEntryIndexes.findIndex((entryIndex, i, arr) => 
-                        i + 1 === arr.length || (entryIndex <= matchIndex && arr[i + 1] > matchIndex)
+                    const entry = entries[valueEntryIndexes.findIndex((entryIndex, i, arr) =>
+                        i + 1 === arr.length || (entryIndex <= matchIndex && arr[i + 1] > matchIndex),
                     )];
                     const result = new IndexQueryResult(recordPointer.key, recordPointer.path, entry.key, metadata);
                     // result.entry = entry;
@@ -951,13 +1030,18 @@ class DataIndex {
         results.stats = stats;
         return results;
     }
-    
-    /**
-     * @param {object} [options]
-     * @param {(tree: BPlusTreeBuilder, value: any, recordPointer: number[], metadata?: object, env: { path: string, wildcards: string[], key: string, locale: string }) => void} [options.addCallback] 
-     * @param {number[]} [options.valueTypes]
-     */
-    async build(options) {
+
+    async build(options: {
+        // addCallback?: (tree: BPlusTreeBuilder, value: any, recordPointer: IndexRecordPointer, metadata?: IndexMetaData, env?: { path: string, wildcards: string[], key: string, locale: string }) => void,
+        addCallback?: (
+            callback: (key: string, recordPointer: IndexRecordPointer, metadata: IndexMetaData) => void,
+            value: unknown, // unknown on purpose
+            recordPointer: IndexRecordPointer,
+            metadata?: IndexMetaData,
+            env?: { path: string, wildcards: string[], key: string, locale: string }
+        ) => void,
+        valueTypes?: number[]
+    }) {
         if ([DataIndex.STATE.BUILD, DataIndex.STATE.REBUILD].includes(this.state)) {
             throw new Error('Index is already being built');
         }
@@ -997,13 +1081,13 @@ class DataIndex {
         const createBuildFile = () => {
             return new Promise((resolve, reject) => {
                 const buildWriteStream = pfs.fs.createWriteStream(buildFile, { flags: pfs.flags.readAndAppendAndCreate });
-                const streamState = { wait: false, chunks: [] };
+                const streamState = { wait: false, chunks: [] as number[][] };
                 buildWriteStream.on('error', (err) => {
                     console.error(err);
                     reject(err);
                 });
                 buildWriteStream.on('open', async () => {
-                    await getAll('', 0)
+                    await getAll('', 0);
                     // if (indexedValues === 0) {
                     //     const err = new Error('No values found to index');
                     //     err.code = 'NO_DATA';
@@ -1025,11 +1109,11 @@ class DataIndex {
                     else {
                         buildWriteStream.end(resolve);
                     }
-                });                
+                });
                 buildWriteStream.on('drain', () => {
                     // Write queued chunks
-                    let totalBytes = streamState.chunks.reduce((total, bytes) => total + bytes.length, 0);
-                    let buffer = new Uint8Array(totalBytes);
+                    const totalBytes = streamState.chunks.reduce((total, bytes) => total + bytes.length, 0);
+                    const buffer = new Uint8Array(totalBytes);
                     let offset = 0;
                     streamState.chunks.forEach(bytes => {
                         buffer.set(bytes, offset);
@@ -1041,7 +1125,7 @@ class DataIndex {
                         console.assert(!err, `Failed to write to stream: ${err && err.message}`);
                     });
                 });
-                const writeToStream = bytes => {
+                const writeToStream = (bytes: number[]) => {
                     if (streamState.wait) {
                         streamState.chunks.push(bytes);
                         console.assert(streamState.chunks.length < 100000, 'Something going wrong here');
@@ -1051,11 +1135,11 @@ class DataIndex {
                             console.assert(!err, `Failed to write to stream: ${err && err.message}`);
                         });
                     }
-                }
-                const isWildcardKey = key => key === '*' || key.startsWith('$');
-                const getAll = async (currentPath, keyIndex) => {
-                    // "users/*/posts" 
-                    // --> Get all children of "users", 
+                };
+                const isWildcardKey = (key: string | number) => typeof key === 'string' && (key === '*' || key.startsWith('$'));
+                const getAll = async (currentPath: string, keyIndex: number) => {
+                    // "users/*/posts"
+                    // --> Get all children of "users",
                     // --> get their "posts" children,
                     // --> get their children to index
 
@@ -1065,30 +1149,30 @@ class DataIndex {
                         keyIndex++;
                     }
                     const isTargetNode = keyIndex === keys.length;
-                    
+
                     const getChildren = async () => {
-                        let children = [];
+                        const children = [] as Array<string | number>;
 
                         await this.storage.getChildren(path)
-                        .next(child => {
-                            let keyOrIndex = typeof child.index === 'number' ? child.index : child.key;
-                            if (!child.address || child.type !== Node.VALUE_TYPES.OBJECT) { //if (child.storageType !== "record" || child.valueType !== VALUE_TYPES.OBJECT) {
-                                return; // This child cannot be indexed because it is not an object with properties
-                            }
-                            else {
-                                children.push(keyOrIndex);
-                            }
-                        })
-                        .catch(reason => {
+                            .next(child => {
+                                const keyOrIndex = typeof child.index === 'number' ? child.index : child.key;
+                                if (!child.address || child.type !== Node.VALUE_TYPES.OBJECT) { //if (child.storageType !== "record" || child.valueType !== VALUE_TYPES.OBJECT) {
+                                    return; // This child cannot be indexed because it is not an object with properties
+                                }
+                                else {
+                                    children.push(keyOrIndex);
+                                }
+                            })
+                            .catch(reason => {
                             // Record doesn't exist? No biggy
-                            this.storage.debug.warn(`Could not get children of "/${path}": ${reason.message}`);
-                        })
+                                this.storage.debug.warn(`Could not get children of "/${path}": ${reason.message}`);
+                            });
 
                         // Iterate through the children in batches of max n nodes
                         // should be determined by amount of * wildcards in index path
                         // If there are 0 wildcards, batch size of 500 is ok
-                        // if there is 1 wildcard, use batch size 22 (sqrt of 500, 500^0.5), 
-                        // 2 wildcards: batch size 5 (2v500 or 500^0.25), 
+                        // if there is 1 wildcard, use batch size 22 (sqrt of 500, 500^0.5),
+                        // 2 wildcards: batch size 5 (2v500 or 500^0.25),
                         // 3 wildcards: batch size 2 (3v500 or 500^00.125)
                         // Algebra refresh:
                         // a = Math.pow(b, c)
@@ -1097,10 +1181,10 @@ class DataIndex {
                         // a is our max batch size, we'll use 500
                         // c is our depth (nrOfWildcards) so we know this
                         // b is our unknown start number
-                        const maxBatchSize = Math.round(Math.pow(500, Math.pow(0.5, wildcardNames.length))); 
-                        let batches = [];
+                        const maxBatchSize = Math.round(Math.pow(500, Math.pow(0.5, wildcardNames.length)));
+                        const batches = [];
                         while (children.length > 0) {
-                            let batchChildren = children.splice(0, maxBatchSize);
+                            const batchChildren = children.splice(0, maxBatchSize);
                             batches.push(batchChildren);
                         }
 
@@ -1121,11 +1205,11 @@ class DataIndex {
                                     let keyValue = null; // initialize to null so we can check if it had a valid indexable value
                                     const metadata = (() => {
                                         // create properties for each included key, if they are not set by the loop they will still be in the metadata (which is required for B+Tree metadata)
-                                        const obj = {};
+                                        const obj = {} as IndexMetaData;
                                         this.includeKeys.forEach(key => obj[key] = undefined);
                                         return obj;
                                     })();
-                                    const addValue = (key, value) => {
+                                    const addValue = (key: string, value: IndexableValue) => {
                                         // if (typeof value === 'string' && value.length > 255) {
                                         //     value = value.slice(0, 255);
                                         // }
@@ -1136,10 +1220,10 @@ class DataIndex {
                                         else { metadata[key] = value; }
                                     };
                                     const gotNamedWildcardKeys = ['{key}'].concat(wildcardNames).filter(key => key !== '*');
-                                    
+
                                     neededKeys.filter(key => gotNamedWildcardKeys.includes(key)).forEach(key => {
-                                        if (key === '{key}') { 
-                                            keyValue = childKey; 
+                                        if (key === '{key}') {
+                                            keyValue = childKey;
                                         }
                                         else {
                                             const index = wildcardNames.indexOf(key);
@@ -1153,13 +1237,13 @@ class DataIndex {
                                     if (!gotAllData) {
                                         // Fetch node value, we need more data
                                         // Get child values
-                                        const keyPromises = [];
+                                        const keyPromises = [] as Promise<any>[];
                                         const seenKeys = gotNamedWildcardKeys.slice();
 
                                         // NEW: Use getNode to get data, enables indexing of subkeys
                                         const { value: obj } = await this.storage.getNode(childPath, { include: keyFilter, tid });
                                         keyFilter.forEach(key => {
-                                            // What can be indexed? 
+                                            // What can be indexed?
                                             // strings, numbers, booleans, dates, undefined
                                             const val = PathInfo.getPathKeys(key).reduce((val, key) => typeof val === 'object' && key in val ? val[key] : undefined, obj);
                                             if (typeof val === 'undefined') {
@@ -1186,7 +1270,7 @@ class DataIndex {
                                         await Promise.all(keyPromises);
                                     }
 
-                                    const addIndexValue = (key, recordPointer, metadata) => {
+                                    const addIndexValue = (key: string, recordPointer: IndexRecordPointer, metadata: IndexMetaData) => {
 
                                         if (typeof key === 'string' && key.length > 255) {
                                             // Make sure strings are not too large to store. Use first 255 chars only
@@ -1197,13 +1281,13 @@ class DataIndex {
                                         // NEW: write value to buildStream
                                         const bytes = [
                                             0, 0, 0, 0, // entry_length
-                                            0 // processed
+                                            0, // processed
                                         ];
 
                                         // key:
-                                        let keyBytes = BinaryWriter.getBytes(key);
+                                        const keyBytes = BinaryWriter.getBytes(key);
                                         bytes.push(...keyBytes);
-                
+
                                         // rp_length:
                                         bytes.push(recordPointer.length);
 
@@ -1229,9 +1313,9 @@ class DataIndex {
 
                                         writeToStream(bytes);
                                         indexedValues++;
-                                    }
+                                    };
 
-                                    if (keyValue !== null) { // typeof keyValue !== 'undefined' && 
+                                    if (keyValue !== null) { // typeof keyValue !== 'undefined' &&
                                         // Add it to the index, using value as the index key, a record pointer as the value
                                         // Create record pointer
                                         const recordPointer = _createRecordPointer(wildcardValues, childKey); //, child.address);
@@ -1251,42 +1335,43 @@ class DataIndex {
                         }
                     };
 
-                    return getChildren();            
-                };              
+                    return getChildren();
+                };
             });
         };
 
         const mergeFile = `${buildFile}.merge`;
         const createMergeFile = async () => {
             // start by grouping the keys:
-            // take the first n keys in the .build file, read through the entire file 
-            // to find other occurences of the same key. 
+            // take the first n keys in the .build file, read through the entire file
+            // to find other occurences of the same key.
             // Group them and write to .build.n files in batches of 10.000 keys
 
             if (indexedValues === 0) {
                 // Remove build file, nothing else to do
-                return await pfs.rm(buildFile).catch(err => {}); 
+                // eslint-disable-next-line @typescript-eslint/no-empty-function
+                return await pfs.rm(buildFile).catch(err => {});
             }
 
             try {
                 const exists = await pfs.exists(mergeFile);
-                if (exists) { 
+                if (exists) {
                     const err = new Error('File already exists');
-                    err.code = 'EEXIST';
+                    (err as FileSystemError).code = 'EEXIST';
                     throw err;
                 }
 
                 const fd = await pfs.open(buildFile, pfs.flags.readAndWrite);
-                let writer = BinaryWriter.forFunction((data, position) => {
-                    let buffer = data instanceof Buffer ? data : Buffer.from(data);
-                    return pfs.write(fd, buffer, 0, buffer.byteLength, position);
+                const writer = BinaryWriter.forFunction(async (data, position) => {
+                    const buffer = data instanceof Buffer ? data : Buffer.from(data);
+                    await pfs.write(fd, buffer, 0, buffer.byteLength, position);
                 });
-                let reader = new BinaryReader(fd, 512 * 1024); // Read 512KB chunks
+                const reader = new BinaryReader(fd, 512 * 1024); // Read 512KB chunks
                 await reader.init();
-                
+
                 // const maxKeys = 10000; // Work with max 10.000 in-memory keys at a time
-                const maxValues = 100000; // Max 100K in-memory values    
-    
+                const maxValues = 100000; // Max 100K in-memory values
+
                 const readNext = async () => {
                     // Read next from file
                     try {
@@ -1302,39 +1387,39 @@ class DataIndex {
                                 throw new Error(`Invalid entry length ${entryLength} at build file index ${entryIndex}`);
                             }
                             buffer = await reader.get(entryLength - 4);
-                            
+
                             // processed:
                             processed = buffer[0] === 1;
                         }
-    
+
                         // key:
                         let index = 1;
-                        let keyValue = BinaryReader.readValue(buffer, index);
+                        const keyValue = BinaryReader.readValue(buffer, index);
                         index += keyValue.byteLength;
-    
+
                         // value: (combine rp_length, rp_data, metadata)
                         const len = buffer.byteLength - index;
-                        let val = buffer.slice(index, index + len); // Buffer.from(buffer.buffer, index, len);
+                        const val = buffer.slice(index, index + len); // Buffer.from(buffer.buffer, index, len);
                         // console.log(`Read "${keyValue.value}" @${entryIndex} with value length ${len}`);
                         return {
                             key: keyValue.value,
                             value: val,
                             index: entryIndex,
                             length: buffer.byteLength + 4,
-                            flagProcessed() { 
+                            flagProcessed() {
                                 buffer[0] = 1;
                                 buffer = null;
                                 return writer.write([1], this.index + 4); // flag file
-                            }
-                            // flagProcessed() { 
-    
+                            },
+                            // flagProcessed() {
+
                             //     // __DEV_CHECK_UNIQUE(this.index);
-    
+
                             //     buffer[0] = 1; // make sure the in-memory cache is also flagged
                             //     buffer = null; // release memory if not referenced anywhere else
                             //     return writer.write([1], this.index + 4); // flag file
                             // }
-                        }
+                        };
                     }
                     catch (err) {
                         if (err.code === 'EOF') { return null; }
@@ -1364,9 +1449,9 @@ class DataIndex {
                 let more = true;
                 while (more) {
                     batchNr++;
-                    let map = new Map();
+                    const map = new Map();
                     let processedValues = 0;
-    
+
                     if (batchStartEntry !== null) {
                         // Skip already processed entries
                         await reader.go(batchStartEntry.index);
@@ -1378,7 +1463,7 @@ class DataIndex {
 
                         processedValues++;
                         const isDate = next.key instanceof Date;
-                        const key = isDate ? next.key.getTime() : next.key;
+                        const key = isDate ? (next.key as Date).getTime() : next.key;
                         let values = map.get(key);
                         if (values) {
                             values.push(next.value);
@@ -1404,20 +1489,20 @@ class DataIndex {
                     }
 
                     // sort the map keys
-                    let sortedKeys = quickSort([...map.keys()], (a, b) => {
+                    const sortedKeys = quickSort([...map.keys()], (a, b) => {
                         if (BPlusTree.typeSafeComparison.isLess(a, b)) { return -1; }
                         if (BPlusTree.typeSafeComparison.isMore(a, b)) { return 1; }
                         return 0;
                     });
 
                     // write batch
-                    let batchStream = pfs.fs.createWriteStream(`${buildFile}.${batchNr}`, { flags: pfs.flags.appendAndCreate });
+                    const batchStream = pfs.fs.createWriteStream(`${buildFile}.${batchNr}`, { flags: pfs.flags.appendAndCreate });
                     for (const key of sortedKeys) {
                         const values = map.get(key);
                         const isDateKey = values.dateKey === true;
-                        
-                        let bytes = [
-                            0, 0, 0, 0 // entry_length
+
+                        const bytes = [
+                            0, 0, 0, 0, // entry_length
                         ];
 
                         // key:
@@ -1433,7 +1518,7 @@ class DataIndex {
                         bytes.push(...b);
 
                         for (let j = 0; j < values.length; j++) {
-                            let value = values[j];
+                            const value = values[j];
                             // value_length:
                             b = BinaryWriter.writeUint32(value.length, [0, 0, 0, 0], 0);
                             bytes.push(...b);
@@ -1441,7 +1526,7 @@ class DataIndex {
                             // value:
                             bytes.push(...value);
                         }
-                        
+
                         // // update values_byte_length:
                         // const valuesByteLength = bytes.length - valuesByteLengthIndex
                         // BinaryWriter.writeUint32(valuesByteLength, bytes, valuesByteLengthIndex);
@@ -1449,7 +1534,7 @@ class DataIndex {
                         // Update entry_length:
                         BinaryWriter.writeUint32(bytes.length, bytes, 0);
 
-                        let ok = batchStream.write(Uint8Array.from(bytes));
+                        const ok = batchStream.write(Uint8Array.from(bytes));
                         if (!ok) {
                             await new Promise(resolve => {
                                 batchStream.once('drain', resolve);
@@ -1461,11 +1546,11 @@ class DataIndex {
                         batchStream.end(resolve);
                     });
                 }
-    
+
                 await pfs.close(fd);        // Close build file
                 await pfs.rm(buildFile);    // Remove build file
 
-                // Now merge-sort all keys, by reading keys from each batch, 
+                // Now merge-sort all keys, by reading keys from each batch,
                 // taking the smallest value from each batch a time
                 const batches = batchNr;
 
@@ -1479,20 +1564,20 @@ class DataIndex {
                 // const outputStream = BinaryWriter.forFunction((data, position) => {
                 //     return pfs.write(fd, data, 0, data.byteLength, position);
                 // });
-                
+
                 // open readers for each batch file
-                const readers = [];
+                const readers = [] as BinaryReader[];
                 const bufferChunkSize = Math.max(10240, Math.round((10 * 1024 * 1024) / batches)); // 10MB dedicated memory to divide between readers, with a minimum of 10KB per reader
                 for (let i = 0; i < batches; i++) {
-                    let reader = new BinaryReader(`${buildFile}.${i+1}`, bufferChunkSize);
+                    const reader = new BinaryReader(`${buildFile}.${i+1}`, bufferChunkSize);
                     readers.push(reader);
                 }
                 await Promise.all(readers.map(reader => reader.init()));
 
                 // load entries from each batch file
-                let sortedEntryIndexes = [];
+                let sortedEntryIndexes = [] as { key: IndexableValue; index: number }[];
                 const entriesPerBatch = new Array(batches);
-                const loadEntry = async (batchIndex) => {
+                const loadEntry = async (batchIndex: number): Promise<void> => {
                     const reader = readers[batchIndex];
 
                     try {
@@ -1535,15 +1620,15 @@ class DataIndex {
                             // const newSortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => BPlusTree.typeSafeComparison.isMore(sortEntry.key, entry.key));
                             let newSortEntryIndex = oldSortEntryIndex; // The newly read value >= previous value, because they are stored sorted in the batch file
                             while(
-                                newSortEntryIndex < sortedEntryIndexes.length 
-                                && BPlusTree.typeSafeComparison.isMore(entry.key, sortedEntryIndexes[newSortEntryIndex].key)) 
+                                newSortEntryIndex < sortedEntryIndexes.length
+                                && BPlusTree.typeSafeComparison.isMore(entry.key, sortedEntryIndexes[newSortEntryIndex].key))
                             {
                                 newSortEntryIndex++;
                             }
                             const newSortEntry = { index: batchIndex, key: entry.key };
                             sortedEntryIndexes.splice(newSortEntryIndex, 0, newSortEntry);
                         }
-                        return entry;
+                        // return entry;
                     }
                     catch (err) {
                         if (err.code === 'EOF') {
@@ -1566,11 +1651,11 @@ class DataIndex {
 
                 // Populate sortedEntryIndexes
                 sortedEntryIndexes = entriesPerBatch.map((entry, index) => ({ index, key: entry.key }))
-                .sort((a, b) => {
-                    if (BPlusTree.typeSafeComparison.isLess(a.key, b.key)) { return -1; }
-                    if (BPlusTree.typeSafeComparison.isMore(a.key, b.key)) { return 1; }
-                    return 0; // happens when a key had too many values (and were split into multiple batches)
-                });                
+                    .sort((a, b) => {
+                        if (BPlusTree.typeSafeComparison.isLess(a.key, b.key)) { return -1; }
+                        if (BPlusTree.typeSafeComparison.isMore(a.key, b.key)) { return 1; }
+                        return 0; // happens when a key had too many values (and were split into multiple batches)
+                    });
 
                 // write all entries
                 while (sortedEntryIndexes.length > 0) {
@@ -1581,7 +1666,7 @@ class DataIndex {
                     const smallestEntry = entriesPerBatch[batchIndex];
 
                     const bytes = [
-                        0, 0, 0, 0 // entry_length
+                        0, 0, 0, 0, // entry_length
                     ];
                     // key:
                     const keyBytes = BinaryWriter.getBytes(smallestEntry.key);
@@ -1606,18 +1691,18 @@ class DataIndex {
                     // .then(writeSmallestEntry);
 
                     const ok = outputStream.write(buffer, err => {
-                        console.assert(!err, 'Error while writing?')
+                        console.assert(!err, 'Error while writing?');
                     });
                     if (!ok) {
                         await new Promise(resolve => {
                             outputStream.once('drain', resolve);
-                        });                        
+                        });
                     }
 
                     // load next entry from the batch we used
                     await loadEntry(batchIndex);
                 }
-                
+
                 // Wait until output stream is done writing
                 await new Promise(resolve => {
                     outputStream.end(resolve);
@@ -1628,166 +1713,155 @@ class DataIndex {
                 await Promise.all(crPromises);
 
                 // Delete all batch files
-                const dbfPromises = [];    
+                const dbfPromises = [];
                 for(let i = 1; i <= batches; i++) {
                     dbfPromises.push(pfs.rm(`${buildFile}.${i}`));
                 }
                 await Promise.all(dbfPromises);
             }
-            catch (err) {
+            catch (err: unknown) {
                 // EEXIST error is ok because that means the .merge file was already built
-                if (err.code !== 'EEXIST') {
+                if ((err as FileSystemError)?.code !== 'EEXIST') {
                     throw err;
                 }
             }
         };
 
         const startTime = Date.now();
-        let lock;
-        return this._lock('exclusive', 24 * 60 * 60 * 1000) // Allow 24hrs to build the index max
-        .then(l => {
-            lock = l;
-            return createBuildFile();
-        })
-        .catch(err => {
-            // If the .build file already existed, use it!
-            if (err.code !== 'EEXIST') { throw err; }
-        })
-        .then(() => {
-            // Done writing values to build file. 
+        const lock = await this._lock('exclusive', 24 * 60 * 60 * 1000); // Allow 24hrs to build the index max
+        try {
+            try {
+                await createBuildFile();
+            }
+            catch(err: unknown) {
+                // If the .build file already existed, use it!
+                if ((err as FileSystemError).code !== 'EEXIST') { throw err; }
+            }
+            // Done writing values to build file.
             // Now we have to group all values per key, sort them.
             // then create the binary B+tree.
             this.storage.debug.log(`done writing build file ${buildFile}`);
-            return createMergeFile();
-        })
-        .then(() => {
+            await createMergeFile();
+
             // Open merge file for reading, index file for writing
             this.storage.debug.log(`done writing merge file ${mergeFile}`);
-            return Promise.all([
+            const [ readFD, writeFD ] = await Promise.all([
                 indexedValues === 0 ? -1 : pfs.open(mergeFile, pfs.flags.read),
-                pfs.open(this.fileName, pfs.flags.write)
+                pfs.open(this.fileName, pfs.flags.write),
             ]);
-        })
-        .then(([ readFD, writeFD ]) => {
+
             // create index from entry stream
-            const treeStatistics = {};
-            const headerStats = { 
-                written: false, 
-                updateTreeLength: () => { 
-                    throw new Error('header hasn\'t been written yet'); 
-                },
-                length: DISK_BLOCK_SIZE
+            const treeStatistics = {
+                totalEntries: 0,
+                totalValues: 0,
             };
-            const writer = BinaryWriter.forFunction((data, index) => {
-                let go = () => {
-                    return pfs.write(writeFD, data, 0, data.length, headerStats.length + index);
-                };
+            const headerStats = {
+                written: false,
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                updateTreeLength: (treeByteLength: number): Promise<unknown> => {
+                    throw new Error('header hasn\'t been written yet');
+                },
+                length: DISK_BLOCK_SIZE,
+                promise: undefined as Promise<void>,
+            };
+            const writer = BinaryWriter.forFunction(async (data, index) => {
                 if (!headerStats.written) {
                     // Write header first, or wait until done
-                    let promise = 
-                        headerStats.promise
-                        || this._writeIndexHeader(writeFD, treeStatistics)
-                        .then(result => {
+                    if (!headerStats.promise) {
+                        headerStats.promise = this._writeIndexHeader(writeFD, treeStatistics).then(async (result) => {
                             headerStats.written = true;
                             headerStats.length = result.length;
                             headerStats.updateTreeLength = result.treeLengthCallback;
                             if (this.state === DataIndex.STATE.REBUILD) {
-                                return pfs.truncate(this.fileName, headerStats.length);
+                                await pfs.truncate(this.fileName, headerStats.length);
                             }
                         });
-                    headerStats.promise = promise.then(go); // Chain to original promise
-                    return headerStats.promise;
+                    }
+                    await headerStats.promise;
                 }
-                else {
-                    return go();
-                }
+                await pfs.write(writeFD, data, 0, data.length, headerStats.length + index);
             });
 
-
-            const reader = indexedValues > 0 
+            const reader = indexedValues > 0
                 ? new BinaryReader(readFD)
                 : new BinaryReader(async (index, length) => Buffer.from([]));
-            return BinaryBPlusTree.createFromEntryStream(
-                reader, 
-                writer, 
-                { 
-                    treeStatistics, 
-                    fillFactor: FILL_FACTOR, //50, 
-                    maxEntriesPerNode: 255, 
-                    isUnique: false, 
-                    keepFreeSpace: true, 
-                    metadataKeys: this.allMetadataKeys
-                }
-            )
-            .then(() => {
-                return Promise.all([
-                    pfs.fsync(writeFD).then(() => pfs.close(writeFD)),
-                    indexedValues > 0 && pfs.close(readFD)
-                ]);
-            });
-        })
-        .then(() => {
-            return indexedValues > 0 ? pfs.rm(mergeFile) : true;
-        })
-        .then(() => {
+            await BinaryBPlusTree.createFromEntryStream(
+                reader,
+                writer,
+                {
+                    treeStatistics,
+                    fillFactor: FILL_FACTOR, //50,
+                    maxEntriesPerNode: 255,
+                    isUnique: false,
+                    keepFreeSpace: true,
+                    metadataKeys: this.allMetadataKeys,
+                },
+            );
+
+            await Promise.all([
+                pfs.fsync(writeFD).then(() => pfs.close(writeFD)),
+                indexedValues > 0 && pfs.close(readFD),
+            ]);
+
+            if (indexedValues > 0) {
+                await pfs.rm(mergeFile);
+            }
+
             const doneTime = Date.now();
             const duration = Math.round((doneTime - startTime) / 1000 / 60);
             this.storage.debug.log(`Index ${this.description} was built successfully, took ${duration} minutes`.colorize(ColorStyle.green));
             this.state = DataIndex.STATE.READY;
-            lock.release(); // release index lock
-            this._processUpdateQueue(); // Process updates queued during build
-            return this;
-        })
-        .catch(err => {
-            this.storage.debug.error(`Error building index ${this.description}: ${err.message}`);
+        }
+        catch(err: unknown) {
+            this.storage.debug.error(`Error building index ${this.description}: ${(err as Error)?.message || err}`);
             this.state = DataIndex.STATE.ERROR;
-            this._buildError = err;
-            lock.release(); // release index lock
+            this._buildError = err as Error;
             throw err;
-        });
+        }
+        finally {
+            lock.release(); // release index lock
+        }
+        this._processUpdateQueue(); // Process updates queued during build
+        return this;
     }
 
-    // eslint-disable-next-line no-unused-vars
-    test(obj, op, val) { throw new Error('test method must be overridden by subclass'); }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    test(obj: unknown, op: string, val: unknown) { throw new Error('test method must be overridden by subclass'); }
 
-    /**
-     * 
-     * @param {number} fd
-     * @param {{ totalEntries: number, totalValues: number }} treeStatistics
-     */
-    async _writeIndexHeader(fd, treeStatistics) {
+    private _getIndexHeaderBytes(treeStatistics: { totalEntries: number, totalValues: number }) {
         const indexEntries = treeStatistics.totalEntries;
         const indexedValues = treeStatistics.totalValues;
 
-        const addNameBytes = (bytes, name) => {
+        const addNameBytes = (bytes: number[], name: string) => {
             // name_length:
             bytes.push(name.length);
             // name_data:
             for(let i = 0; i < name.length; i++) {
                 bytes.push(name.charCodeAt(i));
             }
-        }
-        const addValueBytes = (bytes, value) => {
+        };
+
+        const addValueBytes = (bytes: number[], value: IndexInfoValue) => {
             let valBytes = [];
             if (typeof value === 'undefined') {
                 // value_type:
-                bytes.push(0);
+                bytes.push(INDEX_INFO_VALUE_TYPE.UNDEFINED);
                 // no value_length or value_data
                 return;
             }
             else if (typeof value === 'string') {
                 // value_type:
-                bytes.push(1);
+                bytes.push(INDEX_INFO_VALUE_TYPE.STRING);
                 valBytes = Array.from(encodeString(value)); // textEncoder.encode(value)
             }
             else if (typeof value === 'number') {
                 // value_type:
-                bytes.push(2);
+                bytes.push(INDEX_INFO_VALUE_TYPE.NUMBER);
                 valBytes = numberToBytes(value);
             }
             else if (typeof value === 'boolean') {
                 // value_type:
-                bytes.push(3);
+                bytes.push(INDEX_INFO_VALUE_TYPE.BOOLEAN);
                 // no value_length
                 // value_data:
                 bytes.push(value ? 1 : 0);
@@ -1796,10 +1870,10 @@ class DataIndex {
             }
             else if (value instanceof Array) {
                 // value_type:
-                bytes.push(4);
+                bytes.push(INDEX_INFO_VALUE_TYPE.ARRAY);
                 // value_length:
                 if (value.length > 0xffff) {
-                    throw new Error('Array is too large to store. Max length is 0xffff')
+                    throw new Error('Array is too large to store. Max length is 0xffff');
                 }
                 bytes.push((value.length >> 8) & 0xff);
                 bytes.push(value.length & 0xff);
@@ -1818,8 +1892,9 @@ class DataIndex {
             bytes.push(valBytes.length & 0xff);
             // value_data:
             bytes.push(...valBytes);
-        }
-        const addInfoBytes = (bytes, obj) => {
+        };
+
+        const addInfoBytes = (bytes: number[], obj: Record<string, IndexInfoValue>) => {
             const keys = Object.keys(obj);
             // info_count:
             bytes.push(keys.length);
@@ -1827,29 +1902,18 @@ class DataIndex {
             keys.forEach(key => {
                 addNameBytes(bytes, key); // name
 
-                const value = obj[key];
-                // if (value instanceof Array) {
-                //     bytes.push(1); // is_array
-                //     bytes.push(value.length); // values_count
-                //     value.forEach(val => {
-                //         addValueBytes(bytes, val); // value
-                //     });
-                // }
-                // else {
-                //     bytes.push(0); // is_array
-                //     addValueBytes(bytes, value); // value
-                // }
+                const value = (obj as any)[key];
                 addValueBytes(bytes, value);
             });
         };
 
         const header = [
             // signature:
-            65, 67, 69, 66, 65, 83, 69, 73, 68, 88, // 'ACEBASE'
+            65, 67, 69, 66, 65, 83, 69, 73, 68, 88, // 'ACEBASEIDX'
             // layout_version:
             1,
             // header_length:
-            0, 0, 0, 0
+            0, 0, 0, 0,
         ];
         // info:
         const indexInfo = {
@@ -1868,10 +1932,10 @@ class DataIndex {
         header.push(1); // trees_count
         const treeName = 'default';
         const treeDetails = this.trees[treeName];
-        
+
         // tree_info:
         addNameBytes(header, treeName); // tree_name
-        
+
         const treeRefIndex = header.length;
         header.push(0, 0, 0, 0); // file_index
         header.push(0, 0, 0, 0); // byte_length
@@ -1879,10 +1943,10 @@ class DataIndex {
         treeDetails.entries = indexEntries;
         treeDetails.values = indexedValues;
         const extraTreeInfo = {
-            class: treeDetails.class, // 'BPlusTree',
+            class: treeDetails.class as 'BPlusTree', // 'BPlusTree',
             version: treeDetails.version, // TODO: implement tree.version
             entries: indexEntries,
-            values: indexedValues
+            values: indexedValues,
         };
         addInfoBytes(header, extraTreeInfo);
 
@@ -1901,7 +1965,7 @@ class DataIndex {
         header[11] = (headerLength >> 24) & 0xff;
         header[12] = (headerLength >> 16) & 0xff;
         header[13] = (headerLength >> 8) & 0xff;
-        header[14] = headerLength & 0xff;       
+        header[14] = headerLength & 0xff;
 
         // Update default tree file_index:
         header[treeRefIndex] = (headerLength >> 24) & 0xff;
@@ -1917,32 +1981,33 @@ class DataIndex {
 
         // anything else?
 
+        return { header, headerLength, treeRefIndex, treeDetails };
+    }
+
+    private async _writeIndexHeader(fd: number, treeStatistics: { totalEntries: number, totalValues: number }) {
+        const { header, headerLength, treeRefIndex } = this._getIndexHeaderBytes(treeStatistics);
         await pfs.write(fd, Buffer.from(header));
         return {
             length: headerLength,
-            treeLengthCallback: async (treeByteLength) => {
+            treeLengthCallback: async (treeByteLength: number) => {
                 const bytes = [
                     (treeByteLength >> 24) & 0xff,
                     (treeByteLength >> 16) & 0xff,
                     (treeByteLength >> 8) & 0xff,
-                    treeByteLength & 0xff
+                    treeByteLength & 0xff,
                 ];
                 // treeDetails.byteLength = treeByteLength;
-                return pfs.write(fd, Buffer.from(bytes), 0, bytes.length, treeRefIndex+4);
-            }
+                await pfs.write(fd, Buffer.from(bytes), 0, bytes.length, treeRefIndex + 4);
+            },
         };
     }
 
-    /**
-     * 
-     * @param {BPlusTreeBuilder} builder 
-     */
-    async _writeIndex(builder) {
+    async _writeIndex(builder: BPlusTreeBuilder) {
         // Index v1 layout:
         // data             = header, trees_data
         // header           = signature, layout_version, header_length, index_info, trees_info
         // signature        = 10 bytes ('ACEBASEIDX')
-        // layout_version   = 1 byte number (binary layout version)            
+        // layout_version   = 1 byte number (binary layout version)
         // header_length    = byte_length
         // byte_length      = 4 byte uint
         // index_info       = info_count, info, [info, [info...]]
@@ -1974,179 +2039,22 @@ class DataIndex {
         // trees_data       = tree_data, [tree_data, [tree_date...]]
         // tree_data        = [byte_length] bytes of data (from tree_info header)
 
-        const indexEntries = builder.list.size;
-        const indexedValues = builder.indexedValues;
+        const totalEntries = builder.list.size;
+        const totalValues = builder.indexedValues;
         // const tree = builder.create();
         // const binary = new Uint8Array(tree.toBinary(true));
-        
+
         const fd = await pfs.open(this.fileName, pfs.flags.write);
-        const addNameBytes = (bytes, name) => {
-            // name_length:
-            bytes.push(name.length);
-            // name_data:
-            for(let i = 0; i < name.length; i++) {
-                bytes.push(name.charCodeAt(i));
-            }
-        }
-        const addValueBytes = (bytes, value) => {
-            let valBytes = [];
-            if (typeof value === 'undefined') {
-                // value_type:
-                bytes.push(0);
-                // no value_length or value_data
-                return;
-            }
-            else if (typeof value === 'string') {
-                // value_type:
-                bytes.push(1);
-                valBytes = Array.from(encodeString(value)); // textEncoder.encode(value)
-            }
-            else if (typeof value === 'number') {
-                // value_type:
-                bytes.push(2);
-                valBytes = numberToBytes(value);
-            }
-            else if (typeof value === 'boolean') {
-                // value_type:
-                bytes.push(3);
-                // no value_length
-                // value_data:
-                bytes.push(value ? 1 : 0);
-                // done
-                return;
-            }
-            else if (value instanceof Array) {
-                // value_type:
-                bytes.push(4);
-                // value_length:
-                if (value.length > 0xffff) {
-                    throw new Error('Array is too large to store. Max length is 0xffff')
-                }
-                bytes.push((value.length >> 8) & 0xff);
-                bytes.push(value.length & 0xff);
-                // value_data:
-                value.forEach(val => {
-                    addValueBytes(bytes, val);
-                });
-                // done
-                return;
-            }
-            else {
-                throw new Error(`Invalid value type "${typeof value}"`);
-            }
-            // value_length:
-            bytes.push((valBytes.length >> 8) & 0xff);
-            bytes.push(valBytes.length & 0xff);
-            // value_data:
-            bytes.push(...valBytes);
-        }
-        const addInfoBytes = (bytes, obj) => {
-            const keys = Object.keys(obj);
-            // info_count:
-            bytes.push(keys.length);
-            // info, [info, [info...]]
-            keys.forEach(key => {
-                addNameBytes(bytes, key); // name
-
-                const value = obj[key];
-                // if (value instanceof Array) {
-                //     bytes.push(1); // is_array
-                //     bytes.push(value.length); // values_count
-                //     value.forEach(val => {
-                //         addValueBytes(bytes, val); // value
-                //     });
-                // }
-                // else {
-                //     bytes.push(0); // is_array
-                //     addValueBytes(bytes, value); // value
-                // }
-                addValueBytes(bytes, value);
-            });
-        };
-
-        const header = [
-            // signature:
-            65, 67, 69, 66, 65, 83, 69, 73, 68, 88, // 'ACEBASEIDX'
-            // layout_version:
-            1,
-            // header_length:
-            0, 0, 0, 0
-        ];
-        // info:
-        const indexInfo = {
-            type: this.type,
-            version: 1, // TODO: implement this.versionNr
-            path: this.path,
-            key: this.key,
-            include: this.includeKeys,
-            cs: this.caseSensitive,
-            locale: this.textLocale,
-        };
-        addInfoBytes(header, indexInfo);
-
-        // const treeNames = Object.keys(this.trees);
-        // trees_info:
-        header.push(1); // trees_count
-        const treeName = 'default';
-        const treeDetails = this.trees[treeName];
-        
-        // tree_info:
-        addNameBytes(header, treeName); // tree_name
-        
-        const treeRefIndex = header.length;
-        header.push(0, 0, 0, 0); // file_index
-        header.push(0, 0, 0, 0); // byte_length
-
-        treeDetails.entries = indexEntries;
-        treeDetails.values = indexedValues;
-        const extraTreeInfo = {
-            class: treeDetails.class, // 'BPlusTree',
-            version: treeDetails.version, // TODO: implement tree.version
-            entries: indexEntries,
-            values: indexedValues
-        };
-        addInfoBytes(header, extraTreeInfo);
-
-        // align header bytes to block size
-        while (header.length % DISK_BLOCK_SIZE !== 0) {
-            header.push(0);
-        }
-
-        // end of header
-
-        const headerLength = header.length;
-        treeDetails.fileIndex = headerLength;
-        // treeDetails.byteLength = binary.length;
-
-        // Update header_length:
-        header[11] = (headerLength >> 24) & 0xff;
-        header[12] = (headerLength >> 16) & 0xff;
-        header[13] = (headerLength >> 8) & 0xff;
-        header[14] = headerLength & 0xff;       
-
-        // Update default tree file_index:
-        header[treeRefIndex] = (headerLength >> 24) & 0xff;
-        header[treeRefIndex+1] = (headerLength >> 16) & 0xff;
-        header[treeRefIndex+2] = (headerLength >> 8) & 0xff;
-        header[treeRefIndex+3] = headerLength & 0xff;
-
-        // // Update default tree byte_length:
-        // header[treeRefIndex+4] = (binary.byteLength >> 24) & 0xff;
-        // header[treeRefIndex+5] = (binary.byteLength >> 16) & 0xff;
-        // header[treeRefIndex+6] = (binary.byteLength >> 8) & 0xff;
-        // header[treeRefIndex+7] = binary.byteLength & 0xff;
-
-        // anything else?
+        const { header, headerLength, treeRefIndex, treeDetails } = this._getIndexHeaderBytes({ totalEntries, totalValues });
 
         try {
             await pfs.write(fd, Buffer.from(header));
             // append binary tree data
             const tree = builder.create();
             const stream = pfs.fs.createWriteStream(null, { fd, autoClose: false });
-            const references = [];
-            const writer = new BinaryWriter(stream, (data, position) => {
+            const references = [] as Array<{ data: Uint8Array; position: number }>;
+            const writer = new BinaryWriter(stream, async (data, position) => {
                 references.push({ data, position });
-                return Promise.resolve();
                 // return pfs.write(fd, data, 0, data.byteLength, headerLength + position);
             });
             await tree.toBinary(true, writer);
@@ -2162,7 +2070,7 @@ class DataIndex {
                 (treeByteLength >> 24) & 0xff,
                 (treeByteLength >> 16) & 0xff,
                 (treeByteLength >> 8) & 0xff,
-                treeByteLength & 0xff
+                treeByteLength & 0xff,
             ];
             treeDetails.byteLength = treeByteLength;
             await pfs.write(fd, Buffer.from(bytes), 0, bytes.length, treeRefIndex+4);
@@ -2176,7 +2084,7 @@ class DataIndex {
         }
     }
 
-    async _getTree (lockMode = 'exclusive') {
+    async _getTree (lockMode: 'shared'|'exclusive' = 'exclusive') {
         // File is now opened the first time it is requested, only closed when it needs to be rebuilt or removed
         // This enables the tree to keep its FST state in memory.
         // Also enabled "autoGrow" again, this allows the tree to grow instead of being rebuilt every time it needs
@@ -2189,15 +2097,15 @@ class DataIndex {
         if (!this._idx) {
             // File being opened for the first time (or after a rebuild)
             const fd = await pfs.open(this.fileName, pfs.flags.readAndWrite);
-            const reader = async (index, length) => {
+            const reader = async (index: number, length: number) => {
                 const buffer = Buffer.alloc(length);
                 const { bytesRead } = await pfs.read(fd, buffer, 0, length, this.trees.default.fileIndex + index);
                 if (bytesRead < length) { return buffer.slice(0, bytesRead); }
                 return buffer;
             };
-            const writer = async (data, index) => {
-                const buffer = data.constructor === Uint8Array 
-                    ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) 
+            const writer = async (data: Buffer | Uint8Array, index: number) => {
+                const buffer = data.constructor === Uint8Array
+                    ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
                     : Buffer.from(data);
                 const result = await pfs.write(fd, buffer, 0, data.length, this.trees.default.fileIndex + index);
                 return result;
@@ -2215,47 +2123,39 @@ class DataIndex {
                 const fd = this._idx.fd;
                 this._idx = null;
                 await pfs.close(fd)
-                .catch(err => {
-                    this.storage.debug.warn(`Could not close index file "${this.fileName}":`, err);
-                });
+                    .catch(err => {
+                        this.storage.debug.warn(`Could not close index file "${this.fileName}":`, err);
+                    });
             },
             /** Releases the acquired tree lock */
             release() {
                 lock.release();
-            }
+            },
         };
     }
 }
 
 class IndexQueryResult {
-    /**
-     * 
-     * @param {string|number} key 
-     * @param {string} path 
-     * @param {string|number|boolean|Date|undefined} value 
-     * @param {object} [metadata] 
-     */
-    constructor(key, path, value, metadata) {
-        this.key = key;
-        this.path = path;
-        this.value = value;
-        this.metadata = metadata;
-    }
+    public values: BPlusTreeLeafEntryValue[];
+    constructor(public key: string | number, public path: string, public value: IndexableValue, public metadata: IndexMetaData) { }
 }
 
-class IndexQueryResults extends Array {
+class IndexQueryResults extends Array<IndexQueryResult> {
 
-    /**
-     * @param {IndexQueryResult[]} results 
-     */
-    static from(results, filterKey) {
+    static from(results: IndexQueryResults | IndexQueryResult[], filterKey: string) {
         const arr = new IndexQueryResults(results.length);
         results.forEach((result, i) => arr[i] = result);
         arr.filterKey = filterKey;
         return arr;
     }
 
-    set filterKey(key) {
+    public values: BPlusTreeLeafEntryValue[];
+
+    public hints = [] as IndexQueryHint[];
+    public stats = null as IndexQueryStats;
+
+    private _filterKey: string;
+    set filterKey(key: string) {
         this._filterKey = key;
     }
 
@@ -2273,15 +2173,11 @@ class IndexQueryResults extends Array {
     //     return this._treeEntries;
     // }
 
-    /**
-     * 
-     * @param {(result: IndexQueryResult, index: number, arr: IndexQueryResults) => boolean} callback
-     */
-    filter(callback) {
-        return super.filter(callback);
-    }
+    // filter(callback: (result: IndexQueryResult, index: number, arr: IndexQueryResults) => boolean) {
+    //     return super.filter(callback);
+    // }
 
-    filterMetadata(key, op, compare) {
+    filterMetadata(key: string, op: string, compare: IndexableValueOrArray) {
         if (typeof compare === 'undefined') {
             compare = null; // compare with null so <, <=, > etc will get the right results
         }
@@ -2291,7 +2187,7 @@ class IndexQueryResults extends Array {
         }
         const filtered = this.filter(result => {
             let value = key === this.filterKey ? result.value : result.metadata ? result.metadata[key] : null;
-            if (typeof value === 'undefined') { 
+            if (typeof value === 'undefined') {
                 value = null; // compare with null
             }
             if (op === '<') { return value < compare; }
@@ -2301,9 +2197,12 @@ class IndexQueryResults extends Array {
             if (op === '==') { return value == compare; }
             if (op === '!=') { return value != compare; }
             if (op === 'like' || op === '!like') {
+                if (typeof compare !== 'string') {
+                    return op === '!like';
+                }
                 const pattern = '^' + compare.replace(/\*/g, '.*').replace(/\?/g, '.') + '$';
                 const re = new RegExp(pattern, 'i');
-                const isLike = re.test(value);
+                const isLike = re.test(value as string);
                 return op === 'like' ? isLike : !isLike;
             }
             if (op === 'in' || op === '!in') {
@@ -2311,9 +2210,12 @@ class IndexQueryResults extends Array {
                 return op === 'in' ? isIn : !isIn;
             }
             if (op == 'between' || op === '!between') {
+                if (!(compare instanceof Array)) {
+                    return op === '!between';
+                }
                 let bottom = compare[0], top = compare[1];
                 if (top < bottom) {
-                    let swap = top;
+                    const swap = top;
                     top = bottom;
                     bottom = swap;
                 }
@@ -2321,53 +2223,59 @@ class IndexQueryResults extends Array {
                 return op === 'between' ? isBetween : !isBetween;
             }
             if (op === 'matches' || op === '!matches') {
+                if (!(compare instanceof RegExp)) {
+                    return op === '!matches';
+                }
                 const re = compare;
-                const isMatch = re.test(value);
+                const isMatch = re.test(value as string);
                 return op === 'matches' ? isMatch : !isMatch;
             }
         });
         return IndexQueryResults.from(filtered, this.filterKey);
     }
 
-    constructor(...args) {
+    constructor(length: number);
+    constructor(...results: IndexQueryResult[]);
+    constructor(...args: any[]) {
         super(...args);
-        /** @type {IndexQueryHint[]} */
-        this.hints = [];
-        /** @type {IndexQueryStats} */
-        this.stats = null;
     }
 
 }
 
 class IndexQueryStats {
-    constructor(type, args, start = false) {
-        this.type = type;
-        this.args = args;
-        this.started = 0;
-        this.stopped = 0;
-        /** @type {IndexQueryStats[]} */
-        this.steps = [];
-        /** @type {object} */
-        this.result = null;
+    public started = 0;
+    public stopped = 0;
+    public steps = [] as IndexQueryStats[];
+    public result = null as any;
+
+    /**
+     * Used by GeoIndex: amount of queries executed to get results
+     */
+    public queries = 1;
+
+    constructor(public type: string, public args: unknown, start = false) {
         if (start) {
             this.start();
         }
     }
+
     start() {
         this.started = Date.now();
     }
-    stop(result = null) {
+
+    stop(result: any = null) {
         this.stopped = Date.now();
         this.result = result;
     }
-    get duration() { return this.stopped - this.started; } 
+
+    get duration() { return this.stopped - this.started; }
 }
 
 /**
  * An array index allows all values in an array node to be indexed and searched
  */
-class ArrayIndex extends DataIndex {
-    constructor(storage, path, key, options) {
+export class ArrayIndex extends DataIndex {
+    constructor(storage: Storage, path: string, key: string, options: DataIndexOptions) {
         if (key === '{key}') { throw new Error('Cannot create array index on node keys'); }
         super(storage, path, key, options);
     }
@@ -2376,47 +2284,43 @@ class ArrayIndex extends DataIndex {
     //     return super.fileName.slice(0, -4) + '.array.idx';
     // }
 
-    get type() {
+    get type(): KnownIndexType {
         return 'array';
     }
 
-    /**
-     * 
-     * @param {string} path 
-     * @param {any} oldValue 
-     * @param {any} newValue 
-     */
-    handleRecordUpdate(path, oldValue, newValue) {
-        let oldEntries = oldValue !== null && typeof oldValue === 'object' && this.key in oldValue ? oldValue[this.key] : null;
-        let newEntries = newValue !== null && typeof newValue === 'object' && this.key in newValue ? newValue[this.key] : null;
-        
-        if (oldEntries instanceof Array) { 
+    async handleRecordUpdate(path: string, oldValue: unknown, newValue: unknown) {
+        const tmpOld = oldValue !== null && typeof oldValue === 'object' && this.key in oldValue ? (oldValue as any)[this.key] : null;
+        const tmpNew = newValue !== null && typeof newValue === 'object' && this.key in newValue ? (newValue as any)[this.key] : null;
+
+        let oldEntries: IndexableValue[];
+        if (tmpOld instanceof Array) {
             // Only use unique values
-            oldEntries = oldEntries.reduce((unique, entry) => { 
-                !unique.includes(entry) && unique.push(entry); 
+            oldEntries = tmpOld.reduce((unique, entry) => {
+                !unique.includes(entry) && unique.push(entry);
                 return unique;
             }, []);
         }
         else {
-            oldEntries = []; 
+            oldEntries = [];
         }
-        if (newEntries instanceof Array) {
+        let newEntries: IndexableValue[];
+        if (tmpNew instanceof Array) {
             // Only use unique values
-            newEntries = newEntries.reduce((unique, entry) => { 
-                !unique.includes(entry) && unique.push(entry); 
+            newEntries = tmpNew.reduce((unique, entry) => {
+                !unique.includes(entry) && unique.push(entry);
                 return unique;
             }, []);
-        } 
+        }
         else { newEntries = []; }
 
-        let removed = oldEntries.filter(entry => newEntries.indexOf(entry) < 0);
-        let added = newEntries.filter(entry => oldEntries.indexOf(entry) < 0);
+        const removed = oldEntries.filter(entry => newEntries.indexOf(entry) < 0);
+        const added = newEntries.filter(entry => oldEntries.indexOf(entry) < 0);
 
-        const mutated = { old: {}, new: {} };
+        const mutated = { old: {} as any, new: {} as any };
         Object.assign(mutated.old, oldValue);
         Object.assign(mutated.new, newValue);
 
-        const promises = [];
+        const promises = [] as Promise<void>[];
         removed.forEach(entry => {
             mutated.old[this.key] = entry;
             mutated.new[this.key] = null;
@@ -2429,27 +2333,25 @@ class ArrayIndex extends DataIndex {
             const p = super.handleRecordUpdate(path, mutated.old, mutated.new);
             promises.push(p);
         });
-        return Promise.all(promises);
+        await Promise.all(promises);
     }
 
     build() {
-        const addCallback = (add, array, recordPointer, metadata) => {
-            if (!(array instanceof Array)) { return []; }
-            // if (array.length === 0) {
-            //     this.storage.debug.warn(`No entries found to index array`);
-            // }
+        return super.build({
+            addCallback: (add, array, recordPointer, metadata) => {
+                if (!(array instanceof Array)) { return []; }
 
-            // index unique items only
-            array.reduce((unique, entry) => {
-                !unique.includes(entry) && unique.push(entry);
-                return unique;
-            }, [])
-            .forEach(entry => {
-                add(entry, recordPointer, metadata);
-            });
-            return array;
-        }
-        return super.build({ addCallback, valueTypes: [Node.VALUE_TYPES.ARRAY] });
+                // index unique items only
+                (array as IndexableValue[]).reduce((unique, entry) => {
+                    !unique.includes(entry) && unique.push(entry);
+                    return unique;
+                }, []).forEach(entry => {
+                    add(entry, recordPointer, metadata);
+                });
+                return array;
+            },
+            valueTypes: [Node.VALUE_TYPES.ARRAY],
+        });
     }
 
     static get validOperators() {
@@ -2462,20 +2364,19 @@ class ArrayIndex extends DataIndex {
     }
 
     /**
-     * 
-     * @param {string} op "contains" or "!contains"
-     * @param {string|number|boolean|Date} val value to search for
+     * @param op "contains" or "!contains"
+     * @param val value to search for
      */
-    query(op, val) {
+    async query(op: 'contains' | '!contains', val: IndexableValueOrArray) {
         if (!ArrayIndex.validOperators.includes(op)) {
             throw new Error(`Array indexes can only be queried with operators ${ArrayIndex.validOperators.map(op => `"${op}"`).join(', ')}`);
         }
 
         // Check cache
-        let cache = this.cache(op, val);
+        const cache = this.cache(op, val);
         if (cache) {
             // Use cached results
-            return Promise.resolve(cache);
+            return cache;
         }
 
         const stats = new IndexQueryStats('array_index_query', val, true);
@@ -2492,101 +2393,91 @@ class ArrayIndex extends DataIndex {
                     stats.steps.push(step);
 
                     return this.count(valueOp, value)
-                    .then(count => {
-                        step.stop(count);
-                        return { value, count };
-                    })
+                        .then(count => {
+                            step.stop(count);
+                            return { value, count };
+                        });
                 });
-                return Promise.all(countPromises)
-                .then(counts => {
-                    // Start with the smallest result set
-                    counts.sort((a, b) => {
-                        if (a.count < b.count) { return -1; }
-                        else if (a.count > b.count) { return 1; }
-                        return 0;
+                const counts = await Promise.all(countPromises);
+                // Start with the smallest result set
+                counts.sort((a, b) => {
+                    if (a.count < b.count) { return -1; }
+                    else if (a.count > b.count) { return 1; }
+                    return 0;
+                });
+
+                let results: IndexQueryResults;
+
+                if (counts[0].count === 0) {
+                    stats.stop(0);
+
+                    this.storage.debug.log(`Value "${counts[0].value}" not found in index, 0 results for query ${op} ${val}`);
+                    results = new IndexQueryResults(0);
+                    results.filterKey = this.key;
+                    results.stats = stats;
+
+                    // Add query hints for each unknown item
+                    counts.forEach(c => {
+                        if (c.count === 0) {
+                            const hint = new ArrayIndexQueryHint(ArrayIndexQueryHint.types.missingValue, c.value);
+                            results.hints.push(hint);
+                        }
                     });
 
-                    /** @type {IndexQueryResults} */
-                    let results;
+                    // Cache the empty result set
+                    this.cache(op, val, results);
+                    return results;
+                }
+                const allValues = counts.map(c => c.value);
 
-                    if (counts[0].count === 0) {
-                        stats.stop(0);
-        
-                        this.storage.debug.log(`Value "${counts[0].value}" not found in index, 0 results for query ${op} ${val}`);
-                        results = new IndexQueryResults(0);
-                        results.filterKey = this.key;
-                        results.stats = stats;
-        
-                        // Add query hints for each unknown item
-                        counts.forEach(c => {
-                            if (c.count === 0) {
-                                const hint = new ArrayIndexQueryHint(ArrayIndexQueryHint.types.missingValue, c.value);
-                                results.hints.push(hint);
-                            }
-                        });
-        
-                        // Cache the empty result set
-                        this.cache(op, val, results);
-                        return results;
-                    }
-                    const allValues = counts.map(c => c.value);
-        
-                    // Query 1 value, then filter results further and further
-                    // Start with the smallest result set
-                    const queryValue = (value, filter) => {
-                        const wildcardIndex = typeof value !== 'string' ? -1 : ~(~value.indexOf('*') || ~value.indexOf('?'));
-                        let valueOp = ~wildcardIndex ? 'like' : '==';
+                // Query 1 value, then filter results further and further
+                // Start with the smallest result set
+                const queryValue = (value: IndexableValue, filter?: IndexQueryResults) => {
+                    const wildcardIndex = typeof value !== 'string' ? -1 : ~(~value.indexOf('*') || ~value.indexOf('?'));
+                    const valueOp = ~wildcardIndex ? 'like' : '==';
 
-                        return super.query(valueOp, value, { filter })
+                    return super.query(valueOp, value, { filter })
                         .then(results => {
                             stats.steps.push(results.stats);
                             return results;
                         });
-                    }
-                    let valueIndex = 0;
-                    // let resultsPerValue = new Array(values.length);
-                    const nextValue = () => {
-                        const value = allValues[valueIndex];
-                        return queryValue(value, results)
-                        .then(fr => {
-                            // resultsPerValue[values.indexOf(value)] = fr;
-                            results = fr;
-                            valueIndex++;
-                            if (results.length === 0 || valueIndex === allValues.length) { return; }
-                            return nextValue();
-                        });
-                    }
-                    return nextValue()
-                    .then(() => {
-                        results.filterKey = this.key;
+                };
+                let valueIndex = 0;
+                // let resultsPerValue = new Array(values.length);
+                const nextValue = async () => {
+                    const value = allValues[valueIndex];
+                    const fr = await queryValue(value, results);
+                    results = fr;
+                    valueIndex++;
+                    if (results.length === 0 || valueIndex === allValues.length) { return; }
+                    await nextValue();
+                };
+                await nextValue();
+                results.filterKey = this.key;
 
-                        stats.stop(results.length);
-                        results.stats = stats;
-        
-                        // Cache results
-                        delete results.values; // No need to cache these. Free the memory
-                        this.cache(op, val, results);
-                        return results;
-                    });
-                });
+                stats.stop(results.length);
+                results.stats = stats;
+
+                // Cache results
+                delete results.values; // No need to cache these. Free the memory
+                this.cache(op, val, results);
+                return results;
             }
             else {
                 // Single value query
-                const valueOp = 
-                    typeof val === 'string' && (val.includes('*') || val.includes('?')) 
-                    ? 'like'
-                    : '==';
-                return super.query(valueOp, val)
-                .then(results => {
-                    stats.steps.push(results.stats);
-                    results.stats = stats;
-                    delete results.values;
-                    return results;
-                });
+                const valueOp =
+                    typeof val === 'string' && (val.includes('*') || val.includes('?'))
+                        ? 'like'
+                        : '==';
+                const results = await super.query(valueOp, val);
+                stats.steps.push(results.stats);
+                results.stats = stats;
+                delete results.values;
+                return results;
             }
         }
         else if (op === '!contains') {
-            // DISABLED executing super.query('!=', val) because it returns false positives 
+            // DISABLED executing super.query('!=', val) because it returns false positives
             // for arrays that "!contains" val, but does contain other values...
             // Eg: an indexed array value of: ['bacon', 'egg', 'toast', 'sausage'],
             // when executing index.query('!contains', 'bacon'),
@@ -2597,38 +2488,26 @@ class ArrayIndex extends DataIndex {
             // they are blacklisted along the way. Our callback determines whether to blacklist
             // an entry's values, which we'll do if its key matches val
             const customOp = new BlacklistingSearchOperator(entry => {
-                let blacklist = val === entry.key
+                const blacklist = val === entry.key
                     || (val instanceof Array && val.includes(entry.key));
                 if (blacklist) { return entry.values; }
             });
 
             stats.type = 'array_index_blacklist_scan';
-            return super.query(customOp)
-            .then(results => {
-                stats.stop(results.length);
-                results.filterKey = this.key;
-                results.stats = stats;
+            const results = await super.query(customOp);
+            stats.stop(results.length);
+            results.filterKey = this.key;
+            results.stats = stats;
 
-                // Cache results
-                this.cache(op, val, results);
-                return results;
-            });
+            // Cache results
+            this.cache(op, val, results);
+            return results;
         }
     }
 }
 
 class WordInfo {
-    /**
-     * 
-     * @param {string} word 
-     * @param {number[]} indexes 
-     * @param {number[]} sourceIndexes
-     */
-    constructor(word, indexes, sourceIndexes) {
-        this.word = word;
-        this.indexes = indexes;
-        this.sourceIndexes = sourceIndexes;
-    }
+    constructor(public word: string, public indexes: number[], public sourceIndexes: number[]) { }
     get occurs() {
         return this.indexes.length;
     }
@@ -2640,50 +2519,132 @@ class TextInfo {
         return {
             'default': {
                 pattern: '[A-Za-z0-9\']+',
-                flags: 'gmi'
+                flags: 'gmi',
             },
             'en': {
                 // English stoplist from https://gist.github.com/sebleier/554280
-                stoplist: ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now']
+                stoplist: ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now'],
             },
-            /**
-             * 
-             * @param {string} locale 
-             * @returns {{ pattern: string, flags: string, stoplist?: string[] }}
-             */
-            get(locale) {
-                const settings = {};
+            get(locale: string) {
+                const settings = {} as { pattern?: string, flags?: string, stoplist?: string[] };
                 Object.assign(settings, this.default);
                 if (typeof this[locale] === 'undefined' && locale.indexOf('-') > 0) {
                     locale = locale.split('-')[1];
                 }
-                if (typeof this[locale] === 'undefined') { 
+                if (typeof this[locale] === 'undefined') {
                     return settings;
                 }
                 Object.keys(this[locale]).forEach(key => {
-                    settings[key] = this[locale][key];
+                    (settings as any)[key] = this[locale][key];
                 });
                 return settings;
-            }
-        }
+            },
+        };
+    }
+
+    public locale: string;
+    public words: Map<string, WordInfo>; // WordInfo[];
+    public ignored: string[];
+
+    getWordInfo(word: string): WordInfo {
+        return this.words.get(word);
     }
 
     /**
-     * 
-     * @param {string} text 
-     * @param {object} [options]
-     * @param {string} [options.locale="en"] Set the text locale to accurately convert words to lowercase
-     * @param {RegExp|string} [options.pattern="[\\w']+"] Overrides the default RegExp pattern used
-     * @param {string} [options.includeChars] Add characters to the word detection regular expression. Useful to keep wildcards such as * and ? in query texts
-     * @param {string} [options.flags='gmi'] Overrides the default RegExp flags (gmi) used 
-     * @param {(word:string, locale:string) => string} [options.stemming] Optional callback function that is able to perform word stemming. Will be executed before performing criteria checks
-     * @param {number} [options.minLength=1] minimum length of words to include
-     * @param {number} [options.maxLength=25] maxLength should be increased if you expect words in your texts like "antidisestablishmentarianism" (28), "floccinaucinihilipilification" (29) or "pneumonoultramicroscopicsilicovolcanoconiosis" (45)
-     * @param {string[]} [options.blacklist] words to ignore. You can use a default stoplist from TextInfo.locales
-     * @param {string[]} [options.whitelist] words to include even if they do not meet the min & maxLength criteria
-     * @param {boolean} [options.useStoplist=false] whether to use a default stoplist to blacklist words (if available for locale)
+     * Reconstructs an array of words in the order they were encountered
      */
-    constructor(text, options) {
+    toSequence() {
+        const arr = [] as string[];
+        for (const { word, indexes } of this.words.values()) {
+            for (const index of indexes) {
+                arr[index] = word;
+            }
+        }
+        return arr;
+    }
+
+    /**
+     * Returns all unique words in an array
+     */
+    toArray() {
+        const arr = [] as string[];
+        for (const word of this.words.keys()) {
+            arr.push(word);
+        }
+        return arr;
+    }
+
+    get uniqueWordCount() {
+        return this.words.size; //.length;
+    }
+
+    get wordCount() {
+        let total = 0;
+        for (const wordInfo of this.words.values()) {
+            total += wordInfo.occurs;
+        }
+        return total;
+        // return this.words.reduce((total, word) => total + word.occurs, 0);
+    }
+
+    constructor(text: string, options?: {
+        /**
+         * Set the text locale to accurately convert words to lowercase
+         * @default "en"
+         */
+        locale?: string;
+
+        /**
+         * Overrides the default RegExp pattern used
+         * @default "[\w']+"
+         */
+        pattern?: RegExp | string;
+
+        /**
+         * Add characters to the word detection regular expression. Useful to keep wildcards such as * and ? in query texts
+         */
+        includeChars?: string;
+
+        /**
+         * Overrides the default RegExp flags (`gmi`) used
+         * @default "gmi"
+         */
+        flags?: string;
+
+        /**
+         * Optional callback function that is able to perform word stemming. Will be executed before performing criteria checks
+         */
+        stemming?: (word:string, locale:string) => string;
+
+        /**
+         * Minimum length of words to include
+         * @default 1
+         */
+        minLength?: number;
+
+        /**
+         * Maximum length of words to include, should be increased if you expect words in your texts
+         * like "antidisestablishmentarianism" (28), "floccinaucinihilipilification" (29) or "pneumonoultramicroscopicsilicovolcanoconiosis" (45)
+         * @default 25
+         */
+        maxLength?: number;
+
+        /**
+         * Words to ignore. You can use a default stoplist from TextInfo.locales
+         */
+        blacklist?: string[];
+
+        /**
+         * Words to include even if they do not meet the min & maxLength criteria
+         */
+        whitelist?: string[];
+
+        /**
+         * Whether to use a default stoplist to blacklist words (if available for locale)
+         * @default false
+         */
+        useStoplist?: boolean;
+    }) {
         // this.text = text; // Be gone later...
         this.locale = options.locale || 'en';
         const localeSettings = TextInfo.locales.get(this.locale);
@@ -2702,7 +2663,7 @@ class TextInfo {
             }
             let pos = -1;
             while(true) {
-                let index = pattern.indexOf('[', pos + 1) + 1;
+                const index = pattern.indexOf('[', pos + 1) + 1;
                 if (index === 0) { break; }
                 pattern = pattern.slice(0, index) + insert + pattern.slice(index);
                 pos = index;
@@ -2721,24 +2682,16 @@ class TextInfo {
         }
         const whitelist = options.whitelist instanceof Array ? options.whitelist : [];
 
-        /** @type {WordInfo[]} */
-        this.words = [];
+        const words = this.words = new Map<string, WordInfo>();
         this.ignored = [];
-        if (text === null) { return; }
-        else if (typeof text === 'undefined') {
-            // debugger;
-            return;
-        }
-
-        /** @type {Map<string, WordInfo>} */
-        let words = new Map();
+        if (text === null || typeof text === 'undefined') { return; }
 
         // Unidecode text to get ASCII characters only
-        function safe_unidecode (str) {
+        function safe_unidecode (str: string) {
             // Fix for occasional multi-pass issue, copied from https://github.com/FGRibreau/node-unidecode/issues/16
-            var ret;
+            let ret;
             while (str !== (ret = unidecode(str))) {
-              str = ret;
+                str = ret;
             }
             return ret;
         }
@@ -2746,7 +2699,7 @@ class TextInfo {
 
         // Remove any single quotes, so "don't" will be stored as "dont", "isn't" as "isnt" etc
         text = text.replace(/'/g, '');
-        
+
         // Process the text
         // const wordsRegex = /[\w']+/gu;
         let wordIndex = 0;
@@ -2762,11 +2715,11 @@ class TextInfo {
                 const stemmed = options.stemming(word, this.locale);
                 if (typeof stemmed !== 'string') {
                     // Ignore this word
-                    if (this.ignored.indexOf(word) < 0) { 
+                    if (this.ignored.indexOf(word) < 0) {
                         this.ignored.push(word);
                     }
                     // Do not increase wordIndex
-                    continue; 
+                    continue;
                 }
                 word = stemmed;
             }
@@ -2777,8 +2730,8 @@ class TextInfo {
                 // Word does not meet set criteria
                 if (!~whitelist.indexOf(word)) {
                     // Not whitelisted either
-                    if (this.ignored.indexOf(word) < 0) { 
-                        this.ignored.push(word); 
+                    if (this.ignored.indexOf(word) < 0) {
+                        this.ignored.push(word);
                     }
                     // Do not increase wordIndex
                     continue;
@@ -2800,52 +2753,64 @@ class TextInfo {
             }
             wordIndex++;
         }
-
-        words.forEach(word => this.words.push(word));
-
-        this.getWordInfo = (word) => {
-            return words.get(word);
-        };
     }
 
-    get uniqueWordCount() {
-        return this.words.length;
-    }
-    get wordCount() {
-        return this.words.reduce((total, word) => total + word.occurs, 0);
+}
+
+export interface FullTextIndexOptions extends DataIndexOptions {
+    config?: {
+        /**
+         * callback function that transforms (or filters) words being indexed
+         */
+        transform?: (word: string, locale:string) => string;
+
+        /**
+         * words to be ignored
+         */
+        blacklist?: string[];
+
+        /**
+         * Uses a locale specific stoplist to automatically blacklist words
+         * @default true
+         */
+        useStoplist?: boolean;
+
+        /**
+         * Words to be included if they did not match other criteria
+         */
+        whitelist?: string[];
+
+        /**
+         * Uses the value of a specific key as locale. Allows different languages to be indexed correctly,
+         * overrides options.textLocale
+         */
+        localeKey?: string;
+
+        /**
+         * Minimum length for words to be indexed (after transform)
+         */
+        minLength?: number;
+
+        /**
+         * Maximum length for words to be indexed (after transform)
+         */
+        maxLength?: number;
     }
 }
 
 /**
  * A full text index allows all words in text nodes to be indexed and searched.
- * Eg: "Every word in this text must be indexed." will be indexed with every word 
+ * Eg: "Every word in this text must be indexed." will be indexed with every word
  * and can be queried with filters 'contains' and '!contains' a word, words or pattern.
  * Eg: 'contains "text"', 'contains "text indexed"', 'contains "text in*"' will all match the text above.
  * This does not use a thesauris or word lists (yet), so 'contains "query"' will not match.
  * Each word will be stored and searched in lowercase
  */
-class FullTextIndex extends DataIndex {
+export class FullTextIndex extends DataIndex {
 
-    /**
-     * 
-     * @param {Storage} storage 
-     * @param {string} path 
-     * @param {string} key 
-     * @param {object} options 
-     * @param {boolean} [options.caseSensitive=false] if strings in the index should be indexed case-sensitive. defaults to false
-     * @param {string} [options.textLocale="en"] locale to use when comparing case insensitive string values. Can be a language code ("nl", "en" etc), or LCID ("en-us", "en-au" etc). Defaults to English ("en")
-     * @param {string} [options.textLocaleKey] to allow multiple languages to be indexed, you can specify the name of the key in the source records that contains the locale. When this key is not present in the data, the specified textLocale will be used as default. Eg with textLocaleKey: 'locale', 1 record might contain { text: 'Hello World', locale: 'en' } (text will be indexed with English locale), and another { text: 'Hallo Wereld', locale: 'nl' } (Dutch locale)
-     * @param {string[]} [options.include] other keys' data to include in the index, for faster sorting topN (.limit.order) query results
-     * @param {object} [options.config]
-     * @param {(word: string, locale:string) => string} [options.config.transform] callback function that transforms (or filters) words being indexed
-     * @param {string[]} [options.config.blacklist] words to be ignored
-     * @param {boolean} [options.config.useStoplist=true] uses a locale specific stoplist to automatically blacklist words
-     * @param {string[]} [options.config.whitelist] words to be included if they did not match other criteria
-     * @param {string} [options.config.localeKey] uses the value of a specific key as locale. Allows different languages to be indexed correctly, overrides options.textLocale
-     * @param {number} [options.config.minLength] minimum length for words to be indexed (after transform)
-     * @param {number} [options.config.maxLength] maximum length for words to be indexed (after transform)
-     */
-    constructor(storage, path, key, options) {
+    public config: FullTextIndexOptions['config'];
+
+    constructor(storage: Storage, path: string, key: string, options: FullTextIndexOptions) {
         if (key === '{key}') { throw new Error('Cannot create fulltext index on node keys'); }
         super(storage, path, key, options);
         // this.enableReverseLookup = true;
@@ -2857,17 +2822,25 @@ class FullTextIndex extends DataIndex {
     //     return super.fileName.slice(0, -4) + '.fulltext.idx';
     // }
 
-    get type() {
+    get type(): KnownIndexType {
         return 'fulltext';
     }
 
-    test(obj, op, val) {
+    test(obj: any, op: 'fulltext:contains' | 'fulltext:!contains', val: string): boolean {
         if (obj === null) { return op === 'fulltext:!contains'; }
         const text = obj[this.key];
         if (typeof text === 'undefined') { return op === 'fulltext:!contains'; }
 
-        const locale = obj === null ? this.textLocale : this.config.localeKey && obj[this.config.localeKey] ? obj[this.config.localeKey] : this.textLocale;        
-        const textInfo = new TextInfo(text, { locale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
+        const locale = obj === null ? this.textLocale : this.config.localeKey && obj[this.config.localeKey] ? obj[this.config.localeKey] : this.textLocale;
+        const textInfo = new TextInfo(text, {
+            locale,
+            stemming: this.config.transform,
+            blacklist: this.config.blacklist,
+            whitelist: this.config.whitelist,
+            useStoplist: this.config.useStoplist,
+            minLength: this.config.minLength,
+            maxLength: this.config.maxLength,
+        });
         if (op === 'fulltext:contains') {
             if (~val.indexOf(' OR ')) {
                 // split
@@ -2887,42 +2860,82 @@ class FullTextIndex extends DataIndex {
                     val = val.slice(0, match.index) + val.slice(match.index + match[0].length);
                     phraseRegex.lastIndex = 0;
                 }
-                if (val.length > 0) { 
-                    phrases.push(val); 
+                if (val.length > 0) {
+                    phrases.push(val);
                 }
                 return phrases.every(phrase => {
-                    const phraseInfo = new TextInfo(phrase, { locale: this.textLocale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
-                    const indexes = phraseInfo.words.map(word => textInfo.words.indexOf(word));
-                    if (indexes[0] < 0) { return false; }
-                    for (let i = 1; i < indexes.length; i++) {
-                        if (indexes[i] - indexes[i-1] !== 1) {
-                            return false;
-                        }
-                    }
-                    return true;
+                    const phraseInfo = new TextInfo(phrase, {
+                        locale: this.textLocale,
+                        stemming: this.config.transform,
+                        blacklist: this.config.blacklist,
+                        whitelist: this.config.whitelist,
+                        useStoplist: this.config.useStoplist,
+                        minLength: this.config.minLength,
+                        maxLength: this.config.maxLength,
+                    });
+
+                    // This was broken before TS port because WordInfo had an array of words that was not
+                    // in the same order as the source words were.
+                    // TODO: Thoroughly test this new code
+                    const phraseWords = phraseInfo.toSequence();
+                    const occurrencesPerWord = phraseWords.map((word, i) => {
+                        // Find word in text
+                        const { indexes } = textInfo.words.get(word);
+                        return indexes;
+                    });
+                    const hasSequenceAtIndex = (wordIndex: number, occurrenceIndex: number): boolean => {
+                        const startIndex = occurrencesPerWord[wordIndex]?.[occurrenceIndex];
+                        return occurrencesPerWord.slice(wordIndex + 1).every((occurences, i) => {
+                            return occurences.some((index, j) => {
+                                if (index !== startIndex + 1) { return false; }
+                                return hasSequenceAtIndex(wordIndex + i, j);
+                            });
+                        });
+                    };
+
+                    // Find the existence of a sequence of words
+                    // Loop: for each occurrence of the first word in text, remember its index
+                    // Try to find second word in text with index+1
+                    //  - found: try to find third word in text with index+2, etc (recursive)
+                    //  - not found: stop, proceed with next occurrence in main loop
+                    return occurrencesPerWord[0].some((occurrence, i) => {
+                        return hasSequenceAtIndex(0, i);
+                    });
+
+                    // const indexes = phraseInfo.words.map(word => textInfo.words.indexOf(word));
+                    // if (indexes[0] < 0) { return false; }
+                    // for (let i = 1; i < indexes.length; i++) {
+                    //     if (indexes[i] - indexes[i-1] !== 1) {
+                    //         return false;
+                    //     }
+                    // }
+                    // return true;
                 });
             }
             else {
                 // test 1 or more words
-                const wordsInfo = new TextInfo(val, { locale: this.textLocale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
-                return wordsInfo.words.every(word => {
-                    return textInfo.words.includes(word);
+                const wordsInfo = new TextInfo(val, {
+                    locale: this.textLocale,
+                    stemming: this.config.transform,
+                    blacklist: this.config.blacklist,
+                    whitelist: this.config.whitelist,
+                    useStoplist: this.config.useStoplist,
+                    minLength: this.config.minLength,
+                    maxLength: this.config.maxLength,
+                });
+                return wordsInfo.toSequence().every(word => {
+                    return textInfo.words.has(word);
                 });
             }
         }
     }
 
-    /**
-     * 
-     * @param {string} path 
-     * @param {any} oldValue 
-     * @param {any} newValue 
-     */
-    handleRecordUpdate(path, oldValue, newValue) {
-        let oldText = oldValue === null ? null : oldValue[this.key],
-            newText = newValue === null ? null : newValue[this.key];
-        let oldLocale = oldValue === null ? this.textLocale : this.config.localeKey && oldValue[this.config.localeKey] ? oldValue[this.config.localeKey] : this.textLocale,
-            newLocale = newValue === null ? this.textLocale : this.config.localeKey && newValue[this.config.localeKey] ? newValue[this.config.localeKey] : this.textLocale;
+    async handleRecordUpdate(path: string, oldValue: unknown, newValue: unknown): Promise<void> {
+        let oldText = oldValue !== null && typeof oldValue === 'object' && this.key in oldValue ? (oldValue as any)[this.key] : null;
+        let newText = newValue !== null && typeof newValue === 'object' && this.key in newValue ? (newValue as any)[this.key] : null;
+
+        const oldLocale = oldValue === null ? this.textLocale : this.config.localeKey && (oldValue as any)[this.config.localeKey] ? (oldValue as any)[this.config.localeKey] : this.textLocale,
+            newLocale = newValue === null ? this.textLocale : this.config.localeKey && (newValue as any)[this.config.localeKey] ? (newValue as any)[this.config.localeKey] : this.textLocale;
 
         if (typeof oldText === 'object' && oldText instanceof Array) {
             oldText = oldText.join(' ');
@@ -2935,36 +2948,36 @@ class FullTextIndex extends DataIndex {
         const newTextInfo = new TextInfo(newText, { locale: newLocale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
 
         // super._updateReverseLookupKey(
-        //     path, 
-        //     oldText ? textEncoder.encode(oldText) : null, 
-        //     newText ? textEncoder.encode(newText) : null, 
+        //     path,
+        //     oldText ? textEncoder.encode(oldText) : null,
+        //     newText ? textEncoder.encode(newText) : null,
         //     metadata
         // );
 
-        const oldWords = oldTextInfo.words.map(w => w.word);
-        const newWords = newTextInfo.words.map(w => w.word);
-        
-        let removed = oldWords.filter(word => newWords.indexOf(word) < 0);
-        let added = newWords.filter(word => oldWords.indexOf(word) < 0);
-        let changed = oldWords.filter(word => newWords.indexOf(word) >= 0).filter(word => {
+        const oldWords = oldTextInfo.toArray(); //.words.map(w => w.word);
+        const newWords = newTextInfo.toArray(); //.words.map(w => w.word);
+
+        const removed = oldWords.filter(word => newWords.indexOf(word) < 0);
+        const added = newWords.filter(word => oldWords.indexOf(word) < 0);
+        const changed = oldWords.filter(word => newWords.indexOf(word) >= 0).filter(word => {
             const oldInfo = oldTextInfo.getWordInfo(word);
             const newInfo = newTextInfo.getWordInfo(word);
             return oldInfo.occurs !== newInfo.occurs || oldInfo.indexes.some((index, i) => newInfo.indexes[i] !== index);
-        })
+        });
         changed.forEach(word => {
             // Word metadata changed. Simplest solution: remove and add again
             removed.push(word);
             added.push(word);
-        })
-        const promises = [];
-        // TODO: Prepare operations batch, then execute 1 tree update. 
+        });
+        const promises = [] as Promise<void>[];
+        // TODO: Prepare operations batch, then execute 1 tree update.
         // Now every word is a seperate update which is not necessary!
         removed.forEach(word => {
             const p = super.handleRecordUpdate(path, { [this.key]: word }, { [this.key]: null });
             promises.push(p);
         });
         added.forEach(word => {
-            const mutated = { };
+            const mutated: Record<string, string> = { };
             Object.assign(mutated, newValue);
             mutated[this.key] = word;
 
@@ -2981,70 +2994,71 @@ class FullTextIndex extends DataIndex {
                 occurs = occurs.slice(0, cutIndex);
             }
             const indexMetadata = {
-                '_occurs_': occurs
+                '_occurs_': occurs,
             };
             const p = super.handleRecordUpdate(path, { [this.key]: null }, mutated, indexMetadata);
             promises.push(p);
         });
-        return Promise.all(promises);
+        await Promise.all(promises);
     }
 
     build() {
-        const addCallback = (add, text, recordPointer, metadata, env) => {
-            if (typeof text === 'object' && text instanceof Array) {
-                text = text.join(' ');
-            }
-            if (typeof text === 'undefined') {
-                text = '';
-            }
-            const locale = env.locale || this.textLocale;
-            const textInfo = new TextInfo(text, { locale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
-            const words = textInfo.words; //_getWords(text);
-            if (words.length === 0) {
-                this.storage.debug.warn(`No words found in "${typeof text === 'string' && text.length > 50 ? text.slice(0, 50) + '...' : text}" to fulltext index "${env.path}"`);
-            }
-            
-            // const revLookupKey = super._getRevLookupKey(env.path);
-            // tree.add(revLookupKey, textEncoder.encode(text), metadata);
-
-            words.forEach(wordInfo => {
-                
-                // IDEA: To enable fast '*word' queries (starting with wildcard), we can also store 
-                // reversed words and run reversed query 'drow*' on it. we'd have to enable storing 
-                // multiple B+Trees in a single index file: a 'forward' tree & a 'reversed' tree
-
-                // IDEA: Following up on previous idea: being able to backtrack nodes within an index would
-                // help to speed up sorting queries on an indexed key, 
-                // eg: query .take(10).filter('rating','>=', 8).sort('title')
-                // does not filter on key 'title', but can then use an index on 'title' for the sorting:
-                // it can take the results from the 'rating' index and backtrack the nodes' titles to quickly
-                // get a sorted top 10. We'd have to store a seperate 'backtrack' tree that uses recordPointers
-                // as the key, and 'title' values as recordPointers. Caveat: max string length for sorting would 
-                // then be 255 ASCII chars, because that's the recordPointer size limit.
-                // The same boost can currently only be achieved by creating an index that includes 'title' in 
-                // the index on 'rating' ==> db.indexes.create('movies', 'rating', { include: ['title'] })
-
-                // Extend metadata with more details about the word (occurrences, positions)
-                // const wordMetadata = {
-                //     '_occurs_': wordInfo.occurs,
-                //     '_indexes_': wordInfo.indexes.join(',')
-                // };
-
-                let occurs = wordInfo.indexes.join(',');
-                if (occurs.length > 255) {      
-                    console.warn(`FullTextIndex ${this.description}: word "${wordInfo.word}" occurs too many times to store in index metadata. Truncating occurrences`);
-                    const cutIndex = occurs.lastIndexOf(',', 255);
-                    occurs = occurs.slice(0, cutIndex);
+        return super.build({
+            addCallback: (add, text: string | string[], recordPointer, metadata, env) => {
+                if (typeof text === 'object' && text instanceof Array) {
+                    text = text.join(' ');
                 }
-                const wordMetadata = {
-                    '_occurs_': occurs
-                };
-                Object.assign(wordMetadata, metadata);
-                add(wordInfo.word, recordPointer, wordMetadata);
-            });
-            return words.map(info => info.word);
-        }
-        return super.build({ addCallback, valueTypes: [Node.VALUE_TYPES.STRING] });
+                if (typeof text === 'undefined') {
+                    text = '';
+                }
+                const locale = env.locale || this.textLocale;
+                const textInfo = new TextInfo(text, { locale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
+                if (textInfo.words.size === 0) {
+                    this.storage.debug.warn(`No words found in "${typeof text === 'string' && text.length > 50 ? text.slice(0, 50) + '...' : text}" to fulltext index "${env.path}"`);
+                }
+
+                // const revLookupKey = super._getRevLookupKey(env.path);
+                // tree.add(revLookupKey, textEncoder.encode(text), metadata);
+
+                textInfo.words.forEach(wordInfo => {
+
+                    // IDEA: To enable fast '*word' queries (starting with wildcard), we can also store
+                    // reversed words and run reversed query 'drow*' on it. we'd have to enable storing
+                    // multiple B+Trees in a single index file: a 'forward' tree & a 'reversed' tree
+
+                    // IDEA: Following up on previous idea: being able to backtrack nodes within an index would
+                    // help to speed up sorting queries on an indexed key,
+                    // eg: query .take(10).filter('rating','>=', 8).sort('title')
+                    // does not filter on key 'title', but can then use an index on 'title' for the sorting:
+                    // it can take the results from the 'rating' index and backtrack the nodes' titles to quickly
+                    // get a sorted top 10. We'd have to store a seperate 'backtrack' tree that uses recordPointers
+                    // as the key, and 'title' values as recordPointers. Caveat: max string length for sorting would
+                    // then be 255 ASCII chars, because that's the recordPointer size limit.
+                    // The same boost can currently only be achieved by creating an index that includes 'title' in
+                    // the index on 'rating' ==> db.indexes.create('movies', 'rating', { include: ['title'] })
+
+                    // Extend metadata with more details about the word (occurrences, positions)
+                    // const wordMetadata = {
+                    //     '_occurs_': wordInfo.occurs,
+                    //     '_indexes_': wordInfo.indexes.join(',')
+                    // };
+
+                    let occurs = wordInfo.indexes.join(',');
+                    if (occurs.length > 255) {
+                        console.warn(`FullTextIndex ${this.description}: word "${wordInfo.word}" occurs too many times to store in index metadata. Truncating occurrences`);
+                        const cutIndex = occurs.lastIndexOf(',', 255);
+                        occurs = occurs.slice(0, cutIndex);
+                    }
+                    const wordMetadata: IndexMetaData = {
+                        '_occurs_': occurs,
+                    };
+                    Object.assign(wordMetadata, metadata);
+                    add(wordInfo.word, recordPointer, wordMetadata);
+                });
+                return textInfo.toArray(); //words.map(info => info.word);
+            },
+            valueTypes: [Node.VALUE_TYPES.STRING],
+        });
     }
 
     static get validOperators() {
@@ -3055,22 +3069,39 @@ class FullTextIndex extends DataIndex {
     }
 
     /**
-     * 
-     * @param {string} op Operator to use, can be either "fulltext:contains" or "fulltext:!contains"
-     * @param {string} val Text to search for. Can include * and ? wildcards, OR's for combined searches, and "quotes" for phrase searches
-     * @param {object} [options] Options
-     * @param {string} [options.locale] Locale to use for the words in the query. When omitted, the default index locale is used
-     * @param {boolean} [options.phrase] Used internally: treats the words in val as a phrase, eg: "word1 word2 word3": words need to occur in this exact order
-     * @param {number} [options.minimumWildcardWordLength=2] Sets minimum amount of characters that have to be used for wildcard (sub)queries such as "a%" to guard the system against extremely large result sets. Length does not include the wildcard characters itself. Default value is 2 (allows "an*" but blocks "a*")
-     * @returns {Promise<IndexQueryResults>}
+     *
+     * @param op Operator to use, can be either "fulltext:contains" or "fulltext:!contains"
+     * @param val Text to search for. Can include * and ? wildcards, OR's for combined searches, and "quotes" for phrase searches
      */
-    query(op, val, options = { phrase: false, locale: undefined, minimumWildcardWordLength: 2 }) {        
+    async query(op: string, val: string, options: {
+        /**
+         * Locale to use for the words in the query. When omitted, the default index locale is used
+         */
+        locale?: string;
+
+        /**
+         *  Used internally: treats the words in val as a phrase, eg: "word1 word2 word3": words need to occur in this exact order
+         */
+        phrase?: boolean;
+
+        /**
+         * Sets minimum amount of characters that have to be used for wildcard (sub)queries such as "a%" to guard the
+         * system against extremely large result sets. Length does not include the wildcard characters itself. Default
+         * value is 2 (allows "an*" but blocks "a*")
+         * @default 2
+         */
+        minimumWildcardWordLength?: number;
+    } = {
+        phrase: false,
+        locale: undefined,
+        minimumWildcardWordLength: 2,
+    }): Promise<IndexQueryResults> {
         if (!FullTextIndex.validOperators.includes(op)) { //if (op !== 'fulltext:contains' && op !== 'fulltext:not_contains') {
-            throw new Error(`Fulltext indexes can only be queried with operators ${FullTextIndex.validOperators.map(op => `"${op}"`).join(', ')}`)
+            throw new Error(`Fulltext indexes can only be queried with operators ${FullTextIndex.validOperators.map(op => `"${op}"`).join(', ')}`);
         }
 
         // Check cache
-        let cache = this.cache(op, val);
+        const cache = this.cache(op, val);
         if (cache) {
             // Use cached results
             return Promise.resolve(cache);
@@ -3079,7 +3110,7 @@ class FullTextIndex extends DataIndex {
         const stats = new IndexQueryStats(options.phrase ? 'fulltext_phrase_query' : 'fulltext_query', val, true);
 
         // const searchWordRegex = /[\w'?*]+/g; // Use TextInfo to find and transform words using index settings
-        const getTextInfo = text => {
+        const getTextInfo = (text: string) => {
             const info = new TextInfo(text, {
                 locale: options.locale || this.textLocale,
                 stemming: this.config.transform,
@@ -3088,63 +3119,63 @@ class FullTextIndex extends DataIndex {
                 blacklist: this.config.blacklist,
                 whitelist: this.config.whitelist,
                 useStoplist: this.config.useStoplist,
-                includeChars: '*?'
+                includeChars: '*?',
             });
 
             // Ignore any wildcard words that do not meet the set minimum length
-            // This is to safeguard the system against (possibly unwanted) very large 
+            // This is to safeguard the system against (possibly unwanted) very large
             // result sets
+            const words = info.toArray();
             let i;
-            while (i = info.words.findIndex(w => /^[*?]+$/.test(w.word)), i >= 0) {
+            while (i = words.findIndex(w => /^[*?]+$/.test(w)), i >= 0) {
                 // Word is wildcards only. Ignore
-                info.ignored.push(info.words[i].word);
-                info.words.splice(i, 1);
+                const word = words[i];
+                info.ignored.push(word);
+                info.words.delete(word);
             }
 
             if (options.minimumWildcardWordLength > 0) {
-                for (let i = 0; i < info.words.length; i++) {
-                    const starIndex = info.words[i].word.indexOf('*');
+                for (const word of words) {
+                    const starIndex = word.indexOf('*');
                     // min = 2, word = 'an*', starIndex = 2, ok!
                     // min = 3: starIndex < min: not ok!
                     if (starIndex > 0 && starIndex < options.minimumWildcardWordLength) {
-                        info.ignored.push(info.words[i].word);
-                        info.words.splice(i, 1);
+                        info.ignored.push(word);
+                        info.words.delete(word);
                         i--;
                     }
                 }
             }
             return info;
-        }
+        };
 
-        if (~val.indexOf(' OR ')) {
+        if (val.includes(' OR ')) {
             // Multiple searches in one query: 'secret OR confidential OR "don't tell"'
             // TODO: chain queries instead of running simultanious?
             const queries = val.split(' OR ');
             const promises = queries.map(q => this.query(op, q, options));
-            return Promise.all(promises)
-            .then(resultSets => {
-                stats.steps.push(...resultSets.map(results => results.stats));
+            const resultSets = await Promise.all(promises);
+            stats.steps.push(...resultSets.map(results => results.stats));
 
-                const mergeStep = new IndexQueryStats('merge_expand', { sets: resultSets.length, results: resultSets.reduce((total, set) => total + set.length, 0) }, true);
-                stats.steps.push(mergeStep);
+            const mergeStep = new IndexQueryStats('merge_expand', { sets: resultSets.length, results: resultSets.reduce((total, set) => total + set.length, 0) }, true);
+            stats.steps.push(mergeStep);
 
-                const merged = resultSets[0];
-                resultSets.slice(1).forEach(results => {
-                    results.forEach(result => {
-                        const exists = ~merged.findIndex(r => r.path === result.path);
-                        if (!exists) { merged.push(result); }
-                    });
+            const merged = resultSets[0];
+            resultSets.slice(1).forEach(results => {
+                results.forEach(result => {
+                    const exists = ~merged.findIndex(r => r.path === result.path);
+                    if (!exists) { merged.push(result); }
                 });
-                const results = IndexQueryResults.from(merged, this.key);
-                mergeStep.stop(results.length);
-
-                stats.stop(results.length);
-                results.stats = stats;
-                results.hints.push(...resultSets.reduce((hints, set) => { hints.push(...set.hints); return hints; }, []));
-                return results;
             });
+            const results = IndexQueryResults.from(merged, this.key);
+            mergeStep.stop(results.length);
+
+            stats.stop(results.length);
+            results.stats = stats;
+            results.hints.push(...resultSets.reduce((hints, set) => { hints.push(...set.hints); return hints; }, []));
+            return results;
         }
-        if (~val.indexOf('"')) {
+        if (val.includes('"')) {
             // Phrase(s) used. We have to make sure the words used are not only in the text,
             // but also in that exact order.
             const phraseRegex = /"(.+?)"/g;
@@ -3158,7 +3189,7 @@ class FullTextIndex extends DataIndex {
                 phraseRegex.lastIndex = 0;
             }
 
-            const phraseOptions = {};
+            const phraseOptions: typeof options = {};
             Object.assign(phraseOptions, options);
             phraseOptions.phrase = true;
             const promises = phrases.map(phrase => this.query(op, phrase, phraseOptions));
@@ -3170,40 +3201,37 @@ class FullTextIndex extends DataIndex {
                 promises.push(promise);
             }
 
-            return Promise.all(promises)
-            .then(resultSets => {
-                stats.steps.push(...resultSets.map(results => results.stats));
+            const resultSets = await Promise.all(promises);
+            stats.steps.push(...resultSets.map(results => results.stats));
 
-                // Take shortest set, only keep results that are matched in all other sets
-                const mergeStep = new IndexQueryStats('merge_reduce', { sets: resultSets.length, results: resultSets.reduce((total, set) => total + set.length, 0) }, true);
-                resultSets.length > 1 && stats.steps.push(mergeStep);
+            // Take shortest set, only keep results that are matched in all other sets
+            const mergeStep = new IndexQueryStats('merge_reduce', { sets: resultSets.length, results: resultSets.reduce((total, set) => total + set.length, 0) }, true);
+            resultSets.length > 1 && stats.steps.push(mergeStep);
 
-                const shortestSet = resultSets.sort((a,b) => a.length < b.length ? -1 : 1)[0];
-                const otherSets = resultSets.slice(1);
-                const matches = shortestSet.reduce((matches, match) => {
-                    // Check if the key is present in the other result sets
-                    const path = match.path;
-                    const matchedInAllSets = otherSets.every(set => set.findIndex(match => match.path === path) >= 0);
-                    if (matchedInAllSets) { matches.push(match); }
-                    return matches;
-                }, new IndexQueryResults());
-                matches.filterKey = this.key;
-                mergeStep.stop(matches.length);
-
-                stats.stop(matches.length);
-                matches.stats = stats;
-                matches.hints.push(...resultSets.reduce((hints, set) => { hints.push(...set.hints); return hints; }, []));
+            const shortestSet = resultSets.sort((a,b) => a.length < b.length ? -1 : 1)[0];
+            const otherSets = resultSets.slice(1);
+            const matches = shortestSet.reduce((matches, match) => {
+            // Check if the key is present in the other result sets
+                const path = match.path;
+                const matchedInAllSets = otherSets.every(set => set.findIndex(match => match.path === path) >= 0);
+                if (matchedInAllSets) { matches.push(match); }
                 return matches;
-            });
+            }, new IndexQueryResults());
+            matches.filterKey = this.key;
+            mergeStep.stop(matches.length);
+
+            stats.stop(matches.length);
+            matches.stats = stats;
+            matches.hints.push(...resultSets.reduce((hints, set) => { hints.push(...set.hints); return hints; }, []));
+            return matches;
         }
 
         const info = getTextInfo(val);
 
         /**
          * Add ignored words to the result hints
-         * @param {IndexQueryResults} results 
          */
-        function addIgnoredWordHints(results) {
+        function addIgnoredWordHints(results: IndexQueryResults) {
             // Add hints for ignored words
             info.ignored.forEach(word => {
                 const hint = new FullTextIndexQueryHint(FullTextIndexQueryHint.types.ignoredWord, word);
@@ -3211,14 +3239,14 @@ class FullTextIndex extends DataIndex {
             });
         }
 
-        let words = info.words.map(info => info.word);
+        const words = info.toArray();
         if (words.length === 0) {
             // Resolve with empty array
             stats.stop(0);
             const results = IndexQueryResults.from([], this.key);
             results.stats = stats;
             addIgnoredWordHints(results);
-            return Promise.resolve(results);
+            return results;
         }
 
         if (op === 'fulltext:!contains') {
@@ -3231,175 +3259,167 @@ class FullTextIndex extends DataIndex {
                     return re;
                 }
                 return word;
-            })
+            });
             const customOp = new BlacklistingSearchOperator(entry => {
-                let blacklist = wordChecks.some(word => {
+                const blacklist = wordChecks.some(word => {
                     if (word instanceof RegExp) {
-                        return word.test(entry.key);
+                        return word.test(entry.key as string);
                     }
                     return entry.key === word;
-                })
+                });
                 if (blacklist) { return entry.values; }
             });
 
             stats.type = 'fulltext_blacklist_scan';
-            return super.query(customOp)
-            .then(results => {
-                stats.stop(results.length);
-                results.filterKey = this.key;
-                results.stats = stats;
-                addIgnoredWordHints(results);
+            const results = await super.query(customOp);
+            stats.stop(results.length);
+            results.filterKey = this.key;
+            results.stats = stats;
+            addIgnoredWordHints(results);
 
-                // Cache results
-                this.cache(op, val, results);
-                return results;
-            });            
+            // Cache results
+            this.cache(op, val, results);
+            return results;
         }
 
         // op === 'fulltext:contains'
         // Get result count for each word
         const countPromises = words.map(word => {
-            const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?'));
-            let wordOp = wildcardIndex >= 0 ? 'like' : '==';
+            const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?')); // TODO: improve readability
+            const wordOp = wildcardIndex >= 0 ? 'like' : '==';
             const step = new IndexQueryStats('count', { op: wordOp, word }, true);
             stats.steps.push(step);
             return super.count(wordOp, word)
-            .then(count => {
-                step.stop(count);
-                return { word, count };
-            });
+                .then(count => {
+                    step.stop(count);
+                    return { word, count };
+                });
         });
-        return Promise.all(countPromises)
-        .then(counts => {
-            // Start with the smallest result set
-            counts.sort((a, b) => {
-                if (a.count < b.count) { return -1; }
-                else if (a.count > b.count) { return 1; }
-                return 0;
-            });
+        const counts = await Promise.all(countPromises);
+        // Start with the smallest result set
+        counts.sort((a, b) => {
+            if (a.count < b.count) { return -1; }
+            else if (a.count > b.count) { return 1; }
+            return 0;
+        });
 
-            /** @type {IndexQueryResults} */
-            let results;
+        let results: IndexQueryResults;
 
-            if (counts[0].count === 0) {
-                stats.stop(0);
+        if (counts[0].count === 0) {
+            stats.stop(0);
 
-                this.storage.debug.log(`Word "${counts[0].word}" not found in index, 0 results for query ${op} "${val}"`);
-                results = new IndexQueryResults(0);
-                results.filterKey = this.key;
-                results.stats = stats;
-                addIgnoredWordHints(results);
+            this.storage.debug.log(`Word "${counts[0].word}" not found in index, 0 results for query ${op} "${val}"`);
+            results = new IndexQueryResults(0);
+            results.filterKey = this.key;
+            results.stats = stats;
+            addIgnoredWordHints(results);
 
-                // Add query hints for each unknown word
-                counts.forEach(c => {
-                    if (c.count === 0) {
-                        const hint = new FullTextIndexQueryHint(FullTextIndexQueryHint.types.missingWord, c.word);
-                        results.hints.push(hint);
-                    }
-                });
-
-                // Cache the empty result set
-                this.cache(op, val, results);
-                return results;
-            }
-            const allWords = counts.map(c => c.word);
-
-            // Sequentual method: query 1 word, then filter results further and further
-            // More or less performs the same as parallel, but uses less memory
-            // NEW: Start with the smallest result set
-
-            // OLD: Use the longest word to search with, then filter those results
-            // const allWords = words.slice().sort((a,b) => {
-            //     if (a.length < b.length) { return 1; }
-            //     else if (a.length > b.length) { return -1; }
-            //     return 0;
-            // });
-
-            const queryWord = (word, filter) => {
-                const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?'));
-                let wordOp = wildcardIndex >= 0 ? 'like' : '==';
-                // const step = new IndexQueryStats('query', { op: wordOp, word }, true);
-                // stats.steps.push(step);
-                return super.query(wordOp, word, { filter })
-                .then(results => {
-                    stats.steps.push(results.stats);
-                    // step.stop(results.length);
-                    return results;
-                });
-            }
-            let wordIndex = 0;
-            let resultsPerWord = new Array(words.length);
-            const nextWord = () => {
-                const word = allWords[wordIndex];
-                const t1 = Date.now();
-                return queryWord(word, results)
-                .then(fr => {
-                    const t2 = Date.now();
-                    this.storage.debug.log(`fulltext search for "${word}" took ${t2-t1}ms`);
-                    resultsPerWord[words.indexOf(word)] = fr;
-                    results = fr;
-                    wordIndex++;
-                    if (results.length === 0 || wordIndex === allWords.length) { return; }
-                    return nextWord();
-                });
-            }
-            return nextWord()
-            .then(() => {
-                if (options.phrase === true && allWords.length > 1) {
-                    // Check which results have the words in the right order
-                    const step = new IndexQueryStats('phrase_check', val, true);
-                    stats.steps.push(step);
-                    results = results.reduce((matches, match) => {
-                        // the order of the resultsPerWord is in the same order as the given words,
-                        // check if their metadata._occurs_ say the same about the indexed content
-                        const path = match.path;
-                        const wordMatches = resultsPerWord.map(results => {
-                            return results.find(result => result.path === path);
-                        });
-                        // Convert the _occurs_ strings to arrays we can use
-                        wordMatches.forEach(match => {
-                            match.metadata._occurs_ = match.metadata._occurs_.split(',').map(parseInt);
-                        });
-                        const check = (wordMatchIndex, prevWordIndex) => {
-                            const sourceIndexes = wordMatches[wordMatchIndex].metadata._occurs_;
-                            if (typeof prevWordIndex !== 'number') {
-                                // try with each sourceIndex of the first word
-                                for (let i = 0; i < sourceIndexes.length; i++) {
-                                    const found = check(1, sourceIndexes[i]);
-                                    if (found) { return true; }
-                                }
-                                return false;
-                            }
-                            // We're in a recursive call on the 2nd+ word
-                            if (~sourceIndexes.indexOf(prevWordIndex + 1)) {
-                                // This word came after the previous word, hooray!
-                                // Proceed with next word, or report success if this was the last word to check
-                                if (wordMatchIndex === wordMatches.length-1) { return true; }
-                                return check(wordMatchIndex+1, prevWordIndex+1);
-                            }
-                            else {
-                                return false;
-                            }
-                        }
-                        if (check(0)) {
-                            matches.push(match); // Keep!
-                        }
-                        return matches;
-                    }, new IndexQueryResults());
-                    step.stop(results.length);
+            // Add query hints for each unknown word
+            counts.forEach(c => {
+                if (c.count === 0) {
+                    const hint = new FullTextIndexQueryHint(FullTextIndexQueryHint.types.missingWord, c.word);
+                    results.hints.push(hint);
                 }
-                results.filterKey = this.key;
-
-                stats.stop(results.length);
-                results.stats = stats;
-                addIgnoredWordHints(results);
-
-                // Cache results
-                delete results.values; // No need to cache these. Free the memory
-                this.cache(op, val, results);
-                return results;
             });
-        });
+
+            // Cache the empty result set
+            this.cache(op, val, results);
+            return results;
+        }
+        const allWords = counts.map(c => c.word);
+
+        // Sequentual method: query 1 word, then filter results further and further
+        // More or less performs the same as parallel, but uses less memory
+        // NEW: Start with the smallest result set
+
+        // OLD: Use the longest word to search with, then filter those results
+        // const allWords = words.slice().sort((a,b) => {
+        //     if (a.length < b.length) { return 1; }
+        //     else if (a.length > b.length) { return -1; }
+        //     return 0;
+        // });
+
+        const queryWord = async (word: string, filter: IndexQueryResults) => {
+            const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?')); // TODO: improve readability
+            const wordOp = wildcardIndex >= 0 ? 'like' : '==';
+            // const step = new IndexQueryStats('query', { op: wordOp, word }, true);
+            // stats.steps.push(step);
+            const results = await super.query(wordOp, word, { filter });
+            stats.steps.push(results.stats);
+            // step.stop(results.length);
+            return results;
+        };
+        let wordIndex = 0;
+        const resultsPerWord: IndexQueryResults[] = new Array(words.length);
+        const nextWord = async () => {
+            const word = allWords[wordIndex];
+            const t1 = Date.now();
+            const fr = await queryWord(word, results);
+            const t2 = Date.now();
+            this.storage.debug.log(`fulltext search for "${word}" took ${t2-t1}ms`);
+            resultsPerWord[words.indexOf(word)] = fr;
+            results = fr;
+            wordIndex++;
+            if (results.length === 0 || wordIndex === allWords.length) { return; }
+            await nextWord();
+        };
+        await nextWord();
+
+        type MetaDataWithOccursArray = IndexMetaData & { _occurs_: number[] };
+
+        if (options.phrase === true && allWords.length > 1) {
+            // Check which results have the words in the right order
+            const step = new IndexQueryStats('phrase_check', val, true);
+            stats.steps.push(step);
+            results = results.reduce((matches, match) => {
+                // the order of the resultsPerWord is in the same order as the given words,
+                // check if their metadata._occurs_ say the same about the indexed content
+                const path = match.path;
+                const wordMatches = resultsPerWord.map(results => {
+                    return results.find(result => result.path === path);
+                });
+                // Convert the _occurs_ strings to arrays we can use
+                wordMatches.forEach(match => {
+                    (match.metadata as MetaDataWithOccursArray)._occurs_ = (match.metadata._occurs_ as string).split(',').map(parseInt);
+                });
+                const check = (wordMatchIndex: number, prevWordIndex?: number): boolean => {
+                    const sourceIndexes = (wordMatches[wordMatchIndex].metadata as MetaDataWithOccursArray)._occurs_;
+                    if (typeof prevWordIndex !== 'number') {
+                        // try with each sourceIndex of the first word
+                        for (let i = 0; i < sourceIndexes.length; i++) {
+                            const found = check(1, sourceIndexes[i]);
+                            if (found) { return true; }
+                        }
+                        return false;
+                    }
+                    // We're in a recursive call on the 2nd+ word
+                    if (sourceIndexes.includes(prevWordIndex + 1)) {
+                        // This word came after the previous word, hooray!
+                        // Proceed with next word, or report success if this was the last word to check
+                        if (wordMatchIndex === wordMatches.length-1) { return true; }
+                        return check(wordMatchIndex+1, prevWordIndex+1);
+                    }
+                    else {
+                        return false;
+                    }
+                };
+                if (check(0)) {
+                    matches.push(match); // Keep!
+                }
+                return matches;
+            }, new IndexQueryResults());
+            step.stop(results.length);
+        }
+        results.filterKey = this.key;
+
+        stats.stop(results.length);
+        results.stats = stats;
+        addIgnoredWordHints(results);
+
+        // Cache results
+        delete results.values; // No need to cache these. Free the memory
+        this.cache(op, val, results);
+        return results;
 
         // Parallel method: query all words at the same time, then combine results
         // Uses more memory
@@ -3477,7 +3497,7 @@ class FullTextIndex extends DataIndex {
     }
 }
 
-function _getGeoRadiusPrecision(radiusM) {
+function _getGeoRadiusPrecision(radiusM: number) {
     if (typeof radiusM !== 'number') { return; }
     if (radiusM < 0.01) { return 12; }
     if (radiusM < 0.075) { return 11; }
@@ -3493,7 +3513,7 @@ function _getGeoRadiusPrecision(radiusM) {
     return 1;
 }
 
-function _getGeoHash(obj) {
+function _getGeoHash(obj: { lat: number; long: number }) {
     if (typeof obj.lat !== 'number' || typeof obj.long !== 'number') {
         return;
     }
@@ -3503,54 +3523,54 @@ function _getGeoHash(obj) {
 }
 
 // Calculates which hashes (of different precisions) are within the radius of a point
-function _hashesInRadius(lat, lon, radiusM, precision) {
+function _hashesInRadius(lat: number, lon: number, radiusM: number, precision: number) {
 
-    const isInCircle = (checkLat, checkLon, lat, lon, radiusM) => {
-        let deltaLon = checkLon - lon;
-        let deltaLat = checkLat - lat;
+    const isInCircle = (checkLat: number, checkLon: number, lat: number, lon: number, radiusM: number) => {
+        const deltaLon = checkLon - lon;
+        const deltaLat = checkLat - lat;
         return Math.pow(deltaLon, 2) + Math.pow(deltaLat, 2) <= Math.pow(radiusM, 2);
     };
-    const getCentroid = (latitude, longitude, height, width) => {
-        let y_cen = latitude + (height / 2);
-        let x_cen = longitude + (width / 2);
+    const getCentroid = (latitude: number, longitude: number, height: number, width: number) => {
+        const y_cen = latitude + (height / 2);
+        const x_cen = longitude + (width / 2);
         return { x: x_cen, y: y_cen };
-    }
-    const convertToLatLon = (y, x, lat, lon) => {
-        let pi = 3.14159265359;
-        let r_earth = 6371000;
-    
-        let lat_diff = (y / r_earth) * (180 / pi);
-        let lon_diff = (x / r_earth) * (180 / pi) / Math.cos(lat * pi/180)
-    
-        let final_lat = lat + lat_diff;
-        let final_lon = lon + lon_diff;
-    
+    };
+    const convertToLatLon = (y: number, x: number, lat: number, lon: number) => {
+        const pi = 3.14159265359;
+        const r_earth = 6371000;
+
+        const lat_diff = (y / r_earth) * (180 / pi);
+        const lon_diff = (x / r_earth) * (180 / pi) / Math.cos(lat * pi/180);
+
+        const final_lat = lat + lat_diff;
+        const final_lon = lon + lon_diff;
+
         return { lat: final_lat, lon: final_lon };
     };
 
-    let x = 0;
-    let y = 0;
+    const x = 0;
+    const y = 0;
 
-    let points = [];
-    let geohashes = [];
+    const points = [] as Array<{ lat: number; lon: number; }>;
+    const geohashes = [] as string[];
 
     const gridWidths = [5009400.0, 1252300.0, 156500.0, 39100.0, 4900.0, 1200.0, 152.9, 38.2, 4.8, 1.2, 0.149, 0.0370];
     const gridHeights = [4992600.0, 624100.0, 156000.0, 19500.0, 4900.0, 609.4, 152.4, 19.0, 4.8, 0.595, 0.149, 0.0199];
 
-    let height = gridHeights[precision-1] / 2;
-    let width = gridWidths[precision-1] / 2;
+    const height = gridHeights[precision-1] / 2;
+    const width = gridWidths[precision-1] / 2;
 
-    let latMoves = Math.ceil(radiusM / height);
-    let lonMoves = Math.ceil(radiusM / width);
+    const latMoves = Math.ceil(radiusM / height);
+    const lonMoves = Math.ceil(radiusM / width);
 
     for (let i = 0; i <= latMoves; i++) {
-        let tmpLat = y + height*i;
+        const tmpLat = y + height*i;
 
         for (let j = 0; j < lonMoves; j++) {
-            let tmpLon = x + width * j;
+            const tmpLon = x + width * j;
 
             if (isInCircle(tmpLat, tmpLon, y, x, radiusM)) {
-                let center = getCentroid(tmpLat, tmpLon, height, width);
+                const center = getCentroid(tmpLat, tmpLon, height, width);
                 points.push(convertToLatLon(center.y, center.x, lat, lon));
                 points.push(convertToLatLon(-center.y, center.x, lat, lon));
                 points.push(convertToLatLon(center.y, -center.x, lat, lon));
@@ -3560,7 +3580,7 @@ function _hashesInRadius(lat, lon, radiusM, precision) {
     }
 
     points.forEach(point => {
-        let hash = Geohash.encode(point.lat, point.lon, precision);
+        const hash = Geohash.encode(point.lat, point.lon, precision);
         if (geohashes.indexOf(hash) < 0) {
             geohashes.push(hash);
         }
@@ -3568,11 +3588,11 @@ function _hashesInRadius(lat, lon, radiusM, precision) {
 
     // Original optionally uses Georaptor compression of geohashes
     // This is my simple implementation
-    geohashes.reduce((prev, currentHash, index, arr) => {
-        let precision = currentHash.length;
-        let parentHash = currentHash.substr(0, precision-1);
+    geohashes.forEach((currentHash, index, arr) => {
+        const precision = currentHash.length;
+        const parentHash = currentHash.substr(0, precision-1);
         let hashNeighbourMatches = 0;
-        let removeIndexes = [];
+        const removeIndexes = [];
         arr.forEach((otherHash, otherIndex) => {
             if (otherHash.startsWith(parentHash)) {
                 removeIndexes.push(otherIndex);
@@ -3594,8 +3614,8 @@ function _hashesInRadius(lat, lon, radiusM, precision) {
     return geohashes;
 }
 
-class GeoIndex extends DataIndex {
-    constructor(storage, path, key, options) {
+export class GeoIndex extends DataIndex {
+    constructor(storage: Storage, path: string, key: string, options: DataIndexOptions) {
         if (key === '{key}') { throw new Error('Cannot create geo index on node keys'); }
         super(storage, path, key, options);
     }
@@ -3604,63 +3624,59 @@ class GeoIndex extends DataIndex {
     //     return super.fileName.slice(0, -4) + '.geo.idx';
     // }
 
-    get type() {
+    get type(): KnownIndexType {
         return 'geo';
     }
 
-    /**
-     * 
-     * @param {string} path 
-     * @param {any} oldValue 
-     * @param {any} newValue 
-     */
-    handleRecordUpdate(path, oldValue, newValue) {
-        const mutated = { old: {}, new: {} };
+    async handleRecordUpdate(path: string, oldValue: unknown, newValue: unknown) {
+        const mutated = { old: {} as any, new: {} as any };
         oldValue !== null && typeof oldValue === 'object' && Object.assign(mutated.old, oldValue);
         newValue !== null && typeof newValue === 'object' && Object.assign(mutated.new, newValue);
         if (mutated.old[this.key] !== null && typeof mutated.old[this.key] === 'object') {
-            mutated.old[this.key] = _getGeoHash(mutated.old[this.key]); 
+            mutated.old[this.key] = _getGeoHash(mutated.old[this.key]);
         }
-        if (mutated.new[this.key] !== null && typeof mutated.new[this.key] === 'object') { 
-            mutated.new[this.key] = _getGeoHash(mutated.new[this.key]); 
+        if (mutated.new[this.key] !== null && typeof mutated.new[this.key] === 'object') {
+            mutated.new[this.key] = _getGeoHash(mutated.new[this.key]);
         }
         super.handleRecordUpdate(path, mutated.old, mutated.new);
     }
 
     build() {
-        const addCallback = (add, obj, recordPointer, metadata) => {
-            if (typeof obj !== 'object') {
-                this.storage.debug.warn(`GeoIndex cannot index location because value "${obj}" is not an object`);
-                return;
-            }
-            if (typeof obj.lat !== 'number' || typeof obj.long !== 'number') {
-                this.storage.debug.warn(`GeoIndex cannot index location because lat (${obj.lat}) or long (${obj.long}) are invalid`)
-                return;
-            }
-            const geohash = _getGeoHash(obj);
-            add(geohash, recordPointer, metadata);
-            return geohash;
-        }
-        return super.build({ addCallback, valueTypes: [Node.VALUE_TYPES.OBJECT] });
+        return super.build({
+            addCallback: (add, obj: { lat: number; long: number; }, recordPointer, metadata) => {
+                if (typeof obj !== 'object') {
+                    this.storage.debug.warn(`GeoIndex cannot index location because value "${obj}" is not an object`);
+                    return;
+                }
+                if (typeof obj.lat !== 'number' || typeof obj.long !== 'number') {
+                    this.storage.debug.warn(`GeoIndex cannot index location because lat (${obj.lat}) or long (${obj.long}) are invalid`);
+                    return;
+                }
+                const geohash = _getGeoHash(obj);
+                add(geohash, recordPointer, metadata);
+                return geohash;
+            },
+            valueTypes: [Node.VALUE_TYPES.OBJECT],
+        });
     }
 
     static get validOperators() {
         return ['geo:nearby'];
     }
-    
+
     get validOperators() {
         return GeoIndex.validOperators;
     }
 
-    test(obj, op, val) {
+    test(obj: any, op: 'geo:nearby', val: { lat: number; long: number; radius: number }) {
         if (!this.validOperators.includes(op)) {
-            throw new Error(`Unsupported operator "${op}"`)
+            throw new Error(`Unsupported operator "${op}"`);
         }
         if (obj == null || typeof obj !== 'object') {
             // No source object
             return false;
         }
-        const src = obj[this.key];
+        const src = obj[this.key] as { lat: number; long: number };
         if (typeof src !== 'object' || typeof src.lat !== 'number' || typeof src.long !== 'number') {
             // source object is not geo
             return false;
@@ -3670,32 +3686,45 @@ class GeoIndex extends DataIndex {
             return false;
         }
 
-        const isInCircle = (checkLat, checkLon, lat, lon, radiusM) => {
-            let deltaLon = checkLon - lon;
-            let deltaLat = checkLat - lat;
+        const isInCircle = (checkLat: number, checkLon: number, lat: number, lon: number, radiusM: number) => {
+            const deltaLon = checkLon - lon;
+            const deltaLat = checkLat - lat;
             return Math.pow(deltaLon, 2) + Math.pow(deltaLat, 2) <= Math.pow(radiusM, 2);
         };
         return isInCircle(src.lat, src.long, val.lat, val.long, val.radius);
     }
 
     /**
-     * 
-     * @param {string} op Only 'geo:nearby' is supported at the moment
-     * @param {object} val 
-     * @param {number} val.lat nearby query center latitude
-     * @param {number} val.long nearby query center longitude
-     * @param {number} val.radius nearby query radius in meters
+     * @param op Only 'geo:nearby' is supported at the moment
      */
-    query(op, val) {
+    async query(
+        op: 'geo:nearby',
+        val: {
+            /**
+             * nearby query center latitude
+             */
+            lat: number;
+
+            /**
+             * nearby query center longitude
+             */
+            long: number;
+
+            /**
+             * nearby query radius in meters
+             */
+            radius: number;
+        },
+    ): Promise<IndexQueryResults> {
         if (!GeoIndex.validOperators.includes(op)) {
-            throw new Error(`Geo indexes can not be queried with operators ${GeoIndex.validOperators.map(op => `"${op}"`).join(', ')}`)
+            throw new Error(`Geo indexes can not be queried with operators ${GeoIndex.validOperators.map(op => `"${op}"`).join(', ')}`);
         }
 
         // Check cache
         const cached = this.cache(op, val);
         if (cached) {
             // Use cached results
-            return Promise.resolve(cached);
+            return cached;
         }
 
         if (op === 'geo:nearby') {
@@ -3712,43 +3741,38 @@ class GeoIndex extends DataIndex {
             const promises = targetHashes.map(hash => {
                 return super.query('like', `${hash}*`);
             });
-            return Promise.all(promises)
-            .then(resultSets => {
-                
-                // Combine all results
-                const results = new IndexQueryResults();
-                results.filterKey = this.key;
-                resultSets.forEach(set => {
-                    set.forEach(match => results.push(match));
-                });
+            const resultSets= await Promise.all(promises);
 
-                stats.stop(results.length);
-                results.stats = stats;
-
-                this.cache(op, val, results);
-
-                return results;
+            // Combine all results
+            const results = new IndexQueryResults();
+            results.filterKey = this.key;
+            resultSets.forEach(set => {
+                set.forEach(match => results.push(match));
             });
+
+            stats.stop(results.length);
+            results.stats = stats;
+
+            this.cache(op, val, results);
+
+            return results;
         }
     }
 }
 
 class IndexQueryHint {
-    constructor(type, value) {
-        this.type = type;
-        this.value = value;
-    }
+    constructor(public type: string, public value: unknown) { }
 }
 class FullTextIndexQueryHint extends IndexQueryHint {
     static get types() {
-        return { 
+        return Object.freeze({
             missingWord: 'missing',
             genericWord: 'generic',
-            ignoredWord: 'ignored'
-        };
+            ignoredWord: 'ignored',
+        });
     }
 
-    constructor(type, value) {
+    constructor(type: 'missing' | 'generic' | 'ignored', value: unknown) {
         super(type, value);
     }
 
@@ -3772,12 +3796,12 @@ class FullTextIndexQueryHint extends IndexQueryHint {
 
 class ArrayIndexQueryHint extends IndexQueryHint {
     static get types() {
-        return { 
-            missingValue: 'missing'
-        };
+        return Object.freeze({
+            missingValue: 'missing',
+        });
     }
 
-    constructor(type, value) {
+    constructor(type: 'missing', value: unknown) {
         super(type, value);
     }
 
@@ -3793,10 +3817,3 @@ class ArrayIndexQueryHint extends IndexQueryHint {
         }
     }
 }
-
-module.exports = { 
-    DataIndex,
-    ArrayIndex,
-    FullTextIndex,
-    GeoIndex
-};
