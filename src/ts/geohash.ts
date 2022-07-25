@@ -14,7 +14,7 @@ const base32 = '0123456789bcdefghjkmnpqrstuvwxyz';
  * evaluated precision.
  * @param lat - Latitude in degrees.
  * @param lon - Longitude in degrees.
- * @param precision - Number of characters in resulting 
+ * @param precision - Number of characters in resulting
  * @returns Geohash of supplied latitude/longitude.
  * @example
  * let geohash = encode(52.205, 0.119, 7); // geohash: 'u120fxw'
@@ -24,8 +24,8 @@ export const encode = function (lat: number, lon: number, precision?: number): s
     if (typeof precision == 'undefined') {
         // refine geohash until it matches precision of supplied lat/lon
         for (let p = 1; p <= 12; p++) {
-            let hash = encode(lat, lon, p);
-            let posn = decode(hash);
+            const hash = encode(lat, lon, p);
+            const posn = decode(hash);
             if (posn.lat == lat && posn.lon == lon) return hash;
         }
         precision = 12; // set to maximum
@@ -48,7 +48,7 @@ export const encode = function (lat: number, lon: number, precision?: number): s
     while (geohash.length < precision) {
         if (evenBit) {
             // bisect E-W longitude
-            let lonMid = (lonMin + lonMax) / 2;
+            const lonMid = (lonMin + lonMax) / 2;
             if (lon >= lonMid) {
                 idx = idx * 2 + 1;
                 lonMin = lonMid;
@@ -58,7 +58,7 @@ export const encode = function (lat: number, lon: number, precision?: number): s
             }
         } else {
             // bisect N-S latitude
-            let latMid = (latMin + latMax) / 2;
+            const latMid = (latMin + latMax) / 2;
             if (lat >= latMid) {
                 idx = idx * 2 + 1;
                 latMin = latMid;
@@ -123,15 +123,15 @@ export const bounds = function (geohash: string): { sw: { lat: number, lon: numb
     let lonMin = -180, lonMax = 180;
 
     for (let i = 0; i < geohash.length; i++) {
-        let chr = geohash.charAt(i);
-        let idx = base32.indexOf(chr);
+        const chr = geohash.charAt(i);
+        const idx = base32.indexOf(chr);
         if (idx == -1) throw new Error('Invalid geohash');
 
         for (let n = 4; n >= 0; n--) {
-            let bitN = idx >> n & 1;
+            const bitN = idx >> n & 1;
             if (evenBit) {
                 // longitude
-                let lonMid = (lonMin + lonMax) / 2;
+                const lonMid = (lonMin + lonMax) / 2;
                 if (bitN == 1) {
                     lonMin = lonMid;
                 } else {
@@ -139,7 +139,7 @@ export const bounds = function (geohash: string): { sw: { lat: number, lon: numb
                 }
             } else {
                 // latitude
-                let latMid = (latMin + latMax) / 2;
+                const latMid = (latMin + latMax) / 2;
                 if (bitN == 1) {
                     latMin = latMid;
                 } else {
@@ -150,7 +150,7 @@ export const bounds = function (geohash: string): { sw: { lat: number, lon: numb
         }
     }
 
-    let bounds = {
+    const bounds = {
         sw: { lat: latMin, lon: lonMin },
         ne: { lat: latMax, lon: lonMax },
     };
@@ -164,7 +164,7 @@ export const bounds = function (geohash: string): { sw: { lat: number, lon: numb
  * @param geohash Cell to which adjacent cell is required.
  * @param direction Direction from geohash (N/S/E/W).
  * @returns Geocode of adjacent cell.
- * @throws  Invalid 
+ * @throws  Invalid
  */
 export const adjacent = function (geohash: string, direction: 'N' | 'n' | 'S' | 's' | 'E' | 'e' | 'W' | 'w') {
     // based on github.com/davetroy/geohash-js
@@ -175,23 +175,23 @@ export const adjacent = function (geohash: string, direction: 'N' | 'n' | 'S' | 
     if (length === 0) throw new Error('Invalid geohash');
     if ('nsew'.indexOf(direction) == -1) throw new Error('Invalid direction');
 
-    let neighbour = {
+    const neighbour = {
         n: ['p0r21436x8zb9dcf5h7kjnmqesgutwvy', 'bc01fg45238967deuvhjyznpkmstqrwx'],
         s: ['14365h7k9dcfesgujnmqp0r2twvyx8zb', '238967debc01fg45kmstqrwxuvhjyznp'],
         e: ['bc01fg45238967deuvhjyznpkmstqrwx', 'p0r21436x8zb9dcf5h7kjnmqesgutwvy'],
         w: ['238967debc01fg45kmstqrwxuvhjyznp', '14365h7k9dcfesgujnmqp0r2twvyx8zb'],
     };
-    let border = {
+    const border = {
         n: ['prxz', 'bcfguvyz'],
         s: ['028b', '0145hjnp'],
         e: ['bcfguvyz', 'prxz'],
         w: ['0145hjnp', '028b'],
     };
 
-    let lastCh = geohash.slice(-1);    // last character of hash
+    const lastCh = geohash.slice(-1);    // last character of hash
     let parent = geohash.slice(0, -1); // hash without last character
 
-    let type = geohash.length % 2;
+    const type = geohash.length % 2;
 
     // check for edge-cases which don't share common prefix
     if (border[direction][type].indexOf(lastCh) != -1 && parent !== '') {

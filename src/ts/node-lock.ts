@@ -7,13 +7,13 @@ const LOCK_STATE = {
     PENDING: 'pending',
     LOCKED: 'locked',
     EXPIRED: 'expired',
-    DONE: 'done'
+    DONE: 'done',
 };
 
 export class NodeLocker {
 
     private _locks: NodeLock[] = [];
-    private _lastTid: number = 0;
+    private _lastTid = 0;
 
     /**
      * When .quit() is called, will be set to the quit promise's resolve function
@@ -41,23 +41,23 @@ export class NodeLocker {
     _allowLock(path: string, tid: string|number, forWriting: boolean) {
         /**
          * Disabled path locking because of the following issue:
-         * 
+         *
          * Process 1 requests WRITE lock on "/users/ewout", is GRANTED
          * Process 2 requests READ lock on "", is DENIED (process 1 writing to a descendant)
          * Process 3 requests WRITE lock on "/posts/post1", is GRANTED
          * Process 1 requests READ lock on "/" because of bound events, is DENIED (3 is writing to a descendant)
          * Process 3 requests READ lock on "/" because of bound events, is DENIED (1 is writing to a descendant)
-         * 
+         *
          * --> DEADLOCK!
-         * 
-         * Now simply makes sure one transaction has write access at the same time, 
+         *
+         * Now simply makes sure one transaction has write access at the same time,
          * might change again in the future...
          */
 
         const conflict = this._locks
             .find(otherLock => {
                 return (
-                    otherLock.tid !== tid 
+                    otherLock.tid !== tid
                     && otherLock.state === LOCK_STATE.LOCKED
                     && (forWriting || otherLock.forWriting)
                 );
@@ -69,12 +69,12 @@ export class NodeLocker {
         return new Promise<void>(resolve => {
             if (this._locks.length === 0) { return resolve(); }
             this._quit = resolve;
-        })
+        });
     }
 
     /**
      * Safely reject a pending lock, catching any unhandled promise rejections (that should not happen in the first place, obviously)
-     * @param lock 
+     * @param lock
      */
     _rejectLock(lock: NodeLock, err: Error) {
         this._locks.splice(this._locks.indexOf(lock), 1); // Remove from queue
@@ -100,14 +100,14 @@ export class NodeLocker {
             }
         }
         const pending = this._locks
-            .filter(lock => 
-                lock.state === LOCK_STATE.PENDING
+            .filter(lock =>
+                lock.state === LOCK_STATE.PENDING,
                 // && (lock.waitingFor === null || lock.waitingFor.state !== LOCK_STATE.LOCKED)
                 // Commented out above, because waitingFor lock might have moved to a different non-conflicting path in the meantime
             )
             .sort((a,b) => {
                 // // Writes get higher priority so all reads get the most recent data
-                // if (a.forWriting === b.forWriting) { 
+                // if (a.forWriting === b.forWriting) {
                 //     if (a.requested < b.requested) { return -1; }
                 //     else { return 1; }
                 // }
@@ -121,8 +121,8 @@ export class NodeLocker {
             lock.waitingFor = check.conflict || null;
             if (check.allow) {
                 this.lock(lock)
-                .then(lock.resolve)
-                .catch(err => this._rejectLock(lock, err));
+                    .then(lock.resolve)
+                    .catch(err => this._rejectLock(lock, err));
             }
         });
     }
@@ -134,20 +134,20 @@ export class NodeLocker {
      * @param forWriting if the record will be written to. Multiple read locks can be granted access at the same time if there is no write lock. Once a write lock is granted, no others can read from or write to it.
      * @returns returns a promise with the lock object once it is granted. It's .release method can be used as a shortcut to .unlock(path, tid) to release the lock
      */
-     async lock(
-        path: string, 
-        tid: string, 
-        forWriting?: boolean, 
-        comment?: string, 
+    async lock(
+        path: string,
+        tid: string,
+        forWriting?: boolean,
+        comment?: string,
         options?: { withPriority?: boolean; noTimeout?: boolean }
     ): Promise<NodeLock>;
     async lock(lock: NodeLock): Promise<NodeLock>;
     async lock(
-        path: string|NodeLock, 
-        tid?: string, 
-        forWriting = true, 
-        comment = '', 
-        options: { withPriority?: boolean; noTimeout?: boolean } = { withPriority: false, noTimeout: false }
+        path: string|NodeLock,
+        tid?: string,
+        forWriting = true,
+        comment = '',
+        options: { withPriority?: boolean; noTimeout?: boolean } = { withPriority: false, noTimeout: false },
     ): Promise<NodeLock> {
         let lock: NodeLock, proceed: boolean;
         if (path instanceof NodeLock) {
@@ -162,7 +162,7 @@ export class NodeLocker {
             throw new Error(`Quitting`);
         }
         else {
-            DEBUG_MODE && console.error(`${forWriting ? "write" : "read"} lock requested on "${path}" by tid ${tid} (${comment})`);
+            DEBUG_MODE && console.error(`${forWriting ? 'write' : 'read'} lock requested on "${path}" by tid ${tid} (${comment})`);
             // // Test the requested lock path
             // let duplicateKeys = getPathKeys(path)
             //     .reduce((r, key) => {
@@ -184,9 +184,9 @@ export class NodeLocker {
             proceed = check.allow;
         }
         if (proceed) {
-            DEBUG_MODE && console.error(`${lock.forWriting ? "write" : "read"} lock ALLOWED on "${lock.path}" by tid ${lock.tid} (${lock.comment})`);
+            DEBUG_MODE && console.error(`${lock.forWriting ? 'write' : 'read'} lock ALLOWED on "${lock.path}" by tid ${lock.tid} (${lock.comment})`);
             lock.state = LOCK_STATE.LOCKED;
-            if (typeof lock.granted === "number") {
+            if (typeof lock.granted === 'number') {
                 //debug.warn(`lock :: ALLOWING ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
             }
             else {
@@ -196,7 +196,7 @@ export class NodeLocker {
                     //debug.warn(`lock :: GRANTED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
                     let timeoutCount = 0;
                     const timeoutHandler = () => {
-                        // Autorelease timeouts must only fire when there is something wrong in the 
+                        // Autorelease timeouts must only fire when there is something wrong in the
                         // executing (AceBase) code, eg an unhandled promise rejection causing a lock not
                         // to be released. To guard against programming errors, we will issue 3 warning
                         // messages before releasing the lock.
@@ -206,11 +206,11 @@ export class NodeLocker {
                         timeoutCount++;
                         if (timeoutCount <= 3) {
                             // Warn first.
-                            this.debug.warn(`${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) is taking a long time to complete [${timeoutCount}]`);
+                            this.debug.warn(`${lock.forWriting ? 'write' : 'read' } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) is taking a long time to complete [${timeoutCount}]`);
                             lock.timeout = setTimeout(timeoutHandler, this.timeout / 4);
                             return;
                         }
-                        this.debug.error(`lock :: ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) took too long`);
+                        this.debug.error(`lock :: ${lock.forWriting ? 'write' : 'read' } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) took too long`);
                         lock.state = LOCK_STATE.EXPIRED;
                         // let allTransactionLocks = _locks.filter(l => l.tid === lock.tid).sort((a,b) => a.requested < b.requested ? -1 : 1);
                         // let transactionsDebug = allTransactionLocks.map(l => `${l.state} ${l.forWriting ? "WRITE" : "read"} ${l.comment}`).join("\n");
@@ -234,14 +234,15 @@ export class NodeLocker {
             });
         }
     }
-    unlock(lockOrId, comment, processQueue = true) {
+
+    unlock(lockOrId: NodeLock | NodeLock['id'], comment: string, processQueue = true) {
         let lock, i;
         if (lockOrId instanceof NodeLock) {
             lock = lockOrId;
             i = this._locks.indexOf(lock);
         }
         else {
-            let id = lockOrId;
+            const id = lockOrId;
             i = this._locks.findIndex(l => l.id === id);
             lock = this._locks[i];
         }
@@ -253,7 +254,7 @@ export class NodeLocker {
         lock.state = LOCK_STATE.DONE;
         clearTimeout(lock.timeout);
         this._locks.splice(i, 1);
-        DEBUG_MODE && console.error(`${lock.forWriting ? "write" : "read"} lock RELEASED on "${lock.path}" by tid ${lock.tid}`);
+        DEBUG_MODE && console.error(`${lock.forWriting ? 'write' : 'read'} lock RELEASED on "${lock.path}" by tid ${lock.tid}`);
         //debug.warn(`unlock :: RELEASED ${lock.forWriting ? "write" : "read" } lock on "/${lock.path}" for tid ${lock.tid}; ${lock.comment}; ${comment}`);
 
         processQueue && this._processLockQueue();
@@ -264,7 +265,7 @@ export class NodeLocker {
         return this._locks || [];
     }
 
-    isAllowed(path, tid, forWriting) {
+    isAllowed(path: string, tid: string | number, forWriting: boolean) {
         return this._allowLock(path, tid, forWriting).allow;
     }
 }
@@ -278,7 +279,7 @@ export class NodeLock {
     requested: number = Date.now();
     granted: number;
     expires: number;
-    comment: string = '';
+    comment = '';
     waitingFor: NodeLock = null;
     id: number = ++lastid;
     history: { action: string; path: string; forWriting: boolean; comment?: string }[] = [];
@@ -290,22 +291,22 @@ export class NodeLock {
     /**
      * Constructor for a record lock
      * @param {NodeLocker} locker
-     * @param {string} path 
-     * @param {string} tid 
-     * @param {boolean} forWriting 
+     * @param {string} path
+     * @param {string} tid
+     * @param {boolean} forWriting
      * @param {boolean} priority
      */
     constructor(
-        private locker: NodeLocker, 
-        public path: string, 
-        public tid: string, 
-        public forWriting: boolean, 
+        private locker: NodeLocker,
+        public path: string,
+        public tid: string,
+        public forWriting: boolean,
         public priority = false) {
     }
 
     async release(comment?: string) {
         //return this.storage.unlock(this.path, this.tid, comment);
-        this.history.push({ action: 'release', path: this.path, forWriting: this.forWriting, comment })
+        this.history.push({ action: 'release', path: this.path, forWriting: this.forWriting, comment });
         return this.locker.unlock(this, comment || this.comment);
     }
 
@@ -333,32 +334,32 @@ export class NodeLock {
         }
     }
 
-    /**
-     * Not used? Will be removed
-     */
-    moveTo(otherPath: string, forWriting: boolean) {
-        //const check = _allowLock(otherPath, this.tid, forWriting);
-        const allowed = this.locker.isAllowed(otherPath, this.tid, forWriting);
-        if (allowed) {
-            this.history.push({ path: this.path, forWriting: this.forWriting, action: `moving to "${otherPath}"` });
-            this.waitingFor = null;
-            this.path = otherPath;
-            this.forWriting = forWriting;
-            // this.comment = `moved to "/${otherPath}": ${this.comment}`;
-            return Promise.resolve(this);
-        }
-        else {
-            // Unlock without processing the queue
-            this.locker.unlock(this, `moving to "/${otherPath}": ${this.comment}`, false);
+    // /**
+    //  * Not used? Will be removed
+    //  */
+    // moveTo(otherPath: string, forWriting: boolean) {
+    //     //const check = _allowLock(otherPath, this.tid, forWriting);
+    //     const allowed = this.locker.isAllowed(otherPath, this.tid, forWriting);
+    //     if (allowed) {
+    //         this.history.push({ path: this.path, forWriting: this.forWriting, action: `moving to "${otherPath}"` });
+    //         this.waitingFor = null;
+    //         this.path = otherPath;
+    //         this.forWriting = forWriting;
+    //         // this.comment = `moved to "/${otherPath}": ${this.comment}`;
+    //         return Promise.resolve(this);
+    //     }
+    //     else {
+    //         // Unlock without processing the queue
+    //         this.locker.unlock(this, `moving to "/${otherPath}": ${this.comment}`, false);
 
-            // Lock other node with priority to jump the queue
-            return this.locker.lock(otherPath, this.tid, forWriting, this.comment, { withPriority: true }) // `moved to "/${otherPath}" (queued): ${this.comment}`
-            .then(newLock => {
-                newLock.history = this.history;
-                newLock.history.push({ path: this.path, forWriting: this.forWriting, action: `moved to "${otherPath}" through queue` });
-                return newLock;
-            });
-        }
-    }
+    //         // Lock other node with priority to jump the queue
+    //         return this.locker.lock(otherPath, this.tid, forWriting, this.comment, { withPriority: true }) // `moved to "/${otherPath}" (queued): ${this.comment}`
+    //         .then(newLock => {
+    //             newLock.history = this.history;
+    //             newLock.history.push({ path: this.path, forWriting: this.forWriting, action: `moved to "${otherPath}" through queue` });
+    //             return newLock;
+    //         });
+    //     }
+    // }
 
 }

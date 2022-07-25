@@ -1,8 +1,8 @@
-import { PathInfo } from "acebase-core";
-import { IPCPeer } from "./ipc";
+import { PathInfo } from 'acebase-core';
+import { IPCPeer } from './ipc';
 
-const SECOND = 1000;
-const MINUTE = 60000;
+const SECOND = 1_000;
+const MINUTE = 60_000;
 
 const DEBUG_MODE = false;
 const LOCK_TIMEOUT_MS = DEBUG_MODE ? 15 * MINUTE : 90 * SECOND;
@@ -20,7 +20,7 @@ export abstract class NodeLockIntention {
     /**
      * The intention to read the value of a node and its children, optionally filtered to include or exclude specific child keys/paths
      * While lock is granted, this prevents others to write to this node and its (optionally filtered) child paths
-     * @param filter 
+     * @param filter
      */
     static ReadValue(filter?: { include?: NodeKey[], exclude?: NodeKey[], child_objects?: boolean } ) { return new ReadValueIntention(filter); }
 
@@ -68,22 +68,22 @@ enum NodeLockState {
     pending,
     locked,
     released,
-    expired
+    expired,
 }
 
 export class NodeLockInfo {
     /** Generated lock ID */
     readonly id: LockID;
     /** Transaction this lock is part of */
-    readonly tid: TransactionID
+    readonly tid: TransactionID;
     /** path of the lock */
-    readonly path: string
+    readonly path: string;
     /** pathInfo */
-    readonly pathInfo: PathInfo
+    readonly pathInfo: PathInfo;
     /** the intention the lock was requested with */
-    readonly intention: NodeLockIntention
+    readonly intention: NodeLockIntention;
     /** current state of the lock. Cycle: pending -> locked -> released or expired */
-    state: NodeLockState;    
+    state: NodeLockState;
     /** lock request timestamp */
     requested: number;
     /** timestamp the lock was granted */
@@ -119,7 +119,7 @@ interface ITransactionManager {
     releaseLock(id: LockID): Promise<void>
 }
 export class TransactionManager implements ITransactionManager {
-    
+
     private lastTid:TransactionID = 0;
     private lastLid:LockID = 0;
 
@@ -127,7 +127,7 @@ export class TransactionManager implements ITransactionManager {
     private locks:NodeLockInfo[] = [];
     private blacklisted: TransactionID[] = [];
 
-    constructor() { }
+    // constructor() { }
 
     async createTransaction(): Promise<Transaction> {
         const tid = ++this.lastTid;
@@ -140,7 +140,7 @@ export class TransactionManager implements ITransactionManager {
         if (this.blacklisted.includes(request.tid)) {
             throw new Error(`Transaction ${request.tid} not allowed to continue because one or more locks timed out`);
         }
-        
+
         const lock = new NodeLockInfo(++this.lastLid, request.tid, request.path, request.intention);
         lock.requested = Date.now();
         const grantLock = () => {
@@ -148,7 +148,7 @@ export class TransactionManager implements ITransactionManager {
             lock.granted = Date.now();
             lock.expires = lock.granted + LOCK_TIMEOUT_MS;
             this.locks.push(lock);
-        }
+        };
 
         // Check locks held by other transactions for conflicts, then grant lock or queue.
         const allow = this.allowLock(request);
@@ -157,8 +157,8 @@ export class TransactionManager implements ITransactionManager {
         }
         else {
             // Queue
-            let resolve, reject;
-            const promise = new Promise((rs, rj) => { resolve = rs; reject = rj; });
+            let resolve: () => void, reject: (err: Error) => void;
+            const promise = new Promise<void>((rs, rj) => { resolve = rs; reject = rj; });
             const queuedRequest = {
                 lock,
                 queued: Date.now(),
@@ -167,7 +167,7 @@ export class TransactionManager implements ITransactionManager {
                     this.queue.splice(i, 1);
                     grantLock();
                     resolve();
-                }
+                },
             };
             this.queue.push(queuedRequest);
 
@@ -175,8 +175,8 @@ export class TransactionManager implements ITransactionManager {
             let timeoutsFired = 0;
             const timeoutHandler = () => {
                 timeoutsFired++;
-                const lock = queuedRequest.lock, 
-                    tid = lock.tid, 
+                const lock = queuedRequest.lock,
+                    tid = lock.tid,
                     blacklisted = this.blacklisted.includes(tid),
                     terminate = timeoutsFired === 3 || blacklisted;
 
@@ -190,7 +190,7 @@ export class TransactionManager implements ITransactionManager {
                 timeout = setTimeout(timeoutHandler, LOCK_TIMEOUT_MS / 3);
             };
             let timeout = setTimeout(timeoutHandler, LOCK_TIMEOUT_MS / 3);
-            
+
             // Wait until we get lock
             await promise;
 
@@ -209,7 +209,7 @@ export class TransactionManager implements ITransactionManager {
     }
 
     private processQueue() {
-        this.queue.forEach((item, i, queue) => {
+        this.queue.forEach((item /*, i, queue*/) => {
             const allow = this.allowLock(item.lock);
             if (allow) {
                 item.grant(); // item will be removed from the queue by grant callback
@@ -238,11 +238,11 @@ export class TransactionManager implements ITransactionManager {
         return [ conflict, reverse ];
     }
 
-    private conflictsLegacy(request: INodeLockRequest, lock: NodeLockInfo) {
-        // The legacy locking allowed 1 simultanious write, and denies writes while reading.
-        // So, a requested write lock always conflicts with any other granted lock
-        return request.intention instanceof OverwriteNodeIntention || request.intention instanceof UpdateNodeIntention;
-    }
+    // private conflictsLegacy(request: INodeLockRequest, lock: NodeLockInfo) {
+    //     // The legacy locking allowed 1 simultanious write, and denies writes while reading.
+    //     // So, a requested write lock always conflicts with any other granted lock
+    //     return request.intention instanceof OverwriteNodeIntention || request.intention instanceof UpdateNodeIntention;
+    // }
 
     private conflicts(request: INodeLockRequest, lock: NodeLockInfo) {
         // Returns true if the request lock conflicts with given existing lock
@@ -251,7 +251,7 @@ export class TransactionManager implements ITransactionManager {
         const lockPath = lock.pathInfo;
         if (request.intention instanceof ReadInfoIntention) {
             // Requested lock is to read info for a specific node and/or its children for reflection purposes
-            
+
             if (lock.intention instanceof OverwriteNodeIntention) {
                 // overwrite lock on "users/ewout/address"
                 //      deny info requests for "users/ewout"
@@ -259,7 +259,7 @@ export class TransactionManager implements ITransactionManager {
                 return requestPath.isParentOf(lockPath) || lock.path === request.path || requestPath.isDescendantOf(lockPath);
             }
             else if (lock.intention instanceof UpdateNodeIntention) {
-                // update lock on "users/ewout/address" (keys "street", "nr"): 
+                // update lock on "users/ewout/address" (keys "street", "nr"):
                 //      deny info requests for "users/ewout/address", "users/ewout/address/street(/*)", "users/ewout/address/nr(/*)"
                 //      allow info requests for all else, eg "users/ewout/address/city"
                 return request.path === lock.path || (requestPath.isDescendantOf(lockPath) && lock.intention.keys.some(key => requestPath.isOnTrailOf(lockPath.child(key))));
@@ -294,7 +294,7 @@ export class TransactionManager implements ITransactionManager {
             if (!request.intention.filter) {
                 // Requested lock is unfiltered - all data will be read
             }
-            if (conflict && request.intention.filter && !requestPath.isDescendantOf(lockPath)) {                
+            if (conflict && request.intention.filter && !requestPath.isDescendantOf(lockPath)) {
                 // Requested lock is filtered - only selected data will be read
                 conflict = false;
                 if (request.intention.filter.include instanceof Array) {
@@ -346,7 +346,7 @@ export class TransactionManager implements ITransactionManager {
                             // read lock on "users/ewout/address", include ["street", "nr"]
                             // conflict if overwrite request equals or is descendant of "users/ewout/address/street" or "users/ewout/address/nr"
                             const childLockPath = lockPath.child(key);
-                            return requestPath.equals(childLockPath) || requestPath.isDescendantOf(childLockPath)
+                            return requestPath.equals(childLockPath) || requestPath.isDescendantOf(childLockPath);
                         });
                     }
                     if (!conflict && lock.intention.filter.exclude instanceof Array) {
@@ -354,7 +354,7 @@ export class TransactionManager implements ITransactionManager {
                             // read lock on "users/ewout/address", exclude ["street", "nr"]
                             // conflict if overwrite request equals or is descendant of "users/ewout/address/street" or "users/ewout/address/nr"
                             const childLockPath = lockPath.child(key);
-                            return requestPath.equals(childLockPath) || requestPath.isDescendantOf(childLockPath)
+                            return requestPath.equals(childLockPath) || requestPath.isDescendantOf(childLockPath);
                         });
                     }
                     if (!conflict && lock.intention.filter.child_objects === false) {
@@ -377,7 +377,7 @@ export class TransactionManager implements ITransactionManager {
             if (lock.intention instanceof UpdateNodeIntention) {
                 // update of "users/ewout/address" (keys "street", "nr"):
                 //      deny updates on "" (key "users"), "users" (key "ewout"), "users/ewout" (key "address"), "users/ewout/address" (keys "street", "nr")
-                
+
                 const lockedPaths = lock.intention.keys.map(key => lockPath.child(key));
                 // eg: ["users/ewout/address/street", "users/ewout/address/nr"]
 
@@ -414,7 +414,7 @@ export class TransactionManager implements ITransactionManager {
                 // or: ["users/ewout/last_login" (allow), "users/ewout/address" (deny)]
                 // or: ["users/ewout"] (deny)
                 let conflict = overwritePaths.some(path => path.isOnTrailOf(lockPath));
-                
+
                 if (conflict && lock.intention.filter && !requestPath.isAncestorOf(lockPath)) {
                     conflict = false;
                     if (lock.intention.filter.include instanceof Array) {
@@ -442,7 +442,7 @@ export class TransactionManager implements ITransactionManager {
 }
 
 export class IPCTransactionManager extends TransactionManager {
-    constructor (private ipc: IPCPeer) { 
+    constructor (private ipc: IPCPeer) {
         super();
         this.init();
     }
@@ -453,7 +453,7 @@ export class IPCTransactionManager extends TransactionManager {
                 if (request.type === 'transaction.create') {
                     const transaction = await this.createTransaction();
                     const tx = { id: transaction.id };
-                    this.ipc.replyRequest(request, { ok: true, transaction });
+                    this.ipc.replyRequest(request, { ok: true, transaction: tx });
                 }
                 else if (request.type === 'transaction.lock') {
                     const lock = await this.requestLock(request.lock);
@@ -467,7 +467,7 @@ export class IPCTransactionManager extends TransactionManager {
             catch(err) {
                 this.ipc.replyRequest(request, { ok: false, error: err.message });
             }
-        })
+        });
     }
     async createTransaction() : Promise<Transaction> {
         if (this.ipc.isMaster) {
@@ -494,7 +494,7 @@ export class IPCTransactionManager extends TransactionManager {
 }
 
 export class NodeLock extends NodeLockInfo {
-    constructor(private transaction: Transaction, lockInfo: NodeLockInfo) { 
+    constructor(private transaction: Transaction, lockInfo: NodeLockInfo) {
         super(lockInfo.id, transaction.id, lockInfo.path, lockInfo.intention);
     }
     async release() {

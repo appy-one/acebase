@@ -1,18 +1,38 @@
 {
     "env": {
         "browser": true,
-        "commonjs": true,
         "es2021": true,
         "node": true
     },
-    "extends": "eslint:recommended",
+    "extends": [
+        "plugin:@typescript-eslint/recommended"
+    ],
+    "parser": "@typescript-eslint/parser",
     "parserOptions": {
-        "ecmaVersion": 12
+        "ecmaVersion": "latest",
+        "sourceType": "module"
     },
+    "plugins": [
+        "@typescript-eslint"
+    ],
     "rules": {
-        "no-unused-vars": "warn",
-        "no-constant-condition": ["error", { "checkLoops": false }],
-        "quotes":["error", "single", { "avoidEscape": true }]
+        "indent": [ "error", 4, { "SwitchCase": 1, "VariableDeclarator": 1, "MemberExpression": 1, "CallExpression": { "arguments": 1 } }],
+        "quotes": ["error", "single", { "avoidEscape": false, "allowTemplateLiterals": true }],
+        "semi": ["error", "always"],
+        "@typescript-eslint/no-explicit-any": [
+            "off", // "error" if we want to enforce usage of `unknown` instead
+            { "ignoreRestArgs": false, "fixToUnknown": true }
+        ],
+        "comma-dangle": "off",
+        "@typescript-eslint/comma-dangle": ["error", "always-multiline"],
+        "no-trailing-spaces": "error",
+        "eol-last": "error"
     },
-    "ignorePatterns": ["**/*.spec.js"]
+    "overrides": [{
+        "files": "*.js",
+        "rules": {
+            "@typescript-eslint/no-var-requires": "off"
+        }
+    }],
+    "ignorePatterns": ["dist/**/*.js"]
 }

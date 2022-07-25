@@ -23,7 +23,7 @@ export class NodeInfo {
         this.childCount = info.childCount;
 
         if (typeof this.path === 'string' && (typeof this.key === 'undefined' && typeof this.index === 'undefined')) {
-            let pathInfo = PathInfo.get(this.path);
+            const pathInfo = PathInfo.get(this.path);
             if (typeof pathInfo.key === 'number') {
                 this.index = pathInfo.key;
             }

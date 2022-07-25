@@ -1,7 +1,9 @@
-import { AceBaseBase, ID, PathInfo } from "acebase-core";
-import type { Api } from "acebase-core/src/api";
-import { VALUE_TYPES } from "./node-value-types";
-import { Storage, NodeNotFoundError } from './storage';
+import { AceBaseBase, ID, PathInfo } from 'acebase-core';
+import type { Api } from 'acebase-core/src/api';
+import { VALUE_TYPES } from './node-value-types';
+import { NodeNotFoundError } from './node-errors';
+import { NodeInfo } from './node-info';
+import { Storage } from './storage';
 import { DataIndex } from './data-index';
 
 /**
@@ -20,12 +22,12 @@ export interface QueryFilter {
 
 export interface QueryOrder {
     key: string;
-    ascending: boolean 
+    ascending: boolean
 }
 
 export interface Query {
     filters: QueryFilter[];
-    
+
     /**
      * number of results to skip, useful for paging
      */
@@ -35,7 +37,7 @@ export interface Query {
      * max number of results to return
      */
     take: number;
-    
+
     /**
      * sort order
      */
@@ -91,25 +93,28 @@ export interface QueryOptions {
     }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-empty-function
+const noop = () => {};
+
 /**
- * 
+ *
  * @param storage Target storage instance
- * @param path Path of the object collection to perform query on 
+ * @param path Path of the object collection to perform query on
  * @param query Query to execute
  * @param options Additional options
  * @returns Returns a promise that resolves with matching data or paths in `results`
  */
 export function query(
     api: LocalApi,
-    path: string, 
-    query: Query, 
-    options: QueryOptions = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: event => {} }
+    path: string,
+    query: Query,
+    options: QueryOptions = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: noop },
 ): Promise<{ results: object[]|string[], context: any, stop(): Promise<void> }> {
     // TODO: Refactor to async
 
-    if (typeof options !== "object") { options = {}; }
-    if (typeof options.snapshots === "undefined") { options.snapshots = false; }
-    
+    if (typeof options !== 'object') { options = {}; }
+    if (typeof options.snapshots === 'undefined') { options.snapshots = false; }
+
     const context: any = {};
     if (api.storage.transactionLoggingEnabled) {
         context.acebase_cursor = ID.generate();
@@ -119,15 +124,15 @@ export function query(
 
     const sortMatches = (matches: Array<any>) => {
         matches.sort((a, b) => {
-            const compare = (i) => {
+            const compare = (i: number): number => {
                 const o = querySort[i];
                 const trailKeys = PathInfo.getPathKeys(o.key);
-                let left = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, a.val);
-                let right = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, b.val);
-                
+                const left = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, a.val);
+                const right = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, b.val);
+
                 if (left === null) { return right === null ? 0 : o.ascending ? -1 : 1; }
                 if (right === null) { return o.ascending ? 1 : -1; }
-                
+
                 // TODO: add collation options using Intl.Collator. Note this also has to be implemented in the matching engines (inclusing indexes)
                 // See discussion https://github.com/appy-one/acebase/discussions/27
                 if (left == right) {
@@ -137,80 +142,76 @@ export function query(
                 else if (left < right) {
                     return o.ascending ? -1 : 1;
                 }
-                else if (left > right) {
-                    return o.ascending ? 1 : -1;
-                }
+                // else if (left > right) {
+                return o.ascending ? 1 : -1;
+                // }
             };
             return compare(0);
         });
     };
-    const loadResultsData = (preResults, options) => {
+    const loadResultsData = async (preResults: Array<{ path: string }>, options: { include?: Array<string|number>; exclude?: Array<string|number>; child_objects?: boolean; }) => {
         // Limit the amount of concurrent getValue calls by batching them
         if (preResults.length === 0) {
-            return Promise.resolve([]);
+            return [];
         }
         const maxBatchSize = 50;
-        let batches = [];
+        const batches: Array<Array<{ path: string; index: number }>> = [];
         const items = preResults.map((result, index) => ({ path: result.path, index }));
         while (items.length > 0) {
-            let batchItems= items.splice(0, maxBatchSize);
+            const batchItems = items.splice(0, maxBatchSize);
             batches.push(batchItems);
         }
-        const results = [];
-        const nextBatch = () => {
+        const results: Array<{ path: string, val: any }> = [];
+        const nextBatch = async () => {
             const batch = batches.shift();
-            return Promise.all(batch.map(item => {
+            await Promise.all(batch.map(item => {
                 const { path, index } = item;
                 return api.storage.getNode(path, options)
-                .then(node => {
-                    const val = node.value;
-                    if (val === null) { 
+                    .then((node: NodeInfo) => {
+                        const val = node.value;
+                        if (val === null) {
                         // Record was deleted, but index isn't updated yet?
-                        api.storage.debug.warn(`Indexed result "/${path}" does not have a record!`);
-                        // TODO: let index rebuild
-                        return; 
-                    }
-                    
-                    const result = { path, val };
-                    if (stepsExecuted.sorted) {
-                        // Put the result in the same index as the preResult was
-                        results[index] = result;
-                    }
-                    else {
-                        results.push(result);
-                        if (!stepsExecuted.skipped && results.length > query.skip + Math.abs(query.take)) {
-                            // we can toss a value! sort, toss last one 
-                            sortMatches(results);
-                            // const ascending = querySort.length === 0 || (query.take >= 0 ? querySort[0].ascending : !querySort[0].ascending);
-                            // if (ascending) { 
-                            //     results.pop(); // Ascending sort order, toss last value
-                            // }
-                            // else {
-                            //     results.shift(); // Descending, toss first value
-                            // }
-                            results.pop(); // Always toss last value, results have been sorted already
+                            api.storage.debug.warn(`Indexed result "/${path}" does not have a record!`);
+                            // TODO: let index rebuild
+                            return;
                         }
-                    }
-                });
-            }))
-            .then(() => {
-                if (batches.length > 0) { 
-                    return nextBatch(); 
-                }
-            });
+
+                        const result = { path, val };
+                        if (stepsExecuted.sorted) {
+                            // Put the result in the same index as the preResult was
+                            results[index] = result;
+                        }
+                        else {
+                            results.push(result);
+                            if (!stepsExecuted.skipped && results.length > query.skip + Math.abs(query.take)) {
+                                // we can toss a value! sort, toss last one
+                                sortMatches(results);
+                                // const ascending = querySort.length === 0 || (query.take >= 0 ? querySort[0].ascending : !querySort[0].ascending);
+                                // if (ascending) {
+                                //     results.pop(); // Ascending sort order, toss last value
+                                // }
+                                // else {
+                                //     results.shift(); // Descending, toss first value
+                                // }
+                                results.pop(); // Always toss last value, results have been sorted already
+                            }
+                        }
+                    });
+            }));
+            if (batches.length > 0) {
+                await nextBatch();
+            }
         };
-        return nextBatch()
-        .then(() => {
-            // Got all values
-            return results;
-        });                
+        await nextBatch();
+        // Got all values
+        return results;
     };
 
     const pathInfo = PathInfo.get(path);
     const isWildcardPath = pathInfo.keys.some(key => key === '*' || key.toString().startsWith('$')); // path.includes('*');
 
     const availableIndexes = api.storage.indexes.get(path);
-    const usingIndexes = [];
+    const usingIndexes: DataIndex[] = [];
     if (isWildcardPath) {
         if (availableIndexes.length === 0) {
             // Wildcard paths require data to be indexed
@@ -219,7 +220,7 @@ export function query(
         }
         if (queryFilters.length === 0) {
             // Filterless query on wildcard path. Use first available index with filter on non-null key value (all results)
-            const index = availableIndexes.filter(index => index.type === 'normal')[0];
+            const index = availableIndexes.filter((index) => index.type === 'normal')[0];
             queryFilters.push({ key: index.key, op: '!=', compare: null });
         }
     }
@@ -233,7 +234,7 @@ export function query(
     //         const pattern = '^' + index.path.replace(/(\$[a-z0-9_]+)/gi, (match, name) => `(?<${name}>[a-z0-9_]+|\\*)`) + '$';
     //         const re = new RegExp(pattern, 'i');
     //         const match = path.match(re);
-    //         const canBeUsed = index.key[0] === '$' 
+    //         const canBeUsed = index.key[0] === '$'
     //             ? match.groups[index.key] !== '*' // Index key value MUST be present in the path
     //             : null !== ourFilters.find(filter => filter.key === index.key); // Index key MUST be in a filter
     //         if (!canBeUsed) { return null; }
@@ -255,13 +256,13 @@ export function query(
     // }
 
     queryFilters.forEach(filter => {
-        if (filter.index) {  
+        if (filter.index) {
             // Index has been assigned already
-            return; 
+            return;
         }
 
         // // Check if there are path indexes we can use
-        // const pathIndexesWithKey = DataIndex.validOperators.includes(filter.op) 
+        // const pathIndexesWithKey = DataIndex.validOperators.includes(filter.op)
         //     ? indexesOnPath.filter(info => info.index.key === filter.key || info.index.includeKeys.includes(filter.key))
         //     : [];
 
@@ -273,7 +274,7 @@ export function query(
             });
 
         if (indexesOnKey.length >= 1) {
-            // If there are multiple indexes on 1 key (happens when index includes other keys), 
+            // If there are multiple indexes on 1 key (happens when index includes other keys),
             // we should check other .filters and .order to determine the best one to use
             // TODO: Create a good strategy here...
             const otherFilterKeys = queryFilters.filter(f => f !== filter).map(f => f.key);
@@ -289,14 +290,14 @@ export function query(
                     both: forBoth.length * forBoth.length,
                     get total() {
                         return this.filters + this.sorting + this.both;
-                    }
-                }
+                    },
+                };
                 return { index, points: points.total, filterKeys: forOtherFilters, sortKeys: forSorting };
             });
             // Use index with the most points
             beneficialIndexes.sort((a,b) => a.points > b.points ? -1 : 1);
             const bestBenificialIndex = beneficialIndexes[0];
-            
+
             // Assign to this filter
             filter.index = bestBenificialIndex.index;
 
@@ -352,12 +353,12 @@ export function query(
     const specialOpsRegex = /^[a-z]+:/i;
     if (tableScanFilters.some(filter => specialOpsRegex.test(filter.op))) {
         const f = tableScanFilters.find(filter => specialOpsRegex.test(filter.op));
-        const err = new Error(`query contains operator "${f.op}" which requires a special index that was not found on path "${path}", key "${f.key}"`)
+        const err = new Error(`query contains operator "${f.op}" which requires a special index that was not found on path "${path}", key "${f.key}"`);
         return Promise.reject(err);
     }
 
     // Check if the filters are using valid operators
-    const allowedTableScanOperators = ["<","<=","==","!=",">=",">","like","!like","in","!in","matches","!matches","between","!between","has","!has","contains","!contains","exists","!exists"]; // DISABLED "custom" because it is not fully implemented and only works locally
+    const allowedTableScanOperators = ['<','<=','==','!=','>=','>','like','!like','in','!in','matches','!matches','between','!between','has','!has','contains','!contains','exists','!exists']; // DISABLED "custom" because it is not fully implemented and only works locally
     for(let i = 0; i < tableScanFilters.length; i++) {
         const f = tableScanFilters[i];
         if (!allowedTableScanOperators.includes(f.op)) {
@@ -367,14 +368,14 @@ export function query(
 
     // Check if the available indexes are sufficient for this wildcard query
     if (isWildcardPath && tableScanFilters.length > 0) {
-        // There are unprocessed filters, which means the fields aren't indexed. 
-        // We're not going to get all data of a wildcard path to query manually. 
+        // There are unprocessed filters, which means the fields aren't indexed.
+        // We're not going to get all data of a wildcard path to query manually.
         // Indexes must be created
-        const keys = tableScanFilters.reduce((keys, f) => { 
+        const keys = tableScanFilters.reduce((keys, f) => {
             if (keys.indexOf(f.key) < 0) { keys.push(f.key); }
             return keys;
         }, []).map(key => `"${key}"`);
-        const err = new Error(`This wildcard path query on "/${path}" requires index(es) on key(s): ${keys.join(", ")}. Create the index(es) and retry`);
+        const err = new Error(`This wildcard path query on "/${path}" requires index(es) on key(s): ${keys.join(', ')}. Create the index(es) and retry`);
         return Promise.reject(err);
     }
 
@@ -383,14 +384,14 @@ export function query(
     queryFilters.forEach(filter => {
         if (filter.index && filter.indexUsage !== 'filter') {
             let promise = filter.index.query(filter.op, filter.compare)
-            .then(results => {
-                options.eventHandler && options.eventHandler({ name: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
-                if (results.hints.length > 0) {
-                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
-                }
-                return results;
-            });
-            
+                .then(results => {
+                    options.eventHandler && options.eventHandler({ name: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
+                    if (results.hints.length > 0) {
+                        options.eventHandler && options.eventHandler({ name: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
+                    }
+                    return results;
+                });
+
             // Get other filters that can be executed on these indexed results (eg filters on included keys of the index)
             const resultFilters = queryFilters.filter(f => f.index === filter.index && f.indexUsage === 'filter');
             if (resultFilters.length > 0) {
@@ -416,10 +417,10 @@ export function query(
         taken: query.take === 0,
         sorted: querySort.length === 0,
         preDataLoaded: false,
-        dataLoaded: false
+        dataLoaded: false,
     };
 
-    if (queryFilters.length === 0 && query.take === 0) { 
+    if (queryFilters.length === 0 && query.take === 0) {
         api.storage.debug.warn(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
         query.take = 100;
     }
@@ -430,13 +431,13 @@ export function query(
         if (queryFilters.length === 0) {
             api.storage.debug.log(`Using index for sorting: ${sortIndex.description}`);
             const promise = sortIndex.take(query.skip, Math.abs(query.take), ascending)
-            .then(results => {
-                options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
-                if (results.hints.length > 0) {
-                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: sortIndex.description, hints: results.hints });
-                }
-                return results;
-            });
+                .then(results => {
+                    options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
+                    if (results.hints.length > 0) {
+                        options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: sortIndex.description, hints: results.hints });
+                    }
+                    return results;
+                });
             indexScanPromises.push(promise);
             stepsExecuted.skipped = true;
             stepsExecuted.taken = true;
@@ -451,448 +452,448 @@ export function query(
     }
 
     return Promise.all(indexScanPromises)
-    .then(indexResultSets => {
+        .then(indexResultSets => {
         // Merge all results in indexResultSets, get distinct nodes
-        let indexedResults = [];
-        if (indexResultSets.length === 1) {
-            const resultSet = indexResultSets[0];
-            indexedResults = resultSet.map(match => {
-                const result = { key: match.key, path: match.path, val: { [resultSet.filterKey]: match.value } };
-                match.metadata && Object.assign(result.val, match.metadata);
-                return result;
-            });
-            stepsExecuted.filtered = true;
-        }
-        else if (indexResultSets.length > 1) {
-            indexResultSets.sort((a,b) => a.length < b.length ? -1 : 1); // Sort results, shortest result set first
-            const shortestSet = indexResultSets[0];
-            const otherSets = indexResultSets.slice(1);
-
-            indexedResults = shortestSet.reduce((results, match) => {
-                // Check if the key is present in the other result sets
-                const result = { key: match.key, path: match.path, val: { [shortestSet.filterKey]: match.value } };
-                const matchedInAllSets = otherSets.every(set => set.findIndex(m => m.path === match.path) >= 0);
-                if (matchedInAllSets) { 
+            let indexedResults = [];
+            if (indexResultSets.length === 1) {
+                const resultSet = indexResultSets[0];
+                indexedResults = resultSet.map(match => {
+                    const result = { key: match.key, path: match.path, val: { [resultSet.filterKey]: match.value } };
                     match.metadata && Object.assign(result.val, match.metadata);
-                    otherSets.forEach(set => {
-                        const otherResult = set.find(r => r.path === result.path)
-                        result.val[set.filterKey] = otherResult.value;
-                        otherResult.metadata && Object.assign(result.val, otherResult.metadata)
-                    });
-                    results.push(result); 
-                }
-                return results;
-            }, []);
-
-            stepsExecuted.filtered = true;
-        }
-    
-        if (isWildcardPath || (indexScanPromises.length > 0 && tableScanFilters.length === 0)) {
-
-            if (querySort.length === 0 || querySort.every(o => o.index)) {
-                // No sorting, or all sorts are on indexed keys. We can use current index results
-                stepsExecuted.preDataLoaded = true;
-                if (!stepsExecuted.sorted && querySort.length > 0) {
-                    sortMatches(indexedResults);
-                }
-                stepsExecuted.sorted = true;
-                if (!stepsExecuted.skipped && query.skip > 0) {
-                    indexedResults = query.take < 0 
-                        ? indexedResults.slice(0, -query.skip)
-                        : indexedResults.slice(query.skip);
-                }
-                if (!stepsExecuted.taken && query.take !== 0) {
-                    indexedResults = query.take < 0 
-                        ? indexedResults.slice(query.take) 
-                        : indexedResults.slice(0, query.take);
-                }
-                stepsExecuted.skipped = true;
-                stepsExecuted.taken = true;
-
-                if (!options.snapshots) {
-                    return indexedResults;
-                }
-
-                // TODO: exclude already known key values, merge loaded with known 
-                const childOptions = { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
-                return loadResultsData(indexedResults, childOptions)
-                .then(results => {
-                    stepsExecuted.dataLoaded = true;
-                    return results;
+                    return result;
                 });
+                stepsExecuted.filtered = true;
             }
-            
-            if (options.snapshots || !stepsExecuted.sorted) {
-                const loadPartialResults = querySort.length > 0;
-                const childOptions = loadPartialResults
-                    ? { include: querySort.map(order => order.key) }
-                    : { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
-                return loadResultsData(indexedResults, childOptions)
-                .then(results => {
-                    if (querySort.length > 0) {
-                        sortMatches(results);
+            else if (indexResultSets.length > 1) {
+                indexResultSets.sort((a,b) => a.length < b.length ? -1 : 1); // Sort results, shortest result set first
+                const shortestSet = indexResultSets[0];
+                const otherSets = indexResultSets.slice(1);
+
+                indexedResults = shortestSet.reduce((results, match) => {
+                // Check if the key is present in the other result sets
+                    const result = { key: match.key, path: match.path, val: { [shortestSet.filterKey]: match.value } };
+                    const matchedInAllSets = otherSets.every(set => set.findIndex(m => m.path === match.path) >= 0);
+                    if (matchedInAllSets) {
+                        match.metadata && Object.assign(result.val, match.metadata);
+                        otherSets.forEach(set => {
+                            const otherResult = set.find(r => r.path === result.path);
+                            result.val[set.filterKey] = otherResult.value;
+                            otherResult.metadata && Object.assign(result.val, otherResult.metadata);
+                        });
+                        results.push(result);
+                    }
+                    return results;
+                }, []);
+
+                stepsExecuted.filtered = true;
+            }
+
+            if (isWildcardPath || (indexScanPromises.length > 0 && tableScanFilters.length === 0)) {
+
+                if (querySort.length === 0 || querySort.every(o => o.index)) {
+                // No sorting, or all sorts are on indexed keys. We can use current index results
+                    stepsExecuted.preDataLoaded = true;
+                    if (!stepsExecuted.sorted && querySort.length > 0) {
+                        sortMatches(indexedResults);
                     }
                     stepsExecuted.sorted = true;
-                    if (query.skip > 0) {
-                        results = results.take < 0
-                            ? results.slice(0, -query.skip)
-                            : results.slice(query.skip);
+                    if (!stepsExecuted.skipped && query.skip > 0) {
+                        indexedResults = query.take < 0
+                            ? indexedResults.slice(0, -query.skip)
+                            : indexedResults.slice(query.skip);
                     }
-                    if (query.take !== 0) {
-                        results = query.take < 0 
-                            ? results.slice(query.take)
-                            : results.slice(0, query.take);
+                    if (!stepsExecuted.taken && query.take !== 0) {
+                        indexedResults = query.take < 0
+                            ? indexedResults.slice(query.take)
+                            : indexedResults.slice(0, query.take);
                     }
                     stepsExecuted.skipped = true;
                     stepsExecuted.taken = true;
 
-                    if (options.snapshots && loadPartialResults) {
-                        // Get the rest
-                        return loadResultsData(results, { include: options.include, exclude: options.exclude, child_objects: options.child_objects });
+                    if (!options.snapshots) {
+                        return indexedResults;
                     }
-                    return results;
-                });
-            }
-            else {
-                // No need to take further actions, return what we have now
-                return indexedResults;
-            }
-        }
 
-        // If we get here, this is a query on a regular path (no wildcards) with additional non-indexed filters left, 
-        // we can get child records from a single parent. Merge index results by key
-        let indexKeyFilter;
-        if (indexedResults.length > 0) {
-            indexKeyFilter = indexedResults.map(result => result.key);
-        }
-        // const queue = [];
-        // const promises = [];
-        let matches = [];
-        let preliminaryStop = false;
-        const loadPartialData = querySort.length > 0;
-        const childOptions = loadPartialData
-            ? { include: querySort.map(order => order.key) }
-            : { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
-
-        const batch = {
-            promises: [],
-            add(promise) {
-                this.promises.push(promise);
-                if (this.promises.length >= 1000) {
-                    return Promise.all(this.promises.splice(0));
-                }
-            }
-        };
-        return api.storage.getChildren(path, { keyFilter: indexKeyFilter, async: true })
-        .next(child => {
-            if (child.type === VALUE_TYPES.OBJECT) { // if (child.valueType === VALUE_TYPES.OBJECT) {
-                if (!child.address) {
-                    // Currently only happens if object has no properties 
-                    // ({}, stored as a tiny_value in parent record). In that case, 
-                    // should it be matched in any query? -- That answer could be YES, when testing a property for !exists. Ignoring for now
-                    return;
-                }
-                if (preliminaryStop) {
-                    return false;
-                }
-                // TODO: Queue it, then process in batches later... If the amount of children we're about to process is
-                // large, this will go very wrong.
-                // queue.push({ path: child.path });
-
-                const p = api.storage.matchNode(child.address.path, tableScanFilters)
-                .then(isMatch => {
-                    if (!isMatch) { return null; }
-
-                    const childPath = child.address.path;
-                    if (options.snapshots || querySort.length > 0) {
-                        return api.storage.getNode(childPath, childOptions).then(node => {
-                            return { path: childPath, val: node.value };
+                    // TODO: exclude already known key values, merge loaded with known
+                    const childOptions = { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
+                    return loadResultsData(indexedResults, childOptions)
+                        .then(results => {
+                            stepsExecuted.dataLoaded = true;
+                            return results;
                         });
+                }
+
+                if (options.snapshots || !stepsExecuted.sorted) {
+                    const loadPartialResults = querySort.length > 0;
+                    const childOptions = loadPartialResults
+                        ? { include: querySort.map(order => order.key) }
+                        : { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
+                    return loadResultsData(indexedResults, childOptions)
+                        .then(results => {
+                            if (querySort.length > 0) {
+                                sortMatches(results);
+                            }
+                            stepsExecuted.sorted = true;
+                            if (query.skip > 0) {
+                                results = query.take < 0
+                                    ? results.slice(0, -query.skip)
+                                    : results.slice(query.skip);
+                            }
+                            if (query.take !== 0) {
+                                results = query.take < 0
+                                    ? results.slice(query.take)
+                                    : results.slice(0, query.take);
+                            }
+                            stepsExecuted.skipped = true;
+                            stepsExecuted.taken = true;
+
+                            if (options.snapshots && loadPartialResults) {
+                                // Get the rest
+                                return loadResultsData(results, { include: options.include, exclude: options.exclude, child_objects: options.child_objects });
+                            }
+                            return results;
+                        });
+                }
+                else {
+                // No need to take further actions, return what we have now
+                    return indexedResults;
+                }
+            }
+
+            // If we get here, this is a query on a regular path (no wildcards) with additional non-indexed filters left,
+            // we can get child records from a single parent. Merge index results by key
+            let indexKeyFilter;
+            if (indexedResults.length > 0) {
+                indexKeyFilter = indexedResults.map(result => result.key);
+            }
+            // const queue = [];
+            // const promises = [];
+            let matches = [];
+            let preliminaryStop = false;
+            const loadPartialData = querySort.length > 0;
+            const childOptions = loadPartialData
+                ? { include: querySort.map(order => order.key) }
+                : { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
+
+            const batch = {
+                promises: [],
+                add(promise) {
+                    this.promises.push(promise);
+                    if (this.promises.length >= 1000) {
+                        return Promise.all(this.promises.splice(0));
                     }
-                    else {
-                        return { path: childPath };
+                },
+            };
+            return api.storage.getChildren(path, { keyFilter: indexKeyFilter, async: true })
+                .next(child => {
+                    if (child.type === VALUE_TYPES.OBJECT) { // if (child.valueType === VALUE_TYPES.OBJECT) {
+                        if (!child.address) {
+                            // Currently only happens if object has no properties
+                            // ({}, stored as a tiny_value in parent record). In that case,
+                            // should it be matched in any query? -- That answer could be YES, when testing a property for !exists. Ignoring for now
+                            return;
+                        }
+                        if (preliminaryStop) {
+                            return false;
+                        }
+                        // TODO: Queue it, then process in batches later... If the amount of children we're about to process is
+                        // large, this will go very wrong.
+                        // queue.push({ path: child.path });
+
+                        const p = api.storage.matchNode(child.address.path, tableScanFilters)
+                            .then(isMatch => {
+                                if (!isMatch) { return null; }
+
+                                const childPath = child.address.path;
+                                if (options.snapshots || querySort.length > 0) {
+                                    return api.storage.getNode(childPath, childOptions).then(node => {
+                                        return { path: childPath, val: node.value };
+                                    });
+                                }
+                                else {
+                                    return { path: childPath };
+                                }
+                            })
+                            .then(result => {
+                                // If a maximumum number of results is requested, we can check if we can preliminary toss this result
+                                // This keeps the memory space used limited to skip + take
+                                // TODO: see if we can limit it to the max number of results returned (.take)
+
+                                if (result !== null) {
+                                    matches.push(result);
+                                    if (query.take !== 0 && matches.length > Math.abs(query.take) + query.skip) {
+                                        if (querySort.length > 0) {
+                                            // A query order has been set. If this value falls in between it can replace some other value
+                                            // matched before.
+                                            sortMatches(matches);
+                                        }
+                                        else if (query.take > 0) {
+                                            // No query order set, we can stop after 'take' + 'skip' results
+                                            preliminaryStop = true; // Flags the loop that no more nodes have to be checked
+                                        }
+                                        // const ascending = querySort.length === 0 || (query.take >= 0 ? querySort[0].ascending : !querySort[0].ascending);
+                                        // if (ascending) {
+                                        //     matches.pop(); // ascending sort order, toss last value
+                                        // }
+                                        // else {
+                                        //     matches.shift(); // descending, toss first value
+                                        // }
+                                        matches.pop(); // Always toss last value, results have been sorted already
+                                    }
+                                }
+                            });
+                        return batch.add(p); // If this returns a promise, child iteration should pause automatically
+                        // promises.push(p);
                     }
                 })
-                .then(result => {
-                    // If a maximumum number of results is requested, we can check if we can preliminary toss this result
-                    // This keeps the memory space used limited to skip + take
-                    // TODO: see if we can limit it to the max number of results returned (.take)
+                .catch(reason => {
+                    // No record?
+                    if (!(reason instanceof NodeNotFoundError)) {
+                        api.storage.debug.warn(`Error getting child stream: ${reason}`);
+                    }
+                    return [];
+                })
+                .then(() => {
+                    // Done iterating all children, wait for all match promises to resolve
 
-                    if (result !== null) {
-                        matches.push(result);
-                        if (query.take !== 0 && matches.length > Math.abs(query.take) + query.skip) {
+                    return Promise.all(batch.promises)
+                        .then(() => {
+                            stepsExecuted.preDataLoaded = loadPartialData;
+                            stepsExecuted.dataLoaded = !loadPartialData;
                             if (querySort.length > 0) {
-                                // A query order has been set. If this value falls in between it can replace some other value
-                                // matched before. 
                                 sortMatches(matches);
                             }
-                            else if (query.take > 0) {
-                                // No query order set, we can stop after 'take' + 'skip' results
-                                preliminaryStop = true; // Flags the loop that no more nodes have to be checked
+                            stepsExecuted.sorted = true;
+                            if (query.skip > 0) {
+                                matches = query.take < 0
+                                    ? matches.slice(0, -query.skip)
+                                    : matches.slice(query.skip);
                             }
-                            // const ascending = querySort.length === 0 || (query.take >= 0 ? querySort[0].ascending : !querySort[0].ascending);
-                            // if (ascending) {
-                            //     matches.pop(); // ascending sort order, toss last value
-                            // }
-                            // else {
-                            //     matches.shift(); // descending, toss first value
-                            // }
-                            matches.pop(); // Always toss last value, results have been sorted already
-                        }
-                    }
+                            stepsExecuted.skipped = true;
+                            if (query.take !== 0) {
+                                // (should not be necessary, basically it has already been done in the loop?)
+                                matches = query.take < 0
+                                    ? matches.slice(query.take)
+                                    : matches.slice(0, query.take);
+                            }
+                            stepsExecuted.taken = true;
+
+                            if (!stepsExecuted.dataLoaded) {
+                                return loadResultsData(matches, { include: options.include, exclude: options.exclude, child_objects: options.child_objects })
+                                    .then(results => {
+                                        stepsExecuted.dataLoaded = true;
+                                        return results;
+                                    });
+                            }
+                            return matches;
+                        });
                 });
-                return batch.add(p); // If this returns a promise, child iteration should pause automatically
-                // promises.push(p);
-            }
         })
-        .catch(reason => {
-            // No record?
-            if (!(reason instanceof NodeNotFoundError)) {
-                api.storage.debug.warn(`Error getting child stream: ${reason}`);
-            }
-            return [];
-        })
-        .then(() => {
-            // Done iterating all children, wait for all match promises to resolve
-
-            return Promise.all(batch.promises)
-            .then(() => {
-                stepsExecuted.preDataLoaded = loadPartialData;
-                stepsExecuted.dataLoaded = !loadPartialData;
-                if (querySort.length > 0) {
-                    sortMatches(matches);
-                }
-                stepsExecuted.sorted = true;
-                if (query.skip > 0) {
-                    matches = query.take < 0
-                        ? matches.slice(0, -query.skip)
-                        : matches.slice(query.skip);
-                }
-                stepsExecuted.skipped = true;
-                if (query.take !== 0) {
-                    // (should not be necessary, basically it has already been done in the loop?)
-                    matches = query.take < 0
-                        ? matches.slice(query.take)
-                        : matches.slice(0, query.take);
-                }
-                stepsExecuted.taken = true;
-
-                if (!stepsExecuted.dataLoaded) {
-                    return loadResultsData(matches, { include: options.include, exclude: options.exclude, child_objects: options.child_objects })
-                    .then(results => {
-                        stepsExecuted.dataLoaded = true;
-                        return results;
-                    });
-                }
-                return matches;
-            });
-        });
-    })
-    .then(matches => {
+        .then(matches => {
         // Order the results
-        if (!stepsExecuted.sorted && querySort.length > 0) {
-            sortMatches(matches);
-        }
+            if (!stepsExecuted.sorted && querySort.length > 0) {
+                sortMatches(matches);
+            }
 
-        if (!options.snapshots) {
+            if (!options.snapshots) {
             // Remove the loaded values from the results, because they were not requested (and aren't complete, we only have data of the sorted keys)
-            matches = matches.map(match => match.path);
-        }
+                matches = matches.map(match => match.path);
+            }
 
-        // Limit result set
-        if (!stepsExecuted.skipped && query.skip > 0) {
-            matches = query.take < 0
-                ? matches.slice(0, -query.skip)
-                : matches.slice(query.skip);
-        }
-        if (!stepsExecuted.taken && query.take !== 0) {
-            matches = query.take < 0
-                ? matches.slice(query.take)
-                : matches.slice(0, query.take);
-        }
+            // Limit result set
+            if (!stepsExecuted.skipped && query.skip > 0) {
+                matches = query.take < 0
+                    ? matches.slice(0, -query.skip)
+                    : matches.slice(query.skip);
+            }
+            if (!stepsExecuted.taken && query.take !== 0) {
+                matches = query.take < 0
+                    ? matches.slice(query.take)
+                    : matches.slice(0, query.take);
+            }
 
-        // NEW: Check if this is a realtime query - future updates must send query result updates
-        if (options.monitor === true) {
-            options.monitor = { add: true, change: true, remove: true };
-        }
-        let stop = async () => {};
-        if (typeof options.monitor === 'object' && (options.monitor.add || options.monitor.change || options.monitor.remove)) {
+            // NEW: Check if this is a realtime query - future updates must send query result updates
+            if (options.monitor === true) {
+                options.monitor = { add: true, change: true, remove: true };
+            }
+            let stop = async () => {};
+            if (typeof options.monitor === 'object' && (options.monitor.add || options.monitor.change || options.monitor.remove)) {
             // TODO: Refactor this to use 'mutations' event instead of 'notify_child_*'
 
-            const matchedPaths = options.snapshots ? matches.map(match => match.path) : matches.slice();
-            const ref = api.db.ref(path);
-            const removeMatch = (path) => {
-                const index = matchedPaths.indexOf(path);
-                if (index < 0) { return; }
-                matchedPaths.splice(index, 1);
-            };
-            const addMatch = (path) => {
-                if (matchedPaths.includes(path)) { return; }
-                matchedPaths.push(path);
-            };
-            const stopMonitoring = () => {
-                api.unsubscribe(ref.path, 'child_changed', childChangedCallback);
-                api.unsubscribe(ref.path, 'child_added', childAddedCallback);
-                api.unsubscribe(ref.path, 'notify_child_removed', childRemovedCallback);
-            };
-            stop = async() => { stopMonitoring(); };
-            const childChangedCallback = (err, path, newValue, oldValue) => {
-                const wasMatch = matchedPaths.includes(path);
+                const matchedPaths = options.snapshots ? matches.map(match => match.path) : matches.slice();
+                const ref = api.db.ref(path);
+                const removeMatch = (path) => {
+                    const index = matchedPaths.indexOf(path);
+                    if (index < 0) { return; }
+                    matchedPaths.splice(index, 1);
+                };
+                const addMatch = (path) => {
+                    if (matchedPaths.includes(path)) { return; }
+                    matchedPaths.push(path);
+                };
+                const stopMonitoring = () => {
+                    api.unsubscribe(ref.path, 'child_changed', childChangedCallback);
+                    api.unsubscribe(ref.path, 'child_added', childAddedCallback);
+                    api.unsubscribe(ref.path, 'notify_child_removed', childRemovedCallback);
+                };
+                stop = async() => { stopMonitoring(); };
+                const childChangedCallback = (err, path, newValue, oldValue) => {
+                    const wasMatch = matchedPaths.includes(path);
 
-                let keepMonitoring = true;
-                // check if the properties we already have match filters, 
-                // and if we have to check additional properties
-                const checkKeys = [];
-                queryFilters.forEach(f => !checkKeys.includes(f.key) && checkKeys.push(f.key));
-                const seenKeys = [];
-                typeof oldValue === 'object' && Object.keys(oldValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
-                typeof newValue === 'object' && Object.keys(newValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
-                const missingKeys = [];
-                let isMatch = seenKeys.every(key => {
-                    if (!checkKeys.includes(key)) { return true; }
-                    const filters = queryFilters.filter(filter => filter.key === key);
-                    return filters.every(filter => {
-                        if (allowedTableScanOperators.includes(filter.op)) {
-                            return api.storage.test(newValue[key], filter.op, filter.compare);
-                        }
-                        // specific index filter
-                        if (filter.index.constructor.name === 'FullTextDataIndex' && filter.index.localeKey && !seenKeys.includes(filter.index.localeKey)) {
+                    let keepMonitoring = true;
+                    // check if the properties we already have match filters,
+                    // and if we have to check additional properties
+                    const checkKeys = [];
+                    queryFilters.forEach(f => !checkKeys.includes(f.key) && checkKeys.push(f.key));
+                    const seenKeys = [];
+                    typeof oldValue === 'object' && Object.keys(oldValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
+                    typeof newValue === 'object' && Object.keys(newValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
+                    const missingKeys = [];
+                    let isMatch = seenKeys.every(key => {
+                        if (!checkKeys.includes(key)) { return true; }
+                        const filters = queryFilters.filter(filter => filter.key === key);
+                        return filters.every(filter => {
+                            if (allowedTableScanOperators.includes(filter.op)) {
+                                return api.storage.test(newValue[key], filter.op, filter.compare);
+                            }
+                            // specific index filter
+                            if (filter.index.constructor.name === 'FullTextDataIndex' && filter.index.localeKey && !seenKeys.includes(filter.index.localeKey)) {
                             // Can't check because localeKey is missing
-                            missingKeys.push(filter.index.localeKey);
-                            return true; // so we'll know if all others did match
-                        }
-                        return filter.index.test(newValue, filter.op, filter.compare);
+                                missingKeys.push(filter.index.localeKey);
+                                return true; // so we'll know if all others did match
+                            }
+                            return filter.index.test(newValue, filter.op, filter.compare);
+                        });
                     });
-                });
-                if (isMatch) {
+                    if (isMatch) {
                     // Matches all checked (updated) keys. BUT. Did we have all data needed?
                     // If it was a match before, other properties don't matter because they didn't change and won't
                     // change the current outcome
 
-                    missingKeys.push(...checkKeys.filter(key => !seenKeys.includes(key)));
+                        missingKeys.push(...checkKeys.filter(key => !seenKeys.includes(key)));
 
-                    let promise = Promise.resolve(true);
-                    if (!wasMatch && missingKeys.length > 0) {
+                        let promise = Promise.resolve(true);
+                        if (!wasMatch && missingKeys.length > 0) {
                         // We have to check if this node becomes a match
-                        const filterQueue = queryFilters.filter(f => missingKeys.includes(f.key)); 
-                        const simpleFilters = filterQueue.filter(f => allowedTableScanOperators.includes(f.op));
-                        const indexFilters = filterQueue.filter(f => !allowedTableScanOperators.includes(f.op));
-                        
-                        const processFilters = () => {
-                            const checkIndexFilters = () => {
+                            const filterQueue = queryFilters.filter(f => missingKeys.includes(f.key));
+                            const simpleFilters = filterQueue.filter(f => allowedTableScanOperators.includes(f.op));
+                            const indexFilters = filterQueue.filter(f => !allowedTableScanOperators.includes(f.op));
+
+                            const processFilters = () => {
+                                const checkIndexFilters = () => {
                                 // TODO: ask index what keys to load (eg: FullTextIndex might need key specified by localeKey)
-                                const keysToLoad = indexFilters.reduce((keys, filter) => {
-                                    if (!keys.includes(filter.key)) {
-                                        keys.push(filter.key);
-                                    }
-                                    if (filter.index.constructor.name === 'FullTextDataIndex' && filter.index.localeKey && !keys.includes(filter.index.localeKey)) {
-                                        keys.push(filter.index.localeKey);
-                                    }
-                                    return keys;
-                                }, []);
-                                return api.storage.getNode(path, { include: keysToLoad })
-                                .then(node => {
-                                    if (node.value === null) { return false; }
-                                    return indexFilters.every(filter => filter.index.test(node.value, filter.op, filter.compare));
-                                });
+                                    const keysToLoad = indexFilters.reduce((keys, filter) => {
+                                        if (!keys.includes(filter.key)) {
+                                            keys.push(filter.key);
+                                        }
+                                        if (filter.index.constructor.name === 'FullTextDataIndex' && filter.index.localeKey && !keys.includes(filter.index.localeKey)) {
+                                            keys.push(filter.index.localeKey);
+                                        }
+                                        return keys;
+                                    }, []);
+                                    return api.storage.getNode(path, { include: keysToLoad })
+                                        .then(node => {
+                                            if (node.value === null) { return false; }
+                                            return indexFilters.every(filter => filter.index.test(node.value, filter.op, filter.compare));
+                                        });
+                                };
+                                if (simpleFilters.length > 0) {
+                                    return api.storage.matchNode(path, simpleFilters)
+                                        .then(isMatch => {
+                                            if (isMatch) {
+                                                if (indexFilters.length === 0) { return true; }
+                                                return checkIndexFilters();
+                                            }
+                                            return false;
+                                        });
+                                }
+                                else {
+                                    return checkIndexFilters();
+                                }
                             };
-                            if (simpleFilters.length > 0) {
-                                return api.storage.matchNode(path, simpleFilters)
-                                .then(isMatch => {
-                                    if (isMatch) {
-                                        if (indexFilters.length === 0) { return true; }
-                                        return checkIndexFilters();
-                                    }
-                                    return false;
-                                });
-                            }
-                            else {
-                                return checkIndexFilters();
-                            }
+                            promise = processFilters();
                         }
-                        promise = processFilters();
+                        return promise
+                            .then(isMatch => {
+                                if (isMatch) {
+                                    if (!wasMatch) { addMatch(path); }
+                                    // load missing data if snapshots are requested
+                                    let gotValue = value => {
+                                        if (wasMatch && options.monitor.change) {
+                                            keepMonitoring = options.eventHandler({ name: 'change', path, value }) !== false;
+                                        }
+                                        else if (!wasMatch && options.monitor.add) {
+                                            keepMonitoring = options.eventHandler({ name: 'add', path, value }) !== false;
+                                        }
+                                        if (!keepMonitoring) { stopMonitoring(); }
+                                    };
+                                    if (options.snapshots) {
+                                        const loadOptions = { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
+                                        return api.storage.getNode(path, loadOptions)
+                                            .then(node => gotValue(node.value));
+                                    }
+                                    else {
+                                        return gotValue(newValue);
+                                    }
+                                }
+                                else if (wasMatch) {
+                                    removeMatch(path);
+                                    if (options.monitor.remove) {
+                                        keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: oldValue }) !== false;
+                                    }
+                                }
+                                if (keepMonitoring === false) { stopMonitoring(); }
+                            });
                     }
-                    return promise
-                    .then(isMatch => {
-                        if (isMatch) {
-                            if (!wasMatch) { addMatch(path); }
-                            // load missing data if snapshots are requested
-                            let gotValue = value => {
-                                if (wasMatch && options.monitor.change) {
-                                    keepMonitoring = options.eventHandler({ name: 'change', path, value }) !== false;
-                                }
-                                else if (!wasMatch && options.monitor.add) {
-                                    keepMonitoring = options.eventHandler({ name: 'add', path, value }) !== false;
-                                }
-                                if (!keepMonitoring) { stopMonitoring(); }
-                            };
-                            if (options.snapshots) {
-                                const loadOptions = { include: options.include, exclude: options.exclude, child_objects: options.child_objects };
-                                return api.storage.getNode(path, loadOptions)
-                                .then(node => gotValue(node.value));
-                            }
-                            else {
-                                return gotValue(newValue);
-                            }
-                        }
-                        else if (wasMatch) {
+                    else {
+                    // No match
+                        if (wasMatch) {
                             removeMatch(path);
                             if (options.monitor.remove) {
                                 keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: oldValue }) !== false;
+                                if (keepMonitoring === false) { stopMonitoring(); }
                             }
                         }
-                        if (keepMonitoring === false) { stopMonitoring(); }
+                    }
+                };
+                const childAddedCallback = (err, path, newValue, oldValue) => {
+                    let isMatch = queryFilters.every(filter => {
+                        if (allowedTableScanOperators.includes(filter.op)) {
+                            return api.storage.test(newValue[filter.key], filter.op, filter.compare);
+                        }
+                        else {
+                            return filter.index.test(newValue, filter.op, filter.compare);
+                        }
                     });
-                }
-                else {
-                    // No match
-                    if (wasMatch) {
-                        removeMatch(path);
-                        if (options.monitor.remove) {
-                            keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: oldValue }) !== false;
-                            if (keepMonitoring === false) { stopMonitoring(); }
-                        }                                
+                    let keepMonitoring = true;
+                    if (isMatch) {
+                        addMatch(path);
+                        if (options.monitor.add) {
+                            keepMonitoring = options.eventHandler({ name: 'add', path: path, value: options.snapshots ? newValue : null }) !== false;
+                        }
                     }
-                }
-            };
-            const childAddedCallback = (err, path, newValue, oldValue) => {
-                let isMatch = queryFilters.every(filter => {
-                    if (allowedTableScanOperators.includes(filter.op)) {
-                        return api.storage.test(newValue[filter.key], filter.op, filter.compare);
+                    if (keepMonitoring === false) { stopMonitoring(); }
+                };
+                const childRemovedCallback = (err, path, newValue, oldValue) => {
+                    let keepMonitoring = true;
+                    removeMatch(path);
+                    if (options.monitor.remove) {
+                        keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: options.snapshots ? oldValue : null }) !== false;
                     }
-                    else {
-                        return filter.index.test(newValue, filter.op, filter.compare);
-                    }
-                });
-                let keepMonitoring = true;
-                if (isMatch) {
-                    addMatch(path);
-                    if (options.monitor.add) {
-                        keepMonitoring = options.eventHandler({ name: 'add', path: path, value: options.snapshots ? newValue : null }) !== false;
-                    }
-                }
-                if (keepMonitoring === false) { stopMonitoring(); }
-            };
-            const childRemovedCallback = (err, path, newValue, oldValue) => {
-                let keepMonitoring = true;
-                removeMatch(path);
-                if (options.monitor.remove) {
-                    keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: options.snapshots ? oldValue : null }) !== false;
-                }
-                if (keepMonitoring === false) { stopMonitoring(); }
-            };
-            if (options.monitor.add || options.monitor.change || options.monitor.remove) {
+                    if (keepMonitoring === false) { stopMonitoring(); }
+                };
+                if (options.monitor.add || options.monitor.change || options.monitor.remove) {
                 // Listen for child_changed events
-                api.subscribe(ref.path, 'child_changed', childChangedCallback);
+                    api.subscribe(ref.path, 'child_changed', childChangedCallback);
+                }
+                if (options.monitor.remove) {
+                    api.subscribe(ref.path, 'notify_child_removed', childRemovedCallback);
+                }
+                if (options.monitor.add) {
+                    api.subscribe(ref.path, 'child_added', childAddedCallback);
+                }
             }
-            if (options.monitor.remove) {
-                api.subscribe(ref.path, 'notify_child_removed', childRemovedCallback);
-            }
-            if (options.monitor.add) {
-                api.subscribe(ref.path, 'child_added', childAddedCallback);
-            }
-        }
-    
-        return { results: matches, context, stop };
-    });
+
+            return { results: matches, context, stop };
+        });
 }

@@ -1,6 +1,4 @@
-// export { NodeClusterIPCPeer as IPCPeer } from './node-cluster';
-
-import { AceBaseIPCPeer, IByeMessage, IHelloMessage, IMessage } from './ipc';
+import { AceBaseIPCPeer, IHelloMessage, IMessage } from './ipc';
 import { Storage } from '../storage';
 import * as cluster from 'cluster';
 export { RemoteIPCPeer, RemoteIPCServerConfig } from './remote';
@@ -31,7 +29,7 @@ export class IPCPeer extends AceBaseIPCPeer {
         // Throw eror on PM2 clusters --> they should use an AceBase IPC server
         const pm2id = process.env?.NODE_APP_INSTANCE || process.env?.pm_id;
         if (typeof pm2id === 'string' && pm2id !== '0') {
-            throw new Error(`To use AceBase with pm2 in cluster mode, use an AceBase IPC server to enable interprocess communication.`)
+            throw new Error(`To use AceBase with pm2 in cluster mode, use an AceBase IPC server to enable interprocess communication.`);
         }
 
         const peerId = cluster.isMaster ? masterPeerId : cluster.worker.id.toString();
@@ -50,7 +48,7 @@ export class IPCPeer extends AceBaseIPCPeer {
         bindEventHandler(process, 'SIGINT', () => {
             this.exit();
         });
-        
+
         if (cluster.isMaster) {
             bindEventHandler(cluster, 'online', (worker: cluster.Worker) => {
                 // A new worker is started
@@ -63,11 +61,11 @@ export class IPCPeer extends AceBaseIPCPeer {
             bindEventHandler(cluster, 'exit', (worker: cluster.Worker) => {
                 // A worker has shut down
                 if (this.peers.find(peer => peer.id === worker.id.toString())) {
-                    // Worker apparently did not have time to say goodbye, 
+                    // Worker apparently did not have time to say goodbye,
                     // remove the peer ourselves
                     this.removePeer(worker.id.toString());
 
-                    // Send "bye" message on their behalf           
+                    // Send "bye" message on their behalf
                     this.sayGoodbye(worker.id.toString());
                 }
             });
@@ -75,8 +73,8 @@ export class IPCPeer extends AceBaseIPCPeer {
 
         const handleMessage = (message: INodeIPCMessage) => {
             if (typeof message !== 'object') {
-                 // Ignore non-object IPC messages
-                return; 
+                // Ignore non-object IPC messages
+                return;
             }
             if (message.dbname !== this.dbname) {
                 // Ignore, message not meant for this database
@@ -118,11 +116,11 @@ export class IPCPeer extends AceBaseIPCPeer {
         if (cluster.isMaster) {
             // If we are the master, send the message to the target worker(s)
             this.peers
-            .filter(p => p.id !== message.from && (!message.to || p.id === message.to))
-            .forEach(peer => {
-                const worker = cluster.workers[peer.id];
-                worker && worker.send(message); // When debugging, worker might have stopped in the meantime
-            });
+                .filter(p => p.id !== message.from && (!message.to || p.id === message.to))
+                .forEach(peer => {
+                    const worker = cluster.workers[peer.id];
+                    worker && worker.send(message); // When debugging, worker might have stopped in the meantime
+                });
         }
         else {
             // Send the message to the master who will forward it to the target worker(s)
@@ -130,10 +128,8 @@ export class IPCPeer extends AceBaseIPCPeer {
         }
     }
 
-    public async exit(code: number = 0) {
-        await super.exit();
-        // process.exit(code);
-        // this.storage.debug.warn(`${this.isMaster ? 'Master' : 'Worker ' + this.id} exits`);
+    public async exit(code = 0) {
+        await super.exit(code);
     }
 
 }

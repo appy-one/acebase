@@ -16,7 +16,7 @@ export const VALUE_TYPES = {
     // DOCUMENT: 10,     // JSON/XML documents that are contained entirely within the stored node
 };
 
-export function getValueTypeName(valueType) {
+export function getValueTypeName(valueType: number) {
     switch (valueType) {
         case VALUE_TYPES.ARRAY: return 'array';
         case VALUE_TYPES.BINARY: return 'binary';
@@ -32,7 +32,7 @@ export function getValueTypeName(valueType) {
     }
 }
 
-export function getNodeValueType(value) {
+export function getNodeValueType(value: unknown) {
     if (value instanceof Array) { return VALUE_TYPES.ARRAY; }
     else if (value instanceof PathReference) { return VALUE_TYPES.REFERENCE; }
     else if (value instanceof ArrayBuffer) { return VALUE_TYPES.BINARY; }
@@ -43,7 +43,7 @@ export function getNodeValueType(value) {
     throw new Error(`Invalid value for standalone node: ${value}`);
 }
 
-export function getValueType(value) {
+export function getValueType(value: unknown) {
     if (value instanceof Array) { return VALUE_TYPES.ARRAY; }
     else if (value instanceof PathReference) { return VALUE_TYPES.REFERENCE; }
     else if (value instanceof ArrayBuffer) { return VALUE_TYPES.BINARY; }

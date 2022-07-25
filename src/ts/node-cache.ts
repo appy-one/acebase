@@ -1,10 +1,10 @@
 // TODO: Rename to NodeInfoCache
 
-import { NodeInfo } from "./node-info";
+import { NodeInfo } from './node-info';
 import { PathInfo } from 'acebase-core';
 
-const SECOND = 1000;
-const MINUTE = 60000;
+// const SECOND = 1000;
+const MINUTE = 60_000;
 
 const DEBUG_MODE = false;
 const CACHE_TIMEOUT = DEBUG_MODE ? 5 * MINUTE : MINUTE;
@@ -58,10 +58,10 @@ export class NodeCache {
                 }
             }, CACHE_TIMEOUT);
 
-            // Make sure the cleanup timeout will not delay exiting the main process 
+            // Make sure the cleanup timeout will not delay exiting the main process
             // when the event loop is empty. See discussion #13 at github.
             // See https://nodejs.org/api/timers.html#timers_timeout_unref
-            this._cleanupTimeout.unref && this._cleanupTimeout.unref(); 
+            this._cleanupTimeout.unref && this._cleanupTimeout.unref();
         }
     }
 
@@ -71,8 +71,8 @@ export class NodeCache {
             announcement = {
                 resolve: null,
                 reject: null,
-                promise: null
-            }
+                promise: null,
+            };
             announcement.promise = new Promise<NodeInfo>((resolve, reject) => {
                 announcement.resolve = resolve;
                 announcement.reject = reject;
@@ -89,7 +89,7 @@ export class NodeCache {
             // For legacy .js callers
             throw new TypeError(`nodeInfo must be an instance of NodeInfo`);
         }
-        if (nodeInfo.path === "") {
+        if (nodeInfo.path === '') {
             // Don't cache root address, it has to be retrieved from storage.rootAddress
             return;
         }
@@ -122,7 +122,7 @@ export class NodeCache {
             DEBUG_MODE && console.error(`CACHE INVALIDATE ${reason} => ${entry.nodeInfo}`);
             this._cache.delete(path);
         }
-        
+
         if (recursive) {
             this._cache.forEach((entry, cachedPath) => {
                 if (pathInfo.isAncestorOf(entry.pathInfo)) {
@@ -146,14 +146,14 @@ export class NodeCache {
 
     /**
      * Marks the node at path, and all its descendants as deleted
-     * @param {string} path 
+     * @param path
      */
-    delete(path) {
+    delete(path: string) {
         const entry = this._cache.get(path);
         const pathInfo = PathInfo.get(path);
         DEBUG_MODE && console.error(`CACHE MARK_DELETED => ${entry.nodeInfo}`);
         this.update(new NodeInfo({ path, exists: false }));
-        
+
         this._cache.forEach((entry, cachedPath) => {
             if (pathInfo.isAncestorOf(cachedPath)) {
                 DEBUG_MODE && console.error(`CACHE MARK_DELETED => (child) ${entry.nodeInfo}`);
@@ -202,7 +202,7 @@ export class NodeCache {
             }
         }
         let entry = this._cache.get(path) || null;
-        if (entry && entry.nodeInfo.path !== "") {
+        if (entry && entry.nodeInfo.path !== '') {
             if (entry.expires <= Date.now()) {
                 // expired
                 this._cache.delete(path);
@@ -220,7 +220,7 @@ export class NodeCache {
 
     // /**
     //  * Finds the first cached NodeInfo for the closest ancestor of a given path
-    //  * @param {string} path 
+    //  * @param {string} path
     //  * @returns {NodeInfo} cached info for an ancestor
     //  */
     // findAncestor(path) {

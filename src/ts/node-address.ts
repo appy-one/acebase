@@ -1,7 +1,7 @@
 export class NodeAddress {
     constructor(
-        public readonly path: string, 
-        public readonly pageNr: number, 
+        public readonly path: string,
+        public readonly pageNr: number,
         public readonly recordNr: number) {
     }
 
@@ -29,7 +29,7 @@ export class RemovedNodeAddress extends NodeAddress {
     /**
      * Compares this address to another address
      */
-    equals(address: NodeAddress) {
+    equals(address: NodeAddress): boolean {
         return address instanceof RemovedNodeAddress && this.path === address.path;
     }
 }

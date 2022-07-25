@@ -1,16 +1,16 @@
-import { ID, Transport } from "acebase-core";
+import { ID, Transport } from 'acebase-core';
 import { AceBaseIPCPeer, IAceBaseIPCLock, IHelloMessage, IMessage } from './ipc';
 import { Storage } from '../storage';
 
 type MessageEventCallback = (event: MessageEvent) => any;
 
 /**
- * Browser tabs IPC. Database changes and events will be synchronized automatically. 
- * Locking of resources will be done by the election of a single locking master: 
+ * Browser tabs IPC. Database changes and events will be synchronized automatically.
+ * Locking of resources will be done by the election of a single locking master:
  * the one with the lowest id.
  */
- export class IPCPeer extends AceBaseIPCPeer {
-    
+export class IPCPeer extends AceBaseIPCPeer {
+
     private channel: BroadcastChannel;
 
     constructor(storage: Storage) {
@@ -37,13 +37,13 @@ type MessageEventCallback = (event: MessageEvent) => any;
             this.channel = {
                 name: `acebase:${storage.name}`,
                 postMessage: (message: any) => {
-                    const messageId = ID.generate(), 
+                    const messageId = ID.generate(),
                         key = `acebase:${storage.name}:${this.id}:${messageId}`,
                         payload = JSON.stringify(Transport.serialize(message));
-                    
+
                     // Store message, triggers 'storage' event in other tabs
                     localStorage.setItem(key, payload);
-                    
+
                     // Remove after 10ms
                     setTimeout(() => localStorage.removeItem(key), 10);
                 },
@@ -67,8 +67,8 @@ type MessageEventCallback = (event: MessageEvent) => any;
                             console.error(err);
                         }
                     });
-                    return true;                   
-                 }
+                    return true;
+                },
             } as BroadcastChannel;
 
             // Listen for storage events to intercept possible messages
@@ -110,17 +110,17 @@ type MessageEventCallback = (event: MessageEvent) => any;
 
                 // Let the new master take over any locks and lock requests.
                 const requests =  this._locks.splice(0); // Copy and clear current lock requests before granted locks are requested again.
-                
+
                 // Request previously granted locks again
                 await Promise.all(requests.filter(req => req.granted).map(async req => {
                     // Prevent race conditions: if the existing lock is released or moved to parent before it was
                     // moved to the new master peer, we'll resolve their promises after releasing/moving the new lock
                     let released:(none?: any) => void, movedToParent:(lock: IAceBaseIPCLock) => void;
                     req.lock.release = () => { return new Promise(resolve => released = resolve); };
-                    req.lock.moveToParent = () => { return new Promise(resolve => movedToParent = resolve); }
+                    req.lock.moveToParent = () => { return new Promise(resolve => movedToParent = resolve); };
 
                     // Request lock again:
-                    const lock = await this.lock({ path: req.lock.path, write: req.lock.forWriting, tid: req.lock.tid, comment: req.lock.comment })
+                    const lock = await this.lock({ path: req.lock.path, write: req.lock.forWriting, tid: req.lock.tid, comment: req.lock.comment });
                     if (movedToParent) {
                         const newLock = await lock.moveToParent();
                         movedToParent(newLock);

@@ -34,12 +34,12 @@ export abstract class pfs {
             get readAndWriteAndCreateOrOverwrite() { return 'w+'; },
             /** @description 'wx+' - Like readAndWriteAndCreateOrOverwrite ('w+') but fails if the path exists. */
             get readAndWriteAndCreate() { return 'wx+'; },
-        }
+        };
     }
 
     /**
      * @deprecated deprecated in Node.js since v1.0.0, don't use!
-     * @param path 
+     * @param path
      * @returns returns a promise that resolves with a boolean indicating if the path exists
      */
     static exists(path: string|Buffer|fs.PathLike): Promise<boolean> {
@@ -52,12 +52,12 @@ export abstract class pfs {
 
     /**
      * Opens a file for reading, writing or both
-     * @param path 
+     * @param path
      * @param flags see pfs.flags, default is pfs.flags.read ('r')
      * @param mode default is 0o666
      * @returns returns a promise that resolves with fd (file descriptor)
      */
-     static open(path: string|Buffer|fs.PathLike, flags?:string|number, mode?:number): Promise<number> {
+    static open(path: string|Buffer|fs.PathLike, flags?:string|number, mode?:number): Promise<number> {
         return new Promise((resolve, reject) => {
             fs.open(path, flags, mode, (err, fd) => {
                 if (err) { reject(err); }
@@ -71,7 +71,7 @@ export abstract class pfs {
      * @param fd file descriptor
      * @returns returns a promise that resolves once the file has been closed
      */
-     static close(fd: number): Promise<void> {
+    static close(fd: number): Promise<void> {
         return new Promise((resolve, reject) => {
             fs.close(fd, (err) => {
                 if (err) { reject(err); }
@@ -89,7 +89,7 @@ export abstract class pfs {
      * @param position offset from the beginning of the file where this data should be written. If typeof position !== 'number', the data will be written at the current position
      * @returns returns a Promise that resolves with an object containing the amount of bytes written and reference to the used buffer source
      */
-     static write(fd: number, buffer: Buffer|TypedArray|DataView, offset?:number, length?:number, position?:number): Promise<{ bytesWritten: number, buffer: Buffer|TypedArray|DataView }> {
+    static write(fd: number, buffer: Buffer|TypedArray|DataView, offset?:number, length?:number, position?:number): Promise<{ bytesWritten: number, buffer: Buffer|TypedArray|DataView }> {
         // NOTE: Changes fs.write behaviour by making offset, length and position optional
         if (typeof offset === 'undefined') { offset = 0; }
         if (typeof length === 'undefined') { length = buffer.byteLength - offset; }
@@ -97,7 +97,7 @@ export abstract class pfs {
 
         return new Promise((resolve, reject) => {
             fs.write(fd, buffer, offset, length, position, (err, bytesWritten, buffer) => {
-                if (err) { 
+                if (err) {
                     (err as any).args = { fd, buffer, offset, length, position };
                     reject(err);
                 }
@@ -134,7 +134,7 @@ export abstract class pfs {
      * @param position specifying where to begin reading from in the file. If position is null, data will be read from the current file position, and the file position will be updated. If position is an integer, the file position will remain unchanged.
      * @returns returns a promise that resolves with the amount of bytes read and a reference to the buffer that was written to
      */
-    static read(fd: number, buffer: Buffer|TypedArray|DataView, offset?:number, length?:number, position?:number): Promise<{ bytesRead: number, buffer: Buffer|TypedArray|DataView}> {
+    static read<T extends Buffer|TypedArray|DataView>(fd: number, buffer: T, offset?:number, length?:number, position?:number): Promise<{ bytesRead: number, buffer: T}> {
         // NOTE: Changes fs.read behaviour by making offset, length and position optional
         if (typeof offset === 'undefined') { offset = 0; }
         if (typeof length === 'undefined') { length = buffer.byteLength; }
@@ -142,9 +142,9 @@ export abstract class pfs {
 
         return new Promise((resolve, reject) => {
             fs.read(fd, buffer, offset, length, position, (err, bytesRead, buffer) => {
-                if (err) { 
+                if (err) {
                     (err as any).args = { fd, buffer, offset, length, position };
-                    reject(err); 
+                    reject(err);
                 }
                 else { resolve({ bytesRead, buffer }); }
             });
@@ -170,11 +170,11 @@ export abstract class pfs {
 
     /**
      * Truncates a file asynchronously
-     * @param path 
+     * @param path
      * @param len byte length the file will be truncated to, default is 0.
      * @returns returns a promise that resolves once the file has been truncated
      */
-    static truncate(path:string|Buffer|fs.PathLike, len:number = 0): Promise<void> {
+    static truncate(path:string|Buffer|fs.PathLike, len = 0): Promise<void> {
         return new Promise((resolve, reject) => {
             fs.truncate(path, len, (err) => {
                 if (err) { reject(err); }
@@ -189,7 +189,7 @@ export abstract class pfs {
      * @param len byte length the file will be truncated to, default is 0.
      * @returns returns a promise that resolves once the file has been truncated
      */
-    static ftruncate(fd: number, len: number = 0): Promise<void> {
+    static ftruncate(fd: number, len = 0): Promise<void> {
         return new Promise((resolve, reject) => {
             fs.ftruncate(fd, len, (err) => {
                 if (err) { reject(err); }
@@ -200,7 +200,7 @@ export abstract class pfs {
 
     /**
      * Reads the contents of a directory. returns a promise that resolves with an array of names or entries
-     * @param path 
+     * @param path
      * @param options can be a string specifying an encoding, or an object with an encoding property specifying the character encoding to use for the filenames passed to the callback. If the encoding is set to 'buffer', the filenames returned will be passed as Buffer objects.
      * @param options.encoding default 'utf8'
      * @param options.withFileTypes default is false
@@ -217,7 +217,7 @@ export abstract class pfs {
 
     /**
      * Asynchronously creates a directory
-     * @param path 
+     * @param path
      * @param options optional, can be an integer specifying mode (permission and sticky bits), or an object with a mode property and a recursive property indicating whether parent folders should be created.
      * @param options.recursive default is false
      * @param options.mode Not supported on Windows. default is 0o777
@@ -234,7 +234,7 @@ export abstract class pfs {
 
     /**
      * Asynchronously removes a file or symbolic link
-     * @param path 
+     * @param path
      * @returns returns a promise that resolves once the file has been removed
      */
     static unlink(path: string|Buffer|fs.PathLike): Promise<void> {
@@ -248,21 +248,21 @@ export abstract class pfs {
 
     /**
      * (Alias for unlink) Asynchronously removes a file or symbolic link
-     * @param path 
+     * @param path
      * @returns returns a promise that resolves once the file has been removed
      */
     static rm(path: string|Buffer|fs.PathLike) {
-        return this.unlink(path); 
+        return this.unlink(path);
     }
 
     /**
      * Asynchronously removes a file or symbolic link
-     * @param path 
+     * @param path
      * @returns returns a promise that resolves once the file has been removed
      */
     static rmdir(path: string|Buffer|fs.PathLike, options?: { maxRetries?: number, recursive?: boolean, retryDelay?: number }): Promise<void> {
         return new Promise((resolve, reject) => {
-            const callback = (err) => {
+            const callback = (err: Error) => {
                 if (err) { reject(err); }
                 else { resolve(); }
             };
@@ -283,11 +283,11 @@ export abstract class pfs {
     }
 
     /**
-     * Asynchronously rename file at oldPath to the pathname provided as newPath. 
-     * In the case that newPath already exists, it will be overwritten. If there is 
+     * Asynchronously rename file at oldPath to the pathname provided as newPath.
+     * In the case that newPath already exists, it will be overwritten. If there is
      * a directory at newPath, an error will be raised instead
-     * @param oldPath 
-     * @param newPath 
+     * @param oldPath
+     * @param newPath
      * @returns returns a promise that resolves once the file has been renamed
      */
     static rename(oldPath: string|Buffer|fs.PathLike, newPath:string|Buffer|fs.PathLike): Promise<void> {
@@ -312,7 +312,7 @@ export abstract class pfs {
                 if (err) { reject(err); }
                 else { resolve(stats); }
             });
-        })
+        });
     }
 
     /**
@@ -320,7 +320,7 @@ export abstract class pfs {
      * @param fd A file descriptor
      * @returns {Promise<void>} returns a promise that resolves when all data is flushed
      */
-    static fsync(fd): Promise<void> {
+    static fsync(fd: number): Promise<void> {
         return new Promise((resolve, reject) => {
             fs.fsync(fd, (err) => {
                 if (err) { reject(err); }
@@ -328,17 +328,17 @@ export abstract class pfs {
             });
         });
     }
-    
+
     /**
      * Asynchronous fdatasync(2) - synchronize a file's in-core state with storage device.
      * @param fd A file descriptor
      * @returns {Promise<void>} returns a promise that resolves when all data is flushed
      */
-    static fdatasync(fd) {
-        return new Promise((resolve, reject) => {
-            fs.fdatasync(fd, (err, stats?) => {
+    static fdatasync(fd: number) {
+        return new Promise<void>((resolve, reject) => {
+            fs.fdatasync(fd, (err) => {
                 if (err) { reject(err); }
-                else { resolve(stats); }
+                else { resolve(); }
             });
         });
     }

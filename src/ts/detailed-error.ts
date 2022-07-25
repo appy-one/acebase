@@ -1,11 +1,12 @@
+/* eslint-disable @typescript-eslint/no-this-alias */
 export class DetailedError extends Error {
 
     readonly code: string;
-    
+
     readonly originalError: DetailedError|Error;
 
     /**
-     * 
+     *
      * @param code code identifying the error
      * @param message user/developer friendly error message
      * @param originalError optional original error thrown to enable stack debugging for caught-rethrown errors
@@ -36,7 +37,7 @@ export class DetailedError extends Error {
         return arr.join('\r\n-----------------\r\n');
     }
 
-    hasErrorCode(code) {
+    hasErrorCode(code: string) {
         let err: DetailedError = this;
         while (err.code !== code && err.originalError) {
             err = err.originalError as DetailedError;
@@ -46,7 +47,7 @@ export class DetailedError extends Error {
         // return this.codes.includes(code);
     }
 
-    static hasErrorCode(err, code) {
+    static hasErrorCode(err: Error, code: string) {
         if (!(err instanceof DetailedError)) { return false; }
         return err.hasErrorCode(code);
     }

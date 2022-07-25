@@ -1,5 +1,5 @@
-import { ID, Transport } from "acebase-core";
-import { AceBaseIPCPeer, IAceBaseIPCLock, IHelloMessage, IMessage } from './ipc';
+import { ID } from 'acebase-core';
+import { AceBaseIPCPeer, IMessage } from './ipc';
 import { Storage } from '../storage';
 import * as http from 'http';
 
@@ -13,12 +13,12 @@ const ws = (() => {
     }
 })();
 
-type MessageEventCallback = (event: MessageEvent) => any;
+// type MessageEventCallback = (event: MessageEvent) => any;
 
 export interface RemoteIPCServerConfig {
-    dbname: string, 
-    host?: string, 
-    port: number, 
+    dbname: string,
+    host?: string,
+    port: number,
     ssl?: boolean,
     token?: string,
     role: 'master'|'worker',
@@ -27,36 +27,36 @@ export interface RemoteIPCServerConfig {
 const masterPeerId = '[master]';
 const WS_CLOSE_PING_TIMEOUT = 1;
 const WS_CLOSE_PROCESS_EXIT = 2;
-const WS_CLOSE_UNAUTHORIZED = 3;
-const WS_CLOSE_WRONG_CLIENT = 4;
-const WS_CLOSE_SERVER_ERROR = 5;
+// const WS_CLOSE_UNAUTHORIZED = 3;
+// const WS_CLOSE_WRONG_CLIENT = 4;
+// const WS_CLOSE_SERVER_ERROR = 5;
 
 /**
- * Remote IPC using an external server. Database changes and events will be synchronized automatically. 
- * Locking of resources will be done by a single master that needs to be known up front. Preferably, the master 
+ * Remote IPC using an external server. Database changes and events will be synchronized automatically.
+ * Locking of resources will be done by a single master that needs to be known up front. Preferably, the master
  * is a process that handles no database updates itself and only manages data locking and allocation for workers.
- * 
+ *
  * To use Remote IPC, you have to start the following processes:
  *  - 1 AceBase IPC Server process
  *  - 1 AceBase database master process (optional, used in example 1)
  *  - 1+ AceBase server worker processes
- * 
- * NOTE if your IPC server will be running on a public host (not `localhost`), make sure to use `ssl` and a secret 
+ *
+ * NOTE if your IPC server will be running on a public host (not `localhost`), make sure to use `ssl` and a secret
  * `token` in your IPC configuration.
- * 
+ *
  * @example
  * // IPC server process (start-ipc-server.js)
  * const { AceBaseIPCServer } = require('acebase-ipc-server');
  * const server = new AceBaseIPCServer({ host: 'localhost', port: 9163 })
- * 
+ *
  * // Dedicated db master process (start-db-master.js)
  * const { AceBase } = require('acebase');
  * const db = new AceBase('mydb', { storage: { ipc: { host: 'localhost', port: 9163, ssl: false, role: 'master' } } });
- * 
+ *
  * // Server worker processes (start-db-server.js)
  * const { AceBaseServer } = require('acebase-server');
  * const server = new AceBaseServer('mydb', { host: 'localhost', port: 5757, storage: { ipc: { host: 'localhost', port: 9163, ssl: false, role: 'worker' } } });
- * 
+ *
  * // PM2 ecosystem.config.js:
  * module.exports = {
  *  apps: [{
@@ -72,26 +72,26 @@ const WS_CLOSE_SERVER_ERROR = 5;
  *      exec_mode: "cluster"    // Enables PM2 load balancing, see https://pm2.keymetrics.io/docs/usage/cluster-mode/
  *  }]
  * }
- * 
+ *
  * @description
  * Instead of starting a dedicated db master process, you can also start 1 `AceBaseServer` with `role: "master"` manually.
- * Note that the db master will also handle http requests for clients in this case, which might not be desirable because it 
+ * Note that the db master will also handle http requests for clients in this case, which might not be desirable because it
  * also has to handle IPC master tasks for other clients. See the following example:
- * 
+ *
  * @example
- * // Another example using only 2 startup apps: 
+ * // Another example using only 2 startup apps:
  *  - 1 instance: AceBase IPC server
  *  - Multiple instances of your app
- * 
+ *
  * // IPC server process (start-ipc-server.js)
  * const { AceBaseIPCServer } = require('acebase-ipc-server');
  * const server = new AceBaseIPCServer({ host: 'localhost', port: 9163 })
- * 
+ *
  * // Server worker processes (start-db-server.js)
  * const { AceBaseServer } = require('acebase-server');
  * const role = process.env.NODE_APP_INSTANCE === '0' ? 'master' : 'worker';
  * const server = new AceBaseServer('mydb', { host: 'localhost', port: 5757, storage: { ipc: { host: 'localhost', port: 9163, ssl: false, role } } });
- * 
+ *
  * // PM2 ecosystem.config.js:
  * module.exports = {
  *  apps: [{
@@ -106,16 +106,16 @@ const WS_CLOSE_SERVER_ERROR = 5;
  *  }]
  * }
  */
- export class RemoteIPCPeer extends AceBaseIPCPeer {
+export class RemoteIPCPeer extends AceBaseIPCPeer {
 
     private get version() { return '1.0.0'; }
     private ws: wsTypes.WebSocket;
-    private queue: boolean = true;
+    private queue = true;
     private pending: {
         in: string[],
-        out: string[] 
+        out: string[]
     } = { in: [], out: [] };
-    private maxPayload: number = 100; // Initial setting, will be overridden by server config once connected
+    private maxPayload = 100; // Initial setting, will be overridden by server config once connected
 
     constructor(storage: Storage, private config: RemoteIPCServerConfig) {
         super(storage, config.role === 'master' ? masterPeerId : ID.generate(), config.dbname);
@@ -135,9 +135,9 @@ const WS_CLOSE_SERVER_ERROR = 5;
         return new Promise<void>((resolve, reject) => {
             let connected = false;
             this.ws = new ws.WebSocket(`ws${this.config.ssl ? 's' : ''}://${this.config.host || 'localhost'}:${this.config.port}/${this.config.dbname}/connect?v=${this.version}&id=${this.id}&t=${this.config.token}`); // &role=${this.config.role}
-            
+
             // Handle connection success
-            this.ws.addEventListener('open', async event => {
+            this.ws.addEventListener('open', async (/*event*/) => {
                 connected = true;
                 // Send any pending messages
                 this.pending.out.forEach(msg => {
@@ -177,7 +177,7 @@ const WS_CLOSE_SERVER_ERROR = 5;
                         const retryMs = 1000; // ms
                         this.storage.debug.error(`Unable to connect to remote IPC server (${event.message}). Trying again in ${retryMs}ms`);
                         const retryOptions:{ maxRetries?: number } = {};
-                        if (typeof typeof options?.maxRetries === 'number') { retryOptions.maxRetries = options.maxRetries-1 };
+                        if (typeof typeof options?.maxRetries === 'number') { retryOptions.maxRetries = options.maxRetries-1; }
                         const timeout = setTimeout(() => { this.connect(retryOptions); }, retryMs);
                         timeout.unref?.();
                     }
@@ -186,7 +186,7 @@ const WS_CLOSE_SERVER_ERROR = 5;
                     }
                 }
             });
-            
+
             // Send pings if connection is idle to actively monitor connectivity
             let lastMessageReceived = Date.now();
             const pingInterval = setInterval(() => {
@@ -209,7 +209,7 @@ const WS_CLOSE_SERVER_ERROR = 5;
             });
 
             // Handle disconnect
-            this.ws.addEventListener('close', event => {
+            this.ws.addEventListener('close', (/*event*/) => {
                 // Disconnected. Try reconnecting immediately
                 if (!connected) { return; } // We weren't connected yet. Don't reconnect here, retries will be executed automatically
                 if (this._exiting) { return; }
@@ -233,7 +233,7 @@ const WS_CLOSE_SERVER_ERROR = 5;
                 }
                 else if (str.startsWith('welcome:')) {
                     // Welcome message with config
-                    let config = JSON.parse(str.slice(8));
+                    const config = JSON.parse(str.slice(8));
                     this.maxPayload = config.maxPayload;
                 }
                 else if (str.startsWith('connect:')) {
@@ -244,7 +244,7 @@ const WS_CLOSE_SERVER_ERROR = 5;
                     // A peer has disconnected from the IPC server
                     const id = str.slice(11);
                     if (this.peers.find(peer => peer.id === id)) {
-                        // Peer apparently did not have time to say goodbye, 
+                        // Peer apparently did not have time to say goodbye,
                         // remove the peer ourselves
                         this.removePeer(id);
 
@@ -256,7 +256,7 @@ const WS_CLOSE_SERVER_ERROR = 5;
                     // Large message we have to fetch
                     const msgId = str.slice(4);
                     try {
-                        str = await this.fetch('GET', `/${this.config.dbname}/receive?id=${this.id}&msg=${msgId}&t=${this.config.token}`)
+                        str = await this.fetch('GET', `/${this.config.dbname}/receive?id=${this.id}&msg=${msgId}&t=${this.config.token}`);
                         const msg = JSON.parse(str);
                         super.handleMessage(msg);
                     }
@@ -303,8 +303,8 @@ const WS_CLOSE_SERVER_ERROR = 5;
             method,
             headers: {
                 'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(postData || '')
-            }
+                'Content-Length': Buffer.byteLength(postData || ''),
+            },
         };
         return await new Promise<string>((resolve, reject) => {
             const req = http.request(options, (res) => {
@@ -320,14 +320,14 @@ const WS_CLOSE_SERVER_ERROR = 5;
                     resolve(data);
                 });
             });
-            
+
             req.on('error', reject);
-            
+
             // Write data to request body
             req.write(postData);
-            req.end();   
+            req.end();
         });
     }
 
 
- }
+}

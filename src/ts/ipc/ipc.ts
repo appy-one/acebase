@@ -12,14 +12,14 @@ export class AceBaseIPCPeerExitingError extends Error {
  */
 export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
     protected masterPeerId: string;
-    protected ipcType: string = 'ipc';
-    public get isMaster() { return this.masterPeerId === this.id }
+    protected ipcType = 'ipc';
+    public get isMaster() { return this.masterPeerId === this.id; }
 
     protected ourSubscriptions: Array<{ path: string, event: AceBaseEventType, callback: AceBaseSubscribeCallback }> = [];
     protected remoteSubscriptions: Array<{ for?: string, path: string, event: AceBaseEventType, callback: AceBaseSubscribeCallback }> = [];
     protected peers: Array<{ id: string, lastSeen: number }> = [];
 
-    private _nodeLocker: NodeLocker
+    private _nodeLocker: NodeLocker;
 
     constructor(protected storage: Storage, protected id: string, protected dbname: string = storage.name) {
         super();
@@ -52,7 +52,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
             const message:ISubscribeMessage = { type: 'subscribe', from: this.id, data: { path: subscription.path, event: subscription.event } };
             this.sendMessage(message);
         });
-        
+
         storage.on('unsubscribe', (subscription: { path: string, event?: string, callback?: AceBaseSubscribeCallback }) => {
             // Subscription was removed from db
 
@@ -66,32 +66,32 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
             }
 
             this.ourSubscriptions
-            .filter(sub => sub.path === subscription.path && (!subscription.event || sub.event === subscription.event) && (!subscription.callback || sub.callback === subscription.callback))
-            .forEach(sub => {
+                .filter(sub => sub.path === subscription.path && (!subscription.event || sub.event === subscription.event) && (!subscription.callback || sub.callback === subscription.callback))
+                .forEach(sub => {
                 // Remove from our subscriptions
-                this.ourSubscriptions.splice(this.ourSubscriptions.indexOf(sub), 1);
+                    this.ourSubscriptions.splice(this.ourSubscriptions.indexOf(sub), 1);
 
-                // Request other tabs to stop notifying
-                const message:IUnsubscribeMessage = { type: 'unsubscribe', from: this.id, data: { path: sub.path, event: sub.event } };
-                this.sendMessage(message);                    
-            });
+                    // Request other tabs to stop notifying
+                    const message:IUnsubscribeMessage = { type: 'unsubscribe', from: this.id, data: { path: sub.path, event: sub.event } };
+                    this.sendMessage(message);
+                });
         });
     }
 
-    protected _exiting: boolean = false;
+    protected _exiting = false;
     /**
-     * Requests the peer to shut down. Resolves once its locks are cleared and 'exit' event has been emitted. 
+     * Requests the peer to shut down. Resolves once its locks are cleared and 'exit' event has been emitted.
      * Has to be overridden by the IPC implementation to perform custom shutdown tasks
-     * @param code optional exit code (eg one provided by SIGINT event) 
+     * @param code optional exit code (eg one provided by SIGINT event)
      */
-    public async exit(code: number = 0) {
-        if (this._exiting) { 
+    public async exit(code = 0) {
+        if (this._exiting) {
             // Already exiting...
             return this.once('exit');
         }
         this._exiting = true;
         this.storage.debug.warn(`Received ${this.isMaster ? 'master' : 'worker ' + this.id} process exit request`);
-        
+
         if (this._locks.length > 0) {
             this.storage.debug.warn(`Waiting for ${this.isMaster ? 'master' : 'worker'} ${this.id} locks to clear`);
             await this.once('locks-cleared');
@@ -110,15 +110,9 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         this.sendMessage(bye);
     }
 
-    protected addPeer(id: string, sendReply: boolean = true, ignoreDuplicate: boolean = false) {
+    protected addPeer(id: string, sendReply = true) {
         if (this._exiting) { return; }
         const peer = this.peers.find(w => w.id === id);
-        // if (peer) {
-        //     if (!ignoreDuplicate) {
-        //         throw new Error(`We're not supposed to know this peer!`);
-        //     }
-        //     return;
-        // }
         if (!peer) {
             this.peers.push({ id, lastSeen: Date.now() });
         }
@@ -137,7 +131,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         }
     }
 
-    protected removePeer(id: string, ignoreUnknown: boolean = false) {
+    protected removePeer(id: string, ignoreUnknown = false) {
         if (this._exiting) { return; }
         const peer = this.peers.find(peer => peer.id === id);
         if (!peer) {
@@ -153,7 +147,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         subscriptions.forEach(sub => {
             // Remove & stop their subscription
             this.remoteSubscriptions.splice(this.remoteSubscriptions.indexOf(sub), 1);
-            this.storage.subscriptions.remove(sub.path, sub.event, sub.callback);                        
+            this.storage.subscriptions.remove(sub.path, sub.event, sub.callback);
         });
     }
 
@@ -169,23 +163,23 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         // Add remote subscription
         const subscribeCallback = (err: Error, path: string, val: any, previous: any, context: any) => {
             // db triggered an event, send notification to remote subscriber
-            let eventMessage: IEventMessage = {
-                type: 'event', 
-                from: this.id, 
-                to: peerId, 
-                path: details.path, 
+            const eventMessage: IEventMessage = {
+                type: 'event',
+                from: this.id,
+                to: peerId,
+                path: details.path,
                 event: details.event,
                 data: {
                     path,
                     val,
                     previous,
-                    context
-                }
+                    context,
+                },
             };
             this.sendMessage(eventMessage);
         };
         this.remoteSubscriptions.push({ for: peerId, event: details.event, path: details.path, callback: subscribeCallback });
-        this.storage.subscriptions.add(details.path, details.event, subscribeCallback);        
+        this.storage.subscriptions.add(details.path, details.event, subscribeCallback);
     }
 
     protected cancelRemoteSubscription(peerId: string, details:ISubscriptionData) {
@@ -202,7 +196,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
     protected async handleMessage(message: IMessage) {
         switch (message.type) {
-            case 'hello': return this.addPeer(message.from, message.to !== this.id, false);
+            case 'hello': return this.addPeer(message.from, message.to !== this.id);
             case 'bye': return this.removePeer(message.from, true);
             case 'subscribe': return this.addRemoteSubscription(message.from, message.data);
             case 'unsubscribe': return this.cancelRemoteSubscription(message.from, message.data);
@@ -239,7 +233,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
                         tid: lock.tid,
                         write: lock.forWriting,
                         expires: lock.expires,
-                        comment: lock.comment
+                        comment: lock.comment,
                     };
                 }
                 catch(err) {
@@ -338,7 +332,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
                         tid: movedLock.tid,
                         write: movedLock.forWriting,
                         expires: movedLock.expires,
-                        comment: movedLock.comment
+                        comment: movedLock.comment,
                     };
                 }
                 catch(err) {
@@ -381,9 +375,9 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
     /**
      * Acquires a lock. If this peer is a worker, it will request the lock from the master
-     * @param details 
+     * @param details
      */
-     public async lock(details:ILockRequestData): Promise<IAceBaseIPCLock> { // With methods release(), moveToParent() etc
+    public async lock(details:ILockRequestData): Promise<IAceBaseIPCLock> { // With methods release(), moveToParent() etc
 
         if (this._exiting) {
             // Peer is exiting. Do we have an existing lock with requested tid? If not, deny request.
@@ -413,21 +407,21 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
             const createIPCLock = (lock: NodeLock): IAceBaseIPCLock => {
                 return {
                     get id() { return lock.id; },
-                    get tid() { return lock.tid },
+                    get tid() { return lock.tid; },
                     get path() { return lock.path; },
                     get forWriting() { return lock.forWriting; },
                     get expires() { return lock.expires; },
                     get comment() { return lock.comment; },
                     get state() { return lock.state; },
-                    release: async () => { 
-                        await lock.release(); 
+                    release: async () => {
+                        await lock.release();
                         removeLock(lockInfo);
                     },
                     moveToParent: async () => {
                         const parentLock = await lock.moveToParent();
                         lockInfo.lock = createIPCLock(parentLock);
                         return lockInfo.lock;
-                    }
+                    },
                 };
             };
             lockInfo.lock = createIPCLock(lock);
@@ -450,7 +444,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
                     comment: result.comment,
                     release: async () => {
                         const req: IUnlockRequestMessage = { type: 'unlock-request', id: ID.generate(), from: this.id, to: this.masterPeerId, data: { id: lockInfo.lock.id } };
-                        const result = await this.request(req);
+                        await this.request(req);
                         this.storage.debug.verbose(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
                         removeLock(lockInfo);
                     },
@@ -467,14 +461,14 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
                         }
                         lockInfo.lock = createIPCLock(result);
                         return lockInfo.lock;
-                    }
+                    },
                 };
                 // this.storage.debug.log(`Worker ${this.id} received lock ${lock.id} (tid ${lock.tid}, ${lock.comment}, "/${lock.path}", ${lock.forWriting ? 'write' : 'read'})`);
                 return lockInfo.lock;
             };
 
             const req: ILockRequestMessage = { type: 'lock-request', id: ID.generate(), from: this.id, to: this.masterPeerId, data: details };
-            
+
             let result:ILockResponseData, err: Error;
             try {
                 result = await this.request(req) as ILockResponseData;
@@ -502,7 +496,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
             };
             reject = err => {
                 this._requests.delete(req.id);
-                rj(err); 
+                rj(err);
             };
         });
         this._requests.set(req.id, { resolve, reject, request: req });
@@ -514,16 +508,16 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
     /**
      * Sends a custom request to the IPC master
-     * @param request 
-     * @returns 
+     * @param request
+     * @returns
      */
     public sendRequest(request: any) {
         const req: ICustomRequestMessage = { type: 'request', from: this.id, to: this.masterPeerId, id: ID.generate(), data: request };
         return this.request(req)
-        .catch(err => {
-            this.storage.debug.error(err);
-            throw err;
-        });
+            .catch(err => {
+                this.storage.debug.error(err);
+                throw err;
+            });
     }
 
     public replyRequest(requestMessage:IRequestMessage, result: any) {
@@ -533,15 +527,15 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
     /**
      * Sends a custom notification to all IPC peers
-     * @param notification 
-     * @returns 
+     * @param notification
+     * @returns
      */
     public sendNotification(notification: any) {
         const msg: ICustomNotificationMessage = { type: 'notification', from: this.id, data: notification };
         this.sendMessage(msg);
     }
 
-    private _eventsEnabled: boolean = true;
+    private _eventsEnabled = true;
 
     /**
      * If ipc event handling is currently enabled
@@ -555,7 +549,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         this.storage.debug.log(`ipc events ${enabled ? 'enabled' : 'disabled'}`);
         this._eventsEnabled = enabled;
     }
- 
+
 }
 
 // interface IAceBasePrivateAPI {
@@ -622,7 +616,7 @@ export type AceBaseEventType = string; //'value' | 'child_added' | 'child_change
 
 export interface ISubscriptionData {
     path: string
-    event: AceBaseEventType    
+    event: AceBaseEventType
 }
 
 export interface ISubscribeMessage extends IMessage {
