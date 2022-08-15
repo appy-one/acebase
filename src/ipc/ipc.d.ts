@@ -3,6 +3,12 @@ import { Storage } from '../storage';
 export declare class AceBaseIPCPeerExitingError extends Error {
     constructor(message: string);
 }
+declare type InternalLockInfo = {
+    tid: string;
+    granted: boolean;
+    request: ILockRequestData;
+    lock?: IAceBaseIPCLock;
+};
 /**
  * Base class for Inter Process Communication, enables vertical scaling: using more CPU's on the same machine to share workload.
  * These processes will have to communicate with eachother because they are reading and writing to the same database file
@@ -44,12 +50,7 @@ export declare abstract class AceBaseIPCPeer extends SimpleEventEmitter {
     protected addRemoteSubscription(peerId: string, details: ISubscriptionData): void;
     protected cancelRemoteSubscription(peerId: string, details: ISubscriptionData): void;
     protected handleMessage(message: IMessage): Promise<any>;
-    protected _locks: Array<{
-        tid: string;
-        granted: boolean;
-        request: ILockRequestData;
-        lock?: IAceBaseIPCLock;
-    }>;
+    protected _locks: InternalLockInfo[];
     /**
      * Acquires a lock. If this peer is a worker, it will request the lock from the master
      * @param details
@@ -213,3 +214,4 @@ export interface ICustomRequestMessage extends IRequestMessage {
     type: 'request';
     data: any;
 }
+export {};

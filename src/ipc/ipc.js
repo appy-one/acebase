@@ -345,7 +345,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                 throw new AceBaseIPCPeerExitingError('new transaction lock denied because the IPC peer is exiting');
             }
         }
-        const removeLock = lockDetails => {
+        const removeLock = (lockDetails) => {
             this._locks.splice(this._locks.indexOf(lockDetails), 1);
             if (this._locks.length === 0) {
                 // this.storage.debug.log(`No more locks in worker ${this.id}`);
@@ -394,11 +394,13 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                     tid: result.tid,
                     path: result.path,
                     forWriting: result.write,
+                    state: node_lock_1.LOCK_STATE.LOCKED,
                     expires: result.expires,
                     comment: result.comment,
                     release: async () => {
                         const req = { type: 'unlock-request', id: acebase_core_1.ID.generate(), from: this.id, to: this.masterPeerId, data: { id: lockInfo.lock.id } };
                         await this.request(req);
+                        lockInfo.lock.state = node_lock_1.LOCK_STATE.DONE;
                         this.storage.debug.verbose(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
                         removeLock(lockInfo);
                     },
@@ -410,6 +412,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                         }
                         catch (err) {
                             // We didn't get new lock?!
+                            lockInfo.lock.state = node_lock_1.LOCK_STATE.DONE;
                             removeLock(lockInfo);
                             throw err;
                         }
@@ -440,11 +443,11 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         // Send request, return result promise
         let resolve, reject;
         const promise = new Promise((rs, rj) => {
-            resolve = result => {
+            resolve = (result) => {
                 this._requests.delete(req.id);
                 rs(result);
             };
-            reject = err => {
+            reject = (err) => {
                 this._requests.delete(req.id);
                 rj(err);
             };

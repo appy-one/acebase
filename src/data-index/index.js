@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.GeoIndex = exports.FullTextIndex = exports.ArrayIndex = exports.DataIndex = void 0;
+exports.GeoIndex = exports.FullTextIndex = exports.ArrayIndex = exports.IndexQueryResults = exports.IndexQueryResult = exports.DataIndex = void 0;
 const acebase_core_1 = require("acebase-core");
 const unidecode_1 = require("unidecode");
 const node_1 = require("../node");
@@ -19,8 +19,10 @@ const INDEX_INFO_VALUE_TYPE = {
     NUMBER: 2,
     BOOLEAN: 3,
     ARRAY: 4,
+    // Maybe in the future:
+    // OBJECT: 5,
 };
-function _createRecordPointer(wildcards, key) {
+function _createRecordPointer(wildcards, keyOrIndex) {
     // binary layout:
     // record_pointer   = wildcards_info, key_info, DEPRECATED: record_location
     // wildcards_info   = wildcards_length, wildcards
@@ -45,6 +47,7 @@ function _createRecordPointer(wildcards, key) {
             recordPointer.push(wildcard.charCodeAt(j));
         }
     }
+    const key = typeof keyOrIndex === 'number' ? `[${keyOrIndex}]` : keyOrIndex;
     recordPointer.push(key.length); // key_length
     // key_bytes:
     for (let i = 0; i < key.length; i++) {
@@ -94,7 +97,8 @@ function _parseRecordPointer(path, recordPointer) {
         });
     }
     // return { key, pageNr, recordNr, address: new NodeAddress(`${path}/${key}`, pageNr, recordNr) };
-    return { key, path: `${path}/${key}`, wildcards };
+    const keyOrIndex = key[0] === '[' && key.slice(-1) === ']' ? parseInt(key.slice(1, -1)) : key;
+    return { key: keyOrIndex, path: `${path}/${key}`, wildcards };
 }
 // const _debounceTimeouts = {};
 // function debounce(id, ms, callback) {
@@ -302,6 +306,16 @@ class DataIndex {
                     }
                     return arr;
                 }
+                // Maybe in the future:
+                // else if (valueType === INDEX_INFO_VALUE_TYPE.OBJECT) {
+                //     const obj = {} as Record<string, IndexInfoPrimitiveValue>;
+                //     for (let j = 0; j < valueLength; j++) {
+                //         const prop = readKey();
+                //         const val = readValue() as IndexInfoPrimitiveValue;
+                //         obj[prop] = val;
+                //     }
+                //     return obj;
+                // }
                 index += valueLength;
                 return value;
             };
@@ -320,6 +334,7 @@ class DataIndex {
             const indexOptions = {
                 caseSensitive: indexInfo.cs,
                 textLocale: indexInfo.locale,
+                textLocaleKey: indexInfo.localeKey,
                 include: indexInfo.include,
             };
             let dataIndex;
@@ -730,7 +745,7 @@ class DataIndex {
         return DataIndex.validOperators;
     }
     async query(op, val, options = {}) {
-        if (!DataIndex.validOperators.includes(op) && !(op instanceof btree_1.BlacklistingSearchOperator)) {
+        if (!(op instanceof btree_1.BlacklistingSearchOperator) && !DataIndex.validOperators.includes(op)) {
             throw new TypeError(`Cannot use operator "${op}" to query index "${this.description}"`);
         }
         if (!this.caseSensitive) {
@@ -768,12 +783,12 @@ class DataIndex {
         }
         const results = new IndexQueryResults();
         results.filterKey = this.key;
-        results.values = [];
+        results.entryValues = [];
         if (options.filter) {
             const filterStep = new IndexQueryStats('filter', {
                 entries: entries.length,
                 entryValues: entries.reduce((total, entry) => total + entry.values.length, 0),
-                filterValues: options.filter.values.length,
+                filterValues: options.filter.entryValues.length,
             }, true);
             stats.steps.push(filterStep);
             let values = [];
@@ -782,7 +797,7 @@ class DataIndex {
                 valueEntryIndexes.push(values.length);
                 values = values.concat(entry.values);
             });
-            const filterValues = options.filter.values;
+            const filterValues = options.filter.entryValues;
             // Pre-process recordPointers to speed up matching
             const preProcess = (values, tree = false) => {
                 if (tree && values.rpTree) {
@@ -833,10 +848,10 @@ class DataIndex {
                     const result = new IndexQueryResult(recordPointer.key, recordPointer.path, entry.key, metadata);
                     // result.entry = entry;
                     results.push(result);
-                    results.values.push(match);
+                    results.entryValues.push(match);
                 }
             }
-            filterStep.stop({ results: results.length, values: results.values.length });
+            filterStep.stop({ results: results.length, values: results.entryValues.length });
         }
         else {
             // No filter, add all (unique) results
@@ -852,7 +867,7 @@ class DataIndex {
                         const result = new IndexQueryResult(recordPointer.key, recordPointer.path, entry.key, metadata);
                         // result.entry = entry;
                         results.push(result);
-                        results.values.push(value);
+                        results.entryValues.push(value);
                     }
                 });
             });
@@ -968,21 +983,22 @@ class DataIndex {
                     }
                     const isTargetNode = keyIndex === keys.length;
                     const getChildren = async () => {
-                        const children = [];
-                        await this.storage.getChildren(path)
-                            .next(child => {
-                            const keyOrIndex = typeof child.index === 'number' ? child.index : child.key;
-                            if (!child.address || child.type !== node_1.Node.VALUE_TYPES.OBJECT) { //if (child.storageType !== "record" || child.valueType !== VALUE_TYPES.OBJECT) {
-                                return; // This child cannot be indexed because it is not an object with properties
-                            }
-                            else {
-                                children.push(keyOrIndex);
-                            }
-                        })
-                            .catch(reason => {
+                        const childKeys = [];
+                        try {
+                            await this.storage.getChildren(path).next(child => {
+                                const keyOrIndex = typeof child.index === 'number' ? child.index : child.key;
+                                if (!child.address || child.type !== node_1.Node.VALUE_TYPES.OBJECT) {
+                                    return; // This child cannot be indexed because it is not an object with properties
+                                }
+                                else {
+                                    childKeys.push(keyOrIndex);
+                                }
+                            });
+                        }
+                        catch (reason) {
                             // Record doesn't exist? No biggy
                             this.storage.debug.warn(`Could not get children of "/${path}": ${reason.message}`);
-                        });
+                        }
                         // Iterate through the children in batches of max n nodes
                         // should be determined by amount of * wildcards in index path
                         // If there are 0 wildcards, batch size of 500 is ok
@@ -998,8 +1014,8 @@ class DataIndex {
                         // b is our unknown start number
                         const maxBatchSize = Math.round(Math.pow(500, Math.pow(0.5, wildcardNames.length)));
                         const batches = [];
-                        while (children.length > 0) {
-                            const batchChildren = children.splice(0, maxBatchSize);
+                        while (childKeys.length > 0) {
+                            const batchChildren = childKeys.splice(0, maxBatchSize);
                             batches.push(batchChildren);
                         }
                         while (batches.length > 0) {
@@ -1016,7 +1032,11 @@ class DataIndex {
                                     const wildcardValues = childPath.match(wildcardRE).slice(1);
                                     const neededKeys = [this.key].concat(this.includeKeys);
                                     const keyFilter = neededKeys.filter(key => key !== '{key}' && !wildcardNames.includes(key));
+                                    if (this.textLocaleKey) {
+                                        keyFilter.push(this.textLocaleKey);
+                                    }
                                     let keyValue = null; // initialize to null so we can check if it had a valid indexable value
+                                    let locale = this.textLocale;
                                     const metadata = (() => {
                                         // create properties for each included key, if they are not set by the loop they will still be in the metadata (which is required for B+Tree metadata)
                                         const obj = {};
@@ -1024,20 +1044,39 @@ class DataIndex {
                                         return obj;
                                     })();
                                     const addValue = (key, value) => {
-                                        // if (typeof value === 'string' && value.length > 255) {
-                                        //     value = value.slice(0, 255);
-                                        // }
-                                        if (typeof value === 'string' && !this.caseSensitive) {
-                                            value = value.toLocaleLowerCase(this.textLocale);
-                                        }
                                         if (key === this.key) {
                                             keyValue = value;
+                                        }
+                                        else if (key === this.textLocaleKey && typeof value === 'string') {
+                                            locale = value;
                                         }
                                         else {
                                             metadata[key] = value;
                                         }
                                     };
                                     const gotNamedWildcardKeys = ['{key}'].concat(wildcardNames).filter(key => key !== '*');
+                                    // Add special indexable key values from the current path, such as '{key}' for the current key,
+                                    // and named wildcards such as '$id'. This allows parts of the path to be indexed, or included in the index.
+                                    //
+                                    // Imagine an index on path 'users/$userId/posts/$postId/comments'
+                                    //
+                                    // - indexing on special key '{key}' allows quick lookups on a specific commentId without the need to know
+                                    //   the userId or postId it belongs to:
+                                    //
+                                    //   db.query('users/*/posts/*/comments').filter('{key}', '==', 'l6ukhzd6000009lgcuvm7nef');
+                                    //
+                                    // - indexing on wildcard key '$postId' allows quick lookups on all comments of a specific postId
+                                    //   without the need to know the userId it belongs to:
+                                    //
+                                    //   db.query('users/*/posts/$postId/comments').filter('$postId', '==', 'l6ukv0ru000009l42rbf7hn5');
+                                    //
+                                    // - including any of the special keys to the index allows quick filtering in queries:
+                                    //   (assume key 'text' was indexed:)
+                                    //
+                                    //   db.query('users/*/posts/$postId/comments')
+                                    //      .filter('text', 'like', '*hello*')
+                                    //      .filter('$postId', '==', 'l6ukv0ru000009l42rbf7hn5')
+                                    //
                                     neededKeys.filter(key => gotNamedWildcardKeys.includes(key)).forEach(key => {
                                         if (key === '{key}') {
                                             keyValue = childKey;
@@ -1045,7 +1084,7 @@ class DataIndex {
                                         else {
                                             const index = wildcardNames.indexOf(key);
                                             if (index < 0) {
-                                                throw new Error(`Requested key variable "${key}" not found index path`);
+                                                throw new Error(`Requested key variable "${key}" not found in index path`);
                                             }
                                             const value = wildcardValues[index];
                                             addValue(key, value);
@@ -1087,11 +1126,23 @@ class DataIndex {
                                         }
                                         await Promise.all(keyPromises);
                                     }
-                                    const addIndexValue = (key, recordPointer, metadata) => {
-                                        if (typeof key === 'string' && key.length > 255) {
+                                    const addIndexValue = (value, recordPointer, metadata) => {
+                                        if (typeof value === 'string' && value.length > 255) {
                                             // Make sure strings are not too large to store. Use first 255 chars only
-                                            console.warn(`Truncating key value "${key}" because it is too large to index`);
-                                            key = key.slice(0, 255);
+                                            console.warn(`Truncating key value "${value}" because it is too large to index`);
+                                            value = value.slice(0, 255);
+                                        }
+                                        if (!this.caseSensitive) {
+                                            // Store lowercase key and metadata values
+                                            if (typeof value === 'string') {
+                                                value = value.toLocaleLowerCase(locale);
+                                            }
+                                            Object.keys(metadata).forEach(key => {
+                                                const value = metadata[key];
+                                                if (typeof value === 'string') {
+                                                    metadata[key] = value.toLocaleLowerCase(locale);
+                                                }
+                                            });
                                         }
                                         // NEW: write value to buildStream
                                         const bytes = [
@@ -1099,7 +1150,7 @@ class DataIndex {
                                             0, // processed
                                         ];
                                         // key:
-                                        const keyBytes = btree_1.BinaryWriter.getBytes(key);
+                                        const keyBytes = btree_1.BinaryWriter.getBytes(value);
                                         bytes.push(...keyBytes);
                                         // rp_length:
                                         bytes.push(recordPointer.length);
@@ -1121,14 +1172,14 @@ class DataIndex {
                                         writeToStream(bytes);
                                         indexedValues++;
                                     };
-                                    if (keyValue !== null) { // typeof keyValue !== 'undefined' &&
+                                    if (keyValue !== null) {
                                         // Add it to the index, using value as the index key, a record pointer as the value
                                         // Create record pointer
                                         const recordPointer = _createRecordPointer(wildcardValues, childKey); //, child.address);
                                         // const entryValue = new BinaryBPlusTree.EntryValue(recordPointer, metadata)
                                         // Add it to the index
-                                        if (options && options.addCallback) {
-                                            keyValue = options.addCallback(addIndexValue, keyValue, recordPointer, metadata, { path: childPath, wildcards: wildcardValues, key: childKey });
+                                        if (options === null || options === void 0 ? void 0 : options.addCallback) {
+                                            keyValue = options.addCallback(addIndexValue, keyValue, recordPointer, metadata, { path: childPath, wildcards: wildcardValues, key: childKey, locale });
                                         }
                                         else {
                                             addIndexValue(keyValue, recordPointer, metadata);
@@ -1632,6 +1683,26 @@ class DataIndex {
                 // done
                 return;
             }
+            // Maybe in the future:
+            // else if (value !== null && typeof value === 'object') {
+            //     // value_type:
+            //     bytes.push(INDEX_INFO_VALUE_TYPE.OBJECT);
+            //     // value_length:
+            //     const keys = Object.keys(value);
+            //     if (keys.length > 0xffff) {
+            //         throw new Error('Object is too large to store. Max properties is 0xffff');
+            //     }
+            //     bytes.push((keys.length >> 8) & 0xff);
+            //     bytes.push(keys.length & 0xff);
+            //     // value_data:
+            //     keys.forEach(key => {
+            //         const val = value[key];
+            //         addNameBytes(bytes, key);
+            //         addValueBytes(bytes, val);
+            //     });
+            //     // done
+            //     return;
+            // }
             else {
                 throw new Error(`Invalid value type "${typeof value}"`);
             }
@@ -1669,6 +1740,9 @@ class DataIndex {
             include: this.includeKeys,
             cs: this.caseSensitive,
             locale: this.textLocale,
+            localeKey: this.textLocaleKey,
+            // Don't store:
+            // config: this.config,
         };
         addInfoBytes(header, indexInfo);
         // const treeNames = Object.keys(this.trees);
@@ -1868,23 +1942,18 @@ class IndexQueryResult {
         this.metadata = metadata;
     }
 }
+exports.IndexQueryResult = IndexQueryResult;
 class IndexQueryResults extends Array {
     constructor(...args) {
         super(...args);
         this.hints = [];
         this.stats = null;
     }
-    static from(results, filterKey) {
+    static fromResults(results, filterKey) {
         const arr = new IndexQueryResults(results.length);
         results.forEach((result, i) => arr[i] = result);
         arr.filterKey = filterKey;
         return arr;
-    }
-    set filterKey(key) {
-        this._filterKey = key;
-    }
-    get filterKey() {
-        return this._filterKey;
     }
     // /** @param {BinaryBPlusTreeLeafEntry[]} entries */
     // set treeEntries(entries) {
@@ -1963,9 +2032,10 @@ class IndexQueryResults extends Array {
                 return op === 'matches' ? isMatch : !isMatch;
             }
         });
-        return IndexQueryResults.from(filtered, this.filterKey);
+        return IndexQueryResults.fromResults(filtered, this.filterKey);
     }
 }
+exports.IndexQueryResults = IndexQueryResults;
 class IndexQueryStats {
     constructor(type, args, start = false) {
         this.type = type;
@@ -2021,6 +2091,10 @@ class ArrayIndex extends DataIndex {
         else {
             oldEntries = [];
         }
+        if (oldEntries.length === 0) {
+            // Add undefined entry to indicate empty array
+            oldEntries.push(undefined);
+        }
         let newEntries;
         if (tmpNew instanceof Array) {
             // Only use unique values
@@ -2032,8 +2106,12 @@ class ArrayIndex extends DataIndex {
         else {
             newEntries = [];
         }
-        const removed = oldEntries.filter(entry => newEntries.indexOf(entry) < 0);
-        const added = newEntries.filter(entry => oldEntries.indexOf(entry) < 0);
+        if (newEntries.length === 0) {
+            // Add undefined entry to indicate empty array
+            newEntries.push(undefined);
+        }
+        const removed = oldEntries.filter(entry => !newEntries.includes(entry));
+        const added = newEntries.filter(entry => !oldEntries.includes(entry));
         const mutated = { old: {}, new: {} };
         Object.assign(mutated.old, oldValue);
         Object.assign(mutated.new, newValue);
@@ -2055,15 +2133,17 @@ class ArrayIndex extends DataIndex {
     build() {
         return super.build({
             addCallback: (add, array, recordPointer, metadata) => {
-                if (!(array instanceof Array)) {
+                if (!(array instanceof Array) || array.length === 0) {
+                    // Add undefined entry to indicate empty array
+                    add(undefined, recordPointer, metadata);
                     return [];
                 }
                 // index unique items only
-                array.reduce((unique, entry) => {
-                    !unique.includes(entry) && unique.push(entry);
+                array.reduce((unique, value) => {
+                    !unique.includes(value) && unique.push(value);
                     return unique;
-                }, []).forEach(entry => {
-                    add(entry, recordPointer, metadata);
+                }, []).forEach(value => {
+                    add(value, recordPointer, metadata);
                 });
                 return array;
             },
@@ -2082,9 +2162,15 @@ class ArrayIndex extends DataIndex {
      * @param op "contains" or "!contains"
      * @param val value to search for
      */
-    async query(op, val) {
+    async query(op, val, options) {
+        if (op instanceof btree_1.BlacklistingSearchOperator) {
+            throw new Error(`Not implemented: Can't query array index with blacklisting operator yet`);
+        }
         if (!ArrayIndex.validOperators.includes(op)) {
             throw new Error(`Array indexes can only be queried with operators ${ArrayIndex.validOperators.map(op => `"${op}"`).join(', ')}`);
+        }
+        if (options) {
+            this.storage.debug.warn('Not implemented: query options for array indexes are ignored');
         }
         // Check cache
         const cache = this.cache(op, val);
@@ -2093,7 +2179,17 @@ class ArrayIndex extends DataIndex {
             return cache;
         }
         const stats = new IndexQueryStats('array_index_query', val, true);
-        if (op === 'contains') {
+        if ((op === 'contains' || op === '!contains') && val instanceof Array && val.length === 0) {
+            // Added for #135: empty compare array for contains/!contains must match all values
+            stats.type = 'array_index_scan';
+            const results = await super.query(new btree_1.BlacklistingSearchOperator((_) => []));
+            stats.stop(results.length);
+            results.filterKey = this.key;
+            results.stats = stats;
+            // Don't cache results
+            return results;
+        }
+        else if (op === 'contains') {
             if (val instanceof Array) {
                 // recipesIndex.query('contains', ['egg','bacon'])
                 // Get result count for each value in array
@@ -2166,7 +2262,7 @@ class ArrayIndex extends DataIndex {
                 stats.stop(results.length);
                 results.stats = stats;
                 // Cache results
-                delete results.values; // No need to cache these. Free the memory
+                delete results.entryValues; // No need to cache these. Free the memory
                 this.cache(op, val, results);
                 return results;
             }
@@ -2178,7 +2274,7 @@ class ArrayIndex extends DataIndex {
                 const results = await super.query(valueOp, val);
                 stats.steps.push(results.stats);
                 results.stats = stats;
-                delete results.values;
+                delete results.entryValues;
                 return results;
             }
         }
@@ -2224,6 +2320,7 @@ class WordInfo {
 // const _wordsRegex = /[\w']+/gmi; // TODO: should use a better pattern that supports non-latin characters
 class TextInfo {
     constructor(text, options) {
+        var _a;
         // this.text = text; // Be gone later...
         this.locale = options.locale || 'en';
         const localeSettings = TextInfo.locales.get(this.locale);
@@ -2266,6 +2363,10 @@ class TextInfo {
         this.ignored = [];
         if (text === null || typeof text === 'undefined') {
             return;
+        }
+        if (options.prepare) {
+            // Pre-process text. Allows decompression, decrypting, custom stemming etc
+            text = options.prepare(text, this.locale, `"${(_a = options.includeChars) !== null && _a !== void 0 ? _a : ''}`);
         }
         // Unidecode text to get ASCII characters only
         function safe_unidecode(str) {
@@ -2411,6 +2512,11 @@ class FullTextIndex extends DataIndex {
         // this.enableReverseLookup = true;
         this.indexMetadataKeys = ['_occurs_']; //,'_indexes_'
         this.config = options.config || {};
+        if (this.config.localeKey) {
+            // localeKey is supported by all indexes now
+            storage.debug.warn(`fulltext index config option "localeKey" has been deprecated, as it is now supported for all indexes. Move the setting to the global index settings`);
+            this.textLocaleKey = this.config.localeKey; // Do use it now
+        }
     }
     // get fileName() {
     //     return super.fileName.slice(0, -4) + '.fulltext.idx';
@@ -2418,17 +2524,10 @@ class FullTextIndex extends DataIndex {
     get type() {
         return 'fulltext';
     }
-    test(obj, op, val) {
-        if (obj === null) {
-            return op === 'fulltext:!contains';
-        }
-        const text = obj[this.key];
-        if (typeof text === 'undefined') {
-            return op === 'fulltext:!contains';
-        }
-        const locale = obj === null ? this.textLocale : this.config.localeKey && obj[this.config.localeKey] ? obj[this.config.localeKey] : this.textLocale;
-        const textInfo = new TextInfo(text, {
-            locale,
+    getTextInfo(val, locale) {
+        return new TextInfo(val, {
+            locale: locale !== null && locale !== void 0 ? locale : this.textLocale,
+            prepare: this.config.prepare,
             stemming: this.config.transform,
             blacklist: this.config.blacklist,
             whitelist: this.config.whitelist,
@@ -2436,6 +2535,18 @@ class FullTextIndex extends DataIndex {
             minLength: this.config.minLength,
             maxLength: this.config.maxLength,
         });
+    }
+    test(obj, op, val) {
+        var _a;
+        if (obj === null) {
+            return op === 'fulltext:!contains';
+        }
+        const text = obj[this.key];
+        if (typeof text === 'undefined') {
+            return op === 'fulltext:!contains';
+        }
+        const locale = (_a = obj === null || obj === void 0 ? void 0 : obj[this.textLocaleKey]) !== null && _a !== void 0 ? _a : this.textLocale;
+        const textInfo = this.getTextInfo(text, locale);
         if (op === 'fulltext:contains') {
             if (~val.indexOf(' OR ')) {
                 // split
@@ -2461,15 +2572,7 @@ class FullTextIndex extends DataIndex {
                     phrases.push(val);
                 }
                 return phrases.every(phrase => {
-                    const phraseInfo = new TextInfo(phrase, {
-                        locale: this.textLocale,
-                        stemming: this.config.transform,
-                        blacklist: this.config.blacklist,
-                        whitelist: this.config.whitelist,
-                        useStoplist: this.config.useStoplist,
-                        minLength: this.config.minLength,
-                        maxLength: this.config.maxLength,
-                    });
+                    const phraseInfo = this.getTextInfo(phrase, locale);
                     // This was broken before TS port because WordInfo had an array of words that was not
                     // in the same order as the source words were.
                     // TODO: Thoroughly test this new code
@@ -2511,15 +2614,7 @@ class FullTextIndex extends DataIndex {
             }
             else {
                 // test 1 or more words
-                const wordsInfo = new TextInfo(val, {
-                    locale: this.textLocale,
-                    stemming: this.config.transform,
-                    blacklist: this.config.blacklist,
-                    whitelist: this.config.whitelist,
-                    useStoplist: this.config.useStoplist,
-                    minLength: this.config.minLength,
-                    maxLength: this.config.maxLength,
-                });
+                const wordsInfo = this.getTextInfo(val, locale);
                 return wordsInfo.toSequence().every(word => {
                     return textInfo.words.has(word);
                 });
@@ -2527,17 +2622,18 @@ class FullTextIndex extends DataIndex {
         }
     }
     async handleRecordUpdate(path, oldValue, newValue) {
+        var _a, _b;
         let oldText = oldValue !== null && typeof oldValue === 'object' && this.key in oldValue ? oldValue[this.key] : null;
         let newText = newValue !== null && typeof newValue === 'object' && this.key in newValue ? newValue[this.key] : null;
-        const oldLocale = oldValue === null ? this.textLocale : this.config.localeKey && oldValue[this.config.localeKey] ? oldValue[this.config.localeKey] : this.textLocale, newLocale = newValue === null ? this.textLocale : this.config.localeKey && newValue[this.config.localeKey] ? newValue[this.config.localeKey] : this.textLocale;
+        const oldLocale = (_a = oldValue === null || oldValue === void 0 ? void 0 : oldValue[this.textLocaleKey]) !== null && _a !== void 0 ? _a : this.textLocale, newLocale = (_b = newValue === null || newValue === void 0 ? void 0 : newValue[this.textLocaleKey]) !== null && _b !== void 0 ? _b : this.textLocale;
         if (typeof oldText === 'object' && oldText instanceof Array) {
             oldText = oldText.join(' ');
         }
         if (typeof newText === 'object' && newText instanceof Array) {
             newText = newText.join(' ');
         }
-        const oldTextInfo = new TextInfo(oldText, { locale: oldLocale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
-        const newTextInfo = new TextInfo(newText, { locale: newLocale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
+        const oldTextInfo = this.getTextInfo(oldText, oldLocale);
+        const newTextInfo = this.getTextInfo(newText, newLocale);
         // super._updateReverseLookupKey(
         //     path,
         //     oldText ? textEncoder.encode(oldText) : null,
@@ -2598,7 +2694,7 @@ class FullTextIndex extends DataIndex {
                     text = '';
                 }
                 const locale = env.locale || this.textLocale;
-                const textInfo = new TextInfo(text, { locale, stemming: this.config.transform, blacklist: this.config.blacklist, whitelist: this.config.whitelist, useStoplist: this.config.useStoplist, minLength: this.config.minLength, maxLength: this.config.maxLength });
+                const textInfo = this.getTextInfo(text, locale);
                 if (textInfo.words.size === 0) {
                     this.storage.debug.warn(`No words found in "${typeof text === 'string' && text.length > 50 ? text.slice(0, 50) + '...' : text}" to fulltext index "${env.path}"`);
                 }
@@ -2646,12 +2742,23 @@ class FullTextIndex extends DataIndex {
     get validOperators() {
         return FullTextIndex.validOperators;
     }
+    async query(op, val, options) {
+        if (op instanceof btree_1.BlacklistingSearchOperator) {
+            throw new Error(`Not implemented: Can't query fulltext index with blacklisting operator yet`);
+        }
+        if (op === 'fulltext:contains' || op === 'fulltext:!contains') {
+            return this.contains(op, val, options);
+        }
+        else {
+            throw new Error(`Fulltext indexes can only be queried with operators ${FullTextIndex.validOperators.map(op => `"${op}"`).join(', ')}`);
+        }
+    }
     /**
      *
      * @param op Operator to use, can be either "fulltext:contains" or "fulltext:!contains"
      * @param val Text to search for. Can include * and ? wildcards, OR's for combined searches, and "quotes" for phrase searches
      */
-    async query(op, val, options = {
+    async contains(op, val, options = {
         phrase: false,
         locale: undefined,
         minimumWildcardWordLength: 2,
@@ -2670,6 +2777,7 @@ class FullTextIndex extends DataIndex {
         const getTextInfo = (text) => {
             const info = new TextInfo(text, {
                 locale: options.locale || this.textLocale,
+                prepare: this.config.prepare,
                 stemming: this.config.transform,
                 minLength: this.config.minLength,
                 maxLength: this.config.maxLength,
@@ -2721,7 +2829,7 @@ class FullTextIndex extends DataIndex {
                     }
                 });
             });
-            const results = IndexQueryResults.from(merged, this.key);
+            const results = IndexQueryResults.fromResults(merged, this.key);
             mergeStep.stop(results.length);
             stats.stop(results.length);
             results.stats = stats;
@@ -2791,7 +2899,7 @@ class FullTextIndex extends DataIndex {
         if (words.length === 0) {
             // Resolve with empty array
             stats.stop(0);
-            const results = IndexQueryResults.from([], this.key);
+            const results = IndexQueryResults.fromResults([], this.key);
             results.stats = stats;
             addIgnoredWordHints(results);
             return results;
@@ -2960,7 +3068,7 @@ class FullTextIndex extends DataIndex {
         results.stats = stats;
         addIgnoredWordHints(results);
         // Cache results
-        delete results.values; // No need to cache these. Free the memory
+        delete results.entryValues; // No need to cache these. Free the memory
         this.cache(op, val, results);
         return results;
         // Parallel method: query all words at the same time, then combine results
@@ -3234,42 +3342,55 @@ class GeoIndex extends DataIndex {
         };
         return isInCircle(src.lat, src.long, val.lat, val.long, val.radius);
     }
+    async query(op, val, options) {
+        if (op instanceof btree_1.BlacklistingSearchOperator) {
+            throw new Error(`Not implemented: Can't query geo index with blacklisting operator yet`);
+        }
+        if (options) {
+            this.storage.debug.warn('Not implemented: query options for geo indexes are ignored');
+        }
+        if (op === 'geo:nearby') {
+            if (val === null || typeof val !== 'object' || !('lat' in val) || !('long' in val) || !('radius' in val)) {
+                throw new Error(`geo nearby query expects an object with lat, long and radius properties`);
+            }
+            return this.nearby(val);
+        }
+        else {
+            throw new Error(`Geo indexes can only be queried with operators ${GeoIndex.validOperators.map(op => `"${op}"`).join(', ')}`);
+        }
+    }
     /**
      * @param op Only 'geo:nearby' is supported at the moment
      */
-    async query(op, val) {
-        if (!GeoIndex.validOperators.includes(op)) {
-            throw new Error(`Geo indexes can not be queried with operators ${GeoIndex.validOperators.map(op => `"${op}"`).join(', ')}`);
-        }
+    async nearby(val) {
+        const op = 'geo:nearby';
         // Check cache
         const cached = this.cache(op, val);
         if (cached) {
             // Use cached results
             return cached;
         }
-        if (op === 'geo:nearby') {
-            if (typeof val.lat !== 'number' || typeof val.long !== 'number' || typeof val.radius !== 'number') {
-                throw new Error('geo:nearby query must supply an object with properties .lat, .long and .radius');
-            }
-            const stats = new IndexQueryStats('geo_nearby_query', val, true);
-            const precision = _getGeoRadiusPrecision(val.radius / 10);
-            const targetHashes = _hashesInRadius(val.lat, val.long, val.radius, precision);
-            stats.queries = targetHashes.length;
-            const promises = targetHashes.map(hash => {
-                return super.query('like', `${hash}*`);
-            });
-            const resultSets = await Promise.all(promises);
-            // Combine all results
-            const results = new IndexQueryResults();
-            results.filterKey = this.key;
-            resultSets.forEach(set => {
-                set.forEach(match => results.push(match));
-            });
-            stats.stop(results.length);
-            results.stats = stats;
-            this.cache(op, val, results);
-            return results;
+        if (typeof val.lat !== 'number' || typeof val.long !== 'number' || typeof val.radius !== 'number') {
+            throw new Error('geo:nearby query must supply an object with properties .lat, .long and .radius');
         }
+        const stats = new IndexQueryStats('geo_nearby_query', val, true);
+        const precision = _getGeoRadiusPrecision(val.radius / 10);
+        const targetHashes = _hashesInRadius(val.lat, val.long, val.radius, precision);
+        stats.queries = targetHashes.length;
+        const promises = targetHashes.map(hash => {
+            return super.query('like', `${hash}*`);
+        });
+        const resultSets = await Promise.all(promises);
+        // Combine all results
+        const results = new IndexQueryResults();
+        results.filterKey = this.key;
+        resultSets.forEach(set => {
+            set.forEach(match => results.push(match));
+        });
+        stats.stop(results.length);
+        results.stats = stats;
+        this.cache(op, val, results);
+        return results;
     }
 }
 exports.GeoIndex = GeoIndex;

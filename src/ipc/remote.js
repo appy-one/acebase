@@ -189,6 +189,7 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
             });
             // Handle disconnect
             this.ws.addEventListener('close', ( /*event*/) => {
+                var _a, _b;
                 // Disconnected. Try reconnecting immediately
                 if (!connected) {
                     return;
@@ -198,10 +199,7 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
                 }
                 this.storage.debug.error(`Connection to remote IPC server was lost. Trying to reconnect`);
                 clearInterval(pingInterval);
-                if (this.storage.invalidateCache) {
-                    // Make sure the entire cache is invalidated (when using AceBase storage)
-                    this.storage.invalidateCache(true, '', true, 'ipc_ws_disconnect');
-                }
+                (_b = (_a = this.storage).invalidateCache) === null || _b === void 0 ? void 0 : _b.call(_a, true, '', true, 'ipc_ws_disconnect'); // Make sure the entire cache is invalidated (AceBase storage has such cache)
                 this.connect();
             });
             // Handle incoming messages

@@ -1,5 +1,11 @@
 /// <reference types="node" />
 import { DebugLogger } from 'acebase-core';
+export declare const LOCK_STATE: {
+    PENDING: string;
+    LOCKED: string;
+    EXPIRED: string;
+    DONE: string;
+};
 export declare class NodeLocker {
     private _locks;
     private _lastTid;

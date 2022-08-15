@@ -5,11 +5,18 @@ const acebase_core_1 = require("acebase-core");
 const node_value_types_1 = require("../node-value-types");
 const node_errors_1 = require("../node-errors");
 const node_info_1 = require("../node-info");
-const { compareValues, getChildValues, encodeString, defer } = acebase_core_1.Utils;
 const ipc_1 = require("../ipc");
 const promise_fs_1 = require("../promise-fs");
 // const { IPCTransactionManager } = require('./node-transaction');
+const data_index_1 = require("../data-index"); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
+const indexes_1 = require("./indexes");
+const { compareValues, getChildValues, encodeString, defer } = acebase_core_1.Utils;
 const DEBUG_MODE = false;
+const SUPPORTED_EVENTS = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
+// Add 'notify_*' event types for each event to enable data-less notifications, so data retrieval becomes optional
+SUPPORTED_EVENTS.push(...SUPPORTED_EVENTS.map(event => `notify_${event}`));
+// eslint-disable-next-line @typescript-eslint/no-empty-function
+const NOOP = () => { };
 class SchemaValidationError extends Error {
     constructor(reason) {
         super(`Schema validation failed: ${reason}`);
@@ -48,47 +55,9 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         super();
         this.name = name;
         this.settings = settings;
-        this.debug = new acebase_core_1.DebugLogger(settings.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
-        // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
-        const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
-        if (settings.ipc) {
-            if (typeof settings.ipc.port !== 'number') {
-                throw new Error('IPC port number must be a number');
-            }
-            if (!['master', 'worker'].includes(settings.ipc.role)) {
-                throw new Error(`IPC client role must be either "master" or "worker", not "${settings.ipc.role}"`);
-            }
-            const ipcSettings = Object.assign({ dbname: ipcName }, settings.ipc);
-            this.ipc = new ipc_1.RemoteIPCPeer(this, ipcSettings);
-        }
-        else {
-            this.ipc = new ipc_1.IPCPeer(this, ipcName);
-        }
-        this.ipc.once('exit', (code) => {
-            // We can perform any custom cleanup here:
-            // - storage-acebase should close the db file
-            // - storage-mssql / sqlite should close connection
-            // - indexes should close their files
-            if (this.indexes.supported) {
-                this.indexes.close();
-            }
-        });
-        this.nodeLocker = {
-            lock: (path, tid, write, comment) => {
-                return this.ipc.lock({ path, tid, write, comment });
-            },
-        };
-        // this.transactionManager = new IPCTransactionManager(this.ipc);
-        this._lastTid = 0;
-        // Setup indexing functionality
-        const { DataIndex, ArrayIndex, FullTextIndex, GeoIndex } = require('../data-index'); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
-        /** @type {Map<string, { validate?: (previous: any, value: any) => boolean, schema?: SchemaDefinition }>} */
-        // this._validation = new Map();
-        /** @type {Array<{ path: string, schema: SchemaDefinition }>} */
+        // private _validation = new Map<string, { validate?: (previous: any, value: any) => boolean, schema?: SchemaDefinition }>;
         this._schemas = [];
-        /** @type {DataIndex[]} */
-        const _indexes = [];
-        const storage = this;
+        this._indexes = [];
         this.indexes = {
             /**
              * Tests if (the default storage implementation of) indexes are supported in the environment.
@@ -96,100 +65,32 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
              * TODO: Implement storage specific indexes (eg in SQLite, MySQL, MSSQL, in-memory)
              */
             get supported() {
-                return promise_fs_1.pfs && promise_fs_1.pfs.hasFileSystem;
+                return promise_fs_1.pfs === null || promise_fs_1.pfs === void 0 ? void 0 : promise_fs_1.pfs.hasFileSystem;
             },
-            /**
-             * Creates an index on specified path and key(s)
-             * @param {string} path location of objects to be indexed. Eg: "users" to index all children of the "users" node; or "chats/*\/members" to index all members of all chats
-             * @param {string} key for now - one key to index. Once our B+tree implementation supports nested trees, we can allow multiple fields
-             * @param {object} [options]
-             * @param {boolean} [options.rebuild=false]
-             * @param {string} [options.type] special index to create: 'array', 'fulltext' or 'geo'
-             * @param {string[]} [options.include] keys to include in index
-             * @param {object} [options.config] additional index-specific configuration settings
-             * @returns {Promise<DataIndex?>}
-             */
-            async create(path, key, options = { rebuild: false, type: undefined, include: undefined }) {
-                if (!this.supported) {
-                    throw new Error('Indexes are not supported in current environment because it requires Node.js fs');
-                }
-                // path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
-                const rebuild = options && options.rebuild === true;
-                const indexType = (options && options.type) || 'normal';
-                let includeKeys = (options && options.include) || [];
-                if (typeof includeKeys === 'string') {
-                    includeKeys = [includeKeys];
-                }
-                const existingIndex = _indexes.find(index => index.path === path && index.key === key && index.type === indexType
-                    && index.includeKeys.length === includeKeys.length
-                    && index.includeKeys.every((key, index) => includeKeys[index] === key));
-                if (existingIndex && rebuild !== true) {
-                    storage.debug.log(`Index on "/${path}/*/${key}" already exists`.colorize(acebase_core_1.ColorStyle.inverse));
-                    return existingIndex;
-                }
-                if (!storage.ipc.isMaster) {
-                    // Pass create request to master
-                    const result = await storage.ipc.sendRequest({ type: 'index.create', path, key, options });
-                    if (result.ok) {
-                        return this.add(result.fileName);
-                    }
-                    throw new Error(result.reason);
-                }
-                await promise_fs_1.pfs.mkdir(`${storage.settings.path}/${storage.name}.acebase`).catch(err => {
-                    if (err.code !== 'EEXIST') {
-                        throw err;
-                    }
-                });
-                /** @type {DataIndex} */
-                const index = existingIndex || (() => {
-                    switch (indexType) {
-                        case 'array': return new ArrayIndex(storage, path, key, { include: options.include, config: options.config });
-                        case 'fulltext': return new FullTextIndex(storage, path, key, { include: options.include, config: options.config });
-                        case 'geo': return new GeoIndex(storage, path, key, { include: options.include, config: options.config });
-                        default: return new DataIndex(storage, path, key, { include: options.include }); //, config: options.config
-                    }
-                })();
-                if (!existingIndex) {
-                    _indexes.push(index);
-                }
-                await index.build()
-                    .catch(err => {
-                    storage.debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.colorize(acebase_core_1.ColorStyle.red));
-                    if (!existingIndex) {
-                        // Only remove index if we added it. Build may have failed because someone tried creating the index more than once, or rebuilding it while it was building...
-                        _indexes.splice(_indexes.indexOf(index), 1);
-                    }
-                    throw err;
-                });
-                storage.ipc.sendNotification({ type: 'index.created', fileName: index.fileName, path, key, options });
-                return index;
+            create: (path, key, options = {
+                rebuild: false,
+            }) => {
+                const context = { storage: this, debug: this.debug, indexes: this._indexes, ipc: this.ipc };
+                return (0, indexes_1.createIndex)(context, path, key, options);
             },
             /**
              * Returns indexes at a path, or a specific index on a key in that path
-             * @param {string} path
-             * @param {string|null} [key=null]
-             * @returns {DataIndex[]}
              */
-            get(path, key = null) {
+            get: (path, key = null) => {
                 if (path.includes('$')) {
                     // Replace $variables in path with * wildcards
                     const pathKeys = acebase_core_1.PathInfo.getPathKeys(path).map(key => typeof key === 'string' && key.startsWith('$') ? '*' : key);
                     path = (new acebase_core_1.PathInfo(pathKeys)).path;
                 }
-                return _indexes.filter(index => index.path === path &&
+                return this._indexes.filter(index => index.path === path &&
                     (key === null || key === index.key));
             },
             /**
              * Returns all indexes on a target path, optionally includes indexes on child and parent paths
-             * @param {string} targetPath
-             * @param {object} [options]
-             * @param {boolean} [options.parentPaths=true]
-             * @param {boolean} [options.childPaths=true]
-             * @returns {DataIndex[]}
              */
-            getAll(targetPath, options = { parentPaths: true, childPaths: true }) {
+            getAll: (targetPath, options = { parentPaths: true, childPaths: true }) => {
                 const pathKeys = acebase_core_1.PathInfo.getPathKeys(targetPath);
-                return _indexes.filter(index => {
+                return this._indexes.filter(index => {
                     const indexKeys = acebase_core_1.PathInfo.getPathKeys(index.path + '/*');
                     // check if index is on a parent node of given path:
                     if (options.parentPaths && indexKeys.every((key, i) => { return key === '*' || pathKeys[i] === key; }) && [index.key].concat(...index.includeKeys).includes(pathKeys[indexKeys.length])) {
@@ -215,29 +116,28 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             },
             /**
              * Returns all indexes
-             * @returns {DataIndex[]}
              */
-            list() {
-                return _indexes.slice();
+            list: () => {
+                return this._indexes.slice();
             },
             /**
              * Discovers and populates all created indexes
              */
-            async load() {
-                _indexes.splice(0);
+            load: async () => {
+                this._indexes.splice(0);
                 if (!promise_fs_1.pfs.hasFileSystem) {
                     // If pfs (fs) is not available, don't try using it
                     return;
                 }
                 let files = [];
                 try {
-                    files = await promise_fs_1.pfs.readdir(`${storage.settings.path}/${storage.name}.acebase`);
+                    files = (await promise_fs_1.pfs.readdir(`${this.settings.path}/${this.name}.acebase`));
                 }
                 catch (err) {
                     if (err.code !== 'ENOENT') {
                         // If the directory is not found, there are no file indexes. (probably not supported by used storage class)
                         // Only complain if error is something else
-                        storage.debug.error(err);
+                        this.debug.error(err);
                     }
                 }
                 const promises = [];
@@ -245,73 +145,67 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                     if (!fileName.endsWith('.idx')) {
                         return;
                     }
-                    const needsStoragePrefix = settings.type !== 'data'; // auth indexes need to start with "[auth]-" and have to be ignored by other storage types
+                    const needsStoragePrefix = this.settings.type !== 'data'; // auth indexes need to start with "[auth]-" and have to be ignored by other storage types
                     const hasStoragePrefix = /^\[[a-z]+\]-/.test(fileName);
-                    if ((!needsStoragePrefix && !hasStoragePrefix) || needsStoragePrefix && fileName.startsWith(`[${settings.type}]-`)) {
-                        const p = this.add(fileName);
+                    if ((!needsStoragePrefix && !hasStoragePrefix) || needsStoragePrefix && fileName.startsWith(`[${this.settings.type}]-`)) {
+                        const p = this.indexes.add(fileName);
                         promises.push(p);
                     }
                 });
                 await Promise.all(promises);
             },
-            async add(fileName) {
+            add: async (fileName) => {
                 try {
-                    const index = await DataIndex.readFromFile(storage, fileName);
-                    _indexes.push(index);
+                    const index = await data_index_1.DataIndex.readFromFile(this, fileName);
+                    this._indexes.push(index);
                     return index;
                 }
                 catch (err) {
-                    storage.debug.error(err);
+                    this.debug.error(err);
                     return null;
                 }
             },
             /**
              * Deletes an index from the database
-             * @param {string} fileName
              */
-            async delete(fileName) {
-                const index = await this.remove(fileName);
+            delete: async (fileName) => {
+                const index = await this.indexes.remove(fileName);
                 await index.delete();
-                storage.ipc.sendNotification({ type: 'index.deleted', fileName: index.fileName, path: index.path, keys: index.key });
+                this.ipc.sendNotification({ type: 'index.deleted', fileName: index.fileName, path: index.path, keys: index.key });
             },
             /**
              * Removes an index from the list. Does not delete the actual file, `delete` does that!
-             * @param {string} fileName
              * @returns returns the removed index
              */
-            async remove(fileName) {
-                const index = _indexes.find(index => index.fileName === fileName);
+            remove: async (fileName) => {
+                const index = this._indexes.find(index => index.fileName === fileName);
                 if (!index) {
                     throw new Error(`Index ${fileName} not found`);
                 }
-                _indexes.splice(_indexes.indexOf(index), 1);
+                this._indexes.splice(this._indexes.indexOf(index), 1);
                 return index;
             },
-            async close() {
+            close: async () => {
                 // Close all indexes
-                const promises = this.list().map(index => index.close().catch(err => storage.debug.error(err)));
+                const promises = this.indexes.list().map(index => index.close().catch(err => this.debug.error(err)));
                 await Promise.all(promises);
             },
         };
-        // Subscriptions
-        const _subs = {};
-        const _supportedEvents = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
-        // Add 'notify_*' event types for each event to enable data-less notifications, so data retrieval becomes optional
-        _supportedEvents.push(..._supportedEvents.map(event => `notify_${event}`));
+        this._eventSubscriptions = {};
         this.subscriptions = {
             /**
              * Adds a subscription to a node
-             * @param {string} path - Path to the node to add subscription to
-             * @param {string} type - Type of the subscription
-             * @param {(err: Error, path: string, newValue: any, oldValue: any) => void} callback - Subscription callback function
+             * @param path Path to the node to add subscription to
+             * @param type Type of the subscription
+             * @param callback Subscription callback function
              */
             add: (path, type, callback) => {
-                if (_supportedEvents.indexOf(type) < 0) {
+                if (SUPPORTED_EVENTS.indexOf(type) < 0) {
                     throw new TypeError(`Invalid event type "${type}"`);
                 }
-                let pathSubs = _subs[path];
+                let pathSubs = this._eventSubscriptions[path];
                 if (!pathSubs) {
-                    pathSubs = _subs[path] = [];
+                    pathSubs = this._eventSubscriptions[path] = [];
                 }
                 // if (pathSubs.findIndex(ps => ps.type === type && ps.callback === callback)) {
                 //     storage.debug.warn(`Identical subscription of type ${type} on path "${path}" being added`);
@@ -321,16 +215,17 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             },
             /**
              * Removes 1 or more subscriptions from a node
-             * @param {string} path - Path to the node to remove the subscription from
-             * @param {string} [type] - Type of subscription(s) to remove (optional: if omitted all types will be removed)
-             * @param {Function} [callback] - Callback to remove (optional: if omitted all of the same type will be removed)
+             * @param path Path to the node to remove the subscription from
+             * @param type Type of subscription(s) to remove (optional: if omitted all types will be removed)
+             * @param callback Callback to remove (optional: if omitted all of the same type will be removed)
              */
-            remove: (path, type = undefined, callback = undefined) => {
-                const pathSubs = _subs[path];
+            remove: (path, type, callback) => {
+                const pathSubs = this._eventSubscriptions[path];
                 if (!pathSubs) {
                     return;
                 }
-                let i, next = () => pathSubs.findIndex(ps => (type ? ps.type === type : true) && (callback ? ps.callback === callback : true));
+                const next = () => pathSubs.findIndex(ps => (type ? ps.type === type : true) && (callback ? ps.callback === callback : true));
+                let i;
                 while ((i = next()) >= 0) {
                     pathSubs.splice(i, 1);
                 }
@@ -338,7 +233,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             },
             /**
              * Checks if there are any subscribers at given path that need the node's previous value when a change is triggered
-             * @param {string} path
+             * @param path
              */
             hasValueSubscribersForPath(path) {
                 const valueNeeded = this.getValueSubscribersForPath(path);
@@ -346,10 +241,9 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             },
             /**
              * Gets all subscribers at given path that need the node's previous value when a change is triggered
-             * @param {string} path
-             * @returns {Array<{ type: string; eventPath: string; dataPath: string; subscriptionPath: string }>}
+             * @param path
              */
-            getValueSubscribersForPath(path) {
+            getValueSubscribersForPath: (path) => {
                 // Subscribers that MUST have the entire previous value of a node before updating:
                 //  - "value" events on the path itself, and any ancestor path
                 //  - "child_added", "child_removed" events on the parent path
@@ -357,12 +251,12 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 //  - ALL events on child/descendant paths
                 const pathInfo = new acebase_core_1.PathInfo(path);
                 const valueSubscribers = [];
-                Object.keys(_subs).forEach(subscriptionPath => {
+                Object.keys(this._eventSubscriptions).forEach(subscriptionPath => {
                     if (pathInfo.equals(subscriptionPath) || pathInfo.isDescendantOf(subscriptionPath)) {
                         // path being updated === subscriptionPath, or a child/descendant path of it
                         // eg path === "posts/123/title"
                         // and subscriptionPath is "posts/123/title", "posts/$postId/title", "posts/123", "posts/*", "posts" etc
-                        const pathSubs = _subs[subscriptionPath];
+                        const pathSubs = this._eventSubscriptions[subscriptionPath];
                         const eventPath = acebase_core_1.PathInfo.fillVariables(subscriptionPath, path);
                         pathSubs
                             .filter(sub => !sub.type.startsWith('notify_')) // notify events don't need additional value loading
@@ -382,7 +276,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                                 const childKey = acebase_core_1.PathInfo.getPathKeys(path.slice(eventPath.length).replace(/^\//, ''))[0];
                                 dataPath = acebase_core_1.PathInfo.getChildPath(eventPath, childKey);
                             }
-                            if (dataPath !== null && !valueSubscribers.includes(s => s.type === sub.type && s.eventPath === eventPath)) {
+                            if (dataPath !== null && !valueSubscribers.some(s => s.type === sub.type && s.eventPath === eventPath)) {
                                 valueSubscribers.push({ type: sub.type, eventPath, dataPath, subscriptionPath });
                             }
                         });
@@ -392,19 +286,17 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             },
             /**
              * Gets all subscribers at given path that could possibly be invoked after a node is updated
-             * @param {string} path
-             * @returns {Array<{ type: string; eventPath: string; dataPath: string; subscriptionPath: string }>}
              */
-            getAllSubscribersForPath(path) {
+            getAllSubscribersForPath: (path) => {
                 const pathInfo = acebase_core_1.PathInfo.get(path);
                 const subscribers = [];
-                Object.keys(_subs).forEach(subscriptionPath => {
+                Object.keys(this._eventSubscriptions).forEach(subscriptionPath => {
                     // if (pathInfo.equals(subscriptionPath) //path === subscriptionPath
                     //     || pathInfo.isDescendantOf(subscriptionPath)
                     //     || pathInfo.isAncestorOf(subscriptionPath)
                     // ) {
                     if (pathInfo.isOnTrailOf(subscriptionPath)) {
-                        const pathSubs = _subs[subscriptionPath];
+                        const pathSubs = this._eventSubscriptions[subscriptionPath];
                         const eventPath = acebase_core_1.PathInfo.fillVariables(subscriptionPath, path);
                         pathSubs.forEach(sub => {
                             let dataPath = null;
@@ -439,16 +331,16 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             },
             /**
              * Triggers subscription events to run on relevant nodes
-             * @param {string} event - Event type: "value", "child_added", "child_changed", "child_removed"
-             * @param {string} path - Path to the node the subscription is on
-             * @param {string} dataPath - path to the node the value is stored
-             * @param {any} oldValue - old value
-             * @param {any} newValue - new value
-             * @param {any} context - context used by the client that updated this data
+             * @param event Event type: "value", "child_added", "child_changed", "child_removed"
+             * @param path Path to the node the subscription is on
+             * @param dataPath path to the node the value is stored
+             * @param oldValue old value
+             * @param newValue new value
+             * @param context context used by the client that updated this data
              */
-            trigger(event, path, dataPath, oldValue, newValue, context) {
+            trigger: (event, path, dataPath, oldValue, newValue, context) => {
                 //console.warn(`Event "${event}" triggered on node "/${path}" with data of "/${dataPath}": `, newValue);
-                const pathSubscriptions = _subs[path] || [];
+                const pathSubscriptions = this._eventSubscriptions[path] || [];
                 pathSubscriptions.filter(sub => sub.type === event)
                     .forEach(sub => {
                     sub.callback(null, dataPath, newValue, oldValue, context);
@@ -463,6 +355,38 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 });
             },
         };
+        this.debug = new acebase_core_1.DebugLogger(settings.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
+        // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
+        const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
+        if (settings.ipc) {
+            if (typeof settings.ipc.port !== 'number') {
+                throw new Error('IPC port number must be a number');
+            }
+            if (!['master', 'worker'].includes(settings.ipc.role)) {
+                throw new Error(`IPC client role must be either "master" or "worker", not "${settings.ipc.role}"`);
+            }
+            const ipcSettings = Object.assign({ dbname: ipcName }, settings.ipc);
+            this.ipc = new ipc_1.RemoteIPCPeer(this, ipcSettings);
+        }
+        else {
+            this.ipc = new ipc_1.IPCPeer(this, ipcName);
+        }
+        this.ipc.once('exit', (code) => {
+            // We can perform any custom cleanup here:
+            // - storage-acebase should close the db file
+            // - storage-mssql / sqlite should close connection
+            // - indexes should close their files
+            if (this.indexes.supported) {
+                this.indexes.close();
+            }
+        });
+        this.nodeLocker = {
+            lock: (path, tid, write, comment) => {
+                return this.ipc.lock({ path, tid, write, comment });
+            },
+        };
+        // this.transactionManager = new IPCTransactionManager(this.ipc);
+        this._lastTid = 0;
     } // end of constructor
     createTid() {
         return DEBUG_MODE ? ++this._lastTid : acebase_core_1.ID.generate();
@@ -477,7 +401,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     /**
      * Checks if a value can be stored in a parent object, or if it should
      * move to a dedicated record. Uses settings.maxInlineValueSize
-     * @param {any} value
+     * @param value
      */
     valueFitsInline(value) {
         if (typeof value === 'number' || typeof value === 'boolean' || value instanceof Date) {
@@ -514,22 +438,11 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     }
     /**
      * Creates or updates a node in its own record. DOES NOT CHECK if path exists in parent node, or if parent paths exist! Calling code needs to do this
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options]
-     * @param {boolean} [options.merge=false]
-     * @returns {Promise<any>}
      */
-    // eslint-disable-next-line no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _writeNode(path, value, options) {
         throw new Error('This method must be implemented by subclass');
     }
-    /**
-     *
-     * @param {string} path
-     * @param {boolean} suppressEvents
-     * @returns
-     */
     getUpdateImpact(path, suppressEvents) {
         let topEventPath = path;
         let hasValueSubscribers = false;
@@ -610,7 +523,13 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
      * @param {object} [options]
      * @returns {Promise<IWriteNodeResult>} Returns a promise that resolves with an object that contains storage specific details, plus the applied mutations if transaction logging is enabled
      */
-    async _writeNodeWithTracking(path, value, options = { merge: false, transaction: undefined, tid: undefined, _customWriteFunction: undefined, waitForIndexUpdates: true, suppress_events: false, context: null, impact: null }) {
+    async _writeNodeWithTracking(path, value, options = {
+        merge: false,
+        waitForIndexUpdates: true,
+        suppress_events: false,
+        context: null,
+        impact: null,
+    }) {
         options = options || {};
         if (!options.tid && !options.transaction) {
             throw new Error('_writeNodeWithTracking MUST be executed with a tid OR transaction!');
@@ -625,7 +544,9 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         const transaction = options.transaction;
         // Is anyone interested in the values changing on this path?
         let topEventData = null;
-        let { topEventPath, eventSubscriptions, hasValueSubscribers, indexes, keysFilter } = options.impact ? options.impact : this.getUpdateImpact(path, options.suppress_events);
+        const updateImpact = options.impact ? options.impact : this.getUpdateImpact(path, options.suppress_events);
+        const { topEventPath, eventSubscriptions, hasValueSubscribers, indexes } = updateImpact;
+        let { keysFilter } = updateImpact;
         const writeNode = () => {
             if (typeof options._customWriteFunction === 'function') {
                 return options._customWriteFunction();
@@ -712,7 +633,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             }
             modifiedData = newTopEventData;
             while (trailKeys.length > 0) {
-                /** @type {string|number} trailKeys.shift() as string|number */
                 const childKey = trailKeys.shift();
                 // Create shallow copy of object at target
                 if (!options.merge && trailKeys.length === 0) {
@@ -720,10 +640,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 }
                 else {
                     const original = modifiedData[childKey];
-                    const shallowCopy = typeof childKey === 'number' ? [] : {};
-                    Object.keys(original).forEach(key => {
-                        shallowCopy[key] = original[key];
-                    });
+                    const shallowCopy = typeof childKey === 'number' ? [...original] : Object.assign({}, original);
                     modifiedData[childKey] = shallowCopy;
                 }
                 modifiedData = modifiedData[childKey];
@@ -879,11 +796,10 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 console.assert(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
                 pathKeys[index] = variable.value;
             });
-            /** @type {string} pathKeys.reduce<string>(..) */
             const dataPath = pathKeys.reduce((path, key) => acebase_core_1.PathInfo.getChildPath(path, key), '');
             trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
         };
-        const prepareMutationEvents = (sub, currentPath, oldValue, newValue, compareResult) => {
+        const prepareMutationEvents = (currentPath, oldValue, newValue, compareResult) => {
             const batch = [];
             const result = compareResult || compareValues(oldValue, newValue);
             if (result === 'identical') {
@@ -921,7 +837,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 result.changed.forEach(info => {
                     const childPath = acebase_core_1.PathInfo.getChildPath(currentPath, info.key);
                     const childValues = getChildValues(info.key, oldValue, newValue);
-                    const childBatch = prepareMutationEvents(sub, childPath, childValues.oldValue, childValues.newValue, info.change);
+                    const childBatch = prepareMutationEvents(childPath, childValues.oldValue, childValues.newValue, info.change);
                     batch.push(...childBatch);
                 });
                 result.added.forEach(key => {
@@ -929,7 +845,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                     batch.push({ path: childPath, oldValue: null, newValue: newValue[key] });
                 });
                 if (oldValue instanceof Array && newValue instanceof Array) {
-                    result.removed.sort((a, b) => a - b);
+                    result.removed.sort((a, b) => a < b ? 1 : -1);
                 }
                 result.removed.forEach(key => {
                     const childPath = acebase_core_1.PathInfo.getChildPath(currentPath, key);
@@ -949,8 +865,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                     ({ oldValue, newValue } = getChildValues(key, oldValue, newValue));
                 }
                 const compareResults = compareValues(oldValue, newValue);
-                const fakeSub = { event: 'mutations', path };
-                const batch = prepareMutationEvents(fakeSub, path, oldValue, newValue, compareResults);
+                const batch = prepareMutationEvents(path, oldValue, newValue, compareResults);
                 const mutations = batch.map(m => ({ target: acebase_core_1.PathInfo.getPathKeys(m.path.slice(path.length)), prev: m.oldValue, val: m.newValue })); // key: PathInfo.get(m.path).key
                 return mutations;
             })();
@@ -987,12 +902,8 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                             // Fire on all relevant child keys
                             const allKeys = oldValue === null ? [] : Object.keys(oldValue).map(key => oldValue instanceof Array ? parseInt(key) : key);
                             newValue !== null && Object.keys(newValue).forEach(key => {
-                                if (newValue instanceof Array) {
-                                    key = parseInt(key);
-                                }
-                                if (allKeys.indexOf(key) < 0) {
-                                    allKeys.push(key);
-                                }
+                                const keyOrIndex = newValue instanceof Array ? parseInt(key) : key;
+                                !allKeys.includes(keyOrIndex) && allKeys.push(key);
                             });
                             allKeys.forEach(key => {
                                 const childValues = getChildValues(key, oldValue, newValue);
@@ -1037,8 +948,8 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             // The only events we haven't processed now are 'mutated' events.
             // They require different logic: we'll call them for all nested properties of the updated path, that
             // actually did change. They do not bubble up like 'child_changed' does.
-            eventSubscriptions.filter(sub => ['mutated', 'mutations', 'notify_mutated', 'notify_mutations'].includes(sub.type))
-                .forEach(sub => {
+            const mutationEvents = eventSubscriptions.filter(sub => ['mutated', 'mutations', 'notify_mutated', 'notify_mutations'].includes(sub.type));
+            mutationEvents.forEach(sub => {
                 // Get the target data this subscription is interested in
                 let currentPath = topEventPath;
                 const trailPath = sub.eventPath.slice(currentPath.length).replace(/^\//, '');
@@ -1051,7 +962,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                     oldValue = childValues.oldValue;
                     newValue = childValues.newValue;
                 }
-                const batch = prepareMutationEvents(sub, currentPath, oldValue, newValue);
+                const batch = prepareMutationEvents(currentPath, oldValue, newValue);
                 if (batch.length === 0) {
                     return;
                 }
@@ -1085,27 +996,19 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     }
     /**
      * Enumerates all children of a given Node for reflection purposes
-     * @param {string} path
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string[]|number[]} [options.keyFilter] specify the child keys to get callbacks for, skips .next callbacks for other keys
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {boolean} [options.async] whether to use an async/await flow for each `.next` call
-     * @returns {{ next: (callback: (child: NodeInfo) => boolean|void) => Promise<boolean>}} returns a generator object that calls .next for each child until the .next callback returns false
+     * @param path
+     * @param options optional options used by implementation for recursive calls
+     * @returns returns a generator object that calls .next for each child until the .next callback returns false
      */
-    // eslint-disable-next-line no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     getChildren(path, options) {
         throw new Error('This method must be implemented by subclass');
     }
     /**
      * @deprecated Use `getNode` instead
      * Gets a node's value by delegating to getNode, returning only the value
-     * @param {string} path
-     * @param {object} [options] optional options that can limit the amount of (sub)data being loaded, and any other implementation specific options for recusrsive calls
-     * @param {string[]} [options.include] child paths to include
-     * @param {string[]} [options.exclude] child paths to exclude
-     * @param {boolean} [options.child_objects] whether to inlcude child objects and arrays
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {Promise<any>}
+     * @param path
+     * @param options optional options that can limit the amount of (sub)data being loaded, and any other implementation specific options for recusrsive calls
      */
     async getNodeValue(path, options = {}) {
         const node = await this.getNode(path, options);
@@ -1113,15 +1016,10 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     }
     /**
      * Gets a node's value and (if supported) revision
-     * @param {string} path
-     * @param {object} [options] optional options that can limit the amount of (sub)data being loaded, and any other implementation specific options for recusrsive calls
-     * @param {string[]} [options.include] child paths to include
-     * @param {string[]} [options.exclude] child paths to exclude
-     * @param {boolean} [options.child_objects] whether to inlcude child objects and arrays
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {Promise<{ revision?: string, value: any, cursor?: string }>}
+     * @param path
+     * @param options optional options that can limit the amount of (sub)data being loaded, and any other implementation specific options for recusrsive calls
      */
-    // eslint-disable-next-line no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     getNode(path, options) {
         throw new Error('This method must be implemented by subclass');
     }
@@ -1129,51 +1027,31 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
      * Retrieves info about a node (existence, wherabouts etc)
      * @param {string} path
      * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {boolean} [options.include_child_count=false] whether to include child count if node is an object or array
-     * @returns {Promise<NodeInfo>}
      */
-    // eslint-disable-next-line no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     getNodeInfo(path, options) {
         throw new Error('This method must be implemented by subclass');
     }
-    // /**
-    //  * Removes a node by delegating to updateNode on the parent with null value.
-    //  * Throws an Error if path is root ('')
-    //  * @param {string} path
-    //  * @param {object} [options] optional options used by implementation for recursive calls
-    //  * @param {string} [options.tid] optional transaction id for node locking purposes
-    //  * @param {string} [options.context] context info used by the client
-    //  * @returns {Promise<void>}
-    //  */
-    // removeNode(path, options = { tid: undefined, context: null }) {
-    //     throw new Error(`This method must be implemented by subclass`);
-    // }
     /**
      * Creates or overwrites a node. Delegates to updateNode on a parent if
      * path is not the root.
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {any} [options.context] context info used by the client
-     * @returns {Promise<string|void>} Returns a new cursor if transaction logging is enabled
+     * @param path
+     * @param value
+     * @param options optional options used by implementation for recursive calls
+     * @returns Returns a new cursor if transaction logging is enabled
      */
-    // eslint-disable-next-line no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     setNode(path, value, options) {
         throw new Error('This method must be implemented by subclass');
     }
     /**
      * Updates a node by merging an existing node with passed updates object,
      * or creates it by delegating to updateNode on the parent path.
-     * @param {string} path
-     * @param {object} updates object with key/value pairs
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {any} [options.context] context info used by the client
-     * @returns {Promise<string|void>} Returns a new cursor if transaction logging is enabled
+     * @param path
+     * @param updates object with key/value pairs
+     * @returns Returns a new cursor if transaction logging is enabled
      */
-    // eslint-disable-next-line no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     updateNode(path, updates, options) {
         throw new Error('This method must be implemented by subclass');
     }
@@ -1181,22 +1059,20 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
      * Updates a node by getting its value, running a callback function that transforms
      * the current value and returns the new value to be stored. Assures the read value
      * does not change while the callback runs, or runs the callback again if it did.
-     * @param {string} path
-     * @param {(value: any) => any} callback function that transforms current value and returns the new value to be stored. Can return a Promise
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
-     * @param {any} [options.context] context info used by the client
-     * @returns {Promise<string|void>} Returns a new cursor if transaction logging is enabled
+     * @param path
+     * @param callback function that transforms current value and returns the new value to be stored. Can return a Promise
+     * @param options optional options used by implementation for recursive calls
+     * @returns Returns a new cursor if transaction logging is enabled
      */
     async transactNode(path, callback, options = { no_lock: false, suppress_events: false, context: null }) {
         const useFakeLock = options && options.no_lock === true;
         const tid = this.createTid();
         const lock = useFakeLock
-            ? { tid, release() { } } // Fake lock, we'll use revision checking & retrying instead
+            ? { tid, release: NOOP } // Fake lock, we'll use revision checking & retrying instead
             : await this.nodeLocker.lock(path, tid, true, 'transactNode');
         try {
-            let changed = false, changeCallback = () => { changed = true; };
+            let changed = false;
+            const changeCallback = () => { changed = true; };
             if (useFakeLock) {
                 // Monitor value changes
                 this.subscriptions.add(path, 'notify_value', changeCallback);
@@ -1245,20 +1121,15 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     }
     /**
      * Checks if a node's value matches the passed criteria
-     * @param {string} path
-     * @param {Array<{ key: string, op: string, compare: string }>} criteria criteria to test
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {Promise<boolean>} returns a promise that resolves with a boolean indicating if it matched the criteria
+     * @param path
+     * @param criteria criteria to test
+     * @param options optional options used by implementation for recursive calls
+     * @returns returns a promise that resolves with a boolean indicating if it matched the criteria
      */
-    matchNode(path, criteria, options = { tid: undefined }) {
-        const tid = (options && options.tid) || acebase_core_1.ID.generate();
-        /**
-         *
-         * @param {string} path
-         * @param {Array<{ key: string, op: string, compare: string }>} criteria criteria to test
-         */
-        const checkNode = (path, criteria) => {
+    async matchNode(path, criteria, options) {
+        var _a;
+        const tid = (_a = options === null || options === void 0 ? void 0 : options.tid) !== null && _a !== void 0 ? _a : acebase_core_1.ID.generate();
+        const checkNode = async (path, criteria) => {
             if (criteria.length === 0) {
                 return Promise.resolve(true); // No criteria, so yes... It matches!
             }
@@ -1276,42 +1147,37 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             const unseenKeys = criteriaKeys.slice();
             let isMatch = true;
             const delayedMatchPromises = [];
-            return this.getChildren(path, { tid, keyFilter: criteriaKeys })
-                .next(childInfo => {
-                unseenKeys.includes(childInfo.key) && unseenKeys.splice(unseenKeys.indexOf(childInfo.key), 1);
-                const keyCriteria = criteria
-                    .filter(cr => cr.key === childInfo.key)
-                    .map(cr => ({ op: cr.op, compare: cr.compare }));
-                const keyResult = keyCriteria.length > 0 ? checkChild(childInfo, keyCriteria) : { isMatch: true, promises: [] };
-                isMatch = keyResult.isMatch;
-                if (isMatch) {
-                    delayedMatchPromises.push(...keyResult.promises);
-                    const childCriteria = criteria
-                        .filter(cr => cr.key.startsWith(`${childInfo.key}/`))
-                        .map(cr => {
-                        const key = cr.key.slice(cr.key.indexOf('/') + 1);
-                        return { key, op: cr.op, compare: cr.compare };
-                    });
-                    if (childCriteria.length > 0) {
-                        const childPath = acebase_core_1.PathInfo.getChildPath(path, childInfo.key);
-                        const childPromise = checkNode(childPath, childCriteria)
-                            .then(isMatch => ({ isMatch }));
-                        delayedMatchPromises.push(childPromise);
+            try {
+                await this.getChildren(path, { tid, keyFilter: criteriaKeys }).next(childInfo => {
+                    unseenKeys.includes(childInfo.key) && unseenKeys.splice(unseenKeys.indexOf(childInfo.key), 1);
+                    const keyCriteria = criteria
+                        .filter(cr => cr.key === childInfo.key)
+                        .map(cr => ({ op: cr.op, compare: cr.compare }));
+                    const keyResult = keyCriteria.length > 0 ? checkChild(childInfo, keyCriteria) : { isMatch: true, promises: [] };
+                    isMatch = keyResult.isMatch;
+                    if (isMatch) {
+                        delayedMatchPromises.push(...keyResult.promises);
+                        const childCriteria = criteria
+                            .filter(cr => cr.key.startsWith(`${childInfo.key}/`))
+                            .map(cr => {
+                            const key = cr.key.slice(cr.key.indexOf('/') + 1);
+                            return { key, op: cr.op, compare: cr.compare };
+                        });
+                        if (childCriteria.length > 0) {
+                            const childPath = acebase_core_1.PathInfo.getChildPath(path, childInfo.key);
+                            const childPromise = checkNode(childPath, childCriteria)
+                                .then(isMatch => ({ isMatch }));
+                            delayedMatchPromises.push(childPromise);
+                        }
                     }
-                }
-                if (!isMatch || unseenKeys.length === 0) {
-                    return false; // Stop iterating
-                }
-            })
-                .then(() => {
+                    if (!isMatch || unseenKeys.length === 0) {
+                        return false; // Stop iterating
+                    }
+                });
                 if (isMatch) {
-                    return Promise.all(delayedMatchPromises)
-                        .then(results => {
-                        isMatch = results.every(res => res.isMatch);
-                    });
+                    const results = await Promise.all(delayedMatchPromises);
+                    isMatch = results.every(res => res.isMatch);
                 }
-            })
-                .then(() => {
                 if (!isMatch) {
                     return false;
                 }
@@ -1334,16 +1200,16 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                     return result.isMatch;
                 });
                 return isMatch;
-            })
-                .catch(err => {
+            }
+            catch (err) {
                 this.debug.error(`Error matching on "${path}": `, err);
                 throw err;
-            });
+            }
         }; // checkNode
         /**
          *
-         * @param {NodeInfo} child
-         * @param {Array<{ op: string, compare: string }>} criteria criteria to test
+         * @param child
+         * @param criteria criteria to test
          */
         const checkChild = (child, criteria) => {
             const promises = [];
@@ -1354,6 +1220,10 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 }
                 else if (f.op === 'exists' || (f.op === '!=' && (typeof f.compare === 'undefined' || f.compare === null))) {
                     proceed = child.exists;
+                }
+                else if ((f.op === 'contains' || f.op === '!contains') && f.compare instanceof Array && f.compare.length === 0) {
+                    // Added for #135: empty compare array for contains/!contains must match all values
+                    proceed = true;
                 }
                 else if (!child.exists) {
                     proceed = false;
@@ -1480,20 +1350,19 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     }
     /**
      * Export a specific path's data to a stream
-     * @param {string} path
-     * @param {(str: string) => void|Promise<void> | { write(str: string): void|Promise<void>}} write function that writes to a stream, or stream object that has a write method that (optionally) returns a promise the export needs to wait for before continuing
-     * @returns {Promise<void>} returns a promise that resolves once all data is exported
+     * @param path
+     * @param write function that writes to a stream, or stream object that has a write method that (optionally) returns a promise the export needs to wait for before continuing
+     * @returns returns a promise that resolves once all data is exported
      */
-    async exportNode(path, write, options = { format: 'json', type_safe: true }) {
-        if (options && options.format !== 'json') {
+    async exportNode(path, writeFn, options = { format: 'json', type_safe: true }) {
+        if ((options === null || options === void 0 ? void 0 : options.format) !== 'json') {
             throw new Error('Only json output is currently supported');
         }
-        if (typeof write !== 'function') {
-            // Using the "old" stream argument. Use its write method for backward compatibility
-            write = write.write.bind(write);
-        }
+        const write = typeof writeFn !== 'function'
+            ? writeFn.write.bind(writeFn) // Using the "old" stream argument. Use its write method for backward compatibility
+            : writeFn;
         const stringifyValue = (type, val) => {
-            const escape = str => str.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+            const escape = (str) => str.replace(/"/g, '\\"').replace(/\n/g, '\\n');
             if (type === node_value_types_1.VALUE_TYPES.DATETIME) {
                 val = `"${val.toISOString()}"`;
                 if (options.type_safe) {
@@ -1603,17 +1472,9 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     }
     /**
      * Import a specific path's data from a stream
-     * @param {string} path
-     * @param {(bytes: number) => string|ArrayBufferView|Promise<string|ArrayBufferView>} read read function that streams a new chunk of data
-     * @param {object} [options]
-     * @param {'json'} [options.format]
-     * @param {'set'|'update'|'merge'} [options.method] How to store the imported data: 'set' and 'update' will use the same logic as when calling 'set' or 'update' on the target,
-     * 'merge' will do something special: it will use 'update' logic on all nested child objects:
-     * consider existing data `{ users: { ewout: { name: 'Ewout Stortenbeker', age: 42 } } }`:
-     * importing `{ users: { ewout: { country: 'The Netherlands', age: 43 } } }` with `method: 'merge'` on the root node
-     * will effectively add `country` and update `age` properties of "users/ewout", and keep all else the same.4
-     * This method is extremely useful to replicate effective data changes to remote databases.
-     * @returns {Promise<void>} returns a promise that resolves once all data is imported
+     * @param path
+     * @param read read function that streams a new chunk of data
+     * @returns returns a promise that resolves once all data is imported
      */
     async importNode(path, read, options = { format: 'json', method: 'set' }) {
         const chunkSize = 256 * 1024; // 256KB
@@ -1786,7 +1647,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             })();
             return { type, value };
         };
-        const unescape = str => str.replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        const unescape = (str) => str.replace(/\\n/g, '\n').replace(/\\"/g, '"');
         const getTypeSafeValue = (path, obj) => {
             const type = obj['.type'];
             let val = obj['.val'];
@@ -1827,8 +1688,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         const childOptions = { suppress_events: options.suppress_events, context };
         /**
          * Work in progress (not used yet): queue nodes to store to improve performance
-         * @param {PathInfo} target
-         * @param {any} value
          */
         const enqueue = async (target, value) => {
             state.queue.push({ target, value });
@@ -1862,9 +1721,10 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                             updates.push(Object.assign({ op: options.method === 'merge' ? 'update' : 'set' }, item));
                         }
                     }
+                    return updates;
                 }, []);
                 // Fresh state
-                state.queueStartBytestate.queueStartByte = state.processedBytes;
+                state.queueStartByte = state.processedBytes;
                 state.queue = [];
                 state.timesFlushed++;
                 // Execute db updates
@@ -1873,10 +1733,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 // This is the import target. If method === 'set'
             }
         };
-        /**
-         *
-         * @param {PathInfo} target
-         */
         const importObject = async (target) => {
             await consumeToken('{');
             await consumeSpaces();
@@ -1945,11 +1801,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             promises.push(flushObject());
             await Promise.all(promises);
         };
-        /**
-         *
-         * @param {PathInfo} target
-         * @returns
-         */
         const importArray = async (target) => {
             await consumeToken('[');
             await consumeSpaces();
@@ -2039,8 +1890,8 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     }
     /**
      * Adds, updates or removes a schema definition to validate node values before they are stored at the specified path
-     * @param {string} path target path to enforce the schema on, can include wildcards. Eg: 'users/*\/posts/*' or 'users/$uid/posts/$postid'
-     * @param {string|Object} schema schema type definitions. When null value is passed, a previously set schema is removed.
+     * @param path target path to enforce the schema on, can include wildcards. Eg: 'users/*\/posts/*' or 'users/$uid/posts/$postid'
+     * @param schema schema type definitions. When null value is passed, a previously set schema is removed.
      */
     setSchema(path, schema) {
         if (typeof schema === 'undefined') {
@@ -2071,8 +1922,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     }
     /**
      * Gets currently active schema definition for the specified path
-     * @param {string} path
-     * @returns {{ path: string, schema: string|Object, text: string }}
      */
     getSchema(path) {
         const item = this._schemas.find(item => item.path === path);
@@ -2080,18 +1929,14 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     }
     /**
      * Gets all currently active schema definitions
-     * @returns {Array<{ path: string, schema: string|Object, text: string }>}
      */
     getSchemas() {
         return this._schemas.map(item => ({ path: item.path, schema: item.schema.source, text: item.schema.text }));
     }
     /**
      * Validates the schemas of the node being updated and its children
-     * @param {string} path path being written to
-     * @param {any} value the new value, or updates to current value
-     * @param {object} [options]
-     * @param {boolean} [options.updates] If an existing node is being updated (merged), this will only enforce schema rules set on properties being updated.
-     * @returns {{ ok: true }|{ ok: false; reason: string }}
+     * @param path path being written to
+     * @param value the new value, or updates to current value
      * @example
      * // define schema for each tag of each user post:
      * db.schema.set(
@@ -2123,8 +1968,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     validateSchema(path, value, options = { updates: false }) {
         let result = { ok: true };
         const pathInfo = acebase_core_1.PathInfo.get(path);
-        this._schemas.filter(s => pathInfo.isOnTrailOf(s.path))
-            .every(s => {
+        this._schemas.filter(s => pathInfo.isOnTrailOf(s.path)).every(s => {
             if (pathInfo.isDescendantOf(s.path)) {
                 // Given check path is a descendant of this schema definition's path
                 const ancestorPath = acebase_core_1.PathInfo.fillVariables(s.path, path);
@@ -2135,12 +1979,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             // Given check path is on schema definition's path or on a higher path
             const trailKeys = acebase_core_1.PathInfo.getPathKeys(s.path).slice(pathInfo.keys.length);
             const partial = options.updates === true && trailKeys.length === 0;
-            /**
-         * @param {string} path
-         * @param {any} value
-         * @param {Array<string|number>} trailKeys
-         * @returns {{ ok: boolean, reason?: string }}
-         */
             const check = (path, value, trailKeys) => {
                 if (trailKeys.length === 0) {
                     // Check this node

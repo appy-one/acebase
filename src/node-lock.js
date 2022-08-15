@@ -1,10 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.NodeLock = exports.NodeLocker = void 0;
+exports.NodeLock = exports.NodeLocker = exports.LOCK_STATE = void 0;
 const acebase_core_1 = require("acebase-core");
 const DEBUG_MODE = false;
 const DEFAULT_LOCK_TIMEOUT = 120; // in seconds
-const LOCK_STATE = {
+exports.LOCK_STATE = {
     PENDING: 'pending',
     LOCKED: 'locked',
     EXPIRED: 'expired',
@@ -44,7 +44,7 @@ class NodeLocker {
         const conflict = this._locks
             .find(otherLock => {
             return (otherLock.tid !== tid
-                && otherLock.state === LOCK_STATE.LOCKED
+                && otherLock.state === exports.LOCK_STATE.LOCKED
                 && (forWriting || otherLock.forWriting));
         });
         return { allow: !conflict, conflict };
@@ -76,7 +76,7 @@ class NodeLocker {
             // Reject all pending locks
             const quitError = new Error('Quitting');
             this._locks
-                .filter(lock => lock.state === LOCK_STATE.PENDING)
+                .filter(lock => lock.state === exports.LOCK_STATE.PENDING)
                 .forEach(lock => this._rejectLock(lock, quitError));
             // Resolve quit promise if queue is empty:
             if (this._locks.length === 0) {
@@ -84,7 +84,7 @@ class NodeLocker {
             }
         }
         const pending = this._locks
-            .filter(lock => lock.state === LOCK_STATE.PENDING)
+            .filter(lock => lock.state === exports.LOCK_STATE.PENDING)
             .sort((a, b) => {
             // // Writes get higher priority so all reads get the most recent data
             // if (a.forWriting === b.forWriting) {
@@ -117,7 +117,7 @@ class NodeLocker {
             //lock.comment = `(retry: ${lock.comment})`;
             proceed = true;
         }
-        else if (this._locks.findIndex((l => l.tid === tid && l.state === LOCK_STATE.EXPIRED)) >= 0) {
+        else if (this._locks.findIndex((l => l.tid === tid && l.state === exports.LOCK_STATE.EXPIRED)) >= 0) {
             throw new Error(`lock on tid ${tid} has expired, not allowed to continue`);
         }
         else if (this._quit && !options.withPriority) {
@@ -147,7 +147,7 @@ class NodeLocker {
         }
         if (proceed) {
             DEBUG_MODE && console.error(`${lock.forWriting ? 'write' : 'read'} lock ALLOWED on "${lock.path}" by tid ${lock.tid} (${lock.comment})`);
-            lock.state = LOCK_STATE.LOCKED;
+            lock.state = exports.LOCK_STATE.LOCKED;
             if (typeof lock.granted === 'number') {
                 //debug.warn(`lock :: ALLOWING ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
             }
@@ -162,7 +162,7 @@ class NodeLocker {
                         // executing (AceBase) code, eg an unhandled promise rejection causing a lock not
                         // to be released. To guard against programming errors, we will issue 3 warning
                         // messages before releasing the lock.
-                        if (lock.state !== LOCK_STATE.LOCKED) {
+                        if (lock.state !== exports.LOCK_STATE.LOCKED) {
                             return;
                         }
                         timeoutCount++;
@@ -173,7 +173,7 @@ class NodeLocker {
                             return;
                         }
                         this.debug.error(`lock :: ${lock.forWriting ? 'write' : 'read'} lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) took too long`);
-                        lock.state = LOCK_STATE.EXPIRED;
+                        lock.state = exports.LOCK_STATE.EXPIRED;
                         // let allTransactionLocks = _locks.filter(l => l.tid === lock.tid).sort((a,b) => a.requested < b.requested ? -1 : 1);
                         // let transactionsDebug = allTransactionLocks.map(l => `${l.state} ${l.forWriting ? "WRITE" : "read"} ${l.comment}`).join("\n");
                         // debug.error(transactionsDebug);
@@ -187,7 +187,7 @@ class NodeLocker {
         else {
             // Keep pending until clashing lock(s) is/are removed
             //debug.warn(`lock :: QUEUED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
-            console.assert(lock.state === LOCK_STATE.PENDING);
+            console.assert(lock.state === exports.LOCK_STATE.PENDING);
             return new Promise((resolve, reject) => {
                 lock.resolve = resolve;
                 lock.reject = reject;
@@ -210,7 +210,7 @@ class NodeLocker {
             // debug.error(`unlock :: ${msg}`);
             throw new Error(msg);
         }
-        lock.state = LOCK_STATE.DONE;
+        lock.state = exports.LOCK_STATE.DONE;
         clearTimeout(lock.timeout);
         this._locks.splice(i, 1);
         DEBUG_MODE && console.error(`${lock.forWriting ? 'write' : 'read'} lock RELEASED on "${lock.path}" by tid ${lock.tid}`);
@@ -242,14 +242,14 @@ class NodeLock {
         this.tid = tid;
         this.forWriting = forWriting;
         this.priority = priority;
-        this.state = LOCK_STATE.PENDING;
+        this.state = exports.LOCK_STATE.PENDING;
         this.requested = Date.now();
         this.comment = '';
         this.waitingFor = null;
         this.id = ++lastid;
         this.history = [];
     }
-    static get LOCK_STATE() { return LOCK_STATE; }
+    static get LOCK_STATE() { return exports.LOCK_STATE; }
     async release(comment) {
         //return this.storage.unlock(this.path, this.tid, comment);
         this.history.push({ action: 'release', path: this.path, forWriting: this.forWriting, comment });
