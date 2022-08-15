@@ -1,10 +1,12 @@
 import { ID, SimpleEventEmitter } from 'acebase-core';
-import { NodeLocker, NodeLock } from '../node-lock';
+import { NodeLocker, NodeLock, LOCK_STATE } from '../node-lock';
 import { Storage } from '../storage';
 
 export class AceBaseIPCPeerExitingError extends Error {
     constructor(message: string) { super(`Exiting: ${message}`); }
 }
+
+type InternalLockInfo = { tid: string, granted: boolean, request: ILockRequestData, lock?: IAceBaseIPCLock };
 
 /**
  * Base class for Inter Process Communication, enables vertical scaling: using more CPU's on the same machine to share workload.
@@ -371,7 +373,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         }
     }
 
-    protected _locks: Array<{ tid: string, granted: boolean, request: ILockRequestData, lock?: IAceBaseIPCLock }> = [];
+    protected _locks = [] as InternalLockInfo[];
 
     /**
      * Acquires a lock. If this peer is a worker, it will request the lock from the master
@@ -388,7 +390,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
             }
         }
 
-        const removeLock = lockDetails => {
+        const removeLock = (lockDetails: InternalLockInfo) => {
             this._locks.splice(this._locks.indexOf(lockDetails), 1);
             if (this._locks.length === 0) {
                 // this.storage.debug.log(`No more locks in worker ${this.id}`);
@@ -398,9 +400,9 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
         if (this.isMaster) {
             // Master
-            const lockInfo = { tid: details.tid, granted: false, request: details, lock: null };
+            const lockInfo: InternalLockInfo = { tid: details.tid, granted: false, request: details, lock: null };
             this._locks.push(lockInfo);
-            const lock:NodeLock = await this._nodeLocker.lock(details.path, details.tid, details.write, details.comment);
+            const lock: NodeLock = await this._nodeLocker.lock(details.path, details.tid, details.write, details.comment);
             lockInfo.tid = lock.tid;
             lockInfo.granted = true;
 
@@ -429,7 +431,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         }
         else {
             // Worker
-            const lockInfo = { tid: details.tid, granted: false, request: details, lock: null };
+            const lockInfo: InternalLockInfo = { tid: details.tid, granted: false, request: details, lock: null };
             this._locks.push(lockInfo);
 
             const createIPCLock = (result: ILockResponseData): IAceBaseIPCLock => {
@@ -440,11 +442,13 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
                     tid: result.tid,
                     path: result.path,
                     forWriting: result.write,
+                    state: LOCK_STATE.LOCKED,
                     expires: result.expires,
                     comment: result.comment,
                     release: async () => {
                         const req: IUnlockRequestMessage = { type: 'unlock-request', id: ID.generate(), from: this.id, to: this.masterPeerId, data: { id: lockInfo.lock.id } };
                         await this.request(req);
+                        lockInfo.lock.state = LOCK_STATE.DONE;
                         this.storage.debug.verbose(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
                         removeLock(lockInfo);
                     },
@@ -456,6 +460,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
                         }
                         catch(err) {
                             // We didn't get new lock?!
+                            lockInfo.lock.state = LOCK_STATE.DONE;
                             removeLock(lockInfo);
                             throw err;
                         }
@@ -490,11 +495,11 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         // Send request, return result promise
         let resolve, reject;
         const promise = new Promise((rs, rj) => {
-            resolve = result => {
+            resolve = (result: any) => {
                 this._requests.delete(req.id);
                 rs(result);
             };
-            reject = err => {
+            reject = (err: Error) => {
                 this._requests.delete(req.id);
                 rj(err);
             };
@@ -504,7 +509,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         return promise;
     }
 
-    protected abstract sendMessage(message: IMessage)
+    protected abstract sendMessage(message: IMessage): any;
 
     /**
      * Sends a custom request to the IPC master
