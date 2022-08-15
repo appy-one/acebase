@@ -3,7 +3,7 @@ import { PathInfo, ID, DebugLogger } from 'acebase-core';
 const DEBUG_MODE = false;
 const DEFAULT_LOCK_TIMEOUT = 120; // in seconds
 
-const LOCK_STATE = {
+export const LOCK_STATE = {
     PENDING: 'pending',
     LOCKED: 'locked',
     EXPIRED: 'expired',
