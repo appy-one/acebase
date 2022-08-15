@@ -1298,56 +1298,76 @@ Promise.all([
 
 ### Indexing scattered data with wildcards
 
-Because nesting data is recommended in AceBase (as opposed to Firebase that discourages this), you are able to index and query data that is scattered accross your database in a structered manner. For example, you might want to store ```posts``` for each ```user``` in their own user node, and index (and query) all posts by any user:
+Because nesting data is recommended in AceBase (as opposed to Firebase that discourages this), you are able to index and query data that is scattered accross your database in a structered manner. For example, you might want to store `posts` for each `user` in their own user node, and index (and query) all posts by any user:
 
 ```javascript
-db.indexes.create('users/*/posts', 'date') // Index date of any post by any user
-.then(() => {
-    let now = new Date();
-    let today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    return db.query('users/*/posts') // query with the same wildcard
+await db.indexes.create('users/*/posts', 'date'); // Index date of any post by any user
+
+// Get all today's posts, of all users:
+let now = new Date();
+let today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+const postSnapshots = await db.query('users/*/posts') // query with the same wildcard
     .filter('date', '>=', today)
     .get();
-})
-.then(postSnapshots => {
-    // Got all today's posts, of all users
-});
 ```
 
 **NOTE**: Wildcard queries always require an index - they will not execute if there is no corresponding index.
 
-<a name="include-additional-data-in-indexes"></a>
+You can also use named variables instead of `*`, to allow the indexing of parts of the path. This is really powerful in situations where you want to be able to query nested data, using a single id:
+
+```javascript
+await db.indexes.create('users/*/posts/$postId/comments', '$postId');
+
+// Query comments on a specific postId without knowing which user it was posted by:
+const commentSnapshots = await db.query('users/*/posts/$postId/comments')
+    .filter('$postId', '==', 'l6uldsmt000309l207kz8ll0')
+    .get();
+
+```
+
+Additionally, you can also use `'{key}'` to index the key of the indexed path:
+```javascript
+await db.indexes.create('users/*/posts/*/comments', '{key}');
+// Quickly lookup the comment with a given id, without the need to know which userId
+// it was posted by, or the postId it belongs to:
+const commentSnapshots = await db.query('users/*/posts/*/comments')
+    .filter('{key}', '==', 'l6uldsmt000309l207kz8ll0')
+    .get();
+```
+
 ### Include additional data in indexes
 
 If your query uses filters on multiple keys you could create separate indexes on each key, but you can also include that data into a single index. This will speed up queries even more in most cases:
 
 ```javascript
-db.indexes.create('songs', 'year', { include: ['genre'] })
-.then(() => {
-    return db.query('songs')
+await db.indexes.create('songs', 'year', { include: ['genre'] });
+
+const snapshots = await  db.query('songs')
     .filter('year', '==', 2010) // uses the index on year
-    .filter('genre', 'in', ['jazz','rock','blues']) // filters indexed results of year filter: FAST!
+    .filter('genre', 'in', ['jazz', 'rock', 'blues']) // filters indexed results of year filter: FAST!
     .get();
-})
-.then(snapshots => {
-    // ...
-});
 ```
 
 If you are filtering data on one key, and are sorting on another key, it is highly recommended to include the ```sort``` key in your index on the ```filter``` key, because this will greatly increase sorting performance:
 
 ```javascript
-db.indexes.create('songs', 'title', { include: ['year', 'genre'] })
-.then(() => {
-    return db.query('songs')
+await db.indexes.create('songs', 'title', { include: ['year', 'genre'] });
+
+const snapshots = await db.query('songs')
     .filter('title', 'like', 'Love *') // queries the index
     .sort('genre')  // sorts indexed results: FAST!
     .sort('title')  // sorts indexed results: FAST!
     .get();
-})
-.then(snapshots => {
-    // ...
-});
+```
+
+You can also use named wildcards (as described above) to be included with the indexed values:
+```javascript
+await db.indexes.create('users/$userId/posts', 'title', { include: ['$userId'] });
+
+const snapshots = await db.query('users/$userId/posts')
+    .filter('title', 'like', 'Hello *') // queries the index
+    .filter('$userId', '==', 'l6uldsmt000309l207kz8ll0')  // filters results by userId in path
+    .get();
 ```
 
 ### Other indexing options
