@@ -22,15 +22,15 @@ describe('Query', () => {
         const movies = require('./dataset/movies.json');
         await moviesRef.set(ObjectCollection.from(movies));
 
-        tests.push({ 
+        tests.push({
             query: moviesRef.query().filter('year', 'between', [1995, 2010]).filter('rating', '>=', 7).filter('genres', '!contains', ['sci-fi', 'fantasy']),
-            expect: movies.filter(movie => movie.year >= 1995 && movie.year <= 2010 && movie.rating >= 7 && movie.genres.every(g => !['sci-fi', 'fantasy'].includes(g)))
-        }, { 
+            expect: movies.filter(movie => movie.year >= 1995 && movie.year <= 2010 && movie.rating >= 7 && movie.genres.every(g => !['sci-fi', 'fantasy'].includes(g))),
+        }, {
             query: moviesRef.query().filter('genres', 'contains', ['action']),
-            expect: movies.filter(movie => movie.genres.includes('action'))
+            expect: movies.filter(movie => movie.genres.includes('action')),
         });
     });
-    
+
     it('snapshots', async () => {
         for (let test of tests) {
             const snaps = await test.query.get();
@@ -137,7 +137,7 @@ describe('Query', () => {
 
         // Let's add a non-matching book
         await db.ref('books').push({ title: 'Some mediocre novel', rating: 3 });
-        
+
         // Wait few ms to make sure results are (not) being updated
         await wait(10);
 
@@ -146,7 +146,7 @@ describe('Query', () => {
 
         // Add a matching book
         let matchRef1 = await db.ref('books').push({ title: 'A very good novel', rating: 5 });
-        
+
         // Wait few ms to make sure results are being updated
         await wait(10);
 
@@ -195,7 +195,7 @@ describe('Query with take/skip', () => {
 
         // create non-indexed collection
         await db.ref('collection').update(updates);
-        
+
         // create indexed collection
         await db.indexes.create('indexed_collection', 'letter');  // | Swap these to
         await db.ref('indexed_collection').update(updates);       // | improve performance
@@ -205,7 +205,7 @@ describe('Query with take/skip', () => {
     afterAll(async () => {
         await removeDB();
     });
-    
+
     // Non-indexed:
 
     it('load first 100 sort letter by a-z (non-indexed)', async () => {
@@ -292,7 +292,7 @@ describe('Query with take/skip #120', () => {
         ({ db, removeDB } = await createTempDB());
 
         movies = require('./dataset/movies.json');
-        const collection = ObjectCollection.from(movies)
+        const collection = ObjectCollection.from(movies);
 
         // Create unindexed collection
         await db.ref('movies').set(collection);
@@ -321,10 +321,10 @@ describe('Query with take/skip #120', () => {
         const check = movies.sort((a, b) => b.year - a.year).slice(skip, skip + take);
         expect(results.getValues()).toEqual(check);
     });
-    
+
 });
 
-describe("Query with take/sort/indexes #124", () => {
+describe('Query with take/sort/indexes #124', () => {
     /** @type {AceBase} */
     let db;
     /** @type {{(): Promise<void>}} */
@@ -340,7 +340,7 @@ describe("Query with take/sort/indexes #124", () => {
         ({ db, removeDB } = await createTempDB());
 
         movies = require('./dataset/movies.json');
-        const collection = ObjectCollection.from(movies)
+        const collection = ObjectCollection.from(movies);
 
         // Create collection
         await db.ref('movies').set(collection);
@@ -352,7 +352,7 @@ describe("Query with take/sort/indexes #124", () => {
 
     it('test', async () => {
         // Query movies: filter by title, order by year (desc), take 10
-        
+
         const snaps = await db.query('movies')
             .filter('title', 'like', 'the*')
             .sort('year', false)
@@ -384,7 +384,7 @@ describe('Wildcard query', () => {
         // Created for discussion 92: https://github.com/appy-one/acebase/discussions/92
         // Changed schema to be users/uid/messages/messageid
         // To test: npx jasmine ./spec/query.spec.js --filter='wildcards'
-        
+
         // Insert data without index
         await db.ref('users/user1/messages').push({ text: 'First message' });
         await db.ref('users/user2/messages').push({ text: 'Second message' });
@@ -408,7 +408,7 @@ describe('Wildcard query', () => {
         await db.ref('users/user1/messages').push({ text: 'Third message' });
 
         try {
-            // Query with filter matching all 
+            // Query with filter matching all
             const snaps = await db.query('users/$username/messages').filter('{key}', '!=', '').get();
             expect(snaps.length).toBe(3);
 
@@ -420,7 +420,7 @@ describe('Wildcard query', () => {
         }
 
         try {
-            // Query without filter, index should automatically be selected with filter matching all 
+            // Query without filter, index should automatically be selected with filter matching all
             const snaps = await db.query('users/$username/messages').get();
             expect(snaps.length).toBe(3);
 
@@ -432,4 +432,83 @@ describe('Wildcard query', () => {
         }
     }, 60e3); // increased timeout for debugging
 
-})
+});
+
+describe('Query with array/contains #135', () => {
+    /** @type {AceBase} */
+    let db;
+    /** @type {{(): Promise<void>}} */
+    let removeDB;
+
+    afterAll(async () => {
+        await removeDB();
+    });
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+    });
+
+    it('test', async () => {
+        await db.ref('food').push({
+            name: 'apple',
+            tags: ['fruit', 'sweet'],
+        });
+        await db.ref('food').push({
+            name: 'orange',
+            tags: ['fruit', 'sweet', 'sour'],
+        });
+        await db.ref('food').push({
+            name: 'tomato',
+            tags: ['vegetable', 'sour'],
+        });
+        await db.ref('food').push({
+            name: 'milk',
+            tags: ['drink', 'sweet'],
+        });
+        await db.ref('food').push({
+            name: 'water',
+            tags: ['drink'],
+        });
+        await db.ref('food').push({
+            name: 'salt',
+            tags: [],
+        });
+
+        const test = async () => {
+            let snaps = await db.query('food').filter('tags', 'contains', ['fruit', 'sweet']).get();
+            let values = snaps.getValues().map(v => v.name).sort();
+            expect(values).toEqual(['apple', 'orange']);
+
+            snaps = await db.query('food').filter('tags', 'contains', ['sweet']).get();
+            values = snaps.getValues().map(v => v.name).sort();
+            expect(values).toEqual(['apple', 'milk', 'orange']);
+
+            snaps = await db.query('food').filter('tags', 'contains', []).get();
+            values = snaps.getValues().map(v => v.name).sort();
+            expect(values).toEqual(['apple', 'milk', 'orange', 'salt', 'tomato', 'water']);
+
+            // Now test !contains
+            snaps = await db.query('food').filter('tags', '!contains', ['fruit', 'sweet']).get();
+            values = snaps.getValues().map(v => v.name).sort();
+            expect(values).toEqual(['salt', 'tomato', 'water']);
+
+            snaps = await db.query('food').filter('tags', '!contains', ['sweet']).get();
+            values = snaps.getValues().map(v => v.name).sort();
+            expect(values).toEqual(['salt', 'tomato', 'water']);
+
+            snaps = await db.query('food').filter('tags', '!contains', []).get();
+            values = snaps.getValues().map(v => v.name).sort();
+            expect(values).toEqual(['apple', 'milk', 'orange', 'salt', 'tomato', 'water']);
+        };
+
+        // Run tests without index
+        await test();
+
+        // Now add an array index, run same tests
+        await db.indexes.create('food', 'tags', { type: 'array' });
+
+        // Run tests with index
+        await test();
+
+    }, 60 * 60 * 1000);
+});
