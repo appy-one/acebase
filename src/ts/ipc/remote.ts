@@ -215,10 +215,7 @@ export class RemoteIPCPeer extends AceBaseIPCPeer {
                 if (this._exiting) { return; }
                 this.storage.debug.error(`Connection to remote IPC server was lost. Trying to reconnect`);
                 clearInterval(pingInterval);
-                if (this.storage.invalidateCache) {
-                    // Make sure the entire cache is invalidated (when using AceBase storage)
-                    this.storage.invalidateCache(true, '', true, 'ipc_ws_disconnect');
-                }
+                this.storage.invalidateCache?.(true, '', true, 'ipc_ws_disconnect'); // Make sure the entire cache is invalidated (AceBase storage has such cache)
                 this.connect();
             });
 
