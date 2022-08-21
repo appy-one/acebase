@@ -406,7 +406,7 @@ fdescribe('Query index bigint', () => {
         const collection = ObjectCollection.from(movies);
 
         // Create collection
-        ref=db.ref('movies');
+        ref = db.ref('movies');
         await ref.set(collection);
 
         // Create indexes
@@ -423,7 +423,6 @@ fdescribe('Query index bigint', () => {
         const totalResults = await query.take(1000000).count();
 
         const results = snaps.getValues();
-
         expect(results).toEqual(movies);
         expect(totalResults).toEqual(2);
     }, 60 * 60 * 1000);

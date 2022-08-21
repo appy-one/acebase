@@ -173,8 +173,7 @@ class DataIndex {
         };
     }
     cache(op, param, results) {
-        console.log("Error is here, BigInt can't be serailized", param)
-        const val = JSON.stringify(param); // Make object and array params cachable too
+        const val = JSON.stringify(param, (_, v) => typeof v === 'bigint' ? v.toString() : v);
         if (typeof results === 'undefined') {
             // Get from cache
             let cache;
