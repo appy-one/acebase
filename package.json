@@ -10,8 +10,8 @@
     "./src/storage-acebase.js": "./src/not-supported.js",
     "./src/storage-mssql.js": "./src/not-supported.js",
     "./src/storage-sqlite.js": "./src/not-supported.js",
-    "./src/data-index.js": "./src/not-supported.js",
-    "./src/btree.js": "./src/not-supported.js"
+    "./src/data-index/index.js": "./src/not-supported.js",
+    "./src/btree/index.js": "./src/not-supported.js"
   },
   "types": "./index.d.ts",
   "private": false,
