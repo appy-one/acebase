@@ -138,7 +138,7 @@ export class Storage extends SimpleEventEmitter {
     public debug: DebugLogger;
 
     private ipc: IPCPeer | RemoteIPCPeer;
-    private nodeLocker: {
+    protected nodeLocker: {
         lock(path: string, tid: string, write: boolean, comment?: string): ReturnType<IPCPeer['lock']>;
     };
 
