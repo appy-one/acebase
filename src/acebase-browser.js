@@ -31,7 +31,7 @@ class BrowserAceBase extends AceBase {
             //
             // Don't allow this anymore. If client wants to use localStorage,
             // they need to switch to AceBase.WithLocalStorage('name', settings).
-            // If they want to use custom storage in the browser, they must 
+            // If they want to use custom storage in the browser, they must
             // use the same constructor signature AceBase has:
             // let db = new AceBase('name', { storage: new CustomStorageSettings({ ... }) });
 
@@ -102,10 +102,10 @@ class BrowserAceBase extends AceBase {
                     debug: false,
                     db,
                     cache,
-                    ipc
-                }
+                    ipc,
+                };
                 return new IndexedDBStorageTransaction(context, target);
-            }
+            },
         });
         const acebase = new BrowserAceBase(dbname, { multipleTabs: settings.multipleTabs, logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
         const ipc = acebase.api.storage.ipc;
@@ -124,7 +124,7 @@ class BrowserAceBase extends AceBase {
 }
 
 function _requestToPromise(request) {
-    return new Promise((resolve, reject) => { 
+    return new Promise((resolve, reject) => {
         request.onsuccess = event => {
             return resolve(request.result || null);
         }
@@ -135,12 +135,12 @@ function _requestToPromise(request) {
 class IndexedDBStorageTransaction extends CustomStorageTransaction {
 
     /** Creates a transaction object for IndexedDB usage. Because IndexedDB automatically commits
-     * transactions when they have not been touched for a number of microtasks (eg promises 
-     * resolving whithout querying data), we will enqueue set and remove operations until commit 
+     * transactions when they have not been touched for a number of microtasks (eg promises
+     * resolving whithout querying data), we will enqueue set and remove operations until commit
      * or rollback. We'll create separate IndexedDB transactions for get operations, caching their
      * values to speed up successive requests for the same data.
      * @param {{debug: boolean, db: IDBDatabase, cache: SimpleCache<string, ICustomStorageNode> }} context
-     * @param {{path: string, write: boolean}} target 
+     * @param {{path: string, write: boolean}} target
      */
     constructor(context, target) {
         super(target);
@@ -155,7 +155,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         const tx = this.context.db.transaction(['nodes', 'content'], write ? 'readwrite' : 'readonly');
         return tx;
     }
-    
+
     _splitMetadata(node) {
         /** @type {ICustomStorageNode} */
         const copy = {};
@@ -163,7 +163,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         Object.assign(copy, node);
         delete copy.value;
         /** @type {ICustomStorageNodeMetaData} */
-        const metadata = copy;                
+        const metadata = copy;
         return { metadata, value };
     }
 
@@ -191,7 +191,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     if (stop) { return; }
                     let r1, r2;
                     const path = op.path;
-                    if (op.action === 'set') { 
+                    if (op.action === 'set') {
                         const { metadata, value } = this._splitMetadata(op.node);
                         /** @type {IIndexedDBNodeData} */
                         const nodeInfo = { path, metadata };
@@ -199,13 +199,13 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                         r2 = tx.objectStore('content').put(value, path); // Add value to "content" object store
                         this.context.cache.set(path, op.node);
                     }
-                    else if (op.action === 'remove') { 
+                    else if (op.action === 'remove') {
                         r1 = tx.objectStore('content').delete(path); // Remove from "content" object store
                         r2 = tx.objectStore('nodes').delete(path); // Remove from "nodes" data store
                         this.context.cache.set(path, null);
                     }
-                    else { 
-                        handleError(new Error(`Unknown pending operation "${op.action}" on path "${path}" `)); 
+                    else {
+                        handleError(new Error(`Unknown pending operation "${op.action}" on path "${path}" `));
                     }
                     let succeeded = 0;
                     r1.onsuccess = r2.onsuccess = () => {
@@ -222,7 +222,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
             throw err;
         }
     }
-    
+
     async rollback(err) {
         // Nothing has committed yet, so we'll leave it like that
         this._pending = [];
@@ -246,7 +246,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
             if (!info) {
                 // Node doesn't exist
                 this.context.cache.set(path, null);
-                return null; 
+                return null;
             }
             /** @type {ICustomStorageNode} */
             const node = info.metadata;
@@ -289,16 +289,16 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         include.descendants = true;
         return this._getChildrenOf(path, include, checkCallback, addCallback);
     }
-    
+
     /**
-     * 
-     * @param {string} path 
-     * @param {object} include 
+     *
+     * @param {string} path
+     * @param {object} include
      * @param {boolean} include.descendants
      * @param {boolean} include.metadata
      * @param {boolean} include.value
-     * @param {(path: string, metadata?: ICustomStorageNodeMetaData) => boolean} checkCallback 
-     * @param {(path: string, node: any) => boolean} addCallback 
+     * @param {(path: string, metadata?: ICustomStorageNodeMetaData) => boolean} checkCallback
+     * @param {(path: string, node: any) => boolean} addCallback
      */
     _getChildrenOf(path, include, checkCallback, addCallback) {
         // Use cursor to loop from path on
@@ -326,7 +326,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     keepGoing = false;
                 }
                 else if (include.descendants || pathInfo.isParentOf(otherPath)) {
-                    
+
                     /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
                     let node;
                     if (include.metadata) {

@@ -34,8 +34,8 @@ class MSSQLNodeInfo extends NodeInfo {
 class MSSQLStorageSettings extends StorageSettings {
 
     /**
-     * 
-     * @param {StorageSettings} options 
+     *
+     * @param {StorageSettings} options
      * @param {'tedious'|'native'} [options.driver='tedious'] Driver to use, 'tedious' by default. If you want to use Microsoft's native V8 driver on WIndows, make sure to add msnodesqlv8 to your project dependencies
      * @param {string} [options.domain] Once you set domain, driver will connect to SQL Server using domain login.
      * @param {string} [options.user]
@@ -81,7 +81,7 @@ class MSSQLStorageSettings extends StorageSettings {
 class MSSQLStorage extends Storage {
 
     /**
-     * 
+     *
      * @param {string} name database name
      * @param {MSSQLStorageSettings} [settings]
      */
@@ -111,63 +111,63 @@ class MSSQLStorage extends Storage {
             catch (err) {
                 throw new Error(`MSSQL not found. To use MSSQL as storage, add mssql to your project dependencies: npm i mssql`);
             }
-        })();        
+        })();
 
         const path = `${this.settings.path}/${this.name}.acebase`;
         pfs.exists(path)
-        .then(exists => {
-            const proceed = () => {
-                // connect
-                this._db = new mssql.ConnectionPool({
-                    domain: settings.domain,
-                    user: settings.user,
-                    password: settings.password,
-                    server: settings.server,
-                    port: settings.port,
-                    database: settings.database,
-                    options: {
-                        encrypt: settings.encrypt,
-                        appName: settings.appName,
-                        abortTransactionOnError: true,
-                        instanceName: settings.instance,
-                        // native setting:
-                        trustedConnection: settings.trustedConnection
-                    },
-                    connectionTimeout: settings.connectionTimeout,
-                    requestTimeout: settings.requestTimeout,
-                    pool: {
-                        max: settings.maxConnections,
-                        min: settings.minConnections,
-                        idleTimeoutMillis: settings.idleTimeout
-                    }
-                });
+            .then(exists => {
+                const proceed = () => {
+                    // connect
+                    this._db = new mssql.ConnectionPool({
+                        domain: settings.domain,
+                        user: settings.user,
+                        password: settings.password,
+                        server: settings.server,
+                        port: settings.port,
+                        database: settings.database,
+                        options: {
+                            encrypt: settings.encrypt,
+                            appName: settings.appName,
+                            abortTransactionOnError: true,
+                            instanceName: settings.instance,
+                            // native setting:
+                            trustedConnection: settings.trustedConnection,
+                        },
+                        connectionTimeout: settings.connectionTimeout,
+                        requestTimeout: settings.requestTimeout,
+                        pool: {
+                            max: settings.maxConnections,
+                            min: settings.minConnections,
+                            idleTimeoutMillis: settings.idleTimeout,
+                        },
+                    });
 
-                return this._db.connect()
-                .then(() => {
-                    this.rootRecord = null; 
-                    return this._init() // Initialize
-                })
-                .then(() => {
-                    this.emit('ready');
-                })
-                .catch(err => {
-                    this.debug.error(`Error initializing MSSQL database connection: ${err.message}`);
-                    this.emit('error', err);
-                });
-            }
+                    return this._db.connect()
+                        .then(() => {
+                            this.rootRecord = null;
+                            return this._init(); // Initialize
+                        })
+                        .then(() => {
+                            this.emit('ready');
+                        })
+                        .catch(err => {
+                            this.debug.error(`Error initializing MSSQL database connection: ${err.message}`);
+                            this.emit('error', err);
+                        });
+                };
 
-            if (!exists) {
-                return pfs.mkdir(path)
-                .then(proceed)
-                .catch(err => {
-                    console.error(`Cannot create dir "${path}": ${err}`);
-                    throw err;
-                });
-            }
-            else {
-                return proceed();
-            }
-        })
+                if (!exists) {
+                    return pfs.mkdir(path)
+                        .then(proceed)
+                        .catch(err => {
+                            console.error(`Cannot create dir "${path}": ${err}`);
+                            throw err;
+                        });
+                }
+                else {
+                    return proceed();
+                }
+            });
     }
 
     _executeRequest(request, sql, params) {
@@ -200,36 +200,39 @@ class MSSQLStorage extends Storage {
     }
 
     /**
-     * 
-     * @param {string} sql 
+     * @param {string} sql
+     * @param {any} [params]
      * @returns {Promise<Array<object>>}
      */
-    _get(sql, params) {
+    async _get(sql, params) {
         const request = new mssql.Request(this._db);
-        return this._executeRequest(request, sql, params)
-        .then(result => {
-            return result.recordset;
-        });
-    }
-
-    _getOne(sql, params) {
-        return this._get(sql, params)
-        .then(rows => {
-            return rows[0];
-        });
-    }
-
-    _exec(sql, params) {
-        const request = new mssql.Request(this._db);
-        return this._executeRequest(request, sql, params)
-        .then(result => {
-            return result; //.rowsAffected;
-        });
+        const result = await this._executeRequest(request, sql, params)
+        return result.recordset;
     }
 
     /**
-     * 
-     * @param {string} sql 
+     * @param {string} sql
+     * @param {any} [params]
+     * @returns {Promise<any>}
+     */
+    async _getOne(sql, params) {
+        const rows = await this._get(sql, params);
+        return rows[0];
+    }
+
+    /**
+     * @param {string} sql
+     * @param {any} [params]
+     */
+    async _exec(sql, params) {
+        const request = new mssql.Request(this._db);
+        const result = await this._executeRequest(request, sql, params);
+        return result; //.rowsAffected;
+    }
+
+    /**
+     *
+     * @param {string} sql
      * @param {object} params
      * @param {(row: object) => boolean} callback function to call for every row until it returns false
      * @returns {Promise<{ rows: number, canceled: boolean }>} Resolves once all rows have been processed, or callback returned false
@@ -256,77 +259,68 @@ class MSSQLStorage extends Storage {
                 resolve({ rows: totalRows, canceled: true });
             }
         });
-     
+
         request.on('error', err => {
             // May be emitted multiple times
             if (err.code !== 'ECANCEL') {
                 reject(err);
             }
         });
-     
+
         request.on('done', result => {
             // Always emitted as the last one
             resolve({ rows: totalRows, canceled: false });
         });
 
-        this._executeRequest(request, sql, params)
+        this._executeRequest(request, sql, params);
         return promise;
     }
 
     _createTransaction() {
         const queue = [];
-        const run = () => {
+        const run = async () => {
             const results = [];
 
             // create and run transaction
             const transaction = new mssql.Transaction(this._db);
-            return transaction.begin()
-            .then(() => {
+            try {
+                await transaction.begin();
                 const exec = (sql, params) => {
                     const request = new mssql.Request(transaction);
                     return this._executeRequest(request, sql, params);
+                };
+
+                for (const statement of queue) {
+                    const result = await exec(statement.sql, statement.params);
+                    results.push(result);
                 }
 
-                let promise = Promise.resolve();
-                queue.forEach(statement => promise = promise.then(() => {
-                    return exec(statement.sql, statement.params)
-                    .then(result => {
-                        results.push(result);
-                    });
-                }));
-
-                return promise;
-            })
-            .then(() => {
-                // Commit
-                return transaction.commit();
-            })
-            .then(() => {
+                await transaction.commit();
                 return results;
-            })
-            .catch(err => {
+            }
+            catch (err) {
                 // Any error will have triggered automatic rollback because we have specified this
                 // in the connection
                 const ourErr = new Error(`Error in statement #${results.length} (${queue[results.length].sql}): ${err.message}`);
                 ourErr.inner = err;
                 throw ourErr;
-            });
+            }
         }; // run
 
         return {
             add(sql, params) {
                 queue.push({ sql, params });
             },
-            run
-        }
+            run,
+        };
     }
 
-    _init() {
+    async _init() {
         // create tables that don't exist yet
         const tables = {
             settings: {
                 create: 'CREATE TABLE settings (name VARCHAR(50) NOT NULL PRIMARY KEY, value NVARCHAR(250))',
-                rows: [{ name: 'db_schema_version', value: '1' }]
+                rows: [{ name: 'db_schema_version', value: '1' }],
             },
             nodes: {
                 create: `CREATE TABLE nodes (
@@ -341,15 +335,15 @@ class MSSQLStorage extends Storage {
                     revision_nr INT NOT NULL,   -- nr of times the node's value was updated
                     revision CHAR(24) NOT NULL  -- revision id that is shared with all nested nodes that were updated at the same time, should be time sortable so could be considered as a "transaction timestamp"
                 )`,
-                rows: [{ 
+                rows: [{
                     path: '',
                     type: VALUE_TYPES.OBJECT,
                     json_value: '{}',
                     created: Date.now(),
                     modified: Date.now(),
                     revision_nr: 0,
-                    revision: ID.generate()
-                }]
+                    revision: ID.generate(),
+                }],
             },
             logs: {
                 create: `CREATE TABLE logs (
@@ -360,63 +354,51 @@ class MSSQLStorage extends Storage {
                     date BIGINT, 
                     details NVARCHAR(MAX)
                 )`,
-                rows: [{ action: 'db_created', success: 1, date: Date.now() }]
-            }
-        }
+                rows: [{ action: 'db_created', success: 1, date: Date.now() }],
+            },
+        };
 
-        return this._get(`SELECT TABLE_NAME AS name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'`)
-        .then(rows => {
-            rows.forEach(row => {
-                delete tables[row.name];
-            });
-
-            // Create tables that didn't exist
-            const promises = Object.keys(tables).map(name => {
-                // Create table
-                let sql = tables[name].create;
-                return this._exec(sql)
-                .catch(err => {
-                    throw err;
-                })
-                .then(result => {
-                    // Insert initialization data
-                    if (tables[name].rows) {
-                        let rows = tables[name].rows;
-                        const promises = rows.map(row => {
-                            let keys = Object.keys(row);
-                            // let values = keys.map(key => row[key]).map(val => typeof val === 'number' ? val : `'${val.toString()}'`);
-                            // let sql = `INSERT INTO ${name} (${keys.join(',')}) VALUES (${values.join(',')})`;
-                            const sql = `INSERT INTO ${name} (${keys.join(',')}) VALUES (${keys.map(key => '@' + key).join(',')})`;
-                            const params = keys.reduce((obj, key) => { obj[key] = row[key]; return obj; }, {});
-                            return this._exec(sql, params);
-                        });
-                        return Promise.all(promises);
-                    }
-                })
-                .then(result => {
-                    // Run action callback
-                    return tables[name].action && tables[name].action();
-                });
-            });
-            return Promise.all(promises);
-        })
-        .then(() => {
-            // Get root record info
-            return this.getNodeInfo('')
-            .then(info => {
-                this.rootRecord = info;
-            });
-        })
-        .then(() => {
-            this.debug.log(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
-            this.debug.log(`- Type: MSSQL`.colorize(ColorStyle.dim));
-            this.debug.log(`- Server: ${this.settings.server}:${this.settings.port}`.colorize(ColorStyle.dim));
-            this.debug.log(`- Database: ${this.settings.database}`.colorize(ColorStyle.dim));
-            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(ColorStyle.dim));
-
-            // Load indexes
-            return this.indexes.load();
+        const rows = await this._get(`SELECT TABLE_NAME AS name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'`);
+        rows.forEach(row => {
+            delete tables[row.name];
         });
+
+        // Create tables that didn't exist
+        const promises = Object.keys(tables).map(async name => {
+            // Create table
+            let sql = tables[name].create;
+            const result = await this._exec(sql);
+            // Insert initialization data
+            if (tables[name].rows) {
+                let rows = tables[name].rows;
+                const promises = rows.map(async row => {
+                    let keys = Object.keys(row);
+                    // let values = keys.map(key => row[key]).map(val => typeof val === 'number' ? val : `'${val.toString()}'`);
+                    // let sql = `INSERT INTO ${name} (${keys.join(',')}) VALUES (${values.join(',')})`;
+                    const sql = `INSERT INTO ${name} (${keys.join(',')}) VALUES (${keys.map(key => '@' + key).join(',')})`;
+                    const params = keys.reduce((obj, key) => { obj[key] = row[key]; return obj; }, {});
+                    await this._exec(sql, params);
+                });
+                await Promise.all(promises);
+            }
+            // Run action callback
+            if (tables[name].action) {
+                await tables[name].action();
+            }
+        });
+        await Promise.all(promises);
+
+        // Get root record info
+        this.rootRecord = await this.getNodeInfo('');
+
+        this.debug.log(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
+        this.debug.log(`- Type: MSSQL`.colorize(ColorStyle.dim));
+        this.debug.log(`- Server: ${this.settings.server}:${this.settings.port}`.colorize(ColorStyle.dim));
+        this.debug.log(`- Database: ${this.settings.database}`.colorize(ColorStyle.dim));
+        this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(ColorStyle.dim));
+
+        // Load indexes
+        await this.indexes.load();
     }
 
     _getTypeFromStoredValue(val) {
@@ -465,12 +447,12 @@ class MSSQLStorage extends Storage {
             }
             else if (child instanceof ArrayBuffer) {
                 child = { type: VALUE_TYPES.BINARY, value: ascii85.encode(child) };
-            }            
+            }
             else if (typeof child === 'object') {
                 child = this._createJSON(child);
             }
             obj[key] = child;
-        })
+        });
         return JSON.stringify(obj);
     }
 
@@ -501,22 +483,22 @@ class MSSQLStorage extends Storage {
         });
 
         if (type === VALUE_TYPES.ARRAY) {
-            // Convert object { 0: (...), 1: (...) } to array 
+            // Convert object { 0: (...), 1: (...) } to array
             let arr = [];
             Object.keys(value).forEach(index => {
                 arr[index] = value[index];
-            })
+            });
             value = arr;
-        }            
+        }
 
         return value;
     }
 
     /**
      * Creates or updates a node in its own record. DOES NOT CHECK if path exists in parent node, or if parent paths exist! Calling code needs to do this
-     * @param {string} path 
-     * @param {any} value 
-     * @param {object} [options] 
+     * @param {string} path
+     * @param {any} value
+     * @param {object} [options]
      * @returns {Promise<void>}
      */
     _writeNode(path, value, options = { merge: false, revision: null, transaction: null }) {
@@ -529,212 +511,212 @@ class MSSQLStorage extends Storage {
 
         // Get info about current node at path
         return this._getOne(`SELECT path, type, text_value, binary_value, json_value, revision, revision_nr FROM nodes WHERE path = @path`, { path: path }) //  OR path LIKE '${path}/*' OR path LIKE '${path}[%'
-        .then(currentRow => {
-            const newRevision = (options && options.revision) || ID.generate();
+            .then(currentRow => {
+                const newRevision = (options && options.revision) || ID.generate();
 
-            let mainNode = {
-                type: VALUE_TYPES.OBJECT,
-                value: {},
-                storageType: 'json'
-            };
-            const childNodeValues = {};
-            if (value instanceof Array) {
-                mainNode.type = VALUE_TYPES.ARRAY;
-                // Convert array to object with numeric properties
-                const obj = {};
-                for (let i = 0; i < value.length; i++) {
-                    obj[i] = value[i];
+                let mainNode = {
+                    type: VALUE_TYPES.OBJECT,
+                    value: {},
+                    storageType: 'json',
+                };
+                const childNodeValues = {};
+                if (value instanceof Array) {
+                    mainNode.type = VALUE_TYPES.ARRAY;
+                    // Convert array to object with numeric properties
+                    const obj = {};
+                    for (let i = 0; i < value.length; i++) {
+                        obj[i] = value[i];
+                    }
+                    value = obj;
                 }
-                value = obj;
-            }
-            else if (value instanceof PathReference) {
-                mainNode.type = VALUE_TYPES.REFERENCE;
-                mainNode.value = value.path;
-                mainNode.storageType = 'text';
-            }
-            else if (value instanceof ArrayBuffer) {
-                mainNode.type = VALUE_TYPES.BINARY;
-                mainNode.value = Buffer.from(value);
-                mainNode.storageType = 'binary';
-            }
-            else if (typeof value === 'string') {
-                mainNode.type = VALUE_TYPES.STRING;
-                mainNode.value = value;
-                mainNode.storageType = 'text';
-            }
+                else if (value instanceof PathReference) {
+                    mainNode.type = VALUE_TYPES.REFERENCE;
+                    mainNode.value = value.path;
+                    mainNode.storageType = 'text';
+                }
+                else if (value instanceof ArrayBuffer) {
+                    mainNode.type = VALUE_TYPES.BINARY;
+                    mainNode.value = Buffer.from(value);
+                    mainNode.storageType = 'binary';
+                }
+                else if (typeof value === 'string') {
+                    mainNode.type = VALUE_TYPES.STRING;
+                    mainNode.value = value;
+                    mainNode.storageType = 'text';
+                }
 
-            const currentIsObjectOrArray = currentRow ? [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(currentRow.type) : false;
-            const newIsObjectOrArray = [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(mainNode.type);
-            const children = {
-                current: [],
-                new: []
-            }
-            let currentObject = null;
-            if (currentIsObjectOrArray) {
-                currentObject = this._deserializeJSON(currentRow.type, currentRow.json_value);
-                children.current = Object.keys(currentObject);
+                const currentIsObjectOrArray = currentRow ? [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(currentRow.type) : false;
+                const newIsObjectOrArray = [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(mainNode.type);
+                const children = {
+                    current: [],
+                    new: [],
+                };
+                let currentObject = null;
+                if (currentIsObjectOrArray) {
+                    currentObject = this._deserializeJSON(currentRow.type, currentRow.json_value);
+                    children.current = Object.keys(currentObject);
+                    if (newIsObjectOrArray) {
+                        mainNode.value = currentObject;
+                    }
+                }
                 if (newIsObjectOrArray) {
-                    mainNode.value = currentObject;
-                }
-            }
-            if (newIsObjectOrArray) {
-                // Object or array. Determine which properties can be stored in the main node, 
+                // Object or array. Determine which properties can be stored in the main node,
                 // and which should be stored in their own nodes
                 // children.new = options.merge ? children.current : [];
-                Object.keys(value).forEach(key => {
-                    const val = value[key];
-                    delete mainNode.value[key]; // key is being overwritten, moved from inline to dedicated, or deleted.
-                    if (val === null) { //  || typeof val === 'undefined'
+                    Object.keys(value).forEach(key => {
+                        const val = value[key];
+                        delete mainNode.value[key]; // key is being overwritten, moved from inline to dedicated, or deleted.
+                        if (val === null) { //  || typeof val === 'undefined'
                         // This key is being removed
-                        return;
-                    }
-                    // Where to store this value?
-                    if (this.valueFitsInline(val)) {
+                            return;
+                        }
+                        // Where to store this value?
+                        if (this.valueFitsInline(val)) {
                         // Store in main node
-                        mainNode.value[key] = val;
-                    }
-                    else {
+                            mainNode.value[key] = val;
+                        }
+                        else {
                         // Store in child node
-                        childNodeValues[key] = val;
-                    }
-                });
-            }
+                            childNodeValues[key] = val;
+                        }
+                    });
+                }
 
-            // Insert or update node
-            if (currentRow) {
+                // Insert or update node
+                if (currentRow) {
                 // update
-                this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(ColorStyle.cyan));
+                    this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(ColorStyle.cyan));
 
-                const updateMainNode = () => {
-                    const sql = `UPDATE nodes SET type = @type, text_value = @text_value, binary_value = @binary_value, json_value = @json_value, modified = @modified, revision_nr = revision_nr + 1, revision = @revision
+                    const updateMainNode = () => {
+                        const sql = `UPDATE nodes SET type = @type, text_value = @text_value, binary_value = @binary_value, json_value = @json_value, modified = @modified, revision_nr = revision_nr + 1, revision = @revision
                         WHERE path = @path`;
-                    const params = { 
-                        path: path, 
-                        type: mainNode.type, 
-                        text_value: mainNode.storageType === 'text' ? mainNode.value : null,
-                        binary_value: mainNode.storageType === 'binary' ? mainNode.value : null,
-                        json_value: mainNode.storageType === 'json' ? this._createJSON(mainNode.value) : null,
-                        modified: Date.now(),
-                        // revision_nr: existingDetails.revision_nr + 1,
-                        revision: newRevision
-                    };
-                    // if (transaction) { 
-                    transaction.add(sql, params); 
+                        const params = {
+                            path: path,
+                            type: mainNode.type,
+                            text_value: mainNode.storageType === 'text' ? mainNode.value : null,
+                            binary_value: mainNode.storageType === 'binary' ? mainNode.value : null,
+                            json_value: mainNode.storageType === 'json' ? this._createJSON(mainNode.value) : null,
+                            modified: Date.now(),
+                            // revision_nr: existingDetails.revision_nr + 1,
+                            revision: newRevision,
+                        };
+                        // if (transaction) {
+                        transaction.add(sql, params);
                     // }
                     // else {
                     //     return this._exec(sql, params);
                     // }
-                };
+                    };
 
-                // If existing is an array or object, we have to find out which children are affected
-                if (currentIsObjectOrArray || newIsObjectOrArray) {
+                    // If existing is an array or object, we have to find out which children are affected
+                    if (currentIsObjectOrArray || newIsObjectOrArray) {
 
-                    // Get current child nodes in dedicated child records
-                    let childrenPromise = Promise.resolve([]);
-                    if (currentIsObjectOrArray) {
-                        const where = path === '' 
-                            ? `path <> '' AND path NOT LIKE '%/%'` 
-                            : `(path LIKE '${path}/%' OR path LIKE '${path}[%') AND path NOT LIKE '${path}/%/%' AND path NOT LIKE '${path}[%]/%' AND path NOT LIKE '${path}[%][%'`
-                        // TODO: add parent_path to nodes table to make query easier and faster?
-                        childrenPromise = this._get(`SELECT path FROM nodes WHERE ${where}`);
-                    }
-                    return childrenPromise
-                    .then(childRows => {
-                        const keys = childRows.map(row => PathInfo.get(row.path).key);
-                        children.current = children.current.concat(keys);
-                        if (newIsObjectOrArray) {
-                            if (options && options.merge) {
-                                children.new = children.current.slice();
-                            }
-                            Object.keys(value).forEach(key => {
-                                if (!children.new.includes(key)) {
-                                    children.new.push(key);
-                                }
-                            });
+                        // Get current child nodes in dedicated child records
+                        let childrenPromise = Promise.resolve([]);
+                        if (currentIsObjectOrArray) {
+                            const where = path === ''
+                                ? `path <> '' AND path NOT LIKE '%/%'`
+                                : `(path LIKE '${path}/%' OR path LIKE '${path}[%') AND path NOT LIKE '${path}/%/%' AND path NOT LIKE '${path}[%]/%' AND path NOT LIKE '${path}[%][%'`;
+                            // TODO: add parent_path to nodes table to make query easier and faster?
+                            childrenPromise = this._get(`SELECT path FROM nodes WHERE ${where}`);
                         }
+                        return childrenPromise
+                            .then(childRows => {
+                                const keys = childRows.map(row => PathInfo.get(row.path).key);
+                                children.current = children.current.concat(keys);
+                                if (newIsObjectOrArray) {
+                                    if (options && options.merge) {
+                                        children.new = children.current.slice();
+                                    }
+                                    Object.keys(value).forEach(key => {
+                                        if (!children.new.includes(key)) {
+                                            children.new.push(key);
+                                        }
+                                    });
+                                }
 
-                        // TODO: convert changes to details about changed values for change tracking
-                        const changes = {
-                            insert: children.new.filter(key => !children.current.includes(key)),
-                            update: children.new.filter(key => children.current.includes(key)),
-                            delete: options && options.merge ? Object.keys(value).filter(key => value[key] === null) : children.current.filter(key => !children.new.includes(key)),
-                        };
+                                // TODO: convert changes to details about changed values for change tracking
+                                const changes = {
+                                    insert: children.new.filter(key => !children.current.includes(key)),
+                                    update: children.new.filter(key => children.current.includes(key)),
+                                    delete: options && options.merge ? Object.keys(value).filter(key => value[key] === null) : children.current.filter(key => !children.new.includes(key)),
+                                };
 
-                        // (over)write all child nodes that must be stored in their own record
-                        const childUpdatePromises = Object.keys(childNodeValues).map(key => {
-                            const childPath = PathInfo.getChildPath(path, key);
-                            const childValue = childNodeValues[key];
-                            return this._writeNode(childPath, childValue, { revision: newRevision, merge: false, transaction }); // return this._writeNode(childPath, childValue, { revision: newRevision, merge: false, transaction });
-                        });
+                                // (over)write all child nodes that must be stored in their own record
+                                const childUpdatePromises = Object.keys(childNodeValues).map(key => {
+                                    const childPath = PathInfo.getChildPath(path, key);
+                                    const childValue = childNodeValues[key];
+                                    return this._writeNode(childPath, childValue, { revision: newRevision, merge: false, transaction }); // return this._writeNode(childPath, childValue, { revision: newRevision, merge: false, transaction });
+                                });
 
-                        // Delete all child nodes that were stored in their own record, but are being removed 
-                        // Also delete nodes that are being moved from a dedicated record to inline
-                        const movingNodes = keys.filter(key => key in mainNode.value); // moving from dedicated to inline value
-                        const deleteDedicatedKeys = changes.delete.concat(movingNodes);
-                        // const deletePromises = deleteDedicatedKeys.map(key => {
-                        deleteDedicatedKeys.forEach(key => {
-                            const childPath = PathInfo.getChildPath(path, key);
-                            this._deleteNode(childPath, { transaction }); // return this._deleteNode(childPath, { transaction });
-                        });
+                                // Delete all child nodes that were stored in their own record, but are being removed
+                                // Also delete nodes that are being moved from a dedicated record to inline
+                                const movingNodes = keys.filter(key => key in mainNode.value); // moving from dedicated to inline value
+                                const deleteDedicatedKeys = changes.delete.concat(movingNodes);
+                                // const deletePromises = deleteDedicatedKeys.map(key => {
+                                deleteDedicatedKeys.forEach(key => {
+                                    const childPath = PathInfo.getChildPath(path, key);
+                                    this._deleteNode(childPath, { transaction }); // return this._deleteNode(childPath, { transaction });
+                                });
 
+                                updateMainNode();
+                                return Promise.all(childUpdatePromises);
+                            });
+                    }
+                    else {
+                    // The current and/or new node is not an object/array
                         updateMainNode();
-                        return Promise.all(childUpdatePromises);
-                    });
+                    }
                 }
                 else {
-                    // The current and/or new node is not an object/array
-                    updateMainNode();
-                }
-            }
-            else {
                 // Current node does not exist, create it and any child nodes
                 // write all child nodes that must be stored in their own record
-                this.debug.log(`Node "/${path}" is being created`.colorize(ColorStyle.cyan));
+                    this.debug.log(`Node "/${path}" is being created`.colorize(ColorStyle.cyan));
 
-                const childCreatePromises = Object.keys(childNodeValues).map(key => {
-                    const childPath = PathInfo.getChildPath(path, key);
-                    const childValue = childNodeValues[key];
-                    return this._writeNode(childPath, childValue, { revision: newRevision, merge: false, transaction }); // return this._writeNode(childPath, childValue, { revision: newRevision, merge: false });
-                });
-                return Promise.all(childCreatePromises)
-                .then(() => {
-                    // Create current node
-                    const sql = `INSERT INTO nodes (path, type, text_value, binary_value, json_value, created, modified, revision_nr, revision)
+                    const childCreatePromises = Object.keys(childNodeValues).map(key => {
+                        const childPath = PathInfo.getChildPath(path, key);
+                        const childValue = childNodeValues[key];
+                        return this._writeNode(childPath, childValue, { revision: newRevision, merge: false, transaction }); // return this._writeNode(childPath, childValue, { revision: newRevision, merge: false });
+                    });
+                    return Promise.all(childCreatePromises)
+                        .then(() => {
+                            // Create current node
+                            const sql = `INSERT INTO nodes (path, type, text_value, binary_value, json_value, created, modified, revision_nr, revision)
                         VALUES (@path, @type, @text_value, @binary_value, @json_value, @created, @modified, @revision_nr, @revision)`;
-                    const params = { 
-                        path: path, 
-                        type: mainNode.type, 
-                        text_value: mainNode.storageType === 'text' ? mainNode.value : null,
-                        binary_value: mainNode.storageType === 'binary' ? mainNode.value : null,
-                        json_value: mainNode.storageType === 'json' ? this._createJSON(mainNode.value) : null,
-                        created: Date.now(),
-                        modified: Date.now(),
-                        revision_nr: 0,
-                        revision: newRevision
-                    };
-                        
-                    transaction.add(sql, params); // return this._exec(sql, params);
-                });
-            }
-        })
-        .then(() => {
-            if (!options.transaction) {
+                            const params = {
+                                path: path,
+                                type: mainNode.type,
+                                text_value: mainNode.storageType === 'text' ? mainNode.value : null,
+                                binary_value: mainNode.storageType === 'binary' ? mainNode.value : null,
+                                json_value: mainNode.storageType === 'json' ? this._createJSON(mainNode.value) : null,
+                                created: Date.now(),
+                                modified: Date.now(),
+                                revision_nr: 0,
+                                revision: newRevision,
+                            };
+
+                            transaction.add(sql, params); // return this._exec(sql, params);
+                        });
+                }
+            })
+            .then(() => {
+                if (!options.transaction) {
                 // Our transaction, we can run it now!
-                return transaction.run()
-                // .then(results => {
-                //     console.log(`Transaction successful!`, results);
-                // })
-                .catch(err => {
-                    console.error(err);
-                    throw err;
-                });
-            }
-        });
+                    return transaction.run()
+                    // .then(results => {
+                    //     console.log(`Transaction successful!`, results);
+                    // })
+                        .catch(err => {
+                            console.error(err);
+                            throw err;
+                        });
+                }
+            });
     }
 
     /**
      * Deletes (dedicated) node and all subnodes without checking for existence. Use with care - all removed nodes will lose their revision stats! DOES NOT REMOVE INLINE CHILD NODES!
-     * @param {string} path 
+     * @param {string} path
      */
     _deleteNode(path, options = { transaction: null }) {
         const where = path === '' ? '' : `WHERE path = '${path}' OR path LIKE '${path}/%' OR path LIKE '${path}[%'`;
@@ -749,7 +731,7 @@ class MSSQLStorage extends Storage {
 
     /**
      * Enumerates all children of a given Node for reflection purposes
-     * @param {string} path 
+     * @param {string} path
      * @param {string[]|number[]} [options.keyFilter]
      */
     getChildren(path, options = { keyFilter: undefined, tid: undefined }) {
@@ -757,7 +739,7 @@ class MSSQLStorage extends Storage {
         var callback; //, resolve, reject;
         const generator = {
             /**
-             * 
+             *
              * @param {(child: NodeInfo) => boolean} valueCallback callback function to run for each child. Return false to stop iterating
              * @returns {Promise<bool>} returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
              */
@@ -766,87 +748,87 @@ class MSSQLStorage extends Storage {
                 return start();
                 // const promise = new Promise((rs, rj) => { resolve = rs; reject = rj; });
                 // return promise;
-            }
+            },
         };
         const start = () => {
             let lock, canceled = false;
             const tid = (options && options.tid) || ID.generate();
             return this.nodeLocker.lock(path, tid, false, 'getChildren')
-            .then(l => {
-                lock = l;
-                return this._getOne(`SELECT type, json_value, revision, revision_nr, created, modified FROM nodes WHERE path = @path`, { path: path });
-            })
-            .then(row => {
-                if (!row) { throw new NodeNotFoundError(`Node "/${path}" does not exist`); }
-                if (![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(row.type)) {
+                .then(l => {
+                    lock = l;
+                    return this._getOne(`SELECT type, json_value, revision, revision_nr, created, modified FROM nodes WHERE path = @path`, { path: path });
+                })
+                .then(row => {
+                    if (!row) { throw new NodeNotFoundError(`Node "/${path}" does not exist`); }
+                    if (![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(row.type)) {
                     // No children
-                    return false; //resolve(false);
-                }
-                const isArray = row.type === VALUE_TYPES.ARRAY;
-                const value = JSON.parse(row.json_value);
-                let keys = Object.keys(value);
-                if (options.keyFilter) {
-                    keys = keys.filter(key => options.keyFilter.includes(key));
-                }
-                const pathInfo = PathInfo.get(path);
-                keys.length > 0 && keys.every(key => {
-                    let child = this._getTypeFromStoredValue(value[key]);
+                        return false; //resolve(false);
+                    }
+                    const isArray = row.type === VALUE_TYPES.ARRAY;
+                    const value = JSON.parse(row.json_value);
+                    let keys = Object.keys(value);
+                    if (options.keyFilter) {
+                        keys = keys.filter(key => options.keyFilter.includes(key));
+                    }
+                    const pathInfo = PathInfo.get(path);
+                    keys.length > 0 && keys.every(key => {
+                        let child = this._getTypeFromStoredValue(value[key]);
 
-                    const info = new MSSQLNodeInfo({
-                        path: pathInfo.childPath(key),
-                        key: isArray ? null : key,
-                        index: isArray ? key : null,
-                        type: child.type,
-                        address: null,
-                        exists: true,
-                        value: child.value,
-                        revision: row.revision,
-                        revision_nr: row.revision_nr,
-                        created: row.created,
-                        modified: row.modified
+                        const info = new MSSQLNodeInfo({
+                            path: pathInfo.childPath(key),
+                            key: isArray ? null : key,
+                            index: isArray ? key : null,
+                            type: child.type,
+                            address: null,
+                            exists: true,
+                            value: child.value,
+                            revision: row.revision,
+                            revision_nr: row.revision_nr,
+                            created: row.created,
+                            modified: row.modified,
+                        });
+
+                        canceled = callback(info) === false;
+                        return !canceled; // stop .every loop if canceled
                     });
+                    if (canceled) {
+                        return; //resolve(true);
+                    }
+                    // Go on... query other children
+                    const where = path === ''
+                        ? `path <> '' AND instr(path,'/')=0 AND instr(path,'[')=0` //  AND path NOT LIKE '%/%' AND path NOT LIKE '%[%'
+                        : `path LIKE '${path}${isArray ? '[' : '/'}%' AND path NOT LIKE '${path}${isArray ? '[' : '/'}%/%' AND path NOT LIKE '${path}${isArray ? '[' : '/'}%[%'`;
+                    const q = `SELECT path, type, revision, revision_nr, created, modified FROM nodes WHERE ${where}`;
+                    return this._each(q, null, row => {
+                        const key = PathInfo.get(row.path).key;
+                        if (options.keyFilter && !options.keyFilter.includes(key)) { return; }
 
-                    canceled = callback(info) === false;
-                    return !canceled; // stop .every loop if canceled
-                });
-                if (canceled) {
-                    return; //resolve(true);
-                }
-                // Go on... query other children
-                const where = path === '' 
-                    ? `path <> '' AND instr(path,'/')=0 AND instr(path,'[')=0` //  AND path NOT LIKE '%/%' AND path NOT LIKE '%[%'
-                    : `path LIKE '${path}${isArray ? '[' : '/'}%' AND path NOT LIKE '${path}${isArray ? '[' : '/'}%/%' AND path NOT LIKE '${path}${isArray ? '[' : '/'}%[%'`
-                const q = `SELECT path, type, revision, revision_nr, created, modified FROM nodes WHERE ${where}`;
-                return this._each(q, null, row => {
-                    const key = PathInfo.get(row.path).key;
-                    if (options.keyFilter && !options.keyFilter.includes(key)) { return; }
+                        const info = new MSSQLNodeInfo({
+                            path: row.path,
+                            type: row.type,
+                            key: isArray ? null : key,
+                            index: isArray ? key : null,
+                            address: new MSSQLNodeAddress(row.path), //new SqlNodeAddress(row.path),
+                            exists: true,
+                            value: null, // not loaded
+                            revision: row.revision,
+                            revision_nr: row.revision_nr,
+                            created: parseInt(row.created), // parseInt because bigint is returned as string
+                            modified: parseInt(row.modified),  // parseInt because bigint is returned as string
+                        });
 
-                    const info = new MSSQLNodeInfo({
-                        path: row.path,
-                        type: row.type,
-                        key: isArray ? null : key,
-                        index: isArray ? key : null,
-                        address: new MSSQLNodeAddress(row.path), //new SqlNodeAddress(row.path),
-                        exists: true,
-                        value: null, // not loaded
-                        revision: row.revision,
-                        revision_nr: row.revision_nr,
-                        created: parseInt(row.created), // parseInt because bigint is returned as string
-                        modified: parseInt(row.modified)  // parseInt because bigint is returned as string
+                        canceled = callback(info) === false;
+                        return !canceled; // stop ._each loop if canceled
                     });
-
-                    canceled = callback(info) === false;
-                    return !canceled; // stop ._each loop if canceled
+                })
+                .then(() => {
+                    lock.release();
+                    return canceled;
+                })
+                .catch(err => {
+                    lock.release();
+                    throw err;
                 });
-            })
-            .then(() => {
-                lock.release();
-                return canceled;
-            })
-            .catch(err => {
-                lock.release();
-                throw err;
-            });            
         }; // start()
         return generator;
     }
@@ -856,223 +838,223 @@ class MSSQLStorage extends Storage {
 
         const tid = (options && options.tid )|| ID.generate();
         return this.nodeLocker.lock(path, tid, false, 'getNode')
-        .then(lock => {
+            .then(lock => {
             // Get path, path/* and path[*
-            let where = '';
-            if (path === '') {
-                if (options && options.child_objects === false) {
-                    where = `WHERE path='' OR type NOT IN (${VALUE_TYPES.OBJECT},${VALUE_TYPES.ARRAY})`;
+                let where = '';
+                if (path === '') {
+                    if (options && options.child_objects === false) {
+                        where = `WHERE path='' OR type NOT IN (${VALUE_TYPES.OBJECT},${VALUE_TYPES.ARRAY})`;
+                    }
                 }
-            }
-            else if (options && options.child_objects === false) {
-                where = `WHERE path='${path}' OR ((path LIKE '${path}/%' OR path LIKE '${path}[%') AND type NOT IN (${VALUE_TYPES.OBJECT},${VALUE_TYPES.ARRAY}))`;
-            }
-            else {
-                where = `WHERE path = '${path}' OR path LIKE '${path}/%' OR path LIKE '${path}[%'`;
-            }
-            let getPromise;
-            let filtered = false;
-            if (options && (options.include || options.exclude || options.child_objects === false)) {
+                else if (options && options.child_objects === false) {
+                    where = `WHERE path='${path}' OR ((path LIKE '${path}/%' OR path LIKE '${path}[%') AND type NOT IN (${VALUE_TYPES.OBJECT},${VALUE_TYPES.ARRAY}))`;
+                }
+                else {
+                    where = `WHERE path = '${path}' OR path LIKE '${path}/%' OR path LIKE '${path}[%'`;
+                }
+                let getPromise;
+                let filtered = false;
+                if (options && (options.include || options.exclude || options.child_objects === false)) {
                 // A data filter is requested.
                 // Building a where statement for this is impossible because we'd need regular expressions to filter paths (because LIKE 'users/%/posts' will also falsely match 'users/ewout/archive/posts')
                 // Get all paths unfiltered, then filter them manually
-                filtered = true;
-                getPromise = this._get(`SELECT path, type FROM nodes ${where}`)
-                .then(rows => {
-                    const paths = [path];
-                    const includeCheck = options.include 
-                        ? new RegExp('^' + options.include.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
-                        : null;
-                    const excludeCheck = options.exclude 
-                        ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
-                        : null;
+                    filtered = true;
+                    getPromise = this._get(`SELECT path, type FROM nodes ${where}`)
+                        .then(rows => {
+                            const paths = [path];
+                            const includeCheck = options.include
+                                ? new RegExp('^' + options.include.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
+                                : null;
+                            const excludeCheck = options.exclude
+                                ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
+                                : null;
 
-                    for (let i = 0; i < rows.length; i++) {
-                        const row = rows[i];
-                        if (row.path === path) {
-                            continue; // No need to check the main path...
-                        }
-                        let checkPath = row.path.slice(path.length);
-                        if (checkPath[0] === '/') { checkPath = checkPath.slice(1); }
-                        const match = (includeCheck ? includeCheck.test(checkPath) : true) 
+                            for (let i = 0; i < rows.length; i++) {
+                                const row = rows[i];
+                                if (row.path === path) {
+                                    continue; // No need to check the main path...
+                                }
+                                let checkPath = row.path.slice(path.length);
+                                if (checkPath[0] === '/') { checkPath = checkPath.slice(1); }
+                                const match = (includeCheck ? includeCheck.test(checkPath) : true)
                             && (excludeCheck ? !excludeCheck.test(checkPath) : true)
                             && (options.child_objects === false ? row.type !== VALUE_TYPES.OBJECT && !/[/[]/.test(checkPath) : true);
-                        if (match) {
-                            paths.push(row.path);
-                        }
-                    }
-
-                    // Now query with all paths that met the requirement
-                    return this._get(`SELECT path, type, text_value, binary_value, json_value, revision FROM nodes WHERE path IN (${paths.map(p => `'${p}'`).join(',')})`);
-                })
-            }
-            else {
-                // No filtering
-                getPromise = this._get(`SELECT path, type, text_value, binary_value, json_value, revision FROM nodes ${where}`);
-            }
-            return getPromise
-            .then(rows => {                
-                if (rows.length === 0) { 
-                    // Lookup parent node
-                    return lock.moveToParent()
-                    .then(parentLock => {
-                        lock = parentLock;
-
-                        if (path === '') { return null; } // path is root. There is no parent.
-                        const pathInfo = PathInfo.get(path);
-                        return this._getOne(`SELECT type, json_value, revision FROM nodes WHERE path = '${pathInfo.parentPath}'`)
-                        .then(parentRow => {
-                            const result = {
-                                revision: parentRow ? parentRow.revision : null,
-                                value: null
-                            };
-                            if (!parentRow) { return result; } // parent node doesn't exist
-                            if (![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentRow.type)) { return result; } // parent node is not an object
-
-                            // WARNING: parentRow.json_value might be big!!
-                            // TODO: create JSON streamer if json_value length becomes larger than 10KB?
-                            const val = this._deserializeJSON(parentRow.type, parentRow.json_value);
-                            if (!(pathInfo.key in val)) { return result; } // parent does not have a child with requested key
-                            result.value = val[pathInfo.key];
-                            return result;
-                        })
-                    });
-                }
-
-                this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${rows.length} records`.colorize(ColorStyle.magenta));
-
-                const targetPathKeys = PathInfo.getPathKeys(path);
-                const targetRow = rows.find(row => row.path === path);
-                const result = {
-                    revision: targetRow ? targetRow.revision : null,
-                    value: null
-                };
-                if (targetRow.type === VALUE_TYPES.OBJECT || targetRow.type === VALUE_TYPES.ARRAY) {
-                    // target node is an object or array
-                    let value = this._deserializeJSON(targetRow.type, targetRow.json_value);
-
-                    // merge with other found (child) records
-                    for (let i = 0; i < rows.length; i++) {
-                        const otherRow = rows[i];
-                        if (otherRow === targetRow) { continue; }
-                        const pathKeys = PathInfo.getPathKeys(otherRow.path);
-                        const trailKeys = pathKeys.slice(targetPathKeys.length);
-                        let parent = value;
-                        for (let j = 0 ; j < trailKeys.length; j++) {
-                            console.assert(typeof parent === 'object', 'parent must be an object/array to have children!!');
-                            const key = trailKeys[j];
-                            const isLast = j === trailKeys.length-1;
-                            const nodeType = isLast 
-                                ? otherRow.type 
-                                : typeof trailKeys[j+1] === 'number'
-                                    ? VALUE_TYPES.ARRAY
-                                    : VALUE_TYPES.OBJECT;
-                            let nodeValue;
-                            if (!isLast) {
-                                nodeValue = nodeType === VALUE_TYPES.OBJECT ? {} : [];
+                                if (match) {
+                                    paths.push(row.path);
+                                }
                             }
-                            else if (nodeType === VALUE_TYPES.OBJECT || nodeType === VALUE_TYPES.ARRAY) {
-                                nodeValue = this._deserializeJSON(otherRow.type, otherRow.json_value);
-                            }
-                            else if (nodeType === VALUE_TYPES.REFERENCE) {
-                                nodeValue = new PathReference(otherRow.text_value);
-                            }
-                            else if (nodeType === VALUE_TYPES.BINARY) {
-                                nodeValue = otherRow.binary_value;
-                            }
-                            else {
-                                nodeValue = otherRow.text_value;
-                            }
-                            if (key in parent) {
-                                // Merge with parent
-                                console.assert(typeof parent[key] === typeof nodeValue && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeType), 'Merging child values can only be done if existing and current values are both an array or object');
-                                Object.keys(nodeValue).forEach(childKey => {
-                                    console.assert(!(childKey in parent[key]), 'child key is in parent value already?! HOW?!');
-                                    parent[key][childKey] = nodeValue[childKey];
-                                });
-                            }
-                            else {
-                                parent[key] = nodeValue;
-                            }
-                            parent = parent[key];
-                        }
-                    }
 
-                    result.value = value;
-                }
-                else if (rows.length > 1) {
-                    throw new Error(`more than 1 record found for non-object value!`);
-                }
-                else if (targetRow.type === VALUE_TYPES.REFERENCE) {
-                    result.value = new PathReference(targetRow.text_value);
-                }
-                else if (targetRow.type === VALUE_TYPES.BINARY) {
-                    // BLOBs are returned as Uint8Array by MSSQL3
-                    let val = targetRow.binary_value;
-                    result.value = val.buffer.slice(val.byteOffset, val.byteOffset + val.byteLength);
+                            // Now query with all paths that met the requirement
+                            return this._get(`SELECT path, type, text_value, binary_value, json_value, revision FROM nodes WHERE path IN (${paths.map(p => `'${p}'`).join(',')})`);
+                        });
                 }
                 else {
-                    result.value = targetRow.text_value;
+                // No filtering
+                    getPromise = this._get(`SELECT path, type, text_value, binary_value, json_value, revision FROM nodes ${where}`);
                 }
-                return result;
-            })
-            .then(result => {
+                return getPromise
+                    .then(rows => {
+                        if (rows.length === 0) {
+                            // Lookup parent node
+                            return lock.moveToParent()
+                                .then(parentLock => {
+                                    lock = parentLock;
 
-                lock.release();
+                                    if (path === '') { return null; } // path is root. There is no parent.
+                                    const pathInfo = PathInfo.get(path);
+                                    return this._getOne(`SELECT type, json_value, revision FROM nodes WHERE path = '${pathInfo.parentPath}'`)
+                                        .then(parentRow => {
+                                            const result = {
+                                                revision: parentRow ? parentRow.revision : null,
+                                                value: null,
+                                            };
+                                            if (!parentRow) { return result; } // parent node doesn't exist
+                                            if (![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentRow.type)) { return result; } // parent node is not an object
 
-                // Post process filters to remove any data that got though because they were
-                // not stored in dedicated records. This will happen with smaller values because
-                // they are stored inline in their parent node.
-                // eg:
-                // { number: 1, small_string: 'small string', bool: true, obj: {}, arr: [] }
-                // All properties of this object are stored inline, 
-                // if exclude: ['obj'], or child_objects: false was passed, these will still
-                // have to be removed from the value
-
-                if (options.child_objects === false) {
-                    Object.keys(result.value).forEach(key => {
-                        if (typeof result.value[key] === 'object' && result.value[key].constructor === Object) {
-                            // This can only happen if the object was empty
-                            console.assert(Object.keys(result.value[key]).length === 0);
-                            delete result.value[key];
+                                            // WARNING: parentRow.json_value might be big!!
+                                            // TODO: create JSON streamer if json_value length becomes larger than 10KB?
+                                            const val = this._deserializeJSON(parentRow.type, parentRow.json_value);
+                                            if (!(pathInfo.key in val)) { return result; } // parent does not have a child with requested key
+                                            result.value = val[pathInfo.key];
+                                            return result;
+                                        });
+                                });
                         }
-                    })
-                }
 
-                if (options.exclude) {
-                    const process = (obj, keys) => {
-                        if (typeof obj !== 'object') { return; }
-                        const key = keys[0];
-                        if (key === '*') {
-                            Object.keys(obj).forEach(k => {
-                                process(obj[k], keys.slice(1));
-                            });
+                        this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${rows.length} records`.colorize(ColorStyle.magenta));
+
+                        const targetPathKeys = PathInfo.getPathKeys(path);
+                        const targetRow = rows.find(row => row.path === path);
+                        const result = {
+                            revision: targetRow ? targetRow.revision : null,
+                            value: null,
+                        };
+                        if (targetRow.type === VALUE_TYPES.OBJECT || targetRow.type === VALUE_TYPES.ARRAY) {
+                            // target node is an object or array
+                            let value = this._deserializeJSON(targetRow.type, targetRow.json_value);
+
+                            // merge with other found (child) records
+                            for (let i = 0; i < rows.length; i++) {
+                                const otherRow = rows[i];
+                                if (otherRow === targetRow) { continue; }
+                                const pathKeys = PathInfo.getPathKeys(otherRow.path);
+                                const trailKeys = pathKeys.slice(targetPathKeys.length);
+                                let parent = value;
+                                for (let j = 0 ; j < trailKeys.length; j++) {
+                                    console.assert(typeof parent === 'object', 'parent must be an object/array to have children!!');
+                                    const key = trailKeys[j];
+                                    const isLast = j === trailKeys.length-1;
+                                    const nodeType = isLast
+                                        ? otherRow.type
+                                        : typeof trailKeys[j+1] === 'number'
+                                            ? VALUE_TYPES.ARRAY
+                                            : VALUE_TYPES.OBJECT;
+                                    let nodeValue;
+                                    if (!isLast) {
+                                        nodeValue = nodeType === VALUE_TYPES.OBJECT ? {} : [];
+                                    }
+                                    else if (nodeType === VALUE_TYPES.OBJECT || nodeType === VALUE_TYPES.ARRAY) {
+                                        nodeValue = this._deserializeJSON(otherRow.type, otherRow.json_value);
+                                    }
+                                    else if (nodeType === VALUE_TYPES.REFERENCE) {
+                                        nodeValue = new PathReference(otherRow.text_value);
+                                    }
+                                    else if (nodeType === VALUE_TYPES.BINARY) {
+                                        nodeValue = otherRow.binary_value;
+                                    }
+                                    else {
+                                        nodeValue = otherRow.text_value;
+                                    }
+                                    if (key in parent) {
+                                        // Merge with parent
+                                        console.assert(typeof parent[key] === typeof nodeValue && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeType), 'Merging child values can only be done if existing and current values are both an array or object');
+                                        Object.keys(nodeValue).forEach(childKey => {
+                                            console.assert(!(childKey in parent[key]), 'child key is in parent value already?! HOW?!');
+                                            parent[key][childKey] = nodeValue[childKey];
+                                        });
+                                    }
+                                    else {
+                                        parent[key] = nodeValue;
+                                    }
+                                    parent = parent[key];
+                                }
+                            }
+
+                            result.value = value;
                         }
-                        else if (keys.length > 1) {
-                            key in obj && process(obj[key], keys.slice(1));
+                        else if (rows.length > 1) {
+                            throw new Error(`more than 1 record found for non-object value!`);
+                        }
+                        else if (targetRow.type === VALUE_TYPES.REFERENCE) {
+                            result.value = new PathReference(targetRow.text_value);
+                        }
+                        else if (targetRow.type === VALUE_TYPES.BINARY) {
+                            // BLOBs are returned as Uint8Array by MSSQL3
+                            let val = targetRow.binary_value;
+                            result.value = val.buffer.slice(val.byteOffset, val.byteOffset + val.byteLength);
                         }
                         else {
-                            delete obj[key];
+                            result.value = targetRow.text_value;
                         }
-                    };
-                    options.exclude.forEach(path => {
-                        const checkKeys = PathInfo.getPathKeys(path);
-                        process(result.value, checkKeys);
+                        return result;
+                    })
+                    .then(result => {
+
+                        lock.release();
+
+                        // Post process filters to remove any data that got though because they were
+                        // not stored in dedicated records. This will happen with smaller values because
+                        // they are stored inline in their parent node.
+                        // eg:
+                        // { number: 1, small_string: 'small string', bool: true, obj: {}, arr: [] }
+                        // All properties of this object are stored inline,
+                        // if exclude: ['obj'], or child_objects: false was passed, these will still
+                        // have to be removed from the value
+
+                        if (options.child_objects === false) {
+                            Object.keys(result.value).forEach(key => {
+                                if (typeof result.value[key] === 'object' && result.value[key].constructor === Object) {
+                                    // This can only happen if the object was empty
+                                    console.assert(Object.keys(result.value[key]).length === 0);
+                                    delete result.value[key];
+                                }
+                            });
+                        }
+
+                        if (options.exclude) {
+                            const process = (obj, keys) => {
+                                if (typeof obj !== 'object') { return; }
+                                const key = keys[0];
+                                if (key === '*') {
+                                    Object.keys(obj).forEach(k => {
+                                        process(obj[k], keys.slice(1));
+                                    });
+                                }
+                                else if (keys.length > 1) {
+                                    key in obj && process(obj[key], keys.slice(1));
+                                }
+                                else {
+                                    delete obj[key];
+                                }
+                            };
+                            options.exclude.forEach(path => {
+                                const checkKeys = PathInfo.getPathKeys(path);
+                                process(result.value, checkKeys);
+                            });
+                        }
+                        return result;
+                    })
+                    .catch(err => {
+                        lock.release();
+                        throw err;
                     });
-                }
-                return result;
-            })
-            .catch(err => {
-                lock.release();
-                throw err;
             });
-        });
     }
 
     /**
-     * 
-     * @param {string} path 
-     * @param {*} options 
+     *
+     * @param {string} path
+     * @param {*} options
      * @returns {Promise<MSSQLNodeInfo>}
      */
     getNodeInfo(path, options = { tid: undefined }) {
@@ -1080,124 +1062,124 @@ class MSSQLStorage extends Storage {
 
         const lookupNode = path => {
             return this._get(`SELECT type, text_value, binary_value, json_value, created, modified, revision, revision_nr FROM nodes WHERE path=@path`, { path })
-            .then(rows => {
-                if (rows.length === 0) {
-                    return null; 
-                }
-                const row = rows[0];
-                let value = null;
-                if (row.type === VALUE_TYPES.OBJECT || row.type === VALUE_TYPES.ARRAY) {
-                    value = JSON.parse(row.json_value);
-                }
-                else if (row.type === VALUE_TYPES.BINARY) {
+                .then(rows => {
+                    if (rows.length === 0) {
+                        return null;
+                    }
+                    const row = rows[0];
+                    let value = null;
+                    if (row.type === VALUE_TYPES.OBJECT || row.type === VALUE_TYPES.ARRAY) {
+                        value = JSON.parse(row.json_value);
+                    }
+                    else if (row.type === VALUE_TYPES.BINARY) {
                     // BLOBs are returned as Uint8Array by MSSQL3
-                    let val = row.binary_value;
-                    value = val.buffer.slice(val.byteOffset, val.byteOffset + val.byteLength);
-                }
-                else {
-                    value = row.text_value;
-                }
-                return {
-                    path,
-                    type: row.type, 
-                    value, 
-                    created: row.created, 
-                    modified: row.modified, 
-                    revision: row.revision, 
-                    revision_nr: row.revision_nr 
-                };
-            });
-        }
+                        let val = row.binary_value;
+                        value = val.buffer.slice(val.byteOffset, val.byteOffset + val.byteLength);
+                    }
+                    else {
+                        value = row.text_value;
+                    }
+                    return {
+                        path,
+                        type: row.type,
+                        value,
+                        created: row.created,
+                        modified: row.modified,
+                        revision: row.revision,
+                        revision_nr: row.revision_nr,
+                    };
+                });
+        };
 
         const pathInfo = PathInfo.get(path);
         const tid = (options && options.tid) || ID.generate();
         let lock;
         return this.nodeLocker.lock(path, tid, false, 'getNodeInfo')
-        .then(l => {
-            lock = l;
-            return lookupNode(path);
-        })
-        .then(node => {
-            const info = new MSSQLNodeInfo({ 
-                path, 
-                key: typeof pathInfo.key === 'string' ? pathInfo.key : null,
-                index: typeof pathInfo.key === 'number' ? pathInfo.key : null,
-                type: node ? node.type : 0, 
-                exists: node !== null,
-                address: node ? new MSSQLNodeAddress(path) : null,
-                created: node ? new Date(node.created) : null,
-                modified: node ? new Date(node.modified) : null,
-                revision: node ? node.revision : null,
-                revision_nr: node ? node.revision_nr : null
-            });
-            // info.created = node ? new Date(node.created) : null;
-            // info.modified = node ? new Date(node.modified) : null;
-            // info.revision = node ? node.revision : null;
-            // info.revision_nr = node ? node.revision_nr : null;
-
-            if (node || path === '') {
-                return info;
-            }
-
-            // Try parent node
-            return lock.moveToParent()
-            .then(parentLock => {
-                lock = parentLock;
-                return lookupNode(pathInfo.parentPath);
+            .then(l => {
+                lock = l;
+                return lookupNode(path);
             })
-            .then(parent => {
-                if (parent && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parent.type) && pathInfo.key in parent.value) {
-                    // Stored in parent node
-                    info.exists = true;
-                    info.value = parent.value[pathInfo.key];
-                    info.address = null; // pathInfo.parentPath; //new SqlNodeAddress(pathInfo.parentPath);
-                    switch (typeof info.value) {
-                        case 'string': {
-                            info.type = VALUE_TYPES.STRING; break;
-                        }
-                        case 'number': {
-                            info.type = VALUE_TYPES.NUMBER; break;
-                        }
-                        case 'boolean': {
-                            info.type = VALUE_TYPES.BOOLEAN; break;
-                        }
-                        case 'object': {
-                            // Only allowed if type is REFERENCE, DATETIME, empty ARRAY, empty OBJECT
-                            info.type = info.value.type;
-                            info.value = info.value.value; 
-                            if (info.type === VALUE_TYPES.DATETIME) {
-                                info.value = new Date(info.value); // Convert number to Date
+            .then(node => {
+                const info = new MSSQLNodeInfo({
+                    path,
+                    key: typeof pathInfo.key === 'string' ? pathInfo.key : null,
+                    index: typeof pathInfo.key === 'number' ? pathInfo.key : null,
+                    type: node ? node.type : 0,
+                    exists: node !== null,
+                    address: node ? new MSSQLNodeAddress(path) : null,
+                    created: node ? new Date(node.created) : null,
+                    modified: node ? new Date(node.modified) : null,
+                    revision: node ? node.revision : null,
+                    revision_nr: node ? node.revision_nr : null,
+                });
+                // info.created = node ? new Date(node.created) : null;
+                // info.modified = node ? new Date(node.modified) : null;
+                // info.revision = node ? node.revision : null;
+                // info.revision_nr = node ? node.revision_nr : null;
+
+                if (node || path === '') {
+                    return info;
+                }
+
+                // Try parent node
+                return lock.moveToParent()
+                    .then(parentLock => {
+                        lock = parentLock;
+                        return lookupNode(pathInfo.parentPath);
+                    })
+                    .then(parent => {
+                        if (parent && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parent.type) && pathInfo.key in parent.value) {
+                            // Stored in parent node
+                            info.exists = true;
+                            info.value = parent.value[pathInfo.key];
+                            info.address = null; // pathInfo.parentPath; //new SqlNodeAddress(pathInfo.parentPath);
+                            switch (typeof info.value) {
+                                case 'string': {
+                                    info.type = VALUE_TYPES.STRING; break;
+                                }
+                                case 'number': {
+                                    info.type = VALUE_TYPES.NUMBER; break;
+                                }
+                                case 'boolean': {
+                                    info.type = VALUE_TYPES.BOOLEAN; break;
+                                }
+                                case 'object': {
+                                    // Only allowed if type is REFERENCE, DATETIME, empty ARRAY, empty OBJECT
+                                    info.type = info.value.type;
+                                    info.value = info.value.value;
+                                    if (info.type === VALUE_TYPES.DATETIME) {
+                                        info.value = new Date(info.value); // Convert number to Date
+                                    }
+                                    break;
+                                }
                             }
-                            break;
+                            info.created = new Date(parent.created);
+                            info.modified = new Date(parent.modified);
+                            info.revision = parent.revision;
+                            info.revision_nr = parent.revision_nr;
                         }
-                    }
-                    info.created = new Date(parent.created);
-                    info.modified = new Date(parent.modified);
-                    info.revision = parent.revision;
-                    info.revision_nr = parent.revision_nr;
-                }
-                else {
-                    // Parent doesn't exist, so the node we're looking for cannot exist either
-                    info.address = null;
-                }
+                        else {
+                            // Parent doesn't exist, so the node we're looking for cannot exist either
+                            info.address = null;
+                        }
+                        return info;
+                    });
+            })
+            .then(info => {
+                lock.release();
                 return info;
             })
-        })
-        .then(info => {
-            lock.release();
-            return info;
-        })
-        .catch(err => {
-            lock && lock.release();
-            throw err;
-        });
+            .catch(err => {
+                lock && lock.release();
+                throw err;
+            });
     }
 
     // removeNode(path, options = { tid: undefined }) {
-    //     if (path === '') { 
-    //         return Promise.reject(new Error(`Cannot remove the root node`)); 
+    //     if (path === '') {
+    //         return Promise.reject(new Error(`Cannot remove the root node`));
     //     }
-        
+
     //     const pathInfo = PathInfo.get(path);
     //     const tid = (options && options.tid) || ID.generate();
     //     return this.nodeLocker.lock(pathInfo.parentPath, tid, true, 'removeNode')
@@ -1210,64 +1192,64 @@ class MSSQLStorage extends Storage {
     //         .catch(err => {
     //             lock.release();
     //             throw err;
-    //         });            
+    //         });
     //     });
     // }
 
-    setNode(path, value, options = { assert_revision: undefined, tid: undefined, suppress_events: false, context: null }) {        
+    setNode(path, value, options = { assert_revision: undefined, tid: undefined, suppress_events: false, context: null }) {
         const pathInfo = PathInfo.get(path);
 
         let lock;
         const tid = (options && options.tid) || ID.generate();
         return this.nodeLocker.lock(path, tid, true, 'setNode')
-        .then(l => {
-            lock = l;
+            .then(l => {
+                lock = l;
 
-            if (path === '') {
-                if (value === null || typeof value !== 'object' || value instanceof Array || value instanceof ArrayBuffer || ('buffer' in value && value.buffer instanceof ArrayBuffer)) {
-                    return Promise.reject(new Error(`Invalid value for root node: ${value}`));
+                if (path === '') {
+                    if (value === null || typeof value !== 'object' || value instanceof Array || value instanceof ArrayBuffer || ('buffer' in value && value.buffer instanceof ArrayBuffer)) {
+                        return Promise.reject(new Error(`Invalid value for root node: ${value}`));
+                    }
+
+                    return this._writeNodeWithTracking('', value, { merge: false, tid, suppress_events: options.suppress_events, context: options.context });
                 }
 
-                return this._writeNodeWithTracking('', value, { merge: false, tid, suppress_events: options.suppress_events, context: options.context })
-            }
-
-            if (options && typeof options.assert_revision !== 'undefined') {
-                return this.getNodeInfo(path, { tid: lock.tid })
-                .then(info => {
-                    if (info.revision !== options.assert_revision) {
-                        throw new NodeRevisionError(`revision '${info.revision}' does not match requested revision '${options.assert_revision}'`);
-                    }
-                    if (info.address && info.address.path === path && !this.valueFitsInline(value)) {
-                        // Overwrite node
-                        return this._writeNodeWithTracking(path, value, { merge: false, tid, suppress_events: options.suppress_events, context: options.context });
-                    }
-                    else {
-                        // Update parent node
-                        return lock.moveToParent()
+                if (options && typeof options.assert_revision !== 'undefined') {
+                    return this.getNodeInfo(path, { tid: lock.tid })
+                        .then(info => {
+                            if (info.revision !== options.assert_revision) {
+                                throw new NodeRevisionError(`revision '${info.revision}' does not match requested revision '${options.assert_revision}'`);
+                            }
+                            if (info.address && info.address.path === path && !this.valueFitsInline(value)) {
+                                // Overwrite node
+                                return this._writeNodeWithTracking(path, value, { merge: false, tid, suppress_events: options.suppress_events, context: options.context });
+                            }
+                            else {
+                                // Update parent node
+                                return lock.moveToParent()
+                                    .then(parentLock => {
+                                        lock = parentLock;
+                                        return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
+                                    });
+                            }
+                        });
+                }
+                else {
+                // Delegate operation to update on parent node
+                    return lock.moveToParent()
                         .then(parentLock => {
                             lock = parentLock;
-                            return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
+                            return this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { tid, suppress_events: options.suppress_events, context: options.context });
                         });
-                    }
-                })
-            }
-            else {
-                // Delegate operation to update on parent node
-                return lock.moveToParent()
-                .then(parentLock => {
-                    lock = parentLock;                
-                    return this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { tid, suppress_events: options.suppress_events, context: options.context });
-                });
-            }
-        })
-        .then(result => {
-            lock.release();
-            return result;
-        })
-        .catch(err => {
-            lock.release();
-            throw err;
-        });        
+                }
+            })
+            .then(result => {
+                lock.release();
+                return result;
+            })
+            .catch(err => {
+                lock.release();
+                throw err;
+            });
     }
 
     updateNode(path, updates, options = { tid: undefined, suppress_events: false, context: null }) {
@@ -1279,44 +1261,44 @@ class MSSQLStorage extends Storage {
         const tid = (options && options.tid) || ID.generate();
         let lock;
         return this.nodeLocker.lock(path, tid, true, 'updateNode')
-        .then(l => {
-            lock = l;
-            // Get info about current node
-            return this.getNodeInfo(path, { tid: lock.tid });    
-        })
-        .then(nodeInfo => {
-            const pathInfo = PathInfo.get(path);
-            if (nodeInfo.exists && nodeInfo.address && nodeInfo.address.path === path) {
+            .then(l => {
+                lock = l;
+                // Get info about current node
+                return this.getNodeInfo(path, { tid: lock.tid });
+            })
+            .then(nodeInfo => {
+                const pathInfo = PathInfo.get(path);
+                if (nodeInfo.exists && nodeInfo.address && nodeInfo.address.path === path) {
                 // Node exists and is stored in its own record.
                 // Update it
-                return this._writeNodeWithTracking(path, updates, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
-            }
-            else if (nodeInfo.exists) {
+                    return this._writeNodeWithTracking(path, updates, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
+                }
+                else if (nodeInfo.exists) {
                 // Node exists, but is stored in its parent node.
-                const pathInfo = PathInfo.get(path);
-                return lock.moveToParent()
-                .then(parentLock => {
-                    lock = parentLock;
-                    return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
-                });
-            }
-            else {
+                    const pathInfo = PathInfo.get(path);
+                    return lock.moveToParent()
+                        .then(parentLock => {
+                            lock = parentLock;
+                            return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
+                        });
+                }
+                else {
                 // The node does not exist, it's parent doesn't have it either. Update the parent instead
-                return lock.moveToParent()
-                .then(parentLock => {
-                    lock = parentLock;
-                    return this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { tid, suppress_events: options.suppress_events, context: options.context });
-                });
-            }
-        })
-        .then(result => {
-            lock.release();
-            return result;
-        })
-        .catch(err => {
-            lock.release();
-            throw err;
-        });        
+                    return lock.moveToParent()
+                        .then(parentLock => {
+                            lock = parentLock;
+                            return this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { tid, suppress_events: options.suppress_events, context: options.context });
+                        });
+                }
+            })
+            .then(result => {
+                lock.release();
+                return result;
+            })
+            .catch(err => {
+                lock.release();
+                throw err;
+            });
     }
 
 }
@@ -1325,5 +1307,5 @@ module.exports = {
     MSSQLNodeAddress,
     MSSQLNodeInfo,
     MSSQLStorage,
-    MSSQLStorageSettings
-}
+    MSSQLStorageSettings,
+};
