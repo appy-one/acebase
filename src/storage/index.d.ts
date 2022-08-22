@@ -1,5 +1,6 @@
 import { DebugLogger, SimpleEventEmitter, DataRetrievalOptions, ISchemaCheckResult } from 'acebase-core';
 import { NodeInfo } from '../node-info';
+import { IPCPeer } from '../ipc';
 import { DataIndex } from '../data-index';
 import { CreateIndexOptions } from './indexes';
 export declare class SchemaValidationError extends Error {
@@ -96,7 +97,9 @@ export declare class Storage extends SimpleEventEmitter {
     settings: StorageSettings;
     debug: DebugLogger;
     private ipc;
-    private nodeLocker;
+    protected nodeLocker: {
+        lock(path: string, tid: string, write: boolean, comment?: string): ReturnType<IPCPeer['lock']>;
+    };
     private _lastTid;
     createTid(): string | number;
     private _schemas;
