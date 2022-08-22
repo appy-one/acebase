@@ -981,6 +981,150 @@ class AceBaseStorage extends Storage {
         return index;
     }
 
+    /**
+     * Repairs a broken record by removing the reference to it from the parent node. It does not overwrite the target record to prevent possibly breaking other data.
+     * Example: repairNode('books/l74fm4sg000009jr1iyt93a5/reviews') will remove the reference to the 'reviews' record in 'books/l74fm4sg000009jr1iyt93a5'
+     * @param {string} targetPath
+     * @param {object} [options]
+     * @param {boolean} [options.ignoreIntact=false] Included for testing purposes: whether to proceed if the target node does not appear broken.
+     * @param {boolean} [options.markAsRemoved=true] Whether to mark the target as removed (getting its value will yield `"[[removed]]"`). Set to `false` to completely remove it.
+     */
+    async repairNode(targetPath, options = { ignoreIntact: false, markAsRemoved: true }) {
+        if (typeof options.ignoreIntact !== 'boolean') {
+            options.ignoreIntact = false;
+        }
+        if (typeof options.markAsRemoved !== 'boolean') {
+            options.markAsRemoved = true;
+        }
+        const targetPathInfo = PathInfo.get(targetPath);
+        const { parentPath: path, key, parent: pathInfo } = targetPathInfo;
+        const tid = this.createTid();
+        let lock = await this.nodeLocker.lock(path, tid, true, 'fixRecord');
+        try {
+            // Make sure cache for parent and all children is removed
+            this.invalidateCache(false, path, true);
+
+            // Check if the target node is really broken first
+            /** @type {NodeInfo | null} */
+            let targetNodeInfo = null;
+            try {
+                targetNodeInfo = await this.getNodeInfo(targetPath, { tid });
+            }
+            finally {
+                if (targetNodeInfo) {
+                    const msg = `Node at path "${targetPath}" is not broken: it is a(n) ${targetNodeInfo.valueTypeName} stored ${targetNodeInfo.address ? `@${targetNodeInfo.address.pageNr},${targetNodeInfo.address.recordNr}` : 'inline'}${targetNodeInfo.value ? ` with value ${targetNodeInfo.value}` : ''}`;
+                    this.debug.warn(msg);
+                    if (!options.ignoreIntact) {
+                        throw new Error(msg);
+                    }
+                }
+            }
+
+            /** @type {NodeInfo} */
+            let nodeInfo;
+            try {
+                nodeInfo = await this.getNodeInfo(path, { tid });
+            }
+            catch (err) {
+                throw new Error(`Can't read parent node ${path}: ${err}`);
+            }
+
+            if (!nodeInfo.exists) {
+                throw new Error(`Node at path ${path} does not exist`);
+            }
+            else if (!nodeInfo.address) {
+                throw new Error(`Node at ${path} is not stored in its own record`);
+            }
+            const removedValueIndicator = '[[removed]]';
+            const isArray = nodeInfo.valueType === VALUE_TYPES.ARRAY;
+            if (isArray && !options.markAsRemoved) {
+                this.debug.warn(`Node at path "${path}" is an Array, cannot remove entry at index ${key}: marking it as "${removedValueIndicator}" instead`);
+                options.markAsRemoved = true;
+            }
+            const nodeReader = new NodeReader(this, nodeInfo.address, lock, false);
+            const recordInfo = await nodeReader.readHeader();
+            /** @type {NodeInfo} */
+            let childInfo;
+            try {
+                childInfo = await nodeReader.getChildInfo(key);
+            }
+            catch (err) {
+                throw new Error(`Can't get info about child "${key}" in node "${path}: ${err}`);
+            }
+            if (!childInfo.address) {
+                throw new Error(`Can't fix node "${targetPath}" because it is not stored in its own record`);
+            }
+
+            if (recordInfo.hasKeyIndex) {
+                // This node has an index for the child keys
+                // Easy update: update this child only
+
+                /** @type {SerializedKeyValue} TS: _serializeValue(..) as SerializedKeyValue */
+                const oldKV = _serializeValue(this, targetPath, key, new InternalNodeReference(childInfo.valueType, childInfo.address), tid);
+                const oldVal = _getValueBytes(oldKV);
+                /** @type {SerializedKeyValue} TS: _serializeValue(..) as SerializedKeyValue */
+                const newKV = _serializeValue(this, targetPath, key, removedValueIndicator, tid);
+                const newVal = _getValueBytes(newKV);
+                let tree = nodeReader.getChildTree();
+                const oldEntryValue = new BinaryBPlusTree.EntryValue(oldVal);
+                const newEntryValue = new BinaryBPlusTree.EntryValue(newVal);
+                const op = options.markAsRemoved
+                    ? BinaryBPlusTree.TransactionOperation.update(key, newEntryValue, oldEntryValue)
+                    : BinaryBPlusTree.TransactionOperation.remove(key, oldEntryValue.recordPointer);
+                try {
+                    await tree.transaction([op]);
+                }
+                catch (err) {
+                    throw new Error(`Could not update tree for "${path}": ${err}`);
+                }
+            }
+            else {
+                // This is a small record. Rewrite the entire node
+                let mergedValue = isArray ? [] : {};
+
+                await nodeReader.getChildStream().next(child => {
+                    let keyOrIndex = isArray ? child.index : child.key;
+                    if (keyOrIndex === key) {
+                        // This is the target key to update/delete
+                        if (options.markAsRemoved) {
+                            mergedValue[key] = removedValueIndicator;
+                        }
+                    }
+                    else if (child.address) { //(child.storedAddress || child.address) {
+                        mergedValue[keyOrIndex] = new InternalNodeReference(child.valueType, child.address);
+                    }
+                    else {
+                        mergedValue[keyOrIndex] = child.value;
+                    }
+                });
+
+                const newRecordInfo = await _writeNode(this, path, mergedValue, lock, nodeReader.recordInfo);
+                if (newRecordInfo !== nodeReader.recordInfo) {
+                    // _writeNode allocated new records: its location moved and the parent has to be updated.
+                    if (pathInfo.parent) {
+                        lock = await lock.moveToParent();
+                        await this._updateNode(pathInfo.parentPath, { [pathInfo.key]: new InternalNodeReference(newRecordInfo.valueType, newRecordInfo.address) }, { merge: true, tid, _internal: true });
+                    }
+                    try {
+                        await this.FST.release(nodeReader.recordInfo.allocation.ranges);
+                    }
+                    catch (err) {
+                        this.debug.error(`Could not release previously allocated ranges for "/${path}": ${err}`);
+                    }
+                    // throw new Error(`Node at path "/${path}" was not rewritten at the same location. Fix failed`);
+                }
+            }
+
+            this.debug.log(`Successfully fixed node at path "${targetPath}" by ${options.markAsRemoved ? `marking key "${key}" of parent node "${path}" as removed ("${removedValueIndicator}")` : `removing key "${key}" from parent node "${path}"`}`);
+
+            // Make sure cached address is removed.
+            this.invalidateCache(false, targetPath, true);
+        }
+        finally {
+            await lock.release();
+        }
+    }
+
     get transactionLoggingEnabled() {
         return this.settings.transactions && this.settings.transactions.log === true;
     }

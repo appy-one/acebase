@@ -41,6 +41,14 @@ class AceBase extends AceBaseBase {
         this.api = new LocalApi(dbname, apiSettings, () => {
             this.emit("ready");
         });
+        this.recovery = {
+            repairNode: async (path, options) => {
+                if (!this.api.storage.repairNode) {
+                    throw new Error(`fixNode is not supported with chosen storage engine`);
+                }
+                await this.api.storage.repairNode(path, options);
+            },
+        };
     }
 
     close() {
