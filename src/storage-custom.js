@@ -3,7 +3,8 @@ const { compareValues } = Utils;
 const { NodeInfo } = require('./node-info');
 const { NodeLocker } = require('./node-lock');
 const { VALUE_TYPES } = require('./node-value-types');
-const { Storage, StorageSettings, NodeNotFoundError, NodeRevisionError } = require('./storage');
+const { NodeNotFoundError, NodeRevisionError } = require('./node-errors');
+const { Storage, StorageSettings } = require('./storage');
 
 /** Interface for metadata being stored for nodes */
 class ICustomStorageNodeMetaData {
