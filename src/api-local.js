@@ -1,21 +1,25 @@
-const { Api, ID, PathInfo } = require('acebase-core');
-
+const { Api } = require('acebase-core');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
 const { MSSQLStorage, MSSQLStorageSettings } = require('./storage-mssql');
 const { CustomStorage, CustomStorageSettings } = require('./storage-custom');
 const { VALUE_TYPES } = require('./node-value-types');
-const { DataIndex } = require('./data-index');
 const { query: executeQuery } = require('./query');
+
+/**
+ * @typedef {import('./data-index').DataIndex} DataIndex
+ * @typedef {import('./storage').StorageSettings} StorageSettings
+ * @typedef {import('acebase-core').AceBaseBase} AceBaseBase
+ */
 
 class LocalApi extends Api {
     // All api methods for local database instance
-    
+
     /**
-     * 
-     * @param {{db: AceBase, storage: StorageSettings, logLevel?: string }} settings
+     *
+     * @param {{db: AceBaseBase, storage: StorageSettings, logLevel?: string }} settings
      */
-    constructor(dbname = "default", settings, readyCallback) {
+    constructor(dbname = 'default', settings, readyCallback) {
         super();
         this.db = settings.db;
 
@@ -41,7 +45,7 @@ class LocalApi extends Api {
             settings.storage = new AceBaseStorageSettings({ logLevel: settings.logLevel });
             this.storage = new AceBaseStorage(dbname, settings.storage);
         }
-        this.storage.on("ready", readyCallback);
+        this.storage.on('ready', readyCallback);
     }
 
     stats(options) {
@@ -58,8 +62,8 @@ class LocalApi extends Api {
 
     /**
      * Creates a new node or overwrites an existing node
-     * @param {Storage} storage 
-     * @param {string} path 
+     * @param {Storage} storage
+     * @param {string} path
      * @param {any} value Any value will do. If the value is small enough to be stored in a parent record, it will take care of it
      * @param {object} [options]
      * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
@@ -73,14 +77,13 @@ class LocalApi extends Api {
 
     /**
      * Updates an existing node, or creates a new node.
-     * @param {Storage} storage 
-     * @param {string} path 
+     * @param {string} path
      * @param {any} updates
      * @param {object} [options]
      * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
      * @param {any} [options.context=null] Context to be passed along with data events
      * @returns {Promise<{ cursor?: string }>} returns a promise with the new cursor (if transaction logging is enabled)
-     */    
+     */
     async update(path, updates, options = { suppress_events: false, context: null }) {
         const cursor = await this.storage.updateNode(path, updates, { suppress_events: options.suppress_events, context: options.context });
         return { cursor };
@@ -92,27 +95,26 @@ class LocalApi extends Api {
 
     /**
      * Gets the value of a node
-     * @param {Storage} storage 
-     * @param {string} path 
+     * @param {string} path
      * @param {object} [options] when omitted retrieves all nested data. If include is set to an array of keys it will only return those children. If exclude is set to an array of keys, those values will not be included
      * @param {string[]} [options.include] keys to include
      * @param {string[]} [options.exclude] keys to exclude
      * @param {boolean} [options.child_objects=true] whether to include child objects
      * @returns {Promise<{ value: any, context: any, cursor?: string }>}
-     */    
+     */
     async get(path, options) {
         // const context = {};
         // if (this.transactionLoggingEnabled) {
         //     context.acebase_cursor = ID.generate();
         // }
         if (!options) { options = {}; }
-        if (typeof options.include !== "undefined" && !(options.include instanceof Array)) {
+        if (typeof options.include !== 'undefined' && !(options.include instanceof Array)) {
             throw new TypeError(`options.include must be an array of key names`);
         }
-        if (typeof options.exclude !== "undefined" && !(options.exclude instanceof Array)) {
+        if (typeof options.exclude !== 'undefined' && !(options.exclude instanceof Array)) {
             throw new TypeError(`options.exclude must be an array of key names`);
         }
-        if (["undefined","boolean"].indexOf(typeof options.child_objects) < 0) {
+        if (['undefined','boolean'].indexOf(typeof options.child_objects) < 0) {
             throw new TypeError(`options.child_objects must be a boolean`);
         }
         const node = await this.storage.getNode(path, options);
@@ -121,10 +123,9 @@ class LocalApi extends Api {
 
     /**
      * Performs a transaction on a Node
-     * @param {Storage} storage 
-     * @param {string} path 
+     * @param {string} path
      * @param {(currentValue: any) => Promise<any>} callback callback is called with the current value. The returned value (or promise) will be used as the new value. When the callbacks returns undefined, the transaction will be canceled. When callback returns null, the node will be removed.
-     * @param {any} [options]
+     * @param {object} [options]
      * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
      * @param {any} [options.context=null]
      * @returns {Promise<{ cursor?: string }>} returns a promise with the new cursor (if transaction logging is enabled)
@@ -141,7 +142,7 @@ class LocalApi extends Api {
 
     // query2(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined }) {
     //     /*
-        
+
     //     Now that we're using indexes to filter data and order upon, each query requires a different strategy
     //     to get the results the quickest.
 
@@ -153,7 +154,7 @@ class LocalApi extends Api {
     //     - which indexes can be used for filtering
     //     - which indexes can be used for sorting
     //     - is take/skip used to limit the result set
-        
+
     //     Strategy stage:
     //     - chain index filtering
     //     - ....
@@ -163,9 +164,9 @@ class LocalApi extends Api {
     // }
 
     /**
-     * 
-     * @param {string} path 
-     * @param {object} query 
+     *
+     * @param {string} path
+     * @param {object} query
      * @param {Array<{ key: string, op: string, compare: any}>} query.filters
      * @param {number} query.skip number of results to skip, useful for paging
      * @param {number} query.take max number of results to return
@@ -207,8 +208,8 @@ class LocalApi extends Api {
 
     /**
      * Deletes an existing index from the database
-     * @param {string} filePath 
-     * @returns 
+     * @param {string} filePath
+     * @returns
      */
     async deleteIndex(filePath) {
         return this.storage.indexes.delete(filePath);
@@ -221,40 +222,40 @@ class LocalApi extends Api {
             if (typeof skip === 'string') { skip = parseInt(skip); }
             if (['null','undefined'].includes(from)) { from = null; }
             const children = [];
-            let n = 0, stop = false, more = false; //stop = skip + limit, 
+            let n = 0, stop = false, more = false; //stop = skip + limit,
             await this.storage.getChildren(path)
-            .next(childInfo => {
-                if (stop) {
-                    // Stop 1 child too late on purpose to make sure there's more
-                    more = true;
-                    return false; // Stop iterating
-                }
-                n++;
-                const include = from !== null ? childInfo.key > from : skip === 0 || n > skip;
-                if (include) {
-                    children.push({
-                        key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index,
-                        type: childInfo.valueTypeName,
-                        value: childInfo.value,
-                        // address is now only added when storage is acebase. Not when eg sqlite, mssql
-                        address: typeof childInfo.address === 'object' && 'pageNr' in childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined
-                    });
-                }
-                stop = limit > 0 && children.length === limit; // flag, but don't stop now. Otherwise we won't know if there's more
-            })
-            .catch(err => {
-                // Node doesn't exist? No children..
-            });
+                .next(childInfo => {
+                    if (stop) {
+                        // Stop 1 child too late on purpose to make sure there's more
+                        more = true;
+                        return false; // Stop iterating
+                    }
+                    n++;
+                    const include = from !== null ? childInfo.key > from : skip === 0 || n > skip;
+                    if (include) {
+                        children.push({
+                            key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index,
+                            type: childInfo.valueTypeName,
+                            value: childInfo.value,
+                            // address is now only added when storage is acebase. Not when eg sqlite, mssql
+                            address: typeof childInfo.address === 'object' && 'pageNr' in childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined,
+                        });
+                    }
+                    stop = limit > 0 && children.length === limit; // flag, but don't stop now. Otherwise we won't know if there's more
+                })
+                .catch(err => {
+                    // Node doesn't exist? No children..
+                });
             return {
                 more,
-                list: children
+                list: children,
             };
-        }
+        };
         switch(type) {
-            case "children": {
+            case 'children': {
                 return getChildren(path, args.limit, args.skip, args.from);
             }
-            case "info": {
+            case 'info': {
                 const info = {
                     key: '',
                     exists: false,
@@ -263,8 +264,8 @@ class LocalApi extends Api {
                     children: {
                         count: 0,
                         more: false,
-                        list: []
-                    }
+                        list: [],
+                    },
                 };
                 const nodeInfo = await this.storage.getNodeInfo(path, { include_child_count: args.child_count === true });
                 info.key = typeof nodeInfo.key !== 'undefined' ? nodeInfo.key : nodeInfo.index;
@@ -295,15 +296,15 @@ class LocalApi extends Api {
         return this.storage.importNode(path, read, options);
     }
 
-    async setSchema(path, schema) { 
+    async setSchema(path, schema) {
         return this.storage.setSchema(path, schema);
     }
 
-    async getSchema(path) { 
+    async getSchema(path) {
         return this.storage.getSchema(path);
     }
 
-    async getSchemas() { 
+    async getSchemas() {
         return this.storage.getSchemas();
     }
 
