@@ -1,0 +1,11 @@
+# Exclude dev files from npm package
+src/ts
+src/**/*.js.map
+src/**/*.d.ts
+spec
+.eslintrc*.*
+tsconfig*.*
+img
+.github
+.vscode
+*.acebase
