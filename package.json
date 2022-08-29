@@ -67,7 +67,7 @@
   "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
   "license": "MIT",
   "dependencies": {
-    "acebase-core": "^1.19.0",
+    "acebase-core": "^1.21.0",
     "unidecode": "^0.1.8"
   },
   "devDependencies": {
