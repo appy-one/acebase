@@ -3941,27 +3941,18 @@ class SimpleEventEmitter {
         return this;
     }
     once(event, callback) {
-        let resolve;
-        const promise = new Promise(rs => {
-            if (!callback) {
-                // No callback used, promise only
-                resolve = rs;
+        return new Promise(resolve => {
+            const ourCallback = (data) => {
+                resolve(data);
+                callback === null || callback === void 0 ? void 0 : callback(data);
+            };
+            if (this._oneTimeEvents.has(event)) {
+                runCallback(ourCallback, this._oneTimeEvents.get(event));
             }
             else {
-                // Callback used, maybe also returned promise
-                resolve = (data) => {
-                    rs(data); // resolve promise
-                    callback(data); // trigger callback
-                };
+                this._subscriptions.push({ event, callback: ourCallback, once: true });
             }
         });
-        if (this._oneTimeEvents.has(event)) {
-            runCallback(resolve, this._oneTimeEvents.get(event));
-        }
-        else {
-            this._subscriptions.push({ event, callback: resolve, once: true });
-        }
-        return promise;
     }
     emit(event, data) {
         if (this._oneTimeEvents.has(event)) {
@@ -3972,12 +3963,7 @@ class SimpleEventEmitter {
             if (s.event !== event) {
                 continue;
             }
-            try {
-                s.callback(data);
-            }
-            catch (err) {
-                console.error('Error in subscription callback', err);
-            }
+            runCallback(s.callback, data);
             if (s.once) {
                 this._subscriptions.splice(i, 1);
                 i--;
