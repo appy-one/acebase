@@ -2,9 +2,9 @@ import * as acebasecore from 'acebase-core';
 
 export class AceBase extends acebasecore.AceBaseBase {
     /**
-     * 
+     *
      * @param {string} dbname | Name of the database to open or create
-     * @param {AceBaseLocalSettings} options | 
+     * @param {AceBaseLocalSettings} options |
      */
     constructor(dbname: string, options?: AceBaseLocalSettings);
 
@@ -16,11 +16,11 @@ export class AceBase extends acebasecore.AceBaseBase {
     ready(callback?: () => void): Promise<void>;
 
     /**
-     * Closes the database 
+     * Closes the database
      */
     close(): Promise<void>;
 
-    /** 
+    /**
      * Only available in browser context - Creates an AceBase database instance using IndexedDB as storage engine. Creates a dedicated IndexedDB instance.
      * @param dbname Name of the database
      * @param settings optional settings
@@ -47,7 +47,7 @@ export class AceBase extends acebasecore.AceBaseBase {
      * @param settings.multipleTabs Whether to enable cross-tab synchronization
      * @param settings.lockTimeout timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
      * @param settings.sponsor You can turn this on if you are a sponsor. See https://github.com/appy-one/acebase/discussions/100 for more info
-     */    
+     */
     static WithLocalStorage(dbname: string, settings: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean, provider?: any, removeVoidProperties?: boolean, maxInlineValueSize?: number, multipleTabs?: boolean, lockTimeout?: number, sponsor?: boolean }): AceBase
 }
 
@@ -93,12 +93,12 @@ export interface IPCClientSettings {
 
 /**
  * BETA functionality - logs mutations made to a separate database file so they can be retrieved later
- * for database syncing / replication. Implementing this into acebase itself will allow the current 
+ * for database syncing / replication. Implementing this into acebase itself will allow the current
  * sync implementation in acebase-client to become better: it can simply request a mutations stream from
  * the server after disconnects by passing a cursor or timestamp, instead of downloading whole nodes before
  * applying local changes. This will also enable horizontal scaling: replication with remote db instances
  * becomes possible.
- * 
+ *
  * Still under development, disabled by default. See transaction-logs.spec.js for tests
  */
 export abstract class TransactionLogSettings {
@@ -150,7 +150,7 @@ export class LocalStorageSettings extends StorageSettings {
 
 export interface ICustomStorageNodeMetaData {
     /** cuid (time sortable revision id). Nodes stored in the same operation share this id */
-    revision: string; 
+    revision: string;
     /** Number of revisions, starting with 1. Resets to 1 after deletion and recreation */
     revision_nr: number;
     /** Creation date/time in ms since epoch UTC */
@@ -179,11 +179,11 @@ export abstract class CustomStorageTransaction {
     abstract set(path: string, value: ICustomStorageNode): Promise<void>;
     /** Function that removes the node with given path from your custom data store */
     abstract remove(path: string): Promise<void>;
-    
-    /** 
-     * Function that streams all stored nodes that are direct children of the given path. For path "parent/path", results must include paths such as "parent/path/key" AND "parent/path[0]". 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false. 
+
+    /**
+     * Function that streams all stored nodes that are direct children of the given path. For path "parent/path", results must include paths such as "parent/path/key" AND "parent/path[0]". 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false.
      * @param path Parent path to load children of
-     * @param include 
+     * @param include
      * @param include.metadata Whether metadata needs to be loaded
      * @param include.value  Whether value needs to be loaded
      * @param checkCallback callback method to precheck if child needs to be added, perform before loading metadata/value if possible
@@ -191,11 +191,11 @@ export abstract class CustomStorageTransaction {
      * @returns Returns a promise that resolves when there are no more children to be streamed
      */
     abstract childrenOf(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (childPath: string) => boolean, addCallback: (childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean): Promise<any>;
-    
-    /** 
-     * Function that streams all stored nodes that are descendants of the given path. For path "parent/path", results must include paths such as "parent/path/key", "parent/path/key/subkey", "parent/path[0]", "parent/path[12]/key" etc. 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false. 
+
+    /**
+     * Function that streams all stored nodes that are descendants of the given path. For path "parent/path", results must include paths such as "parent/path/key", "parent/path/key/subkey", "parent/path[0]", "parent/path[12]/key" etc. 👉🏻 You can use CustomStorageHelpers for logic. Keep calling the add callback for each node until it returns false.
      * @param path Parent path to load descendants of
-     * @param include 
+     * @param include
      * @param include.metadata Whether metadata needs to be loaded
      * @param include.value  Whether value needs to be loaded
      * @param checkCallback callback method to precheck if descendant needs to be added, perform before loading metadata/value if possible. NOTE: if include.metadata === true, you should load and pass the metadata to the checkCallback if doing so has no or small performance impact
@@ -203,9 +203,9 @@ export abstract class CustomStorageTransaction {
      * @returns Returns a promise that resolves when there are no more descendants to be streamed
      */
     abstract descendantsOf(path: string, include: { value: boolean, metadata: boolean }, checkCallback: (descPath: string, metadata?: ICustomStorageNodeMetaData) => boolean, addCallback: (descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean): Promise<any>;
-    
+
     /**
-     * (optional) Returns the number of children stored in their own records. Default implementation uses `childrenOf` to count, override if storage supports a quicker way. 
+     * (optional) Returns the number of children stored in their own records. Default implementation uses `childrenOf` to count, override if storage supports a quicker way.
      * Eg: For SQL databases, you can implement this with a single query like `SELECT count(*) FROM nodes WHERE ${CustomStorageHelpers.ChildPathsSql(path)}`
      * @returns Returns a promise that resolves with the number of children
      */
@@ -283,29 +283,31 @@ export class CustomStorageHelpers {
      * pathInfo.childPath('child') === 'my/path/to/data/child';
      * pathInfo.childPath(0) === 'my/path/to/data[0]';
      */
-    static readonly PathInfo: typeof acebasecore.PathInfo
+    static readonly PathInfo: typeof acebasecore.PathInfo;
 }
 
 export class SchemaValidationError extends Error {
-    reason: string
+    reason: string;
 }
 
-export import DataSnapshot = acebasecore.DataSnapshot;
-export import DataReference = acebasecore.DataReference;
-export import DataSnapshotsArray = acebasecore.DataSnapshotsArray;
-export import DataReferencesArray = acebasecore.DataReferencesArray;
-export import EventStream = acebasecore.EventStream;
-export import EventSubscription = acebasecore.EventSubscription;
-export import PathReference = acebasecore.PathReference;
-export import TypeMappings = acebasecore.TypeMappings;
-export import TypeMappingOptions = acebasecore.TypeMappingOptions;
-export import IReflectionNodeInfo = acebasecore.IReflectionNodeInfo;
-export import IReflectionChildrenInfo = acebasecore.IReflectionChildrenInfo;
-export import IStreamLike = acebasecore.IStreamLike;
-export import ILiveDataProxy = acebasecore.ILiveDataProxy;
-export import ILiveDataProxyValue = acebasecore.ILiveDataProxyValue;
-export import IObjectCollection = acebasecore.IObjectCollection;
-export import ObjectCollection = acebasecore.ObjectCollection;
-export import ID = acebasecore.ID;
-export import proxyAccess = acebasecore.proxyAccess;
-export import PartialArray = acebasecore.PartialArray;
+export {
+    DataSnapshot,
+    DataReference,
+    DataSnapshotsArray,
+    DataReferencesArray,
+    EventStream,
+    EventSubscription,
+    PathReference,
+    TypeMappings,
+    TypeMappingOptions,
+    IReflectionNodeInfo,
+    IReflectionChildrenInfo,
+    IStreamLike,
+    ILiveDataProxy,
+    ILiveDataProxyValue,
+    IObjectCollection,
+    ObjectCollection,
+    ID,
+    proxyAccess,
+    PartialArray,
+} from 'acebase-core';
