@@ -289,7 +289,7 @@ export class DataIndex {
     }
 
     cache(op: string, param: unknown, results?: any) {
-        const val = JSON.stringify(param); // Make object and array params cachable too
+        const val = JSON.stringify(Transport.serialize2(param)); // Make object and array params cachable too
         if (typeof results === 'undefined') {
             // Get from cache
             let cache;
