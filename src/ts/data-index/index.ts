@@ -1078,7 +1078,7 @@ export class DataIndex {
         // let idx; // Once using binary file to write to
         const tid = ID.generate();
         const keys = PathInfo.getPathKeys(path);
-        const indexableTypes = [Node.VALUE_TYPES.STRING, Node.VALUE_TYPES.NUMBER, Node.VALUE_TYPES.BOOLEAN, Node.VALUE_TYPES.DATETIME];
+        const indexableTypes = [VALUE_TYPES.STRING, VALUE_TYPES.NUMBER, VALUE_TYPES.BOOLEAN, VALUE_TYPES.DATETIME, VALUE_TYPES.BIGINT];
         const allowedKeyValueTypes = options && options.valueTypes
             ? options.valueTypes
             : indexableTypes;
