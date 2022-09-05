@@ -1,6 +1,6 @@
 /// <reference types="@types/jasmine" />
-const { createTempDB } = require("./tempdb");
-const { AceBase, ID } = require("..");
+const { createTempDB } = require('./tempdb');
+const { AceBase, ID } = require('..');
 
 // TODO: MANY MORE index options to spec
 
@@ -42,12 +42,12 @@ describe('string index', () => {
                 class: m.recclass,
                 location: m.geolocation && m.geolocation.coordinates ? {
                     lat: m.geolocation.coordinates[1],
-                    long: m.geolocation.coordinates[0]
+                    long: m.geolocation.coordinates[0],
                 } : null,
                 meta: {
                     id: m.id,
-                    date: m.year ? new Date(m.year) : null
-                }
+                    date: m.year ? new Date(m.year) : null,
+                },
             };
         });
         await db.ref('meteorites').set(meteorites);
@@ -82,8 +82,8 @@ describe('string index', () => {
             class: 'Unknown',
             meta: {
                 id: 'bigrock',
-                date: new Date()
-            }
+                date: new Date(),
+            },
         });
 
         // Query BigRock
@@ -97,11 +97,11 @@ describe('string index', () => {
     it('path can start with wildcard', async () => {
         // Created for issue https://github.com/appy-one/acebase/issues/86
 
-        await db.indexes.create("*/media", "timestamp");
+        await db.indexes.create('*/media', 'timestamp');
 
-        const postSnapshots = await db.query("*/media")
+        const postSnapshots = await db.query('*/media')
             .take(100)
-            .sort("timestamp", false)
+            .sort('timestamp', false)
             .get();
 
     }, 60000);
@@ -119,15 +119,15 @@ describe('string index', () => {
             .on('hints', ev => hints.push(ev))
             .get({ });
 
-        expect(snaps.length).toEqual(1); 
-        // Check triggered events 
+        expect(snaps.length).toEqual(1);
+        // Check triggered events
         expect(hints.length).toEqual(0); // No hints because the query should have used the index
         expect(stats.length).toEqual(1); // 1 stats event for the used index
-        expect(stats[0].type === 'index_query'); 
-        expect(stats[0].source).toEqual('/meteorites/*/name'); 
+        expect(stats[0].type === 'index_query');
+        expect(stats[0].source).toEqual('/meteorites/*/name');
         expect(stats[0].stats.result).toEqual(snaps.length);
         // Check query performance. NOTE: with all other tests running at the same time (in the same 1 thread), this could possibly fail!
-        expect(stats[0].stats.duration).toBeLessThan(100); 
+        expect(stats[0].stats.duration).toBeLessThan(100);
 
         // Query with 'like'
         stats = [], hints = [];
@@ -165,7 +165,7 @@ describe('Date index', () => {
     let db, removeDB;
 
     beforeAll(async () => {
-        ({ db, removeDB } = await createTempDB({ config: (options) => { options.logLevel = 'warn' }}));
+        ({ db, removeDB } = await createTempDB({ config: (options) => { options.logLevel = 'warn'; }}));
     });
 
     it('is built properly', async () => {
@@ -181,15 +181,15 @@ describe('Date index', () => {
         }
         await db.ref('dates').set(collection);
 
-        console.log('[indexing issue #114] Creating index..'); 
+        console.log('[indexing issue #114] Creating index..');
 
         // Create index
         await db.indexes.create('dates', 'date');
 
-        console.log('[indexing issue #114] Success!'); 
+        console.log('[indexing issue #114] Success!');
 
         // Test index by querying it
-        console.log('[indexing issue #117] Checking index'); 
+        console.log('[indexing issue #117] Checking index');
 
         const count = await db.query('dates').filter('date', '<', new Date(MS_PER_DAY * 100)).count();
         expect(count).toBe(100);
