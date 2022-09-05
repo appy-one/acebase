@@ -3,14 +3,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.GeoIndex = exports.FullTextIndex = exports.ArrayIndex = exports.IndexQueryResults = exports.IndexQueryResult = exports.DataIndex = void 0;
 const acebase_core_1 = require("acebase-core");
 const unidecode_1 = require("unidecode");
-const node_1 = require("../node");
 const btree_1 = require("../btree");
 const Geohash = require("../geohash");
 const promise_fs_1 = require("../promise-fs");
 const thread_safe_1 = require("../thread-safe");
 const node_value_types_1 = require("../node-value-types");
 const quicksort_1 = require("../quicksort");
-const { compareValues, getChildValues, numberToBytes, bigintToBytes, bytesToNumber, bytesToBigint, encodeString, decodeString } = acebase_core_1.Utils;
+const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = acebase_core_1.Utils;
 const DISK_BLOCK_SIZE = 4096; // use 512 for older disks
 const FILL_FACTOR = 50; // leave room for inserts
 const INDEX_INFO_VALUE_TYPE = {
@@ -173,7 +172,7 @@ class DataIndex {
         };
     }
     cache(op, param, results) {
-        const val = JSON.stringify(param); // Make object and array params cachable too
+        const val = JSON.stringify(acebase_core_1.Transport.serialize2(param)); // Make object and array params cachable too
         if (typeof results === 'undefined') {
             // Get from cache
             let cache;
@@ -894,7 +893,7 @@ class DataIndex {
         // let idx; // Once using binary file to write to
         const tid = acebase_core_1.ID.generate();
         const keys = acebase_core_1.PathInfo.getPathKeys(path);
-        const indexableTypes = [node_1.Node.VALUE_TYPES.STRING, node_1.Node.VALUE_TYPES.NUMBER, node_1.Node.VALUE_TYPES.BOOLEAN, node_1.Node.VALUE_TYPES.DATETIME];
+        const indexableTypes = [node_value_types_1.VALUE_TYPES.STRING, node_value_types_1.VALUE_TYPES.NUMBER, node_value_types_1.VALUE_TYPES.BOOLEAN, node_value_types_1.VALUE_TYPES.DATETIME, node_value_types_1.VALUE_TYPES.BIGINT];
         const allowedKeyValueTypes = options && options.valueTypes
             ? options.valueTypes
             : indexableTypes;
@@ -987,7 +986,7 @@ class DataIndex {
                         try {
                             await this.storage.getChildren(path).next(child => {
                                 const keyOrIndex = typeof child.index === 'number' ? child.index : child.key;
-                                if (!child.address || child.type !== node_1.Node.VALUE_TYPES.OBJECT) {
+                                if (!child.address || child.type !== node_value_types_1.VALUE_TYPES.OBJECT) {
                                     return; // This child cannot be indexed because it is not an object with properties
                                 }
                                 else {
@@ -2147,7 +2146,7 @@ class ArrayIndex extends DataIndex {
                 });
                 return array;
             },
-            valueTypes: [node_1.Node.VALUE_TYPES.ARRAY],
+            valueTypes: [node_value_types_1.VALUE_TYPES.ARRAY],
         });
     }
     static get validOperators() {
@@ -2733,7 +2732,7 @@ class FullTextIndex extends DataIndex {
                 });
                 return textInfo.toArray(); //words.map(info => info.word);
             },
-            valueTypes: [node_1.Node.VALUE_TYPES.STRING],
+            valueTypes: [node_value_types_1.VALUE_TYPES.STRING],
         });
     }
     static get validOperators() {
@@ -3309,7 +3308,7 @@ class GeoIndex extends DataIndex {
                 add(geohash, recordPointer, metadata);
                 return geohash;
             },
-            valueTypes: [node_1.Node.VALUE_TYPES.OBJECT],
+            valueTypes: [node_value_types_1.VALUE_TYPES.OBJECT],
         });
     }
     static get validOperators() {
