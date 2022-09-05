@@ -827,8 +827,16 @@ export class DataIndex {
         return result.valueCount;
     }
 
-    async take(skip: number, take: number, ascending: boolean) {
-        const cacheKey = `${skip}+${take}-${ascending ? 'asc' : 'desc'}`;
+    async take(skip: number, take: number, options: Partial<{ ascending: boolean; metadataSort: Array<{ key: string; ascending: boolean; }> }> = {}) {
+        const ascending = options.ascending !== false;
+        const sort = options.metadataSort?.length > 0 ? options.metadataSort : [];
+        sort.forEach(s => {
+            if (!this.allMetadataKeys.includes(s.key)) {
+                throw new Error(`Cannot sort on metadata key ${s.key} because it is not present in index ${this.fileName}`);
+            }
+        });
+
+        const cacheKey = JSON.stringify({ skip, take, options });
         const cache = this.cache('take', cacheKey);
         if (cache) {
             return cache;
@@ -845,7 +853,27 @@ export class DataIndex {
             for (let i = 0; i < leaf.entries.length; i++) {
                 const entry = leaf.entries[i];
                 const value = entry.key;
-                for (let j = 0; j < entry.totalValues; j++) { //entry.values.length
+                if (sort.length > 0 && entry.totalValues > 1 && skipped + entry.totalValues > skip) {
+                    // Sort values on given metadata first
+                    if (leaf.hasExtData && !leaf.extData.loaded) {
+                        await leaf.extData.load();
+                    }
+                    const applySort = (index: number, a: typeof entry.values[0], b: typeof entry.values[0]): number => {
+                        const { key, ascending } = sort[index];
+                        if (a.metadata[key] < b.metadata[key]) {
+                            return ascending ? -1 : 1;
+                        }
+                        else if (a.metadata[key] > b.metadata[key]) {
+                            return ascending ? 1 : -1;
+                        }
+                        else if (index + 1 === sort.length) {
+                            return 1;
+                        }
+                        return applySort(index + 1, a, b);
+                    };
+                    entry.values.sort((a, b) => applySort(0, a, b));
+                }
+                for (let j = 0; j < entry.totalValues; j++) {
                     if (skipped < skip) {
                         skipped++;
                         continue;
