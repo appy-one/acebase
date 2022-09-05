@@ -426,9 +426,13 @@ export function query(
     if (querySort.length > 0 && querySort[0].index) {
         const sortIndex = querySort[0].index;
         const ascending = query.take < 0 ? !querySort[0].ascending : querySort[0].ascending;
-        if (queryFilters.length === 0) {
+        if (queryFilters.length === 0 && querySort.slice(1).every(s => sortIndex.allMetadataKeys.includes(s.key))) {
             api.storage.debug.log(`Using index for sorting: ${sortIndex.description}`);
-            const promise = sortIndex.take(query.skip, Math.abs(query.take), ascending)
+            const metadataSort = querySort.slice(1).map(s => {
+                s.index = sortIndex; // Assign index to skip later processing of this sort operation
+                return { key: s.key, ascending: s.ascending };
+            });
+            const promise = sortIndex.take(query.skip, Math.abs(query.take), { ascending, metadataSort })
                 .then(results => {
                     options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
                     if (results.hints.length > 0) {

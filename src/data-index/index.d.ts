@@ -96,7 +96,13 @@ export declare class DataIndex {
     handleRecordUpdate(path: string, oldValue: unknown, newValue: unknown, indexMetadata?: IndexMetaData): Promise<void>;
     _lock(mode?: string, timeout?: number): Promise<import("../thread-safe").ThreadSafeLock>;
     count(op: string, val: IndexableValueOrArray): Promise<any>;
-    take(skip: number, take: number, ascending: boolean): Promise<any>;
+    take(skip: number, take: number, options?: Partial<{
+        ascending: boolean;
+        metadataSort: Array<{
+            key: string;
+            ascending: boolean;
+        }>;
+    }>): Promise<any>;
     static get validOperators(): string[];
     get validOperators(): string[];
     query(op: BlacklistingSearchOperator): Promise<IndexQueryResults>;
