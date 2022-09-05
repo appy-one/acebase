@@ -104,7 +104,7 @@ describe('Query', () => {
         }
     });
 
-    it('is live', async() => {
+    it('is live', async () => {
         // Code based on realtime query example in README.md
         const wait = async (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -511,4 +511,56 @@ describe('Query with array/contains #135', () => {
         await test();
 
     }, 60 * 60 * 1000);
+});
+
+describe('Query on indexed BigInts #141', () => {
+    // Created for https://github.com/appy-one/acebase/issues/141
+
+    /** @type {AceBase} */
+    let db;
+    /** @type {{(): Promise<void>}} */
+    let removeDB;
+
+    /** @type {DataReference} */
+    let moviesRef;
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+        moviesRef = db.ref('movies');
+
+        const movies = require('./dataset/movies.json').map(movie => {
+            return {
+                title: movie.title,
+                rating: movie.rating,
+                year: movie.year,
+                votes: BigInt(movie.votes),
+            };
+        });
+        await moviesRef.set(ObjectCollection.from(movies));
+        await db.indexes.create('movies', 'votes');
+    });
+
+    afterAll(async () => {
+        await removeDB();
+    });
+
+    it('filter on BigInt', async () => {
+        let query = moviesRef.query().filter('votes', '>', BigInt(1_500_000));
+        let snaps = await query.get();
+        expect(snaps.length).toEqual(5);
+
+        // Try again, now with cached results
+        snaps = await query.get();
+        expect(snaps.length).toEqual(5);
+    }, 60e3);
+
+    it('filter on number', async () => {
+        let query = moviesRef.query().filter('year', '>', BigInt(1995));
+        let snaps = await query.get();
+        expect(snaps.length).toEqual(8);
+
+        // Try again, now with cached results
+        snaps = await query.get();
+        expect(snaps.length).toEqual(8);
+    }, 60e3);
 });

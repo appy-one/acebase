@@ -1,19 +1,18 @@
-import { PathInfo, Utils, ID, ColorStyle } from 'acebase-core';
+import { PathInfo, Utils, ID, ColorStyle, Transport } from 'acebase-core';
 import unidecode from 'unidecode';
 import type { Storage } from '../storage';
-import { Node } from '../node';
 import { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryBPlusTreeLeaf, BinaryBPlusTreeLeafEntry, BinaryWriter, BinaryReader, BlacklistingSearchOperator } from '../btree';
 import * as Geohash from '../geohash';
 import { pfs } from '../promise-fs';
 import { ThreadSafe } from '../thread-safe';
-import { getValueType }  from '../node-value-types';
+import { getValueType, VALUE_TYPES }  from '../node-value-types';
 import quickSort from '../quicksort';
 import { NodeEntryKeyType } from '../btree/entry-key-type';
 import { LeafEntryRecordPointer } from '../btree/leaf-entry-recordpointer';
 import { LeafEntryMetaData } from '../btree/leaf-entry-metadata';
 import { BinaryBPlusTreeTransactionOperation } from '../btree/binary-tree-transaction-operation';
 import { BPlusTreeLeafEntryValue } from '../btree/tree-leaf-entry-value';
-const { compareValues, getChildValues, numberToBytes, bigintToBytes, bytesToNumber, bytesToBigint, encodeString, decodeString } = Utils;
+const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
 
 type FileSystemError = Error & { code: string };
 
@@ -289,7 +288,7 @@ export class DataIndex {
     }
 
     cache(op: string, param: unknown, results?: any) {
-        const val = JSON.stringify(param); // Make object and array params cachable too
+        const val = JSON.stringify(Transport.serialize2(param)); // Make object and array params cachable too
         if (typeof results === 'undefined') {
             // Get from cache
             let cache;
@@ -1078,7 +1077,7 @@ export class DataIndex {
         // let idx; // Once using binary file to write to
         const tid = ID.generate();
         const keys = PathInfo.getPathKeys(path);
-        const indexableTypes = [Node.VALUE_TYPES.STRING, Node.VALUE_TYPES.NUMBER, Node.VALUE_TYPES.BOOLEAN, Node.VALUE_TYPES.DATETIME];
+        const indexableTypes = [VALUE_TYPES.STRING, VALUE_TYPES.NUMBER, VALUE_TYPES.BOOLEAN, VALUE_TYPES.DATETIME, VALUE_TYPES.BIGINT];
         const allowedKeyValueTypes = options && options.valueTypes
             ? options.valueTypes
             : indexableTypes;
@@ -1176,7 +1175,7 @@ export class DataIndex {
                         try {
                             await this.storage.getChildren(path).next(child => {
                                 const keyOrIndex = typeof child.index === 'number' ? child.index : child.key;
-                                if (!child.address || child.type !== Node.VALUE_TYPES.OBJECT) {
+                                if (!child.address || child.type !== VALUE_TYPES.OBJECT) {
                                     return; // This child cannot be indexed because it is not an object with properties
                                 }
                                 else {
@@ -2430,7 +2429,7 @@ export class ArrayIndex extends DataIndex {
                 });
                 return array;
             },
-            valueTypes: [Node.VALUE_TYPES.ARRAY],
+            valueTypes: [VALUE_TYPES.ARRAY],
         });
     }
 
@@ -3200,7 +3199,7 @@ export class FullTextIndex extends DataIndex {
                 });
                 return textInfo.toArray(); //words.map(info => info.word);
             },
-            valueTypes: [Node.VALUE_TYPES.STRING],
+            valueTypes: [VALUE_TYPES.STRING],
         });
     }
 
@@ -3794,7 +3793,7 @@ export class GeoIndex extends DataIndex {
                 add(geohash, recordPointer, metadata);
                 return geohash;
             },
-            valueTypes: [Node.VALUE_TYPES.OBJECT],
+            valueTypes: [VALUE_TYPES.OBJECT],
         });
     }
 
