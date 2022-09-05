@@ -278,8 +278,10 @@ describe('Query with take/skip', () => {
 
 });
 
-describe('Query with take/skip #120', () => {
-    // Based on https://github.com/appy-one/acebase/issues/120
+describe('Query with take/skip multiple sorts', () => {
+    // Based on the test created for issue #120 (see below)
+    // This test performs an index take/skip with a sort on multiple fields (included in the index),
+    // which is a new feature added in v1.24.0
 
     /** @type {AceBase} */
     let db;
@@ -299,7 +301,7 @@ describe('Query with take/skip #120', () => {
 
         // Create indexed collection
         await db.ref('indexed_movies').set(collection);
-        await db.indexes.create('indexed_movies', 'year');
+        await db.indexes.create('indexed_movies', 'year', { include: ['title'] });
     }, 60e3);
 
     afterAll(async () => {
@@ -308,17 +310,76 @@ describe('Query with take/skip #120', () => {
 
     it('skip unindexed', async () => {
         const skip = 10, take = 5;
-        const query = db.query('movies').sort('year', false).take(take).skip(skip);
+        const query = db.query('movies')
+            .sort('year', false)
+            .sort('title')
+            .take(take)
+            .skip(skip);
         const results = await query.get(); //({ include: ['id', 'title', 'year'] })
-        const check = movies.sort((a, b) => b.year - a.year).slice(skip, skip + take);
+        const check = movies.sort((a, b) => b.year === a.year ? a.title < b.title ? -1 : 1 : b.year - a.year).slice(skip, skip + take);
         expect(results.getValues()).toEqual(check);
     });
 
     it('skip indexed', async () => {
         const skip = 10, take = 5;
-        const query = db.query('indexed_movies').sort('year', false).take(take).skip(skip);
+        const query = db.query('indexed_movies')
+            .sort('year', false)
+            .sort('title')
+            .take(take)
+            .skip(skip);
         const results = await query.get(); //({ include: ['id', 'title', 'year'] })
-        const check = movies.sort((a, b) => b.year - a.year).slice(skip, skip + take);
+        const check = movies.sort((a, b) => b.year === a.year ? a.title < b.title ? -1 : 1 : b.year - a.year).slice(skip, skip + take);
+        expect(results.getValues()).toEqual(check);
+    }, 30e6);
+
+});
+
+describe('Query with take/skip #120', () => {
+    // Based on https://github.com/appy-one/acebase/issues/120
+    // This test occasionally failed because the indexed field 'year' was not unique:
+    // performing a take/skip on either indexed or non-indexed data did not always return
+    // the same results, simply because there was no second sort to guarantee a consistent
+    // sort order. This test now uses the 'votes' field, which is unique in the currently
+    // used (movies) dataset
+
+    /** @type {AceBase} */
+    let db;
+    /** @type {{(): Promise<void>}} */
+    let removeDB;
+    /** @type Array<{ id: string; title: string; votes: number }> */
+    let movies;
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+
+        movies = require('./dataset/movies.json');
+        const collection = ObjectCollection.from(movies);
+
+        // Create unindexed collection
+        await db.ref('movies').set(collection);
+
+        // Create indexed collection
+        await db.ref('indexed_movies').set(collection);
+        await db.indexes.create('indexed_movies', 'votes');
+    }, 60e3);
+
+    afterAll(async () => {
+        await removeDB();
+    });
+
+    it('skip unindexed', async () => {
+        const skip = 10, take = 5;
+        const query = db.query('movies').sort('votes', false).take(take).skip(skip);
+        const results = await query.get(); //({ include: ['id', 'title', 'year'] })
+        const check = movies.sort((a, b) => b.votes - a.votes).slice(skip, skip + take);
+        expect(results.getValues()).toEqual(check);
+    });
+
+    it('skip indexed', async () => {
+        const skip = 10, take = 5;
+        const query = db.query('indexed_movies').sort('votes', false).take(take).skip(skip);
+        const results = await query.get(); //({ include: ['id', 'title', 'year'] })
+        const check = movies.sort((a, b) => b.votes - a.votes).slice(skip, skip + take);
         expect(results.getValues()).toEqual(check);
     });
 
