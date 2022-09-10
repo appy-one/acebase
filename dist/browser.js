@@ -241,8 +241,8 @@ function c(input, length, result) {
         else {
             for (let j = 0; j < 5; b[j++] = n % 85 + 33, n = Math.floor(n / 85))
                 ;
+            result.push(String.fromCharCode(b[4], b[3], b[2], b[1], b[0]));
         }
-        result.push(String.fromCharCode(b[4], b[3], b[2], b[1], b[0]));
     }
 }
 function encode(arr) {
