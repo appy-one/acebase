@@ -625,3 +625,78 @@ describe('Query on indexed BigInts #141', () => {
         expect(snaps.length).toEqual(8);
     }, 60e3);
 });
+
+fdescribe('Query index bigint', () => {
+    /** @type {AceBase} */
+    let db;
+    let ref;
+    /** @type {{(): Promise<void>}} */
+    let removeDB;
+    /** @type Array<{ id: string; title: string; year: number }> */
+    let movies;
+
+    afterAll(async () => {
+        await removeDB();
+    });
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+
+        movies = [{
+            id: 'tt0111161',
+            title: 'The Shawshank Redemption',
+            year: 1994,
+            description: 'Two imprisoned men bond over a number of years, finding solace and eventual redemption through acts of common decency.',
+            genres: ['crime', 'drama'],
+            rating: 9.3,
+            votes: 1951324,
+            popularity: 114,
+            aBigIntValue: BigInt(114),
+        },
+        {
+            id: 'tt0068646',
+            title: 'TheGodfather',
+            year: 1972,
+            description: 'The aging patriarch of an organized crime dynasty transfers control of his clandestine empire to his reluctant son.',
+            genres: ['crime', 'drama'],
+            rating: 9.2,
+            votes: 1335641,
+            popularity: 123,
+            aBigIntValue: BigInt(123),
+        },
+        {
+            id: 'tt0068648',
+            title: 'TheGodfather',
+            year: 1972,
+            description: 'The aging patriarch of an organized crime dynasty transfers control of his clandestine empire to his reluctant son.',
+            genres: ['crime', 'drama'],
+            rating: 9.2,
+            votes: 1335641,
+            popularity: 123,
+            aBigIntValue: BigInt(150),
+        }];
+        const collection = ObjectCollection.from(movies);
+
+        // Create collection
+        ref = db.ref('movies');
+        await ref.set(collection);
+
+        // Create indexes
+        await db.indexes.create('movies', 'aBigIntValue');
+    });
+
+    it('test', async () => {
+        // Query movies: filter by title, order by year (desc), take 10
+        const query = ref.query();
+        query.filter('aBigIntValue', '>', BigInt(116));
+        query.filter('title', 'in', ['TheGodfather']);
+        query.sort('year', false);
+
+        const snaps = await query.get();
+        const totalResults = await query.take(1000000).count();
+
+        const results = snaps.getValues();
+        expect(results).toEqual([movies[1], movies[2]]);
+        expect(totalResults).toEqual(2);
+    }, 60 * 60 * 1000);
+});
