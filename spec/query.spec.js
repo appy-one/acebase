@@ -667,8 +667,8 @@ fdescribe('Query index bigint', () => {
         {
             id: 'tt0068648',
             title: 'TheGodfather',
-            year: 1972,
-            description: 'The aging patriarch of an organized crime dynasty transfers control of his clandestine empire to his reluctant son.',
+            year: 2001,
+            description: 'another desc.',
             genres: ['crime', 'drama'],
             rating: 9.2,
             votes: 1335641,
