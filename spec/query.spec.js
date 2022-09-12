@@ -28,6 +28,9 @@ describe('Query', () => {
         }, {
             query: moviesRef.query().filter('genres', 'contains', ['action']),
             expect: movies.filter(movie => movie.genres.includes('action')),
+        }, {
+            query: moviesRef.query().filter('year', 'in', [1994, 1995]),
+            expect: movies.filter(movie => [1994, 1995].includes(movie.year)),
         });
     });
 
