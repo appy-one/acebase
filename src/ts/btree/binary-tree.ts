@@ -1662,7 +1662,7 @@ export class BinaryBPlusTree {
         }
 
         // Get lowerbound
-        const firstLeaf = await this._getLastLeaf();
+        const firstLeaf = await this._getFirstLeaf();
         const firstEntry = firstLeaf.entries[0];
         const firstKey = firstEntry.key;
 
