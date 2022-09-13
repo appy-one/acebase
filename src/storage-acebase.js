@@ -1985,6 +1985,7 @@ class AceBaseStorage extends Storage {
             const write = async () => {
                 if (merge) {
                     // Node exists already, is stored in its own record, and it must be updated (merged)
+                    // TODO: pass current value along if we have it - to prevent _mergeNode loading it again!
                     return await _mergeNode(this, nodeInfo, value, lock);
                 }
                 else {
@@ -3585,7 +3586,7 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
                         await pfs.write(fd, data, 0, data.length, index);
                         bytesWritten += data.length;
                     });
-                    await tree.rebuild(writer, { reserveSpaceForNewEntries: changes.inserts.length - changes.deletes.length });
+                    await tree.rebuild(writer, { reserveSpaceForNewEntries: changes.inserts.length - changes.deletes.length }); // TODO: update changes with already processed!
 
                     // Now write the record with data read from the temp file
                     let readOffset = 0;
