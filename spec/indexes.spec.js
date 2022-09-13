@@ -1,6 +1,7 @@
 /// <reference types="@types/jasmine" />
 const { createTempDB } = require('./tempdb');
 const { AceBase, ID } = require('..');
+const { ObjectCollection } = require('acebase-core');
 
 // TODO: MANY MORE index options to spec
 
@@ -181,6 +182,9 @@ describe('Date index', () => {
         }
         await db.ref('dates').set(collection);
 
+        let count = await db.ref('dates').count();
+        expect(count).toBe(10000);
+
         console.log('[indexing issue #114] Creating index..');
 
         // Create index
@@ -191,11 +195,114 @@ describe('Date index', () => {
         // Test index by querying it
         console.log('[indexing issue #117] Checking index');
 
-        const count = await db.query('dates').filter('date', '<', new Date(MS_PER_DAY * 100)).count();
+        count = await db.query('dates').filter('date', '<', new Date(MS_PER_DAY * 100)).count();
         expect(count).toBe(100);
 
         console.log('[indexing issue #117] Check ok!');
-    }, 60e3);
+
+        console.log('[issue #147] Deleting many items with query...');
+        await db.query('dates').filter('date', '<', new Date(5000 * MS_PER_DAY)).remove();
+
+        console.log('[issue #147] Query after deletion');
+        count = await db.query('dates').filter('date', '>', new Date(5000 * MS_PER_DAY)).take(100).count();
+        expect(count).toBe(100);
+
+        count = await db.ref('dates').count();
+        expect(count).toBe(5000);
+
+        // console.log('[issue #147] Query while deleting more items...');
+        // const deletePromise = db.query('dates').filter('date', '<', new Date(6000 * MS_PER_DAY)).remove();
+
+        // count = await db.query('dates').filter('date', '>', new Date(6000 * MS_PER_DAY)).take(100).count();
+        // expect(count).toBe(100);
+
+        count = await db.query('dates').filter('date', 'exists').count();
+        expect(count).toBe(5000);
+
+        console.log('[issue #147] Deleting all items...');
+        await db.query('dates').filter('date', 'exists').remove();
+
+        count = await db.ref('dates').count();
+        if (count > 0) {
+            const snap = await db.ref('dates').get();
+            const leftOvers = snap.val();
+            console.error(leftOvers);
+        }
+        expect(count).toBe(0);
+
+        // await deletePromise; // already done
+    }, 180e6);
+
+    afterAll(async () => {
+        await removeDB();
+    });
+});
+
+describe('Geo index', () => {
+    /** @type {AceBase} */
+    let db, removeDB;
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+
+        // Insert sample data from meteorites json
+        const m = require('./dataset/meteorites.json');
+        const meteorites = {};
+        m.forEach(m => {
+            const id = ID.generate();
+            meteorites[id] = {
+                name: m.name,
+                mass: typeof m.mass !== 'undefined' ? parseFloat(m.mass) : null,
+                class: m.recclass,
+                location: m.geolocation && m.geolocation.coordinates ? {
+                    lat: m.geolocation.coordinates[1],
+                    long: m.geolocation.coordinates[0],
+                } : null,
+                meta: {
+                    id: m.id,
+                    date: m.year ? new Date(m.year) : null,
+                },
+            };
+        });
+        await db.ref('meteorites').set(meteorites);
+
+        await db.indexes.create('meteorites', 'location', { type: 'geo' });
+    }, 30000);
+
+    it('geo:nearby query', async () => {
+        const amsterdam = { lat: 52.377956, long: 4.897070, radius: 10000 };
+        const aachen = { long: 6.08333, lat: 50.775, radius: 10000 };
+        const snaps = await db.query('meteorites').filter('location', 'geo:nearby', aachen).get();
+        expect(snaps.length).toBeGreaterThan(0); //6.08333,50.775
+    });
+
+    afterAll(async () => {
+        await removeDB();
+    });
+});
+
+describe('Fulltext index', () => {
+    /** @type {AceBase} */
+    let db, removeDB;
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+
+        // Insert sample data from movies json
+        const movies = require('./dataset/movies.json');
+        await db.ref('movies').set(ObjectCollection.from(movies));
+
+        await db.indexes.create('movies', 'description', { type: 'fulltext' });
+    }, 30000);
+
+    it('fulltext:contains query', async () => {
+        let snaps = await db.query('movies').filter('description', 'fulltext:contains', 'while').get();
+        expect(snaps.length).toBe(3);
+
+        // // Match "crime", "cri"
+        // snaps = await db.query('movies').filter('description', 'fulltext:contains', 'cri*').get();
+        // expect(snaps.length).toBe(3);
+    });
 
     afterAll(async () => {
         await removeDB();
