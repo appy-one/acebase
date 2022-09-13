@@ -2702,7 +2702,9 @@ export class BinaryBPlusTree {
                 }
                 else {
                     // Parent node has only 1 entry, removing it would also make parent node empty...
-                    throw new DetailedError('leaf-empty', 'leaf is now empty and parent node has only 1 entry, tree will have to be rebuilt');
+                    // throw new DetailedError('leaf-empty', 'leaf is now empty and parent node has only 1 entry, tree will have to be rebuilt');
+                    // Write the empty leaf anyway, will be removed automatically upon a future tree rebuild.
+                    await this._writeLeaf(leaf);
                 }
             };
 
