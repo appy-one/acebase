@@ -1,3 +1,2 @@
-declare module 'unidecode' {
-    export default function unidecode(input: string): string;
-}
+declare const _default: (input: string) => string;
+export default _default;

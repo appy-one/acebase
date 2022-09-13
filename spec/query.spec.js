@@ -498,6 +498,61 @@ describe('Wildcard query', () => {
 
 });
 
+describe('Wildcard query with delete', () => {
+    /** @type {AceBase} */
+    let db;
+    /** @type {{(): Promise<void>}} */
+    let removeDB;
+    /** @type {Array<{ votes: number }>} */
+    let movies;
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+
+        movies = require('./dataset/movies.json');
+        const collection = ObjectCollection.from(movies);
+        await db.ref('movies/collection1').set(collection);
+        await db.ref('movies/collection2').set(collection);
+        await db.ref('movies/collection3').set(collection);
+
+        await db.indexes.create('movies/*', 'votes');
+    });
+
+    afterAll(async () => {
+        await removeDB();
+    });
+
+    it('works', async () => {
+        const votes = 1_500_000;
+        const query = db.query('movies/*').filter('votes', '>', votes);
+
+        // confirm count delivers the correct amount
+        let count = await query.count();
+        let check = movies.filter(m => m.votes > votes).length * 3; // 3 collections
+        expect(count).toBe(check);
+
+        // exists should return true
+        let exists = await query.exists();
+        expect(exists).toBeTrue();
+
+        // delete those
+        await query.remove();
+
+        // check if count is now 0
+        count = await query.count();
+        expect(count).toBe(0);
+
+        // exists should now return false
+        exists = await query.exists();
+        expect(exists).toBeFalse();
+
+        // All other movies should be still there
+        count = await db.query('movies/*').count();
+        check = movies.filter(m => m.votes <= votes).length * 3; // 3 collections
+        expect(count).toBe(check);
+    });
+});
+
 describe('Query with array/contains #135', () => {
     /** @type {AceBase} */
     let db;
