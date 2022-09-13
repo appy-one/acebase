@@ -36,7 +36,17 @@ class NoTreeInfoError extends Error {
     constructor() { super('Tree info has not been read'); }
 }
 // eslint-disable-next-line @typescript-eslint/no-empty-function
-const noop = async () => { };
+async function noop() { }
+/**
+ * Replacement for console.assert, throws an error if condition is not met.
+ * @param condition 'truthy' condition
+ * @param error
+ */
+function assert(condition, error) {
+    if (!condition) {
+        throw new Error(`Assertion failed: ${error}`);
+    }
+}
 class BinaryBPlusTree {
     /**
      * Provides functionality to read and search in a B+tree from a binary data source
@@ -193,7 +203,7 @@ class BinaryBPlusTree {
         // load whole node/leaf for easy processing
         const dataLength = byteLength - headerLength - freeBytesLength;
         const bytes = await reader.get(dataLength);
-        console.assert(bytes.length === dataLength, 'less bytes read than requested?');
+        assert(bytes.length === dataLength, 'less bytes read than requested?');
         const childInfo = new binary_tree_node_info_1.BinaryBPlusTreeNodeInfo({
             tree: this,
             isLeaf,
@@ -250,13 +260,13 @@ class BinaryBPlusTree {
             return result.entryValue;
         };
         const readEntryValue = (bytes, index) => {
-            console.assert(index < bytes.length, 'invalid data');
+            assert(index < bytes.length, 'invalid data');
             if (index >= bytes.length) {
                 throw new Error('invalid data');
             }
             const startIndex = index;
             const valueLength = bytes[index]; // value_length
-            // console.assert(index + valueLength <= bytes.length, 'not enough data!');
+            // assert(index + valueLength <= bytes.length, 'not enough data!');
             if (index + valueLength > bytes.length) {
                 const bytesShort = index + valueLength - bytes.length;
                 throw new Error(`DEV ERROR: Cannot read entry value past the end of the read buffer (${bytesShort} bytes short)`);
@@ -411,7 +421,7 @@ class BinaryBPlusTree {
                             self._headerLoaded = true;
                             self._length = (0, binary_1.readByteLength)(extHeader, 0);
                             self._freeBytes = (0, binary_1.readByteLength)(extHeader, 4);
-                            console.assert(self._length >= 0 && self._freeBytes >= 0 && self._freeBytes < self._length, 'invalid data');
+                            assert(self._length >= 0 && self._freeBytes >= 0 && self._freeBytes < self._length, 'invalid data');
                             if (keepLock || existingLock) {
                                 return lock;
                             }
@@ -486,7 +496,7 @@ class BinaryBPlusTree {
                                     //     + 4; // ext_byte_length
                                     // const check = await tree._readFn(leafExtFreeBytesIndex, 4);
                                     // const nr = _readByteLength(check, 0);
-                                    // console.assert(nr === leaf.extData.freeBytes, 'ext free bytes in file is different');
+                                    // assert(nr === leaf.extData.freeBytes, 'ext free bytes in file is different');
                                     // const oldLeafExtFreeBytes = leaf.extData.freeBytes;
                                     leaf.extData.freeBytes -= requiredSpace.bytes; // leaf.extData.length - (newOffset + requiredSpace.length);
                                     // console.log(`addValue :: moving ext_block from index ${oldIndex} to ${entry.extData.index}, leaf's ext_data_free_bytes reduces from ${oldLeafExtFreeBytes} to ${leaf.extData.freeBytes} bytes`)
@@ -653,7 +663,7 @@ class BinaryBPlusTree {
                 const freshReader = reader.clone();
                 await freshReader.go(leaf.prevLeafIndex);
                 const childInfo = await this._readChild(freshReader);
-                console.assert(childInfo.isLeaf, `previous leaf is *not* a leaf. Current leaf index: ${leaf.sourceIndex}, next leaf offset: ${prevLeafOffset}, target index: ${leaf.dataIndex + prevLeafOffset}`);
+                assert(childInfo.isLeaf, `previous leaf is *not* a leaf. Current leaf index: ${leaf.sourceIndex}, next leaf offset: ${prevLeafOffset}, target index: ${leaf.dataIndex + prevLeafOffset}`);
                 const prevLeaf = await this._getLeaf(childInfo, freshReader, options);
                 return prevLeaf;
             };
@@ -663,21 +673,21 @@ class BinaryBPlusTree {
                 const freshReader = reader.clone();
                 await freshReader.go(leaf.nextLeafIndex);
                 const childInfo = await this._readChild(freshReader);
-                console.assert(childInfo.isLeaf, `next leaf is *not* a leaf. Current leaf index: ${leaf.sourceIndex}, next leaf offset: ${nextLeafOffset}, target index: ${leaf.dataIndex + 4 + nextLeafOffset}`);
+                assert(childInfo.isLeaf, `next leaf is *not* a leaf. Current leaf index: ${leaf.sourceIndex}, next leaf offset: ${nextLeafOffset}, target index: ${leaf.dataIndex + 4 + nextLeafOffset}`);
                 const nextLeaf = await this._getLeaf(childInfo, freshReader, options);
-                console.assert(nextLeaf.entries.length === 0 || leaf.entries.length === 0 || (0, typesafe_compare_1._isMore)(nextLeaf.entries[0].key, leaf.entries[leaf.entries.length - 1].key), 'next leaf has lower keys than previous leaf?!');
+                assert(nextLeaf.entries.length === 0 || leaf.entries.length === 0 || (0, typesafe_compare_1._isMore)(nextLeaf.entries[0].key, leaf.entries[leaf.entries.length - 1].key), 'next leaf has lower keys than previous leaf?!');
                 return nextLeaf;
             };
         }
-        console.assert(leaf.entries.every((entry, index, arr) => index === 0 || (0, typesafe_compare_1._isMore)(entry.key, arr[index - 1].key)), 'Invalid B+Tree: leaf entries are not sorted ok');
+        assert(leaf.entries.every((entry, index, arr) => index === 0 || (0, typesafe_compare_1._isMore)(entry.key, arr[index - 1].key)), 'Invalid B+Tree: leaf entries are not sorted ok');
         return leaf;
     }
     async _writeNode(nodeInfo) {
         // Rewrite the node.
         // NOTE: not using BPlusTreeNode.toBinary for this, because
         // that function writes children too, we don't want that
-        console.assert(nodeInfo.entries.length > 0, 'node has no entries!');
-        console.assert(nodeInfo.entries.every((entry, index, arr) => index === 0 || (0, typesafe_compare_1._isMore)(entry.key, arr[index - 1].key)), 'Node entries are not sorted ok');
+        assert(nodeInfo.entries.length > 0, 'node has no entries!');
+        assert(nodeInfo.entries.every((entry, index, arr) => index === 0 || (0, typesafe_compare_1._isMore)(entry.key, arr[index - 1].key)), 'Node entries are not sorted ok');
         try {
             const builder = new binary_tree_builder_1.BinaryBPlusTreeBuilder({
                 uniqueKeys: this.info.isUnique,
@@ -695,7 +705,7 @@ class BinaryBPlusTree {
                 addFreeSpace: true,
                 maxLength: nodeInfo.length,
             });
-            console.assert(bytes.length <= nodeInfo.length, 'too many bytes allocated for node');
+            assert(bytes.length <= nodeInfo.length, 'too many bytes allocated for node');
             return await this._writeFn(bytes, nodeInfo.index);
         }
         catch (err) {
@@ -703,7 +713,7 @@ class BinaryBPlusTree {
         }
     }
     async _writeLeaf(leafInfo) {
-        console.assert(leafInfo.entries.every((entry, index, arr) => index === 0 || (0, typesafe_compare_1._isMore)(entry.key, arr[index - 1].key)), 'Leaf entries are not sorted ok');
+        assert(leafInfo.entries.every((entry, index, arr) => index === 0 || (0, typesafe_compare_1._isMore)(entry.key, arr[index - 1].key)), 'Leaf entries are not sorted ok');
         try {
             const builder = new binary_tree_builder_1.BinaryBPlusTreeBuilder({
                 uniqueKeys: this.info.isUnique,
@@ -762,7 +772,7 @@ class BinaryBPlusTree {
                 },
             });
             const maxLength = leafInfo.length + (leafInfo.extData && leafInfo.extData.loaded ? leafInfo.extData.length : 0);
-            console.assert(bytes.length <= maxLength, 'more bytes needed than allocated for leaf');
+            assert(bytes.length <= maxLength, 'more bytes needed than allocated for leaf');
             // write leaf:
             const promise = this._writeFn(bytes, leafInfo.index);
             writes.push(promise);
@@ -772,11 +782,11 @@ class BinaryBPlusTree {
             //     const extDataFreeBytes =  _writeByteLength([], 0, extData.freeBytes);
             //     // Check ext_free_byte_length
             //     bytes.slice(21, 25).forEach((b, i) => {
-            //         console.assert(b === extDataLength[i], 'Not the same');
+            //         assert(b === extDataLength[i], 'Not the same');
             //     });
             //     // Check ext_free_byte_length
             //     bytes.slice(25, 29).forEach((b, i) => {
-            //         console.assert(b === extDataFreeBytes[i], 'Not the same');
+            //         assert(b === extDataFreeBytes[i], 'Not the same');
             //     });
             // }
             const result = await Promise.all(writes);
@@ -797,7 +807,7 @@ class BinaryBPlusTree {
         const node = new binary_tree_node_1.BinaryBPlusTreeNode(nodeInfo);
         const bytes = node.bytes;
         const entriesLength = bytes[0];
-        console.assert(entriesLength > 0, 'Node read failure: no entries');
+        assert(entriesLength > 0, 'Node read failure: no entries');
         let index = 1;
         for (let i = 0; i < entriesLength; i++) {
             const keyInfo = tree_1.BPlusTree.getKeyFromBinary(bytes, index);
@@ -807,7 +817,7 @@ class BinaryBPlusTree {
             node.entries.push(entry);
             // read lt_child_ptr:
             entry.ltChildOffset = (0, binary_1.readSignedOffset)(bytes, index, this.info.hasLargePtrs); // lt_child_ptr
-            console.assert(entry.ltChildOffset !== 0, 'Node read failure: invalid ltChildOffset 0');
+            assert(entry.ltChildOffset !== 0, 'Node read failure: invalid ltChildOffset 0');
             entry.ltChildIndex = node.index + index + 9 + entry.ltChildOffset + (this.info.hasLargePtrs ? 5 : 3); // index + 9 header bytes, +5 because offset is from first byte
             entry.getLtChild = async () => {
                 // return savedPosition.go(entry.ltChildOffset)
@@ -821,7 +831,7 @@ class BinaryBPlusTree {
         }
         // read gt_child_ptr:
         node.gtChildOffset = (0, binary_1.readSignedOffset)(bytes, index, this.info.hasLargePtrs); // gt_child_ptr
-        console.assert(node.gtChildOffset !== 0, 'Node read failure: invalid gtChildOffset 0');
+        assert(node.gtChildOffset !== 0, 'Node read failure: invalid gtChildOffset 0');
         node.gtChildIndex = node.index + index + 9 + node.gtChildOffset + (this.info.hasLargePtrs ? 5 : 3); // index + 9 header bytes, +5 because offset is from first byte
         node.getGtChild = async () => {
             await reader.go(node.gtChildIndex);
@@ -863,7 +873,7 @@ class BinaryBPlusTree {
         while (!nodeInfo.isLeaf) {
             const node = this._getNode(nodeInfo, reader);
             const firstEntry = node.entries[0];
-            console.assert(firstEntry, 'node has no entries!');
+            assert(firstEntry, 'node has no entries!');
             nodeInfo = await firstEntry.getLtChild();
         }
         const leaf = this._getLeaf(nodeInfo, reader, options);
@@ -1549,7 +1559,7 @@ class BinaryBPlusTree {
             return options.existingOnly ? [] : keys.map(key => ({ key, value: null }));
         }
         // Get lowerbound
-        const firstLeaf = await this._getLastLeaf();
+        const firstLeaf = await this._getFirstLeaf();
         const firstEntry = firstLeaf.entries[0];
         const firstKey = firstEntry.key;
         if (keys.slice(-1)[0] < firstKey) {
@@ -2256,13 +2266,13 @@ class BinaryBPlusTree {
     //     // console.warn(keys);
     //     for (let i = 0; i < keys.length - 1; i++) {
     //         const key1 = keys[i], key2 = keys[i + 1];
-    //         console.assert(_isLess(key1, key2), `Key "${key1}" must be smaller than "${key2}"`);
+    //         assert(_isLess(key1, key2), `Key "${key1}" must be smaller than "${key2}"`);
     //     }
     //     for (let i = 0; i < keys.length; i++) {
     //         const key = keys[i];
     //         leaf = await this._findLeaf(key);
     //         const entry = leaf?.entries.find(e => e.key === key)
-    //         console.assert(entry, `Key "${key}" must be in leaf`);
+    //         assert(entry, `Key "${key}" must be in leaf`);
     //     }
     //     console.warn(`TREE TEST: testing ext_data`);
     //     leaf = await this._getFirstLeaf();
@@ -2515,7 +2525,9 @@ class BinaryBPlusTree {
                 }
                 else {
                     // Parent node has only 1 entry, removing it would also make parent node empty...
-                    throw new detailed_error_1.DetailedError('leaf-empty', 'leaf is now empty and parent node has only 1 entry, tree will have to be rebuilt');
+                    // throw new DetailedError('leaf-empty', 'leaf is now empty and parent node has only 1 entry, tree will have to be rebuilt');
+                    // Write the empty leaf anyway, will be removed automatically upon a future tree rebuild.
+                    await this._writeLeaf(leaf);
                 }
             };
             while (operations.length > 0) {
@@ -2691,8 +2703,8 @@ class BinaryBPlusTree {
      */
     async _removeLeaf(leaf) {
         try {
-            console.assert(leaf.parentNode && leaf.parentNode.entries.length >= 2, 'Leaf to remove must have a parent node with at least 2 entries'); // TODO: implement _removeNode
-            console.assert(leaf.entries.length === 0, 'Leaf to remove must be empty');
+            assert(leaf.parentNode && leaf.parentNode.entries.length >= 2, 'Leaf to remove must have a parent node with at least 2 entries'); // TODO: implement _removeNode
+            assert(leaf.entries.length === 0, 'Leaf to remove must be empty');
             const freedBytes = leaf.length + leaf.extData.length;
             // Start transaction
             const tx = new tx_1.TX();
@@ -3194,9 +3206,9 @@ class BinaryBPlusTree {
                     emptyLeaf = true;
                 }
                 // console.log(`Writing leaf with ${entries.length} entries at index ${index}, keys range: ["${entries[0].key}", "${entries[entries.length-1].key}"]`)
-                // console.assert(entries.every((entry, index, arr) => index === 0 || _isMoreOrEqual(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
+                // assert(entries.every((entry, index, arr) => index === 0 || _isMoreOrEqual(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
                 const i = leafIndexes.length;
-                // console.assert(emptyLeaf || _isEqual(leafStartKeys[i], entries[0].key), `first entry for leaf has wrong key, must be ${leafStartKeys[i]}!`);
+                // assert(emptyLeaf || _isEqual(leafStartKeys[i], entries[0].key), `first entry for leaf has wrong key, must be ${leafStartKeys[i]}!`);
                 leafIndexes.push(index);
                 const isLastLeaf = emptyLeaf || leafIndexes.length === leafStartKeys.length;
                 const newLeaf = builder.createLeaf({ index, prevIndex, nextIndex: isLastLeaf ? 0 : 'adjacent', entries }, { addFreeSpace: options.keepFreeSpace });
@@ -3212,7 +3224,7 @@ class BinaryBPlusTree {
                 if (typeof cutEntryKey === 'undefined') {
                     // Last batch
                     if (flushAll) {
-                        // console.assert(newLeafEntries.length <= entriesPerLeaf, 'check logic');
+                        // assert(newLeafEntries.length <= entriesPerLeaf, 'check logic');
                         entries = newLeafEntries.splice(0);
                     }
                     else {
@@ -3223,8 +3235,8 @@ class BinaryBPlusTree {
                     const cutEntryIndex = newLeafEntries.findIndex(entry => (0, typesafe_compare_1._isEqual)(entry.key, cutEntryKey));
                     if (cutEntryIndex === -1) {
                         // Not enough entries yet
-                        // console.assert(!flushAll, 'check logic');
-                        // console.assert(newLeafEntries.length <= entriesPerLeaf, 'check logic!');
+                        // assert(!flushAll, 'check logic');
+                        // assert(newLeafEntries.length <= entriesPerLeaf, 'check logic!');
                         return;
                     }
                     entries = newLeafEntries.splice(0, cutEntryIndex);
@@ -3243,8 +3255,8 @@ class BinaryBPlusTree {
                     return flush(true); // done!
                 }
                 // options.treeStatistics.readEntries += entries.length;
-                // console.assert(entries.every((entry, index, arr) => index === 0 || _isMoreOrEqual(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
-                // console.assert(newLeafEntries.length === 0 || _isMore(entries[0].key, newLeafEntries[newLeafEntries.length-1].key), 'adding entries will corrupt sort order');
+                // assert(entries.every((entry, index, arr) => index === 0 || _isMoreOrEqual(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
+                // assert(newLeafEntries.length === 0 || _isMore(entries[0].key, newLeafEntries[newLeafEntries.length-1].key), 'adding entries will corrupt sort order');
                 newLeafEntries.push(...entries);
                 const writePromise = flush(false);
                 const readNextPromise = options.getEntries(options.maxEntriesPerNode);

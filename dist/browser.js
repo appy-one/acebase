@@ -2518,37 +2518,55 @@ class DataReferenceQuery {
     /**
      * Executes the query and returns the number of results
      */
-    count() {
-        return this.get({ snapshots: false }).then(refs => refs.length);
+    async count() {
+        const refs = await this.find();
+        return refs.length;
     }
     /**
      * Executes the query and returns if there are any results
      */
-    exists() {
-        return this.count().then(count => count > 0);
+    async exists() {
+        const originalTake = this[_private].take;
+        const p = this.take(1).find();
+        this.take(originalTake);
+        const refs = await p;
+        return refs.length !== 0;
     }
     /**
      * Executes the query, removes all matches from the database
-     * @returns returns an Promise that resolves once all matches have been removed, or void if a callback is used
+     * @returns returns a Promise that resolves once all matches have been removed
      */
-    remove(callback) {
-        const promise = this.get({ snapshots: false })
-            .then((refs) => {
-            return Promise.all(refs.map(ref => ref.remove()
-                .then(() => {
-                return { success: true, ref };
-            })
-                .catch(err => {
-                return { success: false, error: err, ref };
-            })))
-                .then(results => {
-                callback && callback(results);
-                return results;
-            });
+    async remove(callback) {
+        const refs = await this.find();
+        // Perform updates on each distinct parent collection (only 1 parent if this is not a wildcard path)
+        const parentUpdates = refs.reduce((parents, ref) => {
+            const parent = parents[ref.parent.path];
+            if (!parent) {
+                parents[ref.parent.path] = [ref];
+            }
+            else {
+                parent.push(ref);
+            }
+            return parents;
+        }, {});
+        const db = this.ref.db;
+        const promises = Object.keys(parentUpdates).map(async (parentPath) => {
+            const updates = refs.reduce((updates, ref) => {
+                updates[ref.key] = null;
+                return updates;
+            }, {});
+            const ref = db.ref(parentPath);
+            try {
+                await ref.update(updates);
+                return { ref, success: true };
+            }
+            catch (error) {
+                return { ref, success: false, error };
+            }
         });
-        if (!callback) {
-            return promise;
-        }
+        const results = await Promise.all(promises);
+        callback && callback(results);
+        return results;
     }
     /**
      * Subscribes to an event. Supported events are:
@@ -2603,7 +2621,7 @@ class DataReferenceQuery {
             throw new TypeError('No callback function given');
         }
         // Get all query results. This could be tweaked further using paging
-        const refs = await this.getRefs();
+        const refs = await this.find();
         const summary = {
             canceled: false,
             total: refs.length,
