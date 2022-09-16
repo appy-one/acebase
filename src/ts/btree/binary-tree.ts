@@ -1601,20 +1601,20 @@ export class BinaryBPlusTree {
     /**
      * @returns returns a promise that resolves with 1 value (unique keys), a values array or the number of values (options.stats === true)
      */
-    async find(searchKey: NodeEntryKeyType, options?: { stats?: boolean }) {
+    async find(searchKey: NodeEntryKeyType, options?: { stats?: boolean; leaf?: BinaryBPlusTreeLeaf }) {
         return this._threadSafe('shared', () => this._find(searchKey, options));
     }
 
     /**
      * @returns returns a promise that resolves with 1 value (unique keys), a values array or the number of values (options.stats === true)
      */
-    async _find(searchKey: NodeEntryKeyType, options?: { stats?: boolean }) {
+    async _find(searchKey: NodeEntryKeyType, options?: { stats?: boolean; leaf?: BinaryBPlusTreeLeaf }) {
         // searchKey = _normalizeKey(searchKey); //if (_isIntString(searchKey)) { searchKey = parseInt(searchKey); }
-        const leaf = await this._findLeaf(searchKey, options);
+        const leaf = options?.leaf ?? await this._findLeaf(searchKey, options);
         const entry = leaf.entries.find(entry => _isEqual(searchKey, entry.key));
         if (!this.info) { throw new NoTreeInfoError(); }
         if (options && options.stats) {
-            return entry ? entry.totalValues : 0;
+            return entry?.totalValues ?? 0;
         }
         else if (entry) {
             if (entry.extData) {
@@ -1632,19 +1632,22 @@ export class BinaryBPlusTree {
     /**
      * @param options `existingOnly`: Whether to only return lookup results for keys that were actually found
      */
-    async findAll(keys: NodeEntryKeyType[], options = { existingOnly: true }) {
+    async findAll(keys: NodeEntryKeyType[], options?: { existingOnly?: boolean; stats?: boolean }) {
         return this._threadSafe('shared', () => this._findAll(keys, options));
     }
 
-    async _findAll(keys: NodeEntryKeyType[], options = { existingOnly: true }) {
+    async _findAll(keys: NodeEntryKeyType[], options: { existingOnly?: boolean; stats?: boolean } = { existingOnly: true, stats: false }) {
+        options.stats = options.stats === true;
         if (keys.length <= 2) {
             const promises = keys.map(async key => {
-                const value = await this._find(key);
-                return { key, value };
+                const result = await this._find(key, { stats: options.stats });
+                const value = options.stats ? null : result;
+                const totalValues = options.stats ? result as number : value === null ? 0 : value instanceof Array ? value.length : 1;
+                return { key, value, totalValues };
             });
             const results = await Promise.all(promises);
             return options.existingOnly
-                ? results.filter(r => r.value !== null)
+                ? results.filter(r => options.stats ? r.totalValues > 0 : r.value !== null)
                 : results;
         }
 
@@ -1656,9 +1659,9 @@ export class BinaryBPlusTree {
         // Sort the keys
         keys = keys.slice().sort();
 
-        if (keys[0] > lastKey) {
+        if (_isMore(keys[0], lastKey)) {
             // First key to lookup is > lastKey, no need to lookup anything!
-            return options.existingOnly ? [] : keys.map(key => ({ key, value: null }));
+            return options.existingOnly ? [] : keys.map(key => ({ key, value: null, totalValues: 0 }));
         }
 
         // Get lowerbound
@@ -1666,31 +1669,51 @@ export class BinaryBPlusTree {
         const firstEntry = firstLeaf.entries[0];
         const firstKey = firstEntry.key;
 
-        if (keys.slice(-1)[0] < firstKey) {
+        if (_isLess(keys.slice(-1)[0], firstKey)) {
             // Last key to lookup is < firstKey, no need to lookup anything!
-            return options.existingOnly ? [] : keys.map(key => ({ key, value: null }));
+            return options.existingOnly ? [] : keys.map(key => ({ key, value: null, totalValues: 0 }));
         }
 
         // Some keys might be out of bounds, others must be looked up
-        const results = [], lookups = [];
+        const results = [] as Array<{ key: NodeEntryKeyType, value: any, totalValues: number }>, lookups = [] as NodeEntryKeyType[];
         for (let i = 0; i < keys.length; i++) {
             const key = keys[i];
             if (_isLess(key, firstKey) || _isMore(key, lastKey)) {
                 // Out of bounds, no need to lookup
-                options.existingOnly || results.push({ key, value: null });
+                options.existingOnly || results.push({ key, value: null, totalValues: 0 });
             }
             else {
                 // Lookup
-                const promise = this._find(key).then(value => {
-                    if (value !== null || !options.existingOnly) {
-                        results.push({ key, value });
-                    }
-                });
-                lookups.push(promise);
+                lookups.push(key);
             }
         }
-        if (lookups.length > 0) {
-            await Promise.all(lookups);
+        lookups.sort((a, b) => _isLess(a, b) ? -1 : 1);
+        for (let i = 0; i < lookups.length;) {
+            let key = lookups[i];
+            const leaf = await this._findLeaf(key);
+            const lastKey = leaf.entries.slice(-1)[0]?.key;
+            const expectedKeysInLeaf = lookups.slice(i).filter(key => _isLessOrEqual(key, lastKey));
+            if (!options.stats && leaf.hasExtData && !leaf.extData.loaded && expectedKeysInLeaf.length > 1) {
+                // Prevent many (small, locking) ext_data reads by _find -> perform 1 whole ext_data read now
+                await leaf.extData.load();
+            }
+
+            const promises = [] as Promise<void>[];
+            do {
+                const lookupKey = key;
+                const p = this._find(lookupKey, { leaf, stats: options.stats }).then(result => {
+                    const value = options.stats ? null : result;
+                    const totalValues = options.stats ? result as number : value === null ? 0 : value instanceof Array ? value.length : 1;
+                    const exists = options.stats ? totalValues > 0 : value !== null;
+                    if (exists || !options.existingOnly) {
+                        results.push({ key: lookupKey, value, totalValues });
+                    }
+                });
+                promises.push(p);
+                key = lookups[++i];
+            }
+            while (lastKey && i < lookups.length && _isLessOrEqual(key, lastKey));
+            await Promise.all(promises);
         }
         return results;
     }
