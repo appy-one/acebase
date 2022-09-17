@@ -4,6 +4,7 @@ import { VALUE_TYPES } from './node-value-types';
 import { NodeNotFoundError } from './node-errors';
 import { Storage } from './storage';
 import { DataIndex, FullTextIndex, IndexQueryResults } from './data-index';
+import { AsyncTaskBatch } from './async-task-batch';
 
 /**
  * TODO: import once LocalApi has been ported to TypeScript
@@ -154,53 +155,33 @@ export function query(
             return [];
         }
         const maxBatchSize = 50;
-        const batches: Array<Array<{ path: string; index: number }>> = [];
-        const items = preResults.map((result, index) => ({ path: result.path, index }));
-        while (items.length > 0) {
-            const batchItems = items.splice(0, maxBatchSize);
-            batches.push(batchItems);
-        }
+        const batch = new AsyncTaskBatch(maxBatchSize);
         const results: Array<{ path: string, val: any }> = [];
-        const nextBatch = async () => {
-            const batch = batches.shift();
-            await Promise.all(batch.map(async (item) => {
-                const { path, index } = item;
-                const node = await api.storage.getNode(path, options);
-                const val = node.value;
-                if (val === null) {
-                    // Record was deleted, but index isn't updated yet?
-                    api.storage.debug.warn(`Indexed result "/${path}" does not have a record!`);
-                    // TODO: let index rebuild
-                    return;
-                }
-
-                const result = { path, val };
-                if (stepsExecuted.sorted) {
-                    // Put the result in the same index as the preResult was
-                    results[index] = result;
-                }
-                else {
-                    results.push(result);
-                    if (!stepsExecuted.skipped && results.length > query.skip + Math.abs(query.take)) {
-                        // we can toss a value! sort, toss last one
-                        sortMatches(results);
-                        // const ascending = querySort.length === 0 || (query.take >= 0 ? querySort[0].ascending : !querySort[0].ascending);
-                        // if (ascending) {
-                        //     results.pop(); // Ascending sort order, toss last value
-                        // }
-                        // else {
-                        //     results.shift(); // Descending, toss first value
-                        // }
-                        results.pop(); // Always toss last value, results have been sorted already
-                    }
-                }
-            }));
-            if (batches.length > 0) {
-                await nextBatch();
+        preResults.forEach(({ path }, index) => batch.add(async () => {
+            const node = await api.storage.getNode(path, options);
+            const val = node.value;
+            if (val === null) {
+                // Record was deleted, but index isn't updated yet?
+                api.storage.debug.warn(`Indexed result "/${path}" does not have a record!`);
+                // TODO: let index rebuild
+                return;
             }
-        };
-        await nextBatch();
-        // Got all values
+
+            const result = { path, val };
+            if (stepsExecuted.sorted) {
+                // Put the result in the same index as the preResult was
+                results[index] = result;
+            }
+            else {
+                results.push(result);
+                if (!stepsExecuted.skipped && results.length > query.skip + Math.abs(query.take)) {
+                    // we can toss a value! sort, toss last one
+                    sortMatches(results);
+                    results.pop(); // Always toss last value, results have been sorted already
+                }
+            }
+        }));
+        await batch.finish();
         return results;
     };
 

@@ -5637,7 +5637,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { BrowserAceBase };
-},{"./acebase-local":29,"./storage-custom":41,"acebase-core":12}],29:[function(require,module,exports){
+},{"./acebase-local":29,"./storage-custom":42,"acebase-core":12}],29:[function(require,module,exports){
 const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
 const { LocalApi } = require('./api-local');
 const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('./storage-custom');
@@ -5853,7 +5853,7 @@ class LocalStorageTransaction extends CustomStorageTransaction {
 }
 
 module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":30,"./storage-custom":41,"acebase-core":12}],30:[function(require,module,exports){
+},{"./api-local":30,"./storage-custom":42,"acebase-core":12}],30:[function(require,module,exports){
 const { Api } = require('acebase-core');
 const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
 const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
@@ -6203,7 +6203,87 @@ class LocalApi extends Api {
 
 module.exports = { LocalApi };
 
-},{"./node-value-types":37,"./query":40,"./storage-acebase":38,"./storage-custom":41,"./storage-mssql":38,"./storage-sqlite":38,"acebase-core":12}],31:[function(require,module,exports){
+},{"./node-value-types":38,"./query":41,"./storage-acebase":39,"./storage-custom":42,"./storage-mssql":39,"./storage-sqlite":39,"acebase-core":12}],31:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AsyncTaskBatch = void 0;
+class AsyncTaskBatch {
+    /**
+     * Creates a new batch: runs a maximum amount of async tasks simultaniously and waits until they are all resolved.
+     * If all tasks succeed, returns the results in the same order tasks were added (like `Promise.all` would do), but
+     * cancels any waiting tasks upon failure of one task. Note that the execution order of tasks added after the set
+     * limit is unknown.
+     * @param name (optional) name of the batch
+     * @param limit Max amount of async functions to execute simultaniously. Default is `1000`
+     */
+    constructor(limit = 1000, options) {
+        this.limit = limit;
+        this.options = options;
+        this.added = 0;
+        this.scheduled = [];
+        this.running = 0;
+        this.results = [];
+        this.done = false;
+    }
+    async execute(task, index) {
+        var _a, _b;
+        try {
+            this.running++;
+            const result = await task();
+            this.results[index] = result;
+            this.running--;
+            if (this.running === 0 && this.scheduled.length === 0) {
+                // Finished
+                this.done = true;
+                (_a = this.doneCallback) === null || _a === void 0 ? void 0 : _a.call(this, this.results);
+            }
+            else if (this.scheduled.length > 0) {
+                // Run next scheduled task
+                const next = this.scheduled.shift();
+                this.execute(next.task, next.index);
+            }
+        }
+        catch (err) {
+            this.done = true;
+            (_b = this.errorCallback) === null || _b === void 0 ? void 0 : _b.call(this, err);
+        }
+    }
+    add(task) {
+        var _a;
+        if (this.done) {
+            throw new Error(`Cannot add to a batch that has already finished. Use wait option and start batch processing manually if you are adding tasks in an async loop`);
+        }
+        const index = this.added++;
+        if (((_a = this.options) === null || _a === void 0 ? void 0 : _a.wait) !== true && this.running < this.limit) {
+            this.execute(task, index);
+        }
+        else {
+            this.scheduled.push({ task, index });
+        }
+    }
+    /**
+     * Manually starts batch processing, mus be done if the `wait` option was used
+     */
+    start() {
+        while (this.running < this.limit) {
+            const next = this.scheduled.shift();
+            this.execute(next.task, next.index);
+        }
+    }
+    async finish() {
+        if (this.running === 0 && this.scheduled.length === 0) {
+            return this.results;
+        }
+        await new Promise((resolve, reject) => {
+            this.doneCallback = resolve;
+            this.errorCallback = reject;
+        });
+        return this.results;
+    }
+}
+exports.AsyncTaskBatch = AsyncTaskBatch;
+
+},{}],32:[function(require,module,exports){
 /**
    ________________________________________________________________________________
    
@@ -6249,7 +6329,7 @@ window.acebase = acebase;
 window.AceBase = BrowserAceBase;
 // Expose classes for module imports:
 module.exports = acebase;
-},{"./acebase-browser":28,"./acebase-local":29,"./storage-custom":41,"acebase-core":12}],32:[function(require,module,exports){
+},{"./acebase-browser":28,"./acebase-local":29,"./storage-custom":42,"acebase-core":12}],33:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IPCPeer = void 0;
@@ -6385,7 +6465,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
 }
 exports.IPCPeer = IPCPeer;
 
-},{"./ipc":33,"acebase-core":12}],33:[function(require,module,exports){
+},{"./ipc":34,"acebase-core":12}],34:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
@@ -6884,7 +6964,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock":36,"acebase-core":12}],34:[function(require,module,exports){
+},{"../node-lock":37,"acebase-core":12}],35:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeRevisionError = exports.NodeNotFoundError = void 0;
@@ -6895,7 +6975,7 @@ class NodeRevisionError extends Error {
 }
 exports.NodeRevisionError = NodeRevisionError;
 
-},{}],35:[function(require,module,exports){
+},{}],36:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeInfo = void 0;
@@ -6944,7 +7024,7 @@ class NodeInfo {
 }
 exports.NodeInfo = NodeInfo;
 
-},{"./node-value-types":37,"acebase-core":12}],36:[function(require,module,exports){
+},{"./node-value-types":38,"acebase-core":12}],37:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeLock = exports.NodeLocker = exports.LOCK_STATE = void 0;
@@ -7228,7 +7308,7 @@ class NodeLock {
 }
 exports.NodeLock = NodeLock;
 
-},{"acebase-core":12}],37:[function(require,module,exports){
+},{"acebase-core":12}],38:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getValueType = exports.getNodeValueType = exports.getValueTypeName = exports.VALUE_TYPES = void 0;
@@ -7320,9 +7400,9 @@ function getValueType(value) {
 }
 exports.getValueType = getValueType;
 
-},{"acebase-core":12}],38:[function(require,module,exports){
+},{"acebase-core":12}],39:[function(require,module,exports){
 // Not supported in current environment
-},{}],39:[function(require,module,exports){
+},{}],40:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pfs = void 0;
@@ -7332,7 +7412,7 @@ class pfs {
 }
 exports.pfs = pfs;
 
-},{}],40:[function(require,module,exports){
+},{}],41:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.query = void 0;
@@ -7340,6 +7420,7 @@ const acebase_core_1 = require("acebase-core");
 const node_value_types_1 = require("./node-value-types");
 const node_errors_1 = require("./node-errors");
 const data_index_1 = require("./data-index");
+const async_task_batch_1 = require("./async-task-batch");
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => { };
 /**
@@ -7404,52 +7485,32 @@ function query(api, path, query, options = { snapshots: false, include: undefine
             return [];
         }
         const maxBatchSize = 50;
-        const batches = [];
-        const items = preResults.map((result, index) => ({ path: result.path, index }));
-        while (items.length > 0) {
-            const batchItems = items.splice(0, maxBatchSize);
-            batches.push(batchItems);
-        }
+        const batch = new async_task_batch_1.AsyncTaskBatch(maxBatchSize);
         const results = [];
-        const nextBatch = async () => {
-            const batch = batches.shift();
-            await Promise.all(batch.map(async (item) => {
-                const { path, index } = item;
-                const node = await api.storage.getNode(path, options);
-                const val = node.value;
-                if (val === null) {
-                    // Record was deleted, but index isn't updated yet?
-                    api.storage.debug.warn(`Indexed result "/${path}" does not have a record!`);
-                    // TODO: let index rebuild
-                    return;
-                }
-                const result = { path, val };
-                if (stepsExecuted.sorted) {
-                    // Put the result in the same index as the preResult was
-                    results[index] = result;
-                }
-                else {
-                    results.push(result);
-                    if (!stepsExecuted.skipped && results.length > query.skip + Math.abs(query.take)) {
-                        // we can toss a value! sort, toss last one
-                        sortMatches(results);
-                        // const ascending = querySort.length === 0 || (query.take >= 0 ? querySort[0].ascending : !querySort[0].ascending);
-                        // if (ascending) {
-                        //     results.pop(); // Ascending sort order, toss last value
-                        // }
-                        // else {
-                        //     results.shift(); // Descending, toss first value
-                        // }
-                        results.pop(); // Always toss last value, results have been sorted already
-                    }
-                }
-            }));
-            if (batches.length > 0) {
-                await nextBatch();
+        preResults.forEach(({ path }, index) => batch.add(async () => {
+            const node = await api.storage.getNode(path, options);
+            const val = node.value;
+            if (val === null) {
+                // Record was deleted, but index isn't updated yet?
+                api.storage.debug.warn(`Indexed result "/${path}" does not have a record!`);
+                // TODO: let index rebuild
+                return;
             }
-        };
-        await nextBatch();
-        // Got all values
+            const result = { path, val };
+            if (stepsExecuted.sorted) {
+                // Put the result in the same index as the preResult was
+                results[index] = result;
+            }
+            else {
+                results.push(result);
+                if (!stepsExecuted.skipped && results.length > query.skip + Math.abs(query.take)) {
+                    // we can toss a value! sort, toss last one
+                    sortMatches(results);
+                    results.pop(); // Always toss last value, results have been sorted already
+                }
+            }
+        }));
+        await batch.finish();
         return results;
     };
     const pathInfo = acebase_core_1.PathInfo.get(path);
@@ -8081,7 +8142,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
 }
 exports.query = query;
 
-},{"./data-index":38,"./node-errors":34,"./node-value-types":37,"acebase-core":12}],41:[function(require,module,exports){
+},{"./async-task-batch":31,"./data-index":39,"./node-errors":35,"./node-value-types":38,"acebase-core":12}],42:[function(require,module,exports){
 const { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils } = require('acebase-core');
 const { compareValues } = Utils;
 const { NodeInfo } = require('./node-info');
@@ -9618,7 +9679,7 @@ module.exports = {
     ICustomStorageNode,
 };
 
-},{"./node-errors":34,"./node-info":35,"./node-lock":36,"./node-value-types":37,"./storage":43,"acebase-core":12}],42:[function(require,module,exports){
+},{"./node-errors":35,"./node-info":36,"./node-lock":37,"./node-value-types":38,"./storage":44,"acebase-core":12}],43:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
@@ -9695,7 +9756,7 @@ async function createIndex(context, path, key, options) {
 }
 exports.createIndex = createIndex;
 
-},{"../data-index":38,"../promise-fs":39,"acebase-core":12}],43:[function(require,module,exports){
+},{"../data-index":39,"../promise-fs":40,"acebase-core":12}],44:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Storage = exports.StorageSettings = exports.SchemaValidationError = void 0;
@@ -11717,12 +11778,12 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
 }
 exports.Storage = Storage;
 
-},{"../data-index":38,"../ipc":32,"../node-errors":34,"../node-info":35,"../node-value-types":37,"../promise-fs":39,"./indexes":44,"acebase-core":12}],44:[function(require,module,exports){
+},{"../data-index":39,"../ipc":33,"../node-errors":35,"../node-info":36,"../node-value-types":38,"../promise-fs":40,"./indexes":45,"acebase-core":12}],45:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
 var create_index_1 = require("./create-index");
 Object.defineProperty(exports, "createIndex", { enumerable: true, get: function () { return create_index_1.createIndex; } });
 
-},{"./create-index":42}]},{},[31])(31)
+},{"./create-index":43}]},{},[32])(32)
 });

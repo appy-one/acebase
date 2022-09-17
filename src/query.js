@@ -5,6 +5,7 @@ const acebase_core_1 = require("acebase-core");
 const node_value_types_1 = require("./node-value-types");
 const node_errors_1 = require("./node-errors");
 const data_index_1 = require("./data-index");
+const async_task_batch_1 = require("./async-task-batch");
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => { };
 /**
@@ -69,52 +70,32 @@ function query(api, path, query, options = { snapshots: false, include: undefine
             return [];
         }
         const maxBatchSize = 50;
-        const batches = [];
-        const items = preResults.map((result, index) => ({ path: result.path, index }));
-        while (items.length > 0) {
-            const batchItems = items.splice(0, maxBatchSize);
-            batches.push(batchItems);
-        }
+        const batch = new async_task_batch_1.AsyncTaskBatch(maxBatchSize);
         const results = [];
-        const nextBatch = async () => {
-            const batch = batches.shift();
-            await Promise.all(batch.map(async (item) => {
-                const { path, index } = item;
-                const node = await api.storage.getNode(path, options);
-                const val = node.value;
-                if (val === null) {
-                    // Record was deleted, but index isn't updated yet?
-                    api.storage.debug.warn(`Indexed result "/${path}" does not have a record!`);
-                    // TODO: let index rebuild
-                    return;
-                }
-                const result = { path, val };
-                if (stepsExecuted.sorted) {
-                    // Put the result in the same index as the preResult was
-                    results[index] = result;
-                }
-                else {
-                    results.push(result);
-                    if (!stepsExecuted.skipped && results.length > query.skip + Math.abs(query.take)) {
-                        // we can toss a value! sort, toss last one
-                        sortMatches(results);
-                        // const ascending = querySort.length === 0 || (query.take >= 0 ? querySort[0].ascending : !querySort[0].ascending);
-                        // if (ascending) {
-                        //     results.pop(); // Ascending sort order, toss last value
-                        // }
-                        // else {
-                        //     results.shift(); // Descending, toss first value
-                        // }
-                        results.pop(); // Always toss last value, results have been sorted already
-                    }
-                }
-            }));
-            if (batches.length > 0) {
-                await nextBatch();
+        preResults.forEach(({ path }, index) => batch.add(async () => {
+            const node = await api.storage.getNode(path, options);
+            const val = node.value;
+            if (val === null) {
+                // Record was deleted, but index isn't updated yet?
+                api.storage.debug.warn(`Indexed result "/${path}" does not have a record!`);
+                // TODO: let index rebuild
+                return;
             }
-        };
-        await nextBatch();
-        // Got all values
+            const result = { path, val };
+            if (stepsExecuted.sorted) {
+                // Put the result in the same index as the preResult was
+                results[index] = result;
+            }
+            else {
+                results.push(result);
+                if (!stepsExecuted.skipped && results.length > query.skip + Math.abs(query.take)) {
+                    // we can toss a value! sort, toss last one
+                    sortMatches(results);
+                    results.pop(); // Always toss last value, results have been sorted already
+                }
+            }
+        }));
+        await batch.finish();
         return results;
     };
     const pathInfo = acebase_core_1.PathInfo.get(path);
