@@ -118,27 +118,33 @@ export declare class BinaryBPlusTree {
      */
     find(searchKey: NodeEntryKeyType, options?: {
         stats?: boolean;
+        leaf?: BinaryBPlusTreeLeaf;
     }): Promise<number | BinaryBPlusTreeLeafEntryValue | BinaryBPlusTreeLeafEntryValue[]>;
     /**
      * @returns returns a promise that resolves with 1 value (unique keys), a values array or the number of values (options.stats === true)
      */
     _find(searchKey: NodeEntryKeyType, options?: {
         stats?: boolean;
+        leaf?: BinaryBPlusTreeLeaf;
     }): Promise<number | BinaryBPlusTreeLeafEntryValue | BinaryBPlusTreeLeafEntryValue[]>;
     /**
      * @param options `existingOnly`: Whether to only return lookup results for keys that were actually found
      */
     findAll(keys: NodeEntryKeyType[], options?: {
-        existingOnly: boolean;
+        existingOnly?: boolean;
+        stats?: boolean;
     }): Promise<{
         key: NodeEntryKeyType;
         value: any;
+        totalValues: number;
     }[]>;
     _findAll(keys: NodeEntryKeyType[], options?: {
-        existingOnly: boolean;
+        existingOnly?: boolean;
+        stats?: boolean;
     }): Promise<{
         key: NodeEntryKeyType;
         value: any;
+        totalValues: number;
     }[]>;
     _growTree(bytesNeeded: number): Promise<void>;
     writeAllocationBytes(): Promise<void>;

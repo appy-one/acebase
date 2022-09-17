@@ -1510,14 +1510,15 @@ class BinaryBPlusTree {
      * @returns returns a promise that resolves with 1 value (unique keys), a values array or the number of values (options.stats === true)
      */
     async _find(searchKey, options) {
+        var _a, _b;
         // searchKey = _normalizeKey(searchKey); //if (_isIntString(searchKey)) { searchKey = parseInt(searchKey); }
-        const leaf = await this._findLeaf(searchKey, options);
+        const leaf = (_a = options === null || options === void 0 ? void 0 : options.leaf) !== null && _a !== void 0 ? _a : await this._findLeaf(searchKey, options);
         const entry = leaf.entries.find(entry => (0, typesafe_compare_1._isEqual)(searchKey, entry.key));
         if (!this.info) {
             throw new NoTreeInfoError();
         }
         if (options && options.stats) {
-            return entry ? entry.totalValues : 0;
+            return (_b = entry === null || entry === void 0 ? void 0 : entry.totalValues) !== null && _b !== void 0 ? _b : 0;
         }
         else if (entry) {
             if (entry.extData) {
@@ -1534,18 +1535,22 @@ class BinaryBPlusTree {
     /**
      * @param options `existingOnly`: Whether to only return lookup results for keys that were actually found
      */
-    async findAll(keys, options = { existingOnly: true }) {
+    async findAll(keys, options) {
         return this._threadSafe('shared', () => this._findAll(keys, options));
     }
-    async _findAll(keys, options = { existingOnly: true }) {
+    async _findAll(keys, options = { existingOnly: true, stats: false }) {
+        var _a;
+        options.stats = options.stats === true;
         if (keys.length <= 2) {
             const promises = keys.map(async (key) => {
-                const value = await this._find(key);
-                return { key, value };
+                const result = await this._find(key, { stats: options.stats });
+                const value = options.stats ? null : result;
+                const totalValues = options.stats ? result : value === null ? 0 : value instanceof Array ? value.length : 1;
+                return { key, value, totalValues };
             });
             const results = await Promise.all(promises);
             return options.existingOnly
-                ? results.filter(r => r.value !== null)
+                ? results.filter(r => options.stats ? r.totalValues > 0 : r.value !== null)
                 : results;
         }
         // Get upperbound
@@ -1554,17 +1559,17 @@ class BinaryBPlusTree {
         const lastKey = lastEntry.key;
         // Sort the keys
         keys = keys.slice().sort();
-        if (keys[0] > lastKey) {
+        if ((0, typesafe_compare_1._isMore)(keys[0], lastKey)) {
             // First key to lookup is > lastKey, no need to lookup anything!
-            return options.existingOnly ? [] : keys.map(key => ({ key, value: null }));
+            return options.existingOnly ? [] : keys.map(key => ({ key, value: null, totalValues: 0 }));
         }
         // Get lowerbound
         const firstLeaf = await this._getFirstLeaf();
         const firstEntry = firstLeaf.entries[0];
         const firstKey = firstEntry.key;
-        if (keys.slice(-1)[0] < firstKey) {
+        if ((0, typesafe_compare_1._isLess)(keys.slice(-1)[0], firstKey)) {
             // Last key to lookup is < firstKey, no need to lookup anything!
-            return options.existingOnly ? [] : keys.map(key => ({ key, value: null }));
+            return options.existingOnly ? [] : keys.map(key => ({ key, value: null, totalValues: 0 }));
         }
         // Some keys might be out of bounds, others must be looked up
         const results = [], lookups = [];
@@ -1572,20 +1577,38 @@ class BinaryBPlusTree {
             const key = keys[i];
             if ((0, typesafe_compare_1._isLess)(key, firstKey) || (0, typesafe_compare_1._isMore)(key, lastKey)) {
                 // Out of bounds, no need to lookup
-                options.existingOnly || results.push({ key, value: null });
+                options.existingOnly || results.push({ key, value: null, totalValues: 0 });
             }
             else {
                 // Lookup
-                const promise = this._find(key).then(value => {
-                    if (value !== null || !options.existingOnly) {
-                        results.push({ key, value });
-                    }
-                });
-                lookups.push(promise);
+                lookups.push(key);
             }
         }
-        if (lookups.length > 0) {
-            await Promise.all(lookups);
+        lookups.sort((a, b) => (0, typesafe_compare_1._isLess)(a, b) ? -1 : 1);
+        for (let i = 0; i < lookups.length;) {
+            let key = lookups[i];
+            const leaf = await this._findLeaf(key);
+            const lastKey = (_a = leaf.entries.slice(-1)[0]) === null || _a === void 0 ? void 0 : _a.key;
+            const expectedKeysInLeaf = lookups.slice(i).filter(key => (0, typesafe_compare_1._isLessOrEqual)(key, lastKey));
+            if (!options.stats && leaf.hasExtData && !leaf.extData.loaded && expectedKeysInLeaf.length > 1) {
+                // Prevent many (small, locking) ext_data reads by _find -> perform 1 whole ext_data read now
+                await leaf.extData.load();
+            }
+            const promises = [];
+            do {
+                const lookupKey = key;
+                const p = this._find(lookupKey, { leaf, stats: options.stats }).then(result => {
+                    const value = options.stats ? null : result;
+                    const totalValues = options.stats ? result : value === null ? 0 : value instanceof Array ? value.length : 1;
+                    const exists = options.stats ? totalValues > 0 : value !== null;
+                    if (exists || !options.existingOnly) {
+                        results.push({ key: lookupKey, value, totalValues });
+                    }
+                });
+                promises.push(p);
+                key = lookups[++i];
+            } while (lastKey && i < lookups.length && (0, typesafe_compare_1._isLessOrEqual)(key, lastKey));
+            await Promise.all(promises);
         }
         return results;
     }
