@@ -632,7 +632,7 @@ describe('Query with array/contains #135', () => {
     }, 60 * 60 * 1000);
 });
 
-describe('Query on indexed BigInts #141', () => {
+fdescribe('Query on indexed BigInts #141', () => {
     // Created for https://github.com/appy-one/acebase/issues/141
 
     /** @type {AceBase} */
@@ -655,8 +655,14 @@ describe('Query on indexed BigInts #141', () => {
                 votes: BigInt(movie.votes),
             };
         });
-        await moviesRef.set(ObjectCollection.from(movies));
+        // await moviesRef.set(ObjectCollection.from(movies));
+        await db.indexes.create('movies', 'title');
+        await db.indexes.create('movies', 'rating');
         await db.indexes.create('movies', 'votes');
+
+        movies.forEach( async (movie) => {
+            await moviesRef.push(movie);
+        });
     });
 
     afterAll(async () => {
@@ -664,7 +670,11 @@ describe('Query on indexed BigInts #141', () => {
     });
 
     it('filter on BigInt', async () => {
-        let query = moviesRef.query().filter('votes', '>', BigInt(1_500_000));
+        let query = moviesRef
+            .query()
+            .filter('votes', '>=', BigInt(1_500_000))
+            .sort('votes', false)
+            .take(1000000);
         let snaps = await query.get();
         expect(snaps.length).toEqual(5);
 
