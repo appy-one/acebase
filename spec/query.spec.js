@@ -683,3 +683,51 @@ describe('Query on indexed BigInts #141', () => {
         expect(snaps.length).toEqual(8);
     }, 60e3);
 });
+
+describe('Query on indexed BigInts #152', () => {
+    // Created for https://github.com/appy-one/acebase/issues/152, with adjustments of https://github.com/appy-one/acebase/pull/159/files
+
+    /** @type {AceBase} */
+    let db;
+    /** @type {{(): Promise<void>}} */
+    let removeDB;
+
+    /** @type {DataReference} */
+    let moviesRef;
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+        moviesRef = db.ref('movies');
+
+        const movies = require('./dataset/movies.json').map(movie => {
+            return {
+                title: movie.title,
+                rating: movie.rating,
+                year: movie.year,
+                votes: BigInt(movie.votes),
+            };
+        });
+        await db.indexes.create('movies', 'title');
+        await db.indexes.create('movies', 'rating');
+        await db.indexes.create('movies', 'votes');
+
+        for (const movie of movies) {
+            await moviesRef.push(movie);
+        }
+    });
+
+    afterAll(async () => {
+        await removeDB();
+    });
+
+    it('filter on BigInt', async () => {
+        let query = moviesRef.query().filter('votes', '>', BigInt(1_500_000));
+        let snaps = await query.get();
+        expect(snaps.length).toEqual(5);
+
+        // Try again, now with cached results
+        snaps = await query.get();
+        expect(snaps.length).toEqual(5);
+    }, 60e3);
+
+});
