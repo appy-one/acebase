@@ -116,7 +116,7 @@ export abstract class pfs {
      * @param options.flag see pfs.flags, default is pfs.flags.write ('w')
      * @returns {} returns a promise that resolves once the file has been written
      */
-    static writeFile(path:string|Buffer|number|fs.PathLike, data: string|Buffer|TypedArray|DataView, options?:string|{ encoding?: BufferEncoding, mode?: number, flag?: string }): Promise<void> {
+    static writeFile(path:string|Buffer|number|fs.PathLike, data: string|Buffer|TypedArray|DataView, options?:BufferEncoding | { encoding?: BufferEncoding, mode?: number, flag?: string }): Promise<void> {
         return new Promise((resolve, reject) => {
             fs.writeFile(path, data, options, err => {
                 if (err) { reject(err); }
@@ -159,7 +159,7 @@ export abstract class pfs {
      * @param options.flag see pfs.flags, default is pfs.flags.read ('r')
      * @returns returns a promise that resolves with a string if an encoding was specified, or a raw buffer otherwise
      */
-    static readFile(path: string|Buffer|number|fs.PathLike, options:string|{ encoding: BufferEncoding|null, flag: string }): Promise<Buffer|string> {
+    static readFile(path: string|Buffer|number|fs.PathLike, options:BufferEncoding |{ encoding: BufferEncoding|null, flag: string }): Promise<Buffer|string> {
         return new Promise((resolve, reject) => {
             fs.readFile(path, options, (err, data) => {
                 if (err) { reject(err); }
