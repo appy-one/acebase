@@ -26,6 +26,7 @@ class BinaryWriter {
             },
             end(callback) {
                 callback();
+                return this;
             },
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             once(event, callback) {
@@ -58,6 +59,7 @@ class BinaryWriter {
             },
             end(callback) {
                 callback();
+                return this;
             },
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             once(event, callback) {
@@ -120,6 +122,7 @@ class BinaryWriter {
                 if (pendingWrites === 0) {
                     callback();
                 }
+                return this;
             },
             once(event, callback) {
                 console.assert(event === 'drain', 'Custom stream can only handle "drain" event');
