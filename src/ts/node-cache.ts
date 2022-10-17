@@ -43,6 +43,10 @@ export class NodeCache {
     private _cleanupTimeout: NodeJS.Timeout = null;
     private _cache = new Map<string, NodeCacheEntry>();
 
+    public has(key: string) {
+        return this._cache.has(key);
+    }
+
     /**
      *  For announced lookups, will bind subsequent .find calls to a promise that resolves once the cache item is set
      */
