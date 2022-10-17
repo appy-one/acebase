@@ -1,12 +1,12 @@
-const { SimpleCache } = require('acebase-core');
-const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
-const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
+import { LoggingLevel, SimpleCache } from 'acebase-core';
+import { AceBase, AceBaseLocalSettings } from './acebase-local';
+import { IPCPeer } from './ipc';
+import { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } from './storage/custom';
 
-/**
- * @typedef {Object} IIndexedDBNodeData
- * @property {string} path
- * @property {ICustomStorageNodeMetaData} metadata
- */
+interface IIndexedDBNodeData {
+    path: string;
+    metadata: ICustomStorageNodeMetaData;
+}
 
 const deprecatedConstructorError = `Using AceBase constructor in the browser to use localStorage is deprecated!
 Switch to:
@@ -18,13 +18,13 @@ Or, write your own CustomStorage adapter:
     let myCustomStorage = new CustomStorageSettings({ ... });
     let db = new AceBase(name, { storage: myCustomStorage })`;
 
-class BrowserAceBase extends AceBase {
+export class BrowserAceBase extends AceBase {
     /**
      * Constructor that is used in browser context
-     * @param {string} name database name
-     * @param {AceBaseLocalSettings} settings settings
+     * @param name database name
+     * @param settings settings
      */
-    constructor(name, settings) {
+    constructor(name: string, settings: Partial<AceBaseLocalSettings> & { multipleTabs?: boolean }) {
         if (typeof settings !== 'object' || typeof settings.storage !== 'object') {
             // Client is using old AceBaseBrowser signature, eg:
             // let db = new AceBase('name', { temp: false })
@@ -43,30 +43,57 @@ class BrowserAceBase extends AceBase {
 
     /**
      * Creates an AceBase database instance using IndexedDB as storage engine
-     * @param {string} dbname Name of the database
-     * @param {object} [settings] optional settings
-     * @param {string} [settings.logLevel='error'] what level to use for logging to the console
-     * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
-     * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
-     * @param {boolean} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
-     * @param {number} [settings.cacheSeconds=60] How many seconds to keep node info in memory, to speed up IndexedDB performance.
-     * @param {number} [settings.lockTimeout=120] timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
-     * @param {boolean} [settings.sponsor=false] You can turn this on if you are a sponsor
+     * @param dbname Name of the database
+     * @param settings optional settings
      */
-    static WithIndexedDB(dbname, settings) {
+    static WithIndexedDB(dbname: string, settings: Partial<{
+        /**
+         * what level to use for logging to the console
+         * @default 'error'
+         */
+        logLevel: LoggingLevel;
+        /**
+         * Whether to remove undefined property values of objects being stored, instead of throwing an error
+         * @default false
+         */
+        removeVoidProperties: boolean;
+        /**
+         * Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
+         * @default 50
+         */
+        maxInlineValueSize: number;
+        /**
+         * Whether to enable cross-tab synchronization
+         * @default false
+         */
+        multipleTabs: boolean;
+        /**
+         * How many seconds to keep node info in memory, to speed up IndexedDB performance.
+         * @default 60
+         */
+        cacheSeconds: number;
+        /**
+         * timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds
+         * @default 120
+         */
+        lockTimeout: number;
+        /**
+         * You can turn this on if you are a sponsor
+         * @default false
+         */
+        sponsor: boolean;
+    }>) {
 
         settings = settings || {};
         if (!settings.logLevel) { settings.logLevel = 'error'; }
 
         // We'll create an IndexedDB with name "dbname.acebase"
-        const IndexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB; // browser prefixes not really needed, see https://caniuse.com/#feat=indexeddb
-        let request = IndexedDB.open(`${dbname}.acebase`, 1);
-
-        let readyResolve, readyReject, readyPromise = new Promise((rs,rj) => { readyResolve = rs; readyReject = rj; });
+        const IndexedDB: IDBFactory = window.indexedDB || (window as any).mozIndexedDB || (window as any).webkitIndexedDB || (window as any).msIndexedDB; // browser prefixes not really needed, see https://caniuse.com/#feat=indexeddb
+        const request = IndexedDB.open(`${dbname}.acebase`, 1);
 
         request.onupgradeneeded = (e) => {
             // create datastore
-            let db = request.result;
+            const db = request.result;
 
             // Create "nodes" object store for metadata
             db.createObjectStore('nodes', { keyPath: 'path'});
@@ -75,16 +102,18 @@ class BrowserAceBase extends AceBase {
             db.createObjectStore('content');
         };
 
-        let db;
-        request.onsuccess = e => {
-            db = request.result;
-            readyResolve();
-        };
-        request.onerror = e => {
-            readyReject(e);
-        };
+        let db: IDBDatabase;
+        const readyPromise = new Promise<void>((resolve, reject) => {
+            request.onsuccess = e => {
+                db = request.result;
+                resolve();
+            };
+            request.onerror = e => {
+                reject(e);
+            };
+        });
 
-        const cache = new SimpleCache(typeof settings.cacheSeconds === 'number' ? settings.cacheSeconds : 60); // 60 second node cache by default
+        const cache = new SimpleCache<string, ICustomStorageNode>(typeof settings.cacheSeconds === 'number' ? settings.cacheSeconds : 60); // 60 second node cache by default
         // cache.enabled = false;
 
         const storageSettings = new CustomStorageSettings({
@@ -96,7 +125,7 @@ class BrowserAceBase extends AceBase {
             ready() {
                 return readyPromise;
             },
-            async getTransaction(target) {
+            async getTransaction(target: { path: string; write: boolean }) {
                 await readyPromise;
                 const context = {
                     debug: false,
@@ -107,14 +136,19 @@ class BrowserAceBase extends AceBase {
                 return new IndexedDBStorageTransaction(context, target);
             },
         });
-        const acebase = new BrowserAceBase(dbname, { multipleTabs: settings.multipleTabs, logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
+        const acebase: AceBase = new BrowserAceBase(dbname, {
+            logLevel: settings.logLevel,
+            storage: storageSettings,
+            sponsor: settings.sponsor,
+        });
         const ipc = acebase.api.storage.ipc;
-        ipc.on('notification', async notification => {
+        acebase.settings.ipcEvents = settings.multipleTabs === true;
+        ipc.on('notification', async (notification: { data: any }) => {
             const message = notification.data;
             if (typeof message !== 'object') { return; }
             if (message.action === 'cache.invalidate') {
                 // console.warn(`Invalidating cache for paths`, message.paths);
-                for (let path of message.paths) {
+                for (const path of message.paths) {
                     cache.remove(path);
                 }
             }
@@ -123,47 +157,43 @@ class BrowserAceBase extends AceBase {
     }
 }
 
-function _requestToPromise(request) {
+function _requestToPromise(request: IDBRequest) {
     return new Promise((resolve, reject) => {
         request.onsuccess = event => {
             return resolve(request.result || null);
-        }
+        };
         request.onerror = reject;
     });
 }
 
 class IndexedDBStorageTransaction extends CustomStorageTransaction {
 
-    /** Creates a transaction object for IndexedDB usage. Because IndexedDB automatically commits
+    production = true; // Improves performance, only set when all works well
+
+    private _pending: Array<{ path: string; action: 'set' | 'update' | 'remove'; node?: ICustomStorageNode }>;
+
+    /**
+     * Creates a transaction object for IndexedDB usage. Because IndexedDB automatically commits
      * transactions when they have not been touched for a number of microtasks (eg promises
      * resolving whithout querying data), we will enqueue set and remove operations until commit
      * or rollback. We'll create separate IndexedDB transactions for get operations, caching their
      * values to speed up successive requests for the same data.
-     * @param {{debug: boolean, db: IDBDatabase, cache: SimpleCache<string, ICustomStorageNode> }} context
-     * @param {{path: string, write: boolean}} target
      */
-    constructor(context, target) {
+    constructor(public context: {debug: boolean, db: IDBDatabase, cache: SimpleCache<string, ICustomStorageNode>, ipc: IPCPeer }, target: { path: string, write: boolean }) {
         super(target);
-        this.production = true; // Improves performance, only set when all works well
-        /** @type {{debug: boolean, db: IDBDatabase, cache: SimpleCache<string, ICustomStorageNode> }} */
-        this.context = context;
         this._pending = [];
     }
 
-    /** @returns {IDBTransaction} */
     _createTransaction(write = false) {
         const tx = this.context.db.transaction(['nodes', 'content'], write ? 'readwrite' : 'readonly');
         return tx;
     }
 
-    _splitMetadata(node) {
-        /** @type {ICustomStorageNode} */
-        const copy = {};
+    _splitMetadata(node: ICustomStorageNode) {
         const value = node.value;
-        Object.assign(copy, node);
+        const copy: ICustomStorageNode = { ...node };
         delete copy.value;
-        /** @type {ICustomStorageNodeMetaData} */
-        const metadata = copy;
+        const metadata = copy as ICustomStorageNodeMetaData;
         return { metadata, value };
     }
 
@@ -172,13 +202,13 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         if (this._pending.length === 0) { return; }
         const batch = this._pending.splice(0);
 
-        this.context.ipc.sendMessage({ type: 'notification', data: { action: 'cache.invalidate', paths: batch.map(op => op.path) } });
+        this.context.ipc.sendNotification({ action: 'cache.invalidate', paths: batch.map(op => op.path) });
 
         const tx = this._createTransaction(true);
         try {
-            await new Promise((resolve, reject) => {
+            await new Promise<void>((resolve, reject) => {
                 let stop = false, processed = 0;
-                const handleError = err => {
+                const handleError = (err: any) => {
                     stop = true;
                     reject(err);
                 };
@@ -193,8 +223,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     const path = op.path;
                     if (op.action === 'set') {
                         const { metadata, value } = this._splitMetadata(op.node);
-                        /** @type {IIndexedDBNodeData} */
-                        const nodeInfo = { path, metadata };
+                        const nodeInfo: IIndexedDBNodeData = { path, metadata };
                         r1 = tx.objectStore('nodes').put(nodeInfo); // Insert into "nodes" object store
                         r2 = tx.objectStore('content').put(value, path); // Add value to "content" object store
                         this.context.cache.set(path, op.node);
@@ -223,12 +252,12 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         }
     }
 
-    async rollback(err) {
+    async rollback(err: any) {
         // Nothing has committed yet, so we'll leave it like that
         this._pending = [];
     }
 
-    async get(path) {
+    async get(path: string) {
         // console.log(`*** get "${path}" ****`);
         if (this.context.cache.has(path)) {
             const cache = this.context.cache.get(path);
@@ -241,15 +270,13 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         try {
             const results = await Promise.all([r1, r2]);
             tx.commit && tx.commit();
-            /** @type {IIndexedDBNodeData} */
-            const info = results[0];
+            const info = results[0] as IIndexedDBNodeData;
             if (!info) {
                 // Node doesn't exist
                 this.context.cache.set(path, null);
                 return null;
             }
-            /** @type {ICustomStorageNode} */
-            const node = info.metadata;
+            const node = info.metadata as ICustomStorageNode;
             node.value = results[1];
             this.context.cache.set(path, node);
             return node;
@@ -261,61 +288,72 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         }
     }
 
-    set(path, node) {
+    set(path: string, node: ICustomStorageNode) {
         // Queue the operation until commit
         this._pending.push({ action: 'set', path, node });
     }
 
-    remove(path) {
+    remove(path: string) {
         // Queue the operation until commit
         this._pending.push({ action: 'remove', path });
     }
 
-    removeMultiple(paths) {
+    async removeMultiple(paths: string[]) {
         // Queues multiple items at once, dramatically improves performance for large datasets
         paths.forEach(path => {
             this._pending.push({ action: 'remove', path });
         });
     }
 
-    childrenOf(path, include, checkCallback, addCallback) {
+    childrenOf(
+        path: string,
+        include: {
+            metadata: boolean;
+            value: boolean;
+        },
+        checkCallback: (childPath: string) => boolean,
+        addCallback?: (childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean,
+    ) {
         // console.log(`*** childrenOf "${path}" ****`);
-        include.descendants = false;
-        return this._getChildrenOf(path, include, checkCallback, addCallback);
+        return this._getChildrenOf(path, { ...include, descendants: false }, checkCallback, addCallback);
     }
 
-    descendantsOf(path, include, checkCallback, addCallback) {
+    descendantsOf(
+        path: string,
+        include: {
+            metadata: boolean;
+            value: boolean;
+        },
+        checkCallback: (descPath: string, metadata?: ICustomStorageNodeMetaData) => boolean,
+        addCallback?: (descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean,
+    ) {
         // console.log(`*** descendantsOf "${path}" ****`);
-        include.descendants = true;
-        return this._getChildrenOf(path, include, checkCallback, addCallback);
+        return this._getChildrenOf(path, { ...include, descendants: true }, checkCallback, addCallback);
     }
 
-    /**
-     *
-     * @param {string} path
-     * @param {object} include
-     * @param {boolean} include.descendants
-     * @param {boolean} include.metadata
-     * @param {boolean} include.value
-     * @param {(path: string, metadata?: ICustomStorageNodeMetaData) => boolean} checkCallback
-     * @param {(path: string, node: any) => boolean} addCallback
-     */
-    _getChildrenOf(path, include, checkCallback, addCallback) {
+    _getChildrenOf(
+        path: string,
+        include: {
+            metadata: boolean;
+            value: boolean;
+            descendants: boolean;
+        },
+        checkCallback: (path: string, metadata?: ICustomStorageNodeMetaData) => boolean,
+        addCallback?: (path: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean,
+    ) {
         // Use cursor to loop from path on
-        return new Promise((resolve, reject) => {
+        return new Promise<void>((resolve, reject) => {
             const pathInfo = CustomStorageHelpers.PathInfo.get(path);
             const tx = this._createTransaction(false);
             const store = tx.objectStore('nodes');
             const query = IDBKeyRange.lowerBound(path, true);
-            /** @type {IDBRequest<IDBCursorWithValue>|IDBRequest<IDBCursor>} */
-            const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
+            const cursor = include.metadata ? store.openCursor(query) as IDBRequest<IDBCursor> : store.openKeyCursor(query) as IDBRequest<IDBCursorWithValue>;
             cursor.onerror = e => {
-                tx.abort && tx.abort();
+                tx.abort?.();
                 reject(e);
-            }
+            };
             cursor.onsuccess = async e => {
-                /** @type {string} */
-                const otherPath = cursor.result ? cursor.result.key : null;
+                const otherPath = cursor.result?.key as string ?? null;
                 let keepGoing = true;
                 if (otherPath === null) {
                     // No more results
@@ -327,13 +365,10 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                 }
                 else if (include.descendants || pathInfo.isParentOf(otherPath)) {
 
-                    /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
-                    let node;
+                    let node: ICustomStorageNode|ICustomStorageNodeMetaData;
                     if (include.metadata) {
-                        /** @type {IDBRequest<IDBCursorWithValue>} */
-                        const valueCursor = cursor;
-                        /** @type {IIndexedDBNodeData} */
-                        const data = valueCursor.result.value;
+                        const valueCursor = cursor as IDBRequest<IDBCursorWithValue>;
+                        const data = valueCursor.result.value as IIndexedDBNodeData;
                         node = data.metadata;
                     }
                     const shouldAdd = checkCallback(otherPath, node);
@@ -342,11 +377,11 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                             // Load value!
                             if (this.context.cache.has(otherPath)) {
                                 const cache = this.context.cache.get(otherPath);
-                                node.value = cache.value;
+                                (node as ICustomStorageNode).value = cache.value;
                             }
                             else {
                                 const req = tx.objectStore('content').get(otherPath);
-                                node.value = await new Promise((resolve, reject) => {
+                                (node as ICustomStorageNode).value = await new Promise((resolve, reject) => {
                                     req.onerror = e => {
                                         resolve(null); // Value missing?
                                     };
@@ -354,7 +389,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                                         resolve(req.result);
                                     };
                                 });
-                                this.context.cache.set(otherPath, node.value === null ? null : node);
+                                this.context.cache.set(otherPath, (node as ICustomStorageNode).value === null ? null : node as ICustomStorageNode);
                             }
                         }
                         keepGoing = addCallback(otherPath, node);
@@ -368,7 +403,7 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     }
                 }
                 if (!keepGoing) {
-                    tx.commit && tx.commit();
+                    tx.commit?.();
                     resolve();
                 }
             };
@@ -376,5 +411,3 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
     }
 
 }
-
-module.exports = { BrowserAceBase };
