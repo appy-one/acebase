@@ -418,7 +418,7 @@ class DataIndex {
     //     return this._updateTree(path, revLookupKey, revLookupKey, oldData, newData, metadata);
     // }
     _updateTree(path, oldValue, newValue, oldRecordPointer, newRecordPointer, metadata) {
-        const canBeIndexed = ['number', 'boolean', 'string'].indexOf(typeof newValue) >= 0 || newValue instanceof Date;
+        const canBeIndexed = ['number', 'boolean', 'string', 'bigint'].indexOf(typeof newValue) >= 0 || newValue instanceof Date;
         const operations = [];
         if (oldValue !== null) {
             const op = btree_1.BinaryBPlusTree.TransactionOperation.remove(oldValue, oldRecordPointer);
