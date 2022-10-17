@@ -1,109 +1,94 @@
-const { ID, PathReference, PathInfo, ascii85, ColorStyle } = require('acebase-core');
-const { Storage, StorageSettings } = require('./storage');
-const { NodeInfo } = require('./node-info');
-const { VALUE_TYPES } = require('./node-value-types');
-const { NodeNotFoundError, NodeRevisionError } = require('./node-errors');
-const { pfs } = require('./promise-fs');
-const { ThreadSafe } = require('./thread-safe');
+import { ID, PathReference, PathInfo, ascii85, ColorStyle } from 'acebase-core';
+import { Storage, StorageSettings } from '..';
+import { NodeInfo } from '../../node-info';
+import { VALUE_TYPES } from '../../node-value-types';
+import { NodeNotFoundError, NodeRevisionError } from '../../node-errors';
+import { pfs } from '../../promise-fs';
+import { ThreadSafe } from '../../thread-safe';
+import { NodeAddress } from '../../node-address';
 
-let sqlite; // sqlite dependency is lazy loaded in SQLiteStorage constructor
-
-class SQLiteNodeAddress {
-    constructor(containerPath) {
-        this.path = containerPath;
+export class SQLiteNodeAddress extends NodeAddress {
+    constructor(containerPath: string) {
+        super(containerPath);
     }
 }
 
-class SQLiteNodeInfo extends NodeInfo {
-    constructor(info) {
+export class SQLiteNodeInfo extends NodeInfo {
+    address: SQLiteNodeAddress;
+    revision: string;
+    revision_nr: number;
+    created: number; // Date;
+    modified: number; // Date;
+
+    constructor(info: Partial<SQLiteNodeInfo>) {
         super(info);
-
-        /** @type {SQLiteNodeAddress | null} */
-        this.address = null;
-
-        /** @type {string} */
+        // this.address = null; // ?
         this.revision = info.revision;
-        /** @type {number} */
         this.revision_nr = info.revision_nr;
-        /** @type {Date} */
         this.created = info.created;
-        /** @type {Date} */
         this.modified = info.modified;
     }
 }
 
-class SQLiteStorageSettings extends StorageSettings {
+export class SQLiteStorageSettings extends StorageSettings {
 
-    constructor(options) {
+    constructor(options: Partial<SQLiteStorageSettings>) {
         super(options);
         options = options || {};
     }
 }
 
-class SQLiteStorage extends Storage {
+export class SQLiteStorage extends Storage {
+
+    private sqlite: any;
+    private _db: any;
+    private rootRecord: SQLiteNodeInfo;
 
     /**
-     *
-     * @param {string} name database name
-     * @param {Partial<SQLiteStorageSettings>} [settings]
+     * @param name database name
+     * @param settings
      */
-    constructor(name, settings = { path: '.' }) {
+    constructor(name: string, settings: Partial<SQLiteStorageSettings> = { path: '.' }) {
 
         settings = new SQLiteStorageSettings(settings);
-        super(name, settings);
+        super(name, settings as SQLiteStorageSettings);
 
-        // Lazy load sqlite3 so it is required once SQLiteStorage is actually requested
-        sqlite = sqlite || (function() {
-            try {
-                return require('sqlite3').verbose();
-            }
-            catch (err) {
-                throw new Error(`sqlite3 not found. To use SQLite as storage, add sqlite3 to your project dependencies: npm i sqlite3`);
-            }
-        })();
+        // Lazy load sqlite3 so it is only `require`d once SQLiteStorage is actually requested
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            this.sqlite = require('sqlite3').verbose();
+        }
+        catch (err) {
+            throw new Error(`sqlite3 not found. To use SQLite as storage, add sqlite3 to your project dependencies: npm i sqlite3`);
+        }
 
-        this._init();
+        this.init();
     }
 
-    /**
-     * @param {string} sql
-     * @param {any} [params]
-     * @returns {Promise<Array<object>>}
-     */
-    _get(sql, params) {
+    _get(sql: string, params?: any): Promise<any[]> {
         const stack = new Error('').stack;
-        return new Promise((resolve, reject) => {
-            this._db.all(sql, params || {}, (err, rows) => {
+        return new Promise<any[]>((resolve, reject) => {
+            this._db.all(sql, params || {}, (err: any, rows: any[]) => {
                 if (err) { err.stack = stack; err.statement = sql; err.params = params; return reject(err); }
                 resolve(rows);
             });
         });
     }
 
-    /**
-     * @param {string} sql
-     * @param {any} [params]
-     * @returns {Promise<object>}
-     */
-    _getOne(sql, params) {
+    _getOne(sql: string, params?: any): Promise<any> {
         const stack = new Error('').stack;
-        return new Promise((resolve, reject) => {
-            this._db.get(sql, params || {}, (err, row) => {
+        return new Promise<any>((resolve, reject) => {
+            this._db.get(sql, params || {}, (err: any, row: any) => {
                 if (err) { err.stack = stack; err.statement = sql; err.params = params; return reject(err); }
                 resolve(row);
             });
         });
     }
 
-    /**
-     * @param {string} sql
-     * @param {any} [params]
-     * @returns {Promise<SQLiteStorage>}
-     */
-    _exec(sql, params) {
+    _exec(sql: string, params?: any): Promise<SQLiteStorage> {
         const stack = new Error('').stack;
-        return new Promise((resolve, reject) => {
-            this._db.run(sql, params || {}, err => {
+        return new Promise<SQLiteStorage>((resolve, reject) => {
+            this._db.run(sql, params || {}, (err: any) => {
                 if (err) { err.stack = stack; err.statement = sql; err.params = params; return reject(err); }
                 resolve(this);
             });
@@ -111,13 +96,12 @@ class SQLiteStorage extends Storage {
     }
 
     /**
-     *
-     * @param {string} sql
-     * @param {object} params
-     * @param {(row: object) => boolean} callback function to call for every row until it returns false
-     * @returns {Promise<{ rows: number, canceled: boolean }>} Resolves once all rows have been processed, or callback returned false
+     * @param sql
+     * @param params
+     * @param callback function to call for every row until it returns false
+     * @returns Resolves once all rows have been processed, or callback returned false
      */
-    _each(sql, params = {}, callback) {
+    _each(sql: string, params: any = {}, callback: (row: any) => boolean): Promise<{ rows: number, canceled: boolean }> {
         return new Promise((resolve, reject) => {
             const take = 100;
             let skip = 0;
@@ -151,9 +135,11 @@ class SQLiteStorage extends Storage {
         });
     }
 
+    private _transactionConnection: any;
     _createTransaction() {
-        const queue = [];
-        const run = async () => {
+        const queue = [] as Array<{ sql: string; params?: any }>;
+        const sqlite = this.sqlite;
+        const run = async (): Promise<unknown> => {
             // Use dedicated connection for transactions, so other statements being executed won't end up in our transaction
             if (!this._transactionConnection) {
                 this._transactionConnection = new sqlite.Database(`${this.settings.path}/${this.name}.acebase/data.sqlite`, sqlite.OPEN_READWRITE);
@@ -167,9 +153,9 @@ class SQLiteStorage extends Storage {
                 });
             const db = this._transactionConnection;
 
-            const exec = (sql, params) => {
+            const exec = (sql: string, params?: any) => {
                 return new Promise((resolve, reject) => {
-                    const callback = function(err) {
+                    const callback = function(err?: any) {
                         if (err) { return reject(err); }
                         resolve(this);
                     };
@@ -207,15 +193,15 @@ class SQLiteStorage extends Storage {
             return results;
         };
         return {
-            add(sql, params) {
+            add(sql: string, params?: any) {
                 queue.push({ sql, params });
             },
             run,
         };
     }
 
-    async _init() {
-
+    private async init() {
+        const sqlite = this.sqlite;
         try {
             const path = `${this.settings.path}/${this.name}.acebase`;
             try {
@@ -295,36 +281,35 @@ class SQLiteStorage extends Storage {
                     rows: [{ action: 'db_created', success: 1, date: Date.now() }],
                 },
             };
+            type TableName = keyof typeof tables;
 
             const rows = await this._get(`SELECT name FROM sqlite_master WHERE type='table'`);
-            rows.forEach(row => {
+            rows.forEach((row: { name: TableName }) => {
                 delete tables[row.name];
             });
 
             // Create tables that didn't exist
-            const promises = Object.keys(tables).map(async name => {
+            const promises = Object.keys(tables).map(async (name: TableName) => {
                 // Create table
-                let sql = tables[name].create;
+                const sql = tables[name].create;
                 await this._exec(sql);
 
                 // Insert initialization data
                 if (tables[name].rows) {
-                    let rows = tables[name].rows;
+                    const rows = tables[name].rows as any[];
                     const promises = rows.map(async row => {
-                        let keys = Object.keys(row);
+                        const keys = Object.keys(row);
                         // let values = keys.map(key => row[key]).map(val => typeof val === 'number' ? val : `'${val.toString()}'`);
                         // let sql = `INSERT INTO ${name} (${keys.join(',')}) VALUES (${values.join(',')})`;
                         const sql = `INSERT INTO ${name} (${keys.join(',')}) VALUES (${keys.map(key => '$' + key).join(',')})`;
-                        const params = keys.reduce((obj, key) => { obj['$' + key] = row[key]; return obj; }, {});
+                        const params = keys.reduce((obj, key) => { obj['$' + key] = row[key]; return obj; }, {} as any);
                         await this._exec(sql, params);
                     });
                     await Promise.all(promises);
                 }
 
                 // Run action callback
-                if (tables[name].action) {
-                    await tables[name].action();
-                }
+                await (tables[name] as any).action?.();
             });
             await Promise.all(promises);
 
@@ -345,7 +330,7 @@ class SQLiteStorage extends Storage {
         }
     }
 
-    _getTypeFromStoredValue(val) {
+    private _getTypeFromStoredValue(val: unknown) {
         let type;
         if (typeof val === 'string') {
             type = VALUE_TYPES.STRING;
@@ -361,13 +346,13 @@ class SQLiteStorage extends Storage {
         }
         else if (typeof val === 'object') {
             if ('type' in val) {
-                type = val.type;
-                val = val.value;
+                type = (val as any).type;
+                val = (val as any).value;
                 if (type === VALUE_TYPES.DATETIME) {
-                    val = new Date(val);
+                    val = new Date(val as number);
                 }
                 else if (type === VALUE_TYPES.REFERENCE) {
-                    val = new PathReference(val);
+                    val = new PathReference(val as string);
                 }
             }
             else {
@@ -380,7 +365,7 @@ class SQLiteStorage extends Storage {
         return { type, value: val };
     }
 
-    _createJSON(obj) {
+    _createJSON(obj: any) {
         Object.keys(obj).forEach(key => {
             let child = obj[key];
             if (child instanceof Date) {
@@ -400,12 +385,12 @@ class SQLiteStorage extends Storage {
         return JSON.stringify(obj);
     }
 
-    _deserializeJSON(type, json) {
+    _deserializeJSON(type: typeof VALUE_TYPES[keyof typeof VALUE_TYPES], json: string) {
         let value = JSON.parse(json);
 
         // Check if there any typed values stored in object's children that need deserializing
         Object.keys(value).forEach(key => {
-            let val = value[key];
+            const val = value[key];
             if (typeof val === 'object' && 'type' in val) {
                 // Typed value stored in parent record
                 if (val.type === VALUE_TYPES.BINARY) {
@@ -428,9 +413,9 @@ class SQLiteStorage extends Storage {
 
         if (type === VALUE_TYPES.ARRAY) {
             // Convert object { 0: (...), 1: (...) } to array
-            let arr = [];
+            const arr = [] as any[];
             Object.keys(value).forEach(index => {
-                arr[index] = value[index];
+                arr[parseInt(index)] = value[index];
             });
             value = arr;
         }
@@ -440,12 +425,20 @@ class SQLiteStorage extends Storage {
 
     /**
      * Creates or updates a node in its own record. DOES NOT CHECK if path exists in parent node, or if parent paths exist! Calling code needs to do this
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options]
-     * @returns {Promise<void>}
      */
-    async _writeNode(path, value, options = { merge: false, revision: null, transaction: null }) {
+    async _writeNode(
+        path: string,
+        value: any,
+        options: {
+            merge?: boolean;
+            revision?: string;
+            transaction?: ReturnType<SQLiteStorage['_createTransaction']>;
+        } = {
+            merge: false,
+            revision: null,
+            transaction: null,
+        },
+    ): Promise<void> {
         if (this.valueFitsInline(value)) {
             throw new Error(`invalid value to store in its own node`);
         }
@@ -457,16 +450,16 @@ class SQLiteStorage extends Storage {
         const currentRow = await this._getOne(`SELECT path, type, text_value, binary_value, json_value, revision, revision_nr FROM nodes WHERE path = $path`, { $path: path }); //  OR path LIKE '${path}/*' OR path LIKE '${path}[%'
         const newRevision = (options && options.revision) || ID.generate();
 
-        let mainNode = {
+        const mainNode = {
             type: VALUE_TYPES.OBJECT,
-            value: {},
+            value: {} as any,
             storageType: 'json',
         };
-        const childNodeValues = {};
+        const childNodeValues = {} as any;
         if (value instanceof Array) {
             mainNode.type = VALUE_TYPES.ARRAY;
             // Convert array to object with numeric properties
-            const obj = {};
+            const obj = {} as any;
             for (let i = 0; i < value.length; i++) {
                 obj[i] = value[i];
             }
@@ -491,10 +484,8 @@ class SQLiteStorage extends Storage {
         const currentIsObjectOrArray = currentRow ? [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(currentRow.type) : false;
         const newIsObjectOrArray = [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(mainNode.type);
         const children = {
-            /** @type {string[]} */
-            current: [],
-            /** @type {string[]} */
-            new: [],
+            current: [] as (string | number)[],
+            new: [] as (string | number)[],
         };
         let currentObject = null;
         if (currentIsObjectOrArray) {
@@ -686,9 +677,8 @@ class SQLiteStorage extends Storage {
 
     /**
      * Deletes (dedicated) node and all subnodes without checking for existence. Use with care - all removed nodes will lose their revision stats! DOES NOT REMOVE INLINE CHILD NODES!
-     * @param {string} path
      */
-    _deleteNode(path, options = { transaction: null }) {
+    _deleteNode(path: string, options = { transaction: null as ReturnType<SQLiteStorage['_createTransaction']> }) {
         const where = path === '' ? '' : `WHERE path = '${path}' OR path LIKE '${path}/%' OR path LIKE '${path}[%'`;
         const sql = `DELETE FROM nodes ${where}`;
         if (options && options.transaction) {
@@ -701,21 +691,24 @@ class SQLiteStorage extends Storage {
 
     /**
      * Enumerates all children of a given Node for reflection purposes
-     * @param {string} path
-     * @param {object} [options={}]
-     * @param {string[]|number[]} [options.keyFilter=[]]
-     * @param {string} [options.tid]
      */
-    getChildren(path, options = {}) {
+    getChildren(
+        path: string,
+        options: {
+            keyFilter?: (string | number)[];
+            tid?: string | number;
+        } = {},
+    ) {
         // return generator
-        var callback; //, resolve, reject;
+        type CallbackFunction = (child: SQLiteNodeInfo) => boolean;
+        let callback: CallbackFunction; //, resolve, reject;
         const generator = {
             /**
              *
-             * @param {(child: NodeInfo) => boolean} valueCallback callback function to run for each child. Return false to stop iterating
-             * @returns {Promise<boolean>} returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
+             * @param valueCallback callback function to run for each child. Return false to stop iterating
+             * @returns returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
              */
-            next(valueCallback) {
+            next(valueCallback: CallbackFunction): Promise<boolean> {
                 callback = valueCallback;
                 return start();
             },
@@ -723,7 +716,7 @@ class SQLiteStorage extends Storage {
         const start = async () => {
             let canceled = false;
             const tid = (options && options.tid) || ID.generate();
-            const lock = await this.nodeLocker.lock(path, tid, false, 'getChildren');
+            const lock = await this.nodeLocker.lock(path, tid.toString(), false, 'getChildren');
             try {
                 const row = await this._getOne(`SELECT type, json_value, revision, revision_nr, created, modified FROM nodes WHERE path = $path`, { $path: path });
                 if (!row) { throw new NodeNotFoundError(`Node "/${path}" does not exist`); }
@@ -739,12 +732,12 @@ class SQLiteStorage extends Storage {
                 }
                 const pathInfo = PathInfo.get(path);
                 keys.length > 0 && keys.every(key => {
-                    let child = this._getTypeFromStoredValue(value[key]);
+                    const child = this._getTypeFromStoredValue(value[key]);
 
                     const info = new SQLiteNodeInfo({
                         path: pathInfo.childPath(key),
-                        key: isArray ? null : key,
-                        index: isArray ? key : null,
+                        ...(!isArray && { key }),
+                        ...(isArray && { index: parseInt(key) }),
                         type: child.type,
                         address: null,
                         exists: true,
@@ -773,8 +766,8 @@ class SQLiteStorage extends Storage {
                     const info = new SQLiteNodeInfo({
                         path: row.path,
                         type: row.type,
-                        key: isArray ? null : key,
-                        index: isArray ? key : null,
+                        ...(!isArray && { key: key as string }),
+                        ...(isArray && { index: key as number }),
                         address: new SQLiteNodeAddress(row.path), //new SqlNodeAddress(row.path),
                         exists: true,
                         value: null, // not loaded
@@ -797,20 +790,19 @@ class SQLiteStorage extends Storage {
         return generator;
     }
 
-    /**
-     * @param {string} path
-     * @param {object} [options]
-     * @param {string[]} [options.include]
-     * @param {string[]} [options.exclude]
-     * @param {boolean} [options.child_objects=true]
-     * @param {string} [options.tid]
-     * @returns {Promise<{ revision: any; value: any; }>}
-     */
-    async getNode(path, options = { child_objects: true }) {
+    async getNode(
+        path: string,
+        options: {
+            include?: (string | number)[];
+            exclude?: (string | number)[];
+            child_objects?: boolean;
+            tid?: string | number;
+        } = { child_objects: true },
+    ): Promise<{ revision: string; value: any; }> {
         // path = path.replace(/'/g, '');  // prevent sql injection, remove single quotes
 
         const tid = (options && options.tid )|| ID.generate();
-        let lock = await this.nodeLocker.lock(path, tid, false, 'getNode');
+        let lock = await this.nodeLocker.lock(path, tid.toString(), false, 'getNode');
         try {
             // Get path, path/* and path[*
             let where = '';
@@ -835,10 +827,10 @@ class SQLiteStorage extends Storage {
                 const rows = await this._get(`SELECT path, type FROM nodes ${where}`);
                 const paths = [path];
                 const includeCheck = options.include
-                    ? new RegExp('^' + options.include.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
+                    ? new RegExp('^' + options.include.map(p => `(?:${p.toString().replace(/\*/g, '[^/\\[]+')})`).join('|') + '(?:$|[/\\[])')
                     : null;
                 const excludeCheck = options.exclude
-                    ? new RegExp('^' + options.exclude.map(p => '(?:' + p.replace(/\*/g, '[^/\\[]+') + ')').join('|') + '(?:$|[/\\[])')
+                    ? new RegExp('^' + options.exclude.map(p => `(?:${p.toString().replace(/\*/g, '[^/\\[]+')})`).join('|') + '(?:$|[/\\[])')
                     : null;
 
                 for (let i = 0; i < rows.length; i++) {
@@ -871,7 +863,7 @@ class SQLiteStorage extends Storage {
                 const parentRow = await this._getOne(`SELECT type, json_value, revision FROM nodes WHERE path = '${pathInfo.parentPath}'`);
                 const result = {
                     revision: parentRow ? parentRow.revision : null,
-                    value: null,
+                    value: null as any,
                 };
                 if (!parentRow) { return result; } // parent node doesn't exist
                 if (![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentRow.type)) { return result; } // parent node is not an object
@@ -890,12 +882,11 @@ class SQLiteStorage extends Storage {
             const targetRow = childRows.find(row => row.path === path);
             const result = {
                 revision: targetRow ? targetRow.revision : null,
-                /** @type {any} */
-                value: null,
+                value: null as any,
             };
             if (targetRow.type === VALUE_TYPES.OBJECT || targetRow.type === VALUE_TYPES.ARRAY) {
                 // target node is an object or array
-                let value = this._deserializeJSON(targetRow.type, targetRow.json_value);
+                const value = this._deserializeJSON(targetRow.type, targetRow.json_value);
 
                 // merge with other found (child) records
                 for (let i = 0; i < childRows.length; i++) {
@@ -913,7 +904,7 @@ class SQLiteStorage extends Storage {
                             : typeof trailKeys[j+1] === 'number'
                                 ? VALUE_TYPES.ARRAY
                                 : VALUE_TYPES.OBJECT;
-                        let nodeValue;
+                        let nodeValue: any;
                         if (!isLast) {
                             nodeValue = nodeType === VALUE_TYPES.OBJECT ? {} : [];
                         }
@@ -954,7 +945,7 @@ class SQLiteStorage extends Storage {
             }
             else if (targetRow.type === VALUE_TYPES.BINARY) {
                 // BLOBs are returned as Uint8Array by SQLite3
-                let val = targetRow.binary_value;
+                const val = targetRow.binary_value;
                 result.value = val.buffer.slice(val.byteOffset, val.byteOffset + val.byteLength);
             }
             else {
@@ -981,7 +972,7 @@ class SQLiteStorage extends Storage {
             }
 
             if (options.exclude) {
-                const process = (obj, keys) => {
+                const process = (obj: any, keys: (string | number)[]) => {
                     if (typeof obj !== 'object') { return; }
                     const key = keys[0];
                     if (key === '*') {
@@ -997,7 +988,7 @@ class SQLiteStorage extends Storage {
                     }
                 };
                 options.exclude.forEach(path => {
-                    const checkKeys = PathInfo.getPathKeys(path);
+                    const checkKeys = typeof path === 'number' ? [path] : PathInfo.getPathKeys(path);
                     process(result.value, checkKeys);
                 });
             }
@@ -1009,16 +1000,13 @@ class SQLiteStorage extends Storage {
         }
     }
 
-    /**
-     *
-     * @param {string} path
-     * @param {*} options
-     * @returns {Promise<SQLiteNodeInfo>}
-     */
-    async getNodeInfo(path, options = { tid: undefined }) {
+    async getNodeInfo(
+        path: string,
+        options: { tid?: string | number } = {},
+    ): Promise<SQLiteNodeInfo> {
         // path = path.replace(/'/g, '');  // prevent sql injection, remove single quotes
 
-        const lookupNode = async path => {
+        const lookupNode = async (path: string) => {
             const rows = await this._get(`SELECT type, text_value, binary_value, json_value, created, modified, revision, revision_nr FROM nodes WHERE path='${path}'`);
             if (rows.length === 0) {
                 return null;
@@ -1030,7 +1018,7 @@ class SQLiteStorage extends Storage {
             }
             else if (row.type === VALUE_TYPES.BINARY) {
                 // BLOBs are returned as Uint8Array by SQLite3
-                let val = row.binary_value;
+                const val = row.binary_value;
                 value = val.buffer.slice(val.byteOffset, val.byteOffset + val.byteLength);
             }
             else {
@@ -1049,7 +1037,7 @@ class SQLiteStorage extends Storage {
 
         const pathInfo = PathInfo.get(path);
         const tid = (options && options.tid) || ID.generate();
-        let lock = await this.nodeLocker.lock(path, tid, false, 'getNodeInfo');
+        let lock = await this.nodeLocker.lock(path, tid.toString(), false, 'getNodeInfo');
         try {
             const node = await lookupNode(path);
             const info = new SQLiteNodeInfo({
@@ -1059,8 +1047,8 @@ class SQLiteStorage extends Storage {
                 type: node ? node.type : 0,
                 exists: node !== null,
                 address: node ? new SQLiteNodeAddress(path) : null,
-                created: node ? new Date(node.created) : null,
-                modified: node ? new Date(node.modified) : null,
+                created: node ? parseInt(node.created) : null,
+                modified: node ? parseInt(node.modified) : null,
                 revision: node ? node.revision : null,
                 revision_nr: node ? node.revision_nr : null,
             });
@@ -1101,8 +1089,8 @@ class SQLiteStorage extends Storage {
                         break;
                     }
                 }
-                info.created = new Date(parent.created);
-                info.modified = new Date(parent.modified);
+                info.created = parseInt(parent.created);
+                info.modified = parseInt(parent.modified);
                 info.revision = parent.revision;
                 info.revision_nr = parent.revision_nr;
             }
@@ -1117,42 +1105,43 @@ class SQLiteStorage extends Storage {
         }
     }
 
-    /**
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options]
-     * @param {string} [options.assert_revision]
-     * @param {string} [options.tid]
-     * @param {boolean} [options.suppress_events=false]
-     * @param {any} [options.context=null]
-     * @returns {Promise<any>}
-     */
-    async setNode(path, value, options = { suppress_events: false, context: null }) {
+    async setNode(
+        path: string,
+        value: any,
+        options: {
+            assert_revision?: string;
+            tid?: string | number;
+            suppress_events?: boolean;
+            context?: any;
+        } = {
+            suppress_events: false,
+            context: null,
+        },
+    ): Promise<void> {
         const pathInfo = PathInfo.get(path);
 
         const tid = (options && options.tid) || ID.generate();
-        let lock = await this.nodeLocker.lock(path, tid, true, 'setNode');
+        let lock = await this.nodeLocker.lock(path, tid.toString(), true, 'setNode');
         try {
             if (path === '') {
                 if (value === null || typeof value !== 'object' || value instanceof Array || value instanceof ArrayBuffer || ('buffer' in value && value.buffer instanceof ArrayBuffer)) {
                     throw new Error(`Invalid value for root node: ${value}`);
                 }
-                return this._writeNodeWithTracking('', value, { merge: false, tid, suppress_events: options.suppress_events, context: options.context });
+                await this._writeNodeWithTracking('', value, { merge: false, tid, suppress_events: options.suppress_events, context: options.context });
             }
-
-            if (options && typeof options.assert_revision !== 'undefined') {
+            else if (options && typeof options.assert_revision !== 'undefined') {
                 const info = await this.getNodeInfo(path, { tid: lock.tid });
                 if (info.revision !== options.assert_revision) {
                     throw new NodeRevisionError(`revision '${info.revision}' does not match requested revision '${options.assert_revision}'`);
                 }
                 if (info.address && info.address.path === path && !this.valueFitsInline(value)) {
                     // Overwrite node
-                    return this._writeNodeWithTracking(path, value, { merge: false, tid, suppress_events: options.suppress_events, context: options.context });
+                    await this._writeNodeWithTracking(path, value, { merge: false, tid, suppress_events: options.suppress_events, context: options.context });
                 }
                 else {
                     // Update parent node
                     lock = await lock.moveToParent();
-                    return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
+                    await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
                 }
             }
             else {
@@ -1166,24 +1155,25 @@ class SQLiteStorage extends Storage {
         }
     }
 
-    /**
-     * @param {string} path
-     * @param {object} updates
-     * @param {object} [options]
-     * @param {string} [options.assert_revision]
-     * @param {string} [options.tid]
-     * @param {boolean} [options.suppress_events=false]
-     * @param {any} [options.context=null]
-     * @returns {Promise<any>}
-     */
-    async updateNode(path, updates, options = { suppress_events: false, context: null }) {
+    async updateNode(
+        path: string,
+        updates: any,
+        options: {
+            tid?: string | number;
+            suppress_events?: boolean;
+            context?: any;
+        } = {
+            suppress_events: false,
+            context: null,
+        },
+    ): Promise<void> {
 
         if (typeof updates !== 'object') { //  || Object.keys(updates).length === 0
             throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
         }
 
         const tid = (options && options.tid) || ID.generate();
-        let lock = await this.nodeLocker.lock(path, tid, true, 'updateNode');
+        let lock = await this.nodeLocker.lock(path, tid.toString(), true, 'updateNode');
         try {
             // Get info about current node
             const nodeInfo = await this.getNodeInfo(path, { tid: lock.tid });
@@ -1191,18 +1181,18 @@ class SQLiteStorage extends Storage {
             if (nodeInfo.exists && nodeInfo.address && nodeInfo.address.path === path) {
                 // Node exists and is stored in its own record.
                 // Update it
-                return this._writeNodeWithTracking(path, updates, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
+                await this._writeNodeWithTracking(path, updates, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
             }
             else if (nodeInfo.exists) {
                 // Node exists, but is stored in its parent node.
                 const pathInfo = PathInfo.get(path);
                 lock = await lock.moveToParent();
-                return this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
+                await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
             }
             else {
                 // The node does not exist, it's parent doesn't have it either. Update the parent instead
                 lock = await lock.moveToParent();
-                return this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { tid, suppress_events: options.suppress_events, context: options.context });
+                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { tid, suppress_events: options.suppress_events, context: options.context });
             }
         }
         finally {
