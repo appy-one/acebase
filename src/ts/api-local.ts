@@ -1,25 +1,21 @@
-const { Api } = require('acebase-core');
-const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
-const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
-const { MSSQLStorage, MSSQLStorageSettings } = require('./storage-mssql');
-const { CustomStorage, CustomStorageSettings } = require('./storage-custom');
-const { VALUE_TYPES } = require('./node-value-types');
-const { query: executeQuery } = require('./query');
+import { AceBaseBase, IStreamLike, Api, EventSubscriptionCallback, ReflectionType, StreamReadFunction, StreamWriteFunction, TransactionLogFilter, LoggingLevel, Query, QueryOptions } from 'acebase-core';
+import { AceBaseStorage, AceBaseStorageSettings } from './storage/binary';
+import { SQLiteStorage, SQLiteStorageSettings } from './storage/sqlite';
+import { MSSQLStorage, MSSQLStorageSettings } from './storage/mssql';
+import { CustomStorage, CustomStorageSettings } from './storage/custom';
+import { VALUE_TYPES } from './node-value-types';
+import { query as executeQuery } from './query';
+import { Storage, StorageSettings } from './storage';
+import { CreateIndexOptions } from './storage/indexes';
+import type { BinaryNodeAddress } from './storage/binary/node-address';
 
-/**
- * @typedef {import('./data-index').DataIndex} DataIndex
- * @typedef {import('./storage').StorageSettings} StorageSettings
- * @typedef {import('acebase-core').AceBaseBase} AceBaseBase
- */
-
-class LocalApi extends Api {
+export class LocalApi extends Api {
     // All api methods for local database instance
+    public db: AceBaseBase;
+    public storage: Storage;
+    public logLevel: LoggingLevel;
 
-    /**
-     *
-     * @param {{db: AceBaseBase, storage: StorageSettings, logLevel?: string }} settings
-     */
-    constructor(dbname = 'default', settings, readyCallback) {
+    constructor(dbname = 'default', settings: { db: AceBaseBase, storage: StorageSettings, logLevel?: LoggingLevel }, readyCallback: () => any) {
         super();
         this.db = settings.db;
 
@@ -32,61 +28,80 @@ class LocalApi extends Api {
                 this.storage = new MSSQLStorage(dbname, settings.storage);
             }
             else if (CustomStorageSettings && (settings.storage instanceof CustomStorageSettings || settings.storage.type === 'custom')) {
-                this.storage = new CustomStorage(dbname, settings.storage);
+                this.storage = new CustomStorage(dbname, settings.storage as CustomStorageSettings);
             }
             else {
                 const storageSettings = settings.storage instanceof AceBaseStorageSettings
                     ? settings.storage
-                    : new AceBaseStorageSettings(settings.storage);
+                    : new AceBaseStorageSettings(settings.storage as AceBaseStorageSettings);
                 this.storage = new AceBaseStorage(dbname, storageSettings);
             }
         }
         else {
             settings.storage = new AceBaseStorageSettings({ logLevel: settings.logLevel });
-            this.storage = new AceBaseStorage(dbname, settings.storage);
+            this.storage = new AceBaseStorage(dbname, settings.storage as AceBaseStorageSettings);
         }
         this.storage.on('ready', readyCallback);
     }
 
-    stats(options) {
-        return Promise.resolve(this.storage.stats);
+    async stats(options?: any) {
+        return this.storage.stats;
     }
 
-    subscribe(path, event, callback) {
+    subscribe(path: string, event: string, callback: EventSubscriptionCallback) {
         this.storage.subscriptions.add(path, event, callback);
     }
 
-    unsubscribe(path, event = undefined, callback = undefined) {
+    unsubscribe(path: string, event?: string, callback?: EventSubscriptionCallback) {
         this.storage.subscriptions.remove(path, event, callback);
     }
 
     /**
      * Creates a new node or overwrites an existing node
-     * @param {Storage} storage
-     * @param {string} path
-     * @param {any} value Any value will do. If the value is small enough to be stored in a parent record, it will take care of it
-     * @param {object} [options]
-     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
-     * @param {any} [options.context=null] Context to be passed along with data events
-     * @returns {Promise<{ cursor?: string }>} returns a promise with the new cursor (if transaction logging is enabled)
+     * @param path
+     * @param value Any value will do. If the value is small enough to be stored in a parent record, it will take care of it
+     * @returns returns a promise with the new cursor (if transaction logging is enabled)
      */
-    async set(path, value, options = { suppress_events: false, context: null }) {
+    async set(path: string, value: any, options: {
+        /**
+         * whether to suppress the execution of event subscriptions
+         * @default false
+         */
+        suppress_events?: boolean;
+        /**
+         * Context to be passed along with data events
+         * @default null
+         */
+        context?: any;
+    } = {
+        suppress_events: false,
+        context: null,
+    }) {
         const cursor = await this.storage.setNode(path, value, { suppress_events: options.suppress_events, context: options.context });
-        return { cursor };
+        return { ...(cursor && { cursor }) };
     }
 
     /**
      * Updates an existing node, or creates a new node.
-     * @param {string} path
-     * @param {any} updates
-     * @param {object} [options]
-     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
-     * @param {any} [options.context=null] Context to be passed along with data events
-     * @returns {Promise<{ cursor?: string }>} returns a promise with the new cursor (if transaction logging is enabled)
+     * @returns returns a promise with the new cursor (if transaction logging is enabled)
      */
-    async update(path, updates, options = { suppress_events: false, context: null }) {
+    async update(path: string, updates: any, options: {
+        /**
+         * whether to suppress the execution of event subscriptions
+         * @default false
+         */
+        suppress_events?: boolean;
+        /**
+         * Context to be passed along with data events
+         * @default null
+         */
+        context?: any;
+    } = {
+        suppress_events: false,
+        context: null,
+    }) {
         const cursor = await this.storage.updateNode(path, updates, { suppress_events: options.suppress_events, context: options.context });
-        return { cursor };
+        return { ...(cursor && { cursor }) };
     }
 
     get transactionLoggingEnabled() {
@@ -95,18 +110,23 @@ class LocalApi extends Api {
 
     /**
      * Gets the value of a node
-     * @param {string} path
-     * @param {object} [options] when omitted retrieves all nested data. If include is set to an array of keys it will only return those children. If exclude is set to an array of keys, those values will not be included
-     * @param {string[]} [options.include] keys to include
-     * @param {string[]} [options.exclude] keys to exclude
-     * @param {boolean} [options.child_objects=true] whether to include child objects
-     * @returns {Promise<{ value: any, context: any, cursor?: string }>}
+     * @param options when omitted retrieves all nested data. If `include` is set to an array of keys it will only return those children.
+     * If `exclude` is set to an array of keys, those values will not be included
      */
-    async get(path, options) {
-        // const context = {};
-        // if (this.transactionLoggingEnabled) {
-        //     context.acebase_cursor = ID.generate();
-        // }
+    async get(path: string, options?: {
+        /**
+         * child keys (properties) to include
+         */
+        include?: string[];
+        /**
+         * chld keys (properties) to exclude
+         */
+        exclude?: string[];
+        /**
+         * whether to include child objects
+         */
+        child_objects?: boolean;
+    }) {
         if (!options) { options = {}; }
         if (typeof options.include !== 'undefined' && !(options.include instanceof Array)) {
             throw new TypeError(`options.include must be an array of key names`);
@@ -123,19 +143,30 @@ class LocalApi extends Api {
 
     /**
      * Performs a transaction on a Node
-     * @param {string} path
-     * @param {(currentValue: any) => Promise<any>} callback callback is called with the current value. The returned value (or promise) will be used as the new value. When the callbacks returns undefined, the transaction will be canceled. When callback returns null, the node will be removed.
-     * @param {object} [options]
-     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
-     * @param {any} [options.context=null]
-     * @returns {Promise<{ cursor?: string }>} returns a promise with the new cursor (if transaction logging is enabled)
+     * @param path
+     * @param callback callback is called with the current value. The returned value (or promise) will be used as the new value. When the callbacks returns undefined, the transaction will be canceled. When callback returns null, the node will be removed.
+     * @returns returns a promise with the new cursor (if transaction logging is enabled)
      */
-    async transaction(path, callback, options = { suppress_events: false, context: null }) {
+    async transaction(path: string, callback: (currentValue: any) => Promise<any>, options: {
+        /**
+         * whether to suppress the execution of event subscriptions
+         * @default false
+         */
+        suppress_events?: boolean;
+        /**
+         * Context to be passed along with data events
+         * @default null
+         */
+        context?: any;
+    } = {
+        suppress_events: false,
+        context: null,
+    }) {
         const cursor = await this.storage.transactNode(path, callback, { suppress_events: options.suppress_events, context: options.context });
-        return { cursor };
+        return { ...(cursor && { cursor }) };
     }
 
-    async exists(path) {
+    async exists(path: string) {
         const nodeInfo = await this.storage.getNodeInfo(path);
         return nodeInfo.exists;
     }
@@ -164,64 +195,41 @@ class LocalApi extends Api {
     // }
 
     /**
-     *
-     * @param {string} path
-     * @param {object} query
-     * @param {Array<{ key: string, op: string, compare: any}>} query.filters
-     * @param {number} query.skip number of results to skip, useful for paging
-     * @param {number} query.take max number of results to return
-     * @param {Array<{ key: string, ascending: boolean }>} query.order
-     * @param {object} [options]
-     * @param {boolean} [options.snapshots=false] whether to return matching data, or paths to matching nodes only
-     * @param {string[]} [options.include] when using snapshots, keys or relative paths to include in result data
-     * @param {string[]} [options.exclude] when using snapshots, keys or relative paths to exclude from result data
-     * @param {boolean} [options.child_objects] when using snapshots, whether to include child objects in result data
-     * @param {(event: { name: string, [key: string]: any }) => void} [options.eventHandler]
-     * @param {object} [options.monitor] NEW (BETA) monitor changes
-     * @param {boolean} [options.monitor.add=false] monitor new matches (either because they were added, or changed and now match the query)
-     * @param {boolean} [options.monitor.change=false] monitor changed children that still match this query
-     * @param {boolean} [options.monitor.remove=false] monitor children that don't match this query anymore
-     * @returns {Promise<{ results: object[]|string[], context: any, stop(): Promise<void> }>} returns a promise that resolves with matching data or paths in `results`
+     * @returns Returns a promise that resolves with matching data or paths in `results`
      */
-    query(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: event => {} }) {
-        return executeQuery(this, path, query, options);
+    async query(path: string, query: Query, options: QueryOptions = { snapshots: false }): ReturnType<Api['query']> {
+        const results = await executeQuery(this, path, query, options);
+        return results;
     }
 
     /**
      * Creates an index on key for all child nodes at path
-     * @param {string} path
-     * @param {string} key
-     * @param {object} [options]
-     * @returns {Promise<DataIndex>}
      */
-    createIndex(path, key, options) {
+    createIndex(path: string, key: string, options: CreateIndexOptions) {
         return this.storage.indexes.create(path, key, options);
     }
 
     /**
      * Gets all indexes
-     * @returns {Promise<DataIndex[]>}
      */
-    getIndexes() {
-        return Promise.resolve(this.storage.indexes.list());
+    async getIndexes() {
+        return this.storage.indexes.list();
     }
 
     /**
      * Deletes an existing index from the database
-     * @param {string} filePath
-     * @returns
      */
-    async deleteIndex(filePath) {
+    async deleteIndex(filePath: string) {
         return this.storage.indexes.delete(filePath);
     }
 
-    async reflect(path, type, args) {
+    async reflect(path: string, type: ReflectionType, args: any) {
         args = args || {};
-        const getChildren = async (path, limit = 50, skip = 0, from = null) => {
+        const getChildren = async (path: string, limit = 50, skip = 0, from: string = null) => {
             if (typeof limit === 'string') { limit = parseInt(limit); }
             if (typeof skip === 'string') { skip = parseInt(skip); }
             if (['null','undefined'].includes(from)) { from = null; }
-            const children = [];
+            const children = [] as Array<{ key: string | number; type: string; value: any; address?: any }>;
             let n = 0, stop = false, more = false; //stop = skip + limit,
             await this.storage.getChildren(path)
                 .next(childInfo => {
@@ -238,7 +246,12 @@ class LocalApi extends Api {
                             type: childInfo.valueTypeName,
                             value: childInfo.value,
                             // address is now only added when storage is acebase. Not when eg sqlite, mssql
-                            address: typeof childInfo.address === 'object' && 'pageNr' in childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined,
+                            ...(typeof childInfo.address === 'object' && 'pageNr' in childInfo.address && {
+                                address: {
+                                    pageNr: (childInfo.address as BinaryNodeAddress).pageNr,
+                                    recordNr: (childInfo.address as BinaryNodeAddress).recordNr,
+                                },
+                            }),
                         });
                     }
                     stop = limit > 0 && children.length === limit; // flag, but don't stop now. Otherwise we won't know if there's more
@@ -257,23 +270,29 @@ class LocalApi extends Api {
             }
             case 'info': {
                 const info = {
-                    key: '',
+                    key: '' as string | number,
                     exists: false,
                     type: 'unknown',
-                    value: undefined,
+                    value: undefined as any,
+                    address: undefined as any,
                     children: {
                         count: 0,
                         more: false,
                         list: [],
-                    },
+                    } as Awaited<ReturnType<typeof getChildren>> | { count: number },
                 };
                 const nodeInfo = await this.storage.getNodeInfo(path, { include_child_count: args.child_count === true });
                 info.key = typeof nodeInfo.key !== 'undefined' ? nodeInfo.key : nodeInfo.index;
                 info.exists = nodeInfo.exists;
                 info.type = nodeInfo.exists ? nodeInfo.valueTypeName : undefined;
                 info.value = nodeInfo.value;
-                info.address = typeof nodeInfo.address === 'object' && 'pageNr' in nodeInfo.address ? { pageNr: nodeInfo.address.pageNr, recordNr: nodeInfo.address.recordNr } : undefined;
-                let isObjectOrArray = nodeInfo.exists && nodeInfo.address && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeInfo.type);
+                info.address = typeof nodeInfo.address === 'object' && 'pageNr' in nodeInfo.address
+                    ? {
+                        pageNr: (nodeInfo.address as BinaryNodeAddress).pageNr,
+                        recordNr: (nodeInfo.address as BinaryNodeAddress).recordNr,
+                    }
+                    : undefined;
+                const isObjectOrArray = nodeInfo.exists && nodeInfo.address && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeInfo.type);
                 if (args.child_count === true) {
                     // set child count instead of enumerating
                     info.children = { count: isObjectOrArray ? nodeInfo.childCount : 0 };
@@ -288,19 +307,33 @@ class LocalApi extends Api {
         }
     }
 
-    export(path, stream, options = { format: 'json' }) {
+    export(path: string, stream: StreamWriteFunction | IStreamLike, options: {
+        format: string;
+        type_safe: boolean;
+    } = {
+        format: 'json',
+        type_safe: true,
+    }) {
         return this.storage.exportNode(path, stream, options);
     }
 
-    import(path, read, options = { format: 'json', suppress_events: false, method: 'set' }) {
+    import(path: string, read: StreamReadFunction, options: {
+        format: 'json';
+        suppress_events: boolean;
+        method: 'set' | 'update' | 'merge';
+    } = {
+        format: 'json',
+        suppress_events: false,
+        method: 'set',
+    }) {
         return this.storage.importNode(path, read, options);
     }
 
-    async setSchema(path, schema) {
+    async setSchema(path: string, schema: Record<string, any> | string) {
         return this.storage.setSchema(path, schema);
     }
 
-    async getSchema(path) {
+    async getSchema(path: string) {
         return this.storage.getSchema(path);
     }
 
@@ -308,41 +341,27 @@ class LocalApi extends Api {
         return this.storage.getSchemas();
     }
 
-    async validateSchema(path, value, isUpdate) {
+    async validateSchema(path: string, value: any, isUpdate: boolean) {
         return this.storage.validateSchema(path, value, { updates: isUpdate });
     }
 
     /**
      * Gets all relevant mutations for specific events on a path and since specified cursor
-     * @param {object} filter
-     * @param {string} [filter.path] path to get all mutations for, only used if `for` property isn't used
-     * @param {Array<{ path: string, events: string[] }>} [filter.for] paths and events to get relevant mutations for
-     * @param {string} filter.cursor cursor to use
-     * @param {number} filter.timestamp timestamp to use
-     * @returns {Promise<{ used_cursor: string, new_cursor: string, mutations: object[] }>}
      */
-    async getMutations(filter) {
-        if (typeof this.storage.getMutations !== 'function') { throw new Error('Used storage type does not support getMutations'); }
+    async getMutations(filter: TransactionLogFilter) {
+        if (typeof (this.storage as AceBaseStorage).getMutations !== 'function') { throw new Error('Used storage type does not support getMutations'); }
         if (typeof filter !== 'object') { throw new Error('No filter specified'); }
-        if (typeof filter.cursor !== 'string' && typeof filter.timestamp !== 'number') { throw new Error('No cursor or timestamp given'); }
-        return this.storage.getMutations(filter);
+        if (typeof (filter as any).cursor !== 'string' && typeof (filter as any).timestamp !== 'number') { throw new Error('No cursor or timestamp given'); }
+        return (this.storage as AceBaseStorage).getMutations(filter);
     }
 
     /**
      * Gets all relevant effective changes for specific events on a path and since specified cursor
-     * @param {object} filter
-     * @param {string} [filter.path] path to get all mutations for, only used if `for` property isn't used
-     * @param {Array<{ path: string, events: string[] }>} [filter.for] paths and events to get relevant mutations for
-     * @param {string} filter.cursor cursor to use
-     * @param {number} filter.timestamp timestamp to use
-     * @returns {Promise<{ used_cursor: string, new_cursor: string, changes: object[] }>}
      */
-    async getChanges(filter) {
-        if (typeof this.storage.getChanges !== 'function') { throw new Error('Used storage type does not support getChanges'); }
+    async getChanges(filter: TransactionLogFilter) {
+        if (typeof (this.storage as AceBaseStorage).getChanges !== 'function') { throw new Error('Used storage type does not support getChanges'); }
         if (typeof filter !== 'object') { throw new Error('No filter specified'); }
-        if (typeof filter.cursor !== 'string' && typeof filter.timestamp !== 'number') { throw new Error('No cursor or timestamp given'); }
-        return this.storage.getChanges(filter);
+        if (typeof (filter as any).cursor !== 'string' && typeof (filter as any).timestamp !== 'number') { throw new Error('No cursor or timestamp given'); }
+        return (this.storage as AceBaseStorage).getChanges(filter);
     }
 }
-
-module.exports = { LocalApi };
