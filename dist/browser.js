@@ -44,6 +44,7 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
      */
     constructor(dbname, options) {
         super();
+        this._ready = false;
         options = new AceBaseBaseSettings(options || {});
         this.name = dbname;
         // Setup console logging
@@ -72,56 +73,46 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
         });
     }
     /**
-     *
-     * @param {()=>void} [callback] (optional) callback function that is called when ready. You can also use the returned promise
-     * @returns {Promise<void>} returns a promise that resolves when ready
+     * Waits for the database to be ready before running your callback.
+     * @param callback (optional) callback function that is called when the database is ready to be used. You can also use the returned promise.
+     * @returns returns a promise that resolves when ready
      */
-    ready(callback = undefined) {
-        if (this._ready === true) {
-            // ready event was emitted before
-            callback && callback();
-            return Promise.resolve();
-        }
-        else {
+    async ready(callback) {
+        if (!this._ready) {
             // Wait for ready event
-            let resolve;
-            const promise = new Promise(res => resolve = res);
-            this.on('ready', () => {
-                resolve();
-                callback && callback();
-            });
-            return promise;
+            await new Promise(resolve => this.on('ready', resolve));
         }
+        callback === null || callback === void 0 ? void 0 : callback();
     }
     get isReady() {
-        return this._ready === true;
+        return this._ready;
     }
     /**
      * Allow specific observable implementation to be used
-     * @param {Observable} Observable Implementation to use
+     * @param ObservableImpl Implementation to use
      */
-    setObservable(Observable) {
-        (0, optional_observable_1.setObservable)(Observable);
+    setObservable(ObservableImpl) {
+        (0, optional_observable_1.setObservable)(ObservableImpl);
     }
     /**
      * Creates a reference to a node
-     * @param {string} path
-     * @returns {DataReference} reference to the requested node
+     * @param path
+     * @returns reference to the requested node
      */
     ref(path) {
         return new data_reference_1.DataReference(this, path);
     }
     /**
      * Get a reference to the root database node
-     * @returns {DataReference} reference to root node
+     * @returns reference to root node
      */
     get root() {
         return this.ref('');
     }
     /**
      * Creates a query on the requested node
-     * @param {string} path
-     * @returns {DataReferenceQuery} query for the requested node
+     * @param path
+     * @returns query for the requested node
      */
     query(path) {
         const ref = new data_reference_1.DataReference(this, path);
@@ -141,14 +132,9 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
              * will index "system/users/user1/name", "system/users/user2/name" etc.
              * You can also use wildcard paths to enable indexing and quering of fragmented data.
              * Example: path "users/*\/posts", key "title": will index all "title" keys in all posts of all users.
-             * @param {string} path path to the container node
-             * @param {string} key name of the key to index every container child node
-             * @param {object} [options] any additional options
-             * @param {string} [options.type] type of index to create, such as `fulltext`, `geo`, `array` or `normal` (default)
-             * @param {string[]} [options.include] keys to include in the index. Speeds up sorting on these columns when the index is used (and dramatically increases query speed when .take(n) is used in addition)
-             * @param {boolean} [options.rebuild] whether to rebuild the index if it exists already
-             * @param {string} [options.textLocale] If the indexed values are strings, which default locale to use
-             * @param {object} [options.config] additional index-specific configuration settings
+             * @param path path to the container node
+             * @param key name of the key to index every container child node
+             * @param options any additional options
              */
             create: (path, key, options) => {
                 return this.api.createIndex(path, key, options);
@@ -192,7 +178,7 @@ class NotImplementedError extends Error {
  */
 class Api {
     // eslint-disable-next-line @typescript-eslint/no-empty-function
-    constructor(dbname, settings, readyCallback) { }
+    constructor() { }
     /**
      * Provides statistics
      * @param options
@@ -212,8 +198,8 @@ class Api {
     exists(path) { throw new NotImplementedError('exists'); }
     query(path, query, options) { throw new NotImplementedError('query'); }
     reflect(path, type, args) { throw new NotImplementedError('reflect'); }
-    export(path, arg, options) { throw new NotImplementedError('export'); }
-    import(path, stream, options) { throw new NotImplementedError('import'); }
+    export(path, write, options) { throw new NotImplementedError('export'); }
+    import(path, read, options) { throw new NotImplementedError('import'); }
     /** Creates an index on key for all child nodes at path */
     createIndex(path, key, options) { throw new NotImplementedError('createIndex'); }
     getIndexes() { throw new NotImplementedError('getIndexes'); }
@@ -1405,6 +1391,22 @@ function removeVoidProperties(obj) {
         }
     });
 }
+/**
+ * Convenience function to access ILiveDataProxyValue methods on a proxied value
+ * @param proxiedValue The proxied value to get access to
+ * @returns Returns the same object typecasted to an ILiveDataProxyValue
+ * @example
+ * // IChatMessages is an ObjectCollection<IChatMessage>
+ * let observable: Observable<IChatMessages>;
+ *
+ * // Allows you to do this:
+ * observable = proxyAccess<IChatMessages>(chat.messages).getObservable();
+ *
+ * // Instead of:
+ * observable = (chat.messages.msg1 as any as ILiveDataProxyValue<IChatMessages>).getObservable();
+ *
+ * // Both do the exact same, but the first is less obscure
+ */
 function proxyAccess(proxiedValue) {
     if (typeof proxiedValue !== 'object' || !proxiedValue[isProxy]) {
         throw new Error('Given value is not proxied. Make sure you are referencing the value through the live data proxy.');
@@ -1647,18 +1649,13 @@ class DataReference {
      * Creates a reference to a node
      */
     constructor(db, path, vars) {
+        this.db = db;
         if (!path) {
             path = '';
         }
         path = path.replace(/^\/|\/$/g, ''); // Trim slashes
         const pathInfo = path_info_1.PathInfo.get(path);
-        const key = pathInfo.key; //path.length === 0 ? "" : path.substr(path.lastIndexOf("/") + 1); //path.match(/(?:^|\/)([a-z0-9_$]+)$/i)[1];
-        // const query = {
-        //     filters: [],
-        //     skip: 0,
-        //     take: 0,
-        //     order: []
-        // };
+        const key = pathInfo.key;
         const callbacks = [];
         this[_private] = {
             get path() { return path; },
@@ -1669,9 +1666,8 @@ class DataReference {
             pushed: false,
             cursor: null,
         };
-        this.db = db; //Object.defineProperty(this, "db", ...)
     }
-    context(context = undefined, merge = false) {
+    context(context, merge = false) {
         const currentContext = this[_private].context;
         if (typeof context === 'object') {
             const newContext = context ? merge ? currentContext || {} : context : {};
@@ -1725,7 +1721,7 @@ class DataReference {
     }
     /**
      * Contains values of the variables/wildcards used in a subscription path if this reference was
-     * created by an event ("value", "child_added" etc)
+     * created by an event ("value", "child_added" etc), or in a type mapping path when serializing / instantiating typed objects
      */
     get vars() {
         return this[_private].vars;
@@ -1744,8 +1740,8 @@ class DataReference {
     /**
      * Sets or overwrites the stored value
      * @param value value to store in database
-     * @param onComplete completion callback to use instead of returning promise
-     * @returns promise that resolves with this reference when completed (when not using onComplete callback)
+     * @param onComplete optional completion callback to use instead of returning promise
+     * @returns promise that resolves with this reference when completed
      */
     async set(value, onComplete) {
         try {
@@ -1792,8 +1788,8 @@ class DataReference {
     /**
      * Updates properties of the referenced node
      * @param updates object containing the properties to update
-     * @param onComplete completion callback to use instead of returning promise
-     * @return returns promise that resolves with this reference once completed (when not using onComplete callback)
+     * @param onComplete optional completion callback to use instead of returning promise
+     * @return returns promise that resolves with this reference once completed
      */
     async update(updates, onComplete) {
         try {
@@ -1887,18 +1883,6 @@ class DataReference {
         }
         return this;
     }
-    /**
-     * Subscribes to an event. Supported events are "value", "child_added", "child_changed", "child_removed",
-     * which will run the callback with a snapshot of the data. If you only wish to receive notifications of the
-     * event (without the data), use the "notify_value", "notify_child_added", "notify_child_changed",
-     * "notify_child_removed" events instead, which will run the callback with a DataReference to the changed
-     * data. This enables you to manually retrieve data upon changes (eg if you want to exclude certain child
-     * data from loading)
-     * @param event Name of the event to subscribe to
-     * @param callback Callback function, event settings, or whether or not to run callbacks on current values when using "value" or "child_added" events
-     * @param cancelCallback Function to call when the subscription is not allowed, or denied access later on
-     * @returns returns an EventStream
-     */
     on(event, callback, cancelCallback) {
         if (this.path === '' && ['value', 'child_changed'].includes(event)) {
             // Removed 'notify_value' and 'notify_child_changed' events from the list, they do not require additional data loading anymore.
@@ -1988,8 +1972,7 @@ class DataReference {
                 authorized.then(() => {
                     // Access granted
                     eventPublisher.start(allSubscriptionsStoppedCallback);
-                })
-                    .catch(cancelSubscription);
+                }).catch(cancelSubscription);
             }
             else {
                 // Local API, always authorized
@@ -2003,7 +1986,6 @@ class DataReference {
                 if (event === 'value') {
                     this.get(snap => {
                         eventPublisher.publish(snap);
-                        // typeof callback === 'function' && callback(snap);
                     });
                 }
                 else if (event === 'child_added') {
@@ -2015,7 +1997,6 @@ class DataReference {
                         Object.keys(val).forEach(key => {
                             const childSnap = new data_snapshot_1.DataSnapshot(this.child(key), val[key]);
                             eventPublisher.publish(childSnap);
-                            // typeof callback === 'function' && callback(childSnap);
                         });
                     });
                 }
@@ -2024,19 +2005,17 @@ class DataReference {
                     // NOTE: This does not work with AceBaseServer <= v0.9.7, only when signed in as admin
                     const step = 100, limit = step;
                     let skip = 0;
-                    const more = () => {
-                        this.db.api.reflect(this.path, 'children', { limit, skip })
-                            .then(children => {
-                            children.list.forEach(child => {
-                                const childRef = this.child(child.key);
-                                eventPublisher.publish(childRef);
-                                // typeof callback === 'function' && callback(childRef);
-                            });
-                            if (children.more) {
-                                skip += step;
-                                more();
-                            }
+                    const more = async () => {
+                        const children = await this.db.api.reflect(this.path, 'children', { limit, skip });
+                        children.list.forEach(child => {
+                            const childRef = this.child(child.key);
+                            eventPublisher.publish(childRef);
+                            // typeof callback === 'function' && callback(childRef);
                         });
+                        if (children.more) {
+                            skip += step;
+                            more();
+                        }
                     };
                     more();
                 }
@@ -2050,12 +2029,6 @@ class DataReference {
         }
         return eventStream;
     }
-    /**
-     * Unsubscribes from a previously added event
-     * @param event Name of the event
-     * @param callback callback function to remove
-     * @returns returns this `DataReference` instance
-     */
     off(event, callback) {
         const subscriptions = this[_private].callbacks;
         const stopSubs = subscriptions.filter(sub => (!event || sub.event === event) && (!callback || sub.userCallback === callback));
@@ -2167,7 +2140,7 @@ class DataReference {
     }
     /**
      * Quickly checks if this reference has a value in the database, without returning its data
-     * @returns {Promise<boolean>} | returns a promise that resolves with a boolean value
+     * @returns returns a promise that resolves with a boolean value
      */
     async exists() {
         if (this.isWildcardPath) {
@@ -2181,9 +2154,15 @@ class DataReference {
     get isWildcardPath() {
         return this.path.indexOf('*') >= 0 || this.path.indexOf('$') >= 0;
     }
+    /**
+     * Creates a query object for current node
+     */
     query() {
         return new DataReferenceQuery(this);
     }
+    /**
+     * Gets the number of children this node has, uses reflection
+     */
     async count() {
         const info = await this.reflect('info', { child_count: true });
         return info.children.count;
@@ -2204,8 +2183,15 @@ class DataReference {
         if (!this.db.isReady) {
             await this.db.ready();
         }
-        return this.db.api.export(this.path, write, options);
+        const writeFn = typeof write === 'function' ? write : write.write.bind(write);
+        return this.db.api.export(this.path, writeFn, options);
     }
+    /**
+     * Imports the value of this node and all children
+     * @param read Function that reads data from your stream
+     * @param options Only supported format currently is json
+     * @returns returns a promise that resolves once all data is imported
+     */
     async import(read, options = { format: 'json', suppress_events: false }) {
         if (this.isWildcardPath) {
             throw new Error(`Cannot import to wildcard path "/${this.path}"`);
@@ -2223,6 +2209,11 @@ class DataReference {
         }
         return data_proxy_1.LiveDataProxy.create(this, options);
     }
+    /**
+      * @param options optional initial data retrieval options.
+      * Not recommended to use yet - given includes/excludes are not applied to received mutations,
+      * or sync actions when using an AceBaseClient with cache db.
+      */
     observe(options) {
         // options should not be used yet - we can't prevent/filter mutation events on excluded paths atm
         if (options) {
@@ -2372,13 +2363,13 @@ class DataReferenceQuery {
         return this;
     }
     /**
-     * @deprecated use .filter instead
+     * @deprecated use `.filter` instead
      */
     where(key, op, compare) {
         return this.filter(key, op, compare);
     }
     /**
-     * Limits the number of query results to n
+     * Limits the number of query results
      */
     take(n) {
         this[_private].take = n;
@@ -2391,9 +2382,6 @@ class DataReferenceQuery {
         this[_private].skip = n;
         return this;
     }
-    /**
-     * Sorts the query results
-     */
     sort(key, ascending = true) {
         if (!['string', 'number'].includes(typeof key)) {
             throw 'key must be a string or number';
@@ -2402,7 +2390,7 @@ class DataReferenceQuery {
         return this;
     }
     /**
-     * @deprecated use .sort instead
+     * @deprecated use `.sort` instead
      */
     order(key, ascending = true) {
         return this.sort(key, ascending);
@@ -2568,15 +2556,6 @@ class DataReferenceQuery {
         callback && callback(results);
         return results;
     }
-    /**
-     * Subscribes to an event. Supported events are:
-     *  "stats": receive information about query performance.
-     *  "hints": receive query or index optimization hints
-     *  "add", "change", "remove": receive real-time query result changes
-     * @param event Name of the event to subscribe to
-     * @param callback Callback function
-     * @returns returns reference to this query
-     */
     on(event, callback) {
         if (!this[_private].events[event]) {
             this[_private].events[event] = [];
@@ -2585,7 +2564,7 @@ class DataReferenceQuery {
         return this;
     }
     /**
-     * Unsubscribes from a previously added event(s)
+     * Unsubscribes from (a) previously added event(s)
      * @param event Name of the event
      * @param callback callback function to remove
      * @returns returns reference to this query
@@ -2719,9 +2698,13 @@ class DataSnapshot {
         };
         this.context = () => { return context || {}; };
     }
+    /**
+     * Indicates whether the node exists in the database
+     */
     exists() { return false; }
     /**
-     * Creates a DataSnapshot instance (for internal AceBase usage only)
+     * Creates a `DataSnapshot` instance
+     * @internal (for internal use)
      */
     static for(ref, value) {
         return new DataSnapshot(ref, value);
@@ -2729,7 +2712,7 @@ class DataSnapshot {
     /**
      * Gets a new snapshot for a child node
      * @param path child key or path
-     * @returns Returns a DataSnapshot of the child
+     * @returns Returns a `DataSnapshot` of the child
      */
     child(path) {
         // Create new snapshot for child data
@@ -2739,30 +2722,27 @@ class DataSnapshot {
     }
     /**
      * Checks if the snapshot's value has a child with the given key or path
-     * @param {string} path child key or path
-     * @returns {boolean}
+     * @param path child key or path
      */
     hasChild(path) {
         return getChild(this, path) !== null;
     }
     /**
      * Indicates whether the the snapshot's value has any child nodes
-     * @returns {boolean}
      */
     hasChildren() {
         return getChildren(this).length > 0;
     }
     /**
      * The number of child nodes in this snapshot
-     * @returns {number}
      */
     numChildren() {
         return getChildren(this).length;
     }
     /**
      * Runs a callback function for each child node in this snapshot until the callback returns false
-     * @param callback function that is called with a snapshot of each child node in this snapshot. Must return a boolean value that indicates whether to continue iterating or not.
-     * @returns {void}
+     * @param callback function that is called with a snapshot of each child node in this snapshot.
+     * Must return a boolean value that indicates whether to continue iterating or not.
      */
     forEach(callback) {
         const value = this.val();
@@ -2773,7 +2753,7 @@ class DataSnapshot {
         });
     }
     /**
-     * @type {string|number}
+     * The key of the node's path
      */
     get key() { return this.ref.key; }
 }
@@ -2781,6 +2761,11 @@ exports.DataSnapshot = DataSnapshot;
 class MutationsDataSnapshot extends DataSnapshot {
     constructor(ref, mutations, context) {
         super(ref, mutations, false, undefined, context);
+        /**
+         * Don't use this to get previous values of mutated nodes.
+         * Use `.previous` properties on the individual child snapshots instead.
+         * @throws Throws an error if you do use it.
+         */
         this.previous = () => { throw new Error('Iterate values to get previous values for each mutation'); };
         this.val = (warn = true) => {
             if (warn) {
@@ -2827,12 +2812,12 @@ const process_1 = require("./process");
 const noop = () => { };
 class DebugLogger {
     constructor(level = 'log', prefix = '') {
+        this.level = level;
         this.prefix = prefix;
         this.setLevel(level);
     }
     setLevel(level) {
         const prefix = this.prefix ? this.prefix + ' %s' : '';
-        this.level = level;
         this.verbose = ['verbose'].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : noop;
         this.log = ['verbose', 'log'].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : noop;
         this.warn = ['verbose', 'log', 'warn'].includes(level) ? prefix ? console.warn.bind(console, prefix) : console.warn.bind(console) : noop;
@@ -2858,6 +2843,10 @@ const cuid_1 = require("./cuid");
 // const uuid62 = require('uuid62');
 let timeBias = 0;
 class ID {
+    /**
+     * (for internal use)
+     * bias in milliseconds to adjust generated cuid timestamps with
+     */
     static set timeBias(bias) {
         if (typeof bias !== 'number') {
             return;
@@ -2875,7 +2864,7 @@ exports.ID = ID;
 },{"./cuid":5}],12:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PartialArray = exports.ObjectCollection = exports.SchemaDefinition = exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.proxyAccess = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.DataReferencesArray = exports.DataSnapshotsArray = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
+exports.ObjectCollection = exports.PartialArray = exports.SchemaDefinition = exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.OrderedCollectionProxy = exports.proxyAccess = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.DataReferencesArray = exports.DataSnapshotsArray = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
 var acebase_base_1 = require("./acebase-base");
 Object.defineProperty(exports, "AceBaseBase", { enumerable: true, get: function () { return acebase_base_1.AceBaseBase; } });
 Object.defineProperty(exports, "AceBaseBaseSettings", { enumerable: true, get: function () { return acebase_base_1.AceBaseBaseSettings; } });
@@ -2891,6 +2880,9 @@ Object.defineProperty(exports, "DataReferencesArray", { enumerable: true, get: f
 var data_snapshot_1 = require("./data-snapshot");
 Object.defineProperty(exports, "DataSnapshot", { enumerable: true, get: function () { return data_snapshot_1.DataSnapshot; } });
 Object.defineProperty(exports, "MutationsDataSnapshot", { enumerable: true, get: function () { return data_snapshot_1.MutationsDataSnapshot; } });
+var data_proxy_1 = require("./data-proxy");
+Object.defineProperty(exports, "proxyAccess", { enumerable: true, get: function () { return data_proxy_1.proxyAccess; } });
+Object.defineProperty(exports, "OrderedCollectionProxy", { enumerable: true, get: function () { return data_proxy_1.OrderedCollectionProxy; } });
 var debug_1 = require("./debug");
 Object.defineProperty(exports, "DebugLogger", { enumerable: true, get: function () { return debug_1.DebugLogger; } });
 var id_1 = require("./id");
@@ -2911,8 +2903,6 @@ var ascii85_1 = require("./ascii85");
 Object.defineProperty(exports, "ascii85", { enumerable: true, get: function () { return ascii85_1.ascii85; } });
 var simple_cache_1 = require("./simple-cache");
 Object.defineProperty(exports, "SimpleCache", { enumerable: true, get: function () { return simple_cache_1.SimpleCache; } });
-var data_proxy_1 = require("./data-proxy");
-Object.defineProperty(exports, "proxyAccess", { enumerable: true, get: function () { return data_proxy_1.proxyAccess; } });
 var simple_event_emitter_1 = require("./simple-event-emitter");
 Object.defineProperty(exports, "SimpleEventEmitter", { enumerable: true, get: function () { return simple_event_emitter_1.SimpleEventEmitter; } });
 var simple_colors_1 = require("./simple-colors");
@@ -2920,17 +2910,53 @@ Object.defineProperty(exports, "ColorStyle", { enumerable: true, get: function (
 Object.defineProperty(exports, "Colorize", { enumerable: true, get: function () { return simple_colors_1.Colorize; } });
 var schema_1 = require("./schema");
 Object.defineProperty(exports, "SchemaDefinition", { enumerable: true, get: function () { return schema_1.SchemaDefinition; } });
-var object_collection_1 = require("./object-collection");
-Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return object_collection_1.ObjectCollection; } });
 var partial_array_1 = require("./partial-array");
 Object.defineProperty(exports, "PartialArray", { enumerable: true, get: function () { return partial_array_1.PartialArray; } });
+var object_collection_1 = require("./object-collection");
+Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return object_collection_1.ObjectCollection; } });
 
 },{"./acebase-base":1,"./api":2,"./ascii85":3,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./object-collection":13,"./partial-array":15,"./path-info":16,"./path-reference":17,"./schema":19,"./simple-cache":20,"./simple-colors":21,"./simple-event-emitter":22,"./subscription":23,"./transport":24,"./type-mappings":25,"./utils":26}],13:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ObjectCollection = void 0;
 const id_1 = require("./id");
+/**
+ * Convenience interface for defining an object collection
+ * @example
+ * type ChatMessage = {
+ *    text: string, uid: string, sent: Date
+ * }
+ * type Chat = {
+ *    title: text
+ *    messages: ObjectCollection<ChatMessage>
+ * }
+ */
 class ObjectCollection {
+    /**
+     * Converts and array of values into an object collection, generating a unique key for each item in the array
+     * @param array
+     * @example
+     * const array = [
+     *  { title: "Don't make me think!", author: "Steve Krug" },
+     *  { title: "The tipping point", author: "Malcolm Gladwell" }
+     * ];
+     *
+     * // Convert:
+     * const collection = ObjectCollection.from(array);
+     * // --> {
+     * //   kh1x3ygb000120r7ipw6biln: {
+     * //       title: "Don't make me think!",
+     * //       author: "Steve Krug"
+     * //   },
+     * //   kh1x3ygb000220r757ybpyec: {
+     * //       title: "The tipping point",
+     * //       author: "Malcolm Gladwell"
+     * //   }
+     * // }
+     *
+     * // Now it's easy to add them to the db:
+     * db.ref('books').update(collection);
+     */
     static from(array) {
         const collection = {};
         array.forEach(child => {
@@ -2943,6 +2969,9 @@ exports.ObjectCollection = ObjectCollection;
 
 },{"./id":11}],14:[function(require,module,exports){
 "use strict";
+// Optional dependency on rxjs package. If rxjs is installed into your project, you'll get the correct
+// typings for AceBase methods that use Observables, and you'll be able to use them. If you don't use
+// those methods, there is no need to install rxjs.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ObservableShim = exports.setObservable = exports.getObservable = void 0;
 let _observable;
@@ -3422,11 +3451,19 @@ function parse(definition) {
                 // read numeric value
                 type.typeOf = 'number';
                 let nr = '';
-                while (c = definition[pos], c === '.' || (c >= '0' && c <= '9')) {
+                while (c = definition[pos], c === '.' || c === 'n' || (c >= '0' && c <= '9')) {
                     nr += c;
                     pos++;
                 }
-                type.value = nr.includes('.') ? parseFloat(nr) : parseInt(nr);
+                if (nr.endsWith('n')) {
+                    type.value = BigInt(nr);
+                }
+                else if (nr.includes('.')) {
+                    type.value = parseFloat(nr);
+                }
+                else {
+                    type.value = parseInt(nr);
+                }
             }
             else if (definition[pos] === '{') {
                 // Read object (interface) definition
@@ -3448,7 +3485,7 @@ function parse(definition) {
                 consumeCharacter('}');
             }
             else if (definition[pos] === '/') {
-                // Read regular expression defintion
+                // Read regular expression definition
                 consumeCharacter('/');
                 let pattern = '', flags = '';
                 while (c = definition[pos], c !== '/' || pattern.endsWith('\\')) {
@@ -3467,7 +3504,7 @@ function parse(definition) {
                 throw new Error(`Expected a type definition at position ${pos}, found character '${definition[pos]}'`);
             }
         }
-        else if (['string', 'number', 'boolean', 'undefined', 'String', 'Number', 'Boolean'].includes(name)) {
+        else if (['string', 'number', 'boolean', 'bigint', 'undefined', 'String', 'Number', 'Boolean', 'BigInt'].includes(name)) {
             type.typeOf = name.toLowerCase();
         }
         else if (name === 'Object' || name === 'object') {
@@ -3634,6 +3671,7 @@ function getConstructorType(val) {
         case Number: return 'number';
         case Boolean: return 'boolean';
         case Date: return 'Date';
+        case BigInt: return 'bigint';
         case Array: throw new Error('Schema error: Array cannot be used without a type. Use string[] or Array<string> instead');
         default: throw new Error(`Schema error: unknown type used: ${val.name}`);
     }
@@ -3669,8 +3707,8 @@ class SchemaDefinition {
                     else if (typeof val === 'function') {
                         val = getConstructorType(val);
                     }
-                    else if (!['string', 'number', 'boolean'].includes(typeof val)) {
-                        throw new Error(`Type definition for key "${key}" must be a string, number, boolean, object, regular expression, or one of these classes: String, Number, Boolean, Date`);
+                    else if (!['string', 'number', 'boolean', 'bigint'].includes(typeof val)) {
+                        throw new Error(`Type definition for key "${key}" must be a string, number, boolean, bigint, object, regular expression, or one of these classes: String, Number, Boolean, Date, BigInt`);
                     }
                     return `${key}:${val}`;
                 })
@@ -4007,9 +4045,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.EventStream = exports.EventPublisher = exports.EventSubscription = void 0;
 class EventSubscription {
     /**
-     *
      * @param stop function that stops the subscription from receiving future events
-     * @param {} activated function that runs optional callback when subscription is activated, and returns a promise that resolves once activated
      */
     constructor(stop) {
         this.stop = stop;
@@ -4020,7 +4056,7 @@ class EventSubscription {
     }
     /**
      * Notifies when subscription is activated or canceled
-     * @param callback optional callback when subscription is activated or canceled
+     * @param callback optional callback to run each time activation state changes
      * @returns returns a promise that resolves once activated, or rejects when it is denied (and no callback was supplied)
      */
     activated(callback) {
@@ -4051,6 +4087,7 @@ class EventSubscription {
             });
         });
     }
+    /** (for internal use) */
     _setActivationState(activated, cancelReason) {
         this._internal.cancelReason = cancelReason;
         this._internal.state = activated ? 'active' : 'canceled';
@@ -4083,10 +4120,6 @@ class EventPublisher {
 }
 exports.EventPublisher = EventPublisher;
 class EventStream {
-    /**
-     *
-     * @param eventPublisherCallback
-     */
     constructor(eventPublisherCallback) {
         const subscribers = [];
         let noMoreSubscribersCallback;
@@ -4710,15 +4743,13 @@ function process(db, mappings, path, obj, action) {
 }
 const _mappings = Symbol('mappings');
 class TypeMappings {
-    /**
-     *
-     * @param {AceBaseBase} db
-     */
     constructor(db) {
         this.db = db;
         this[_mappings] = {};
     }
+    /** (for internal use) */
     get mappings() { return this[_mappings]; }
+    /** (for internal use) */
     map(path) {
         return map(this[_mappings], path);
     }
@@ -4727,12 +4758,34 @@ class TypeMappings {
      * serialized when stored to, and deserialized (instantiated) when loaded from the database.
      * @param path path to an object container, eg "users" or "users/*\/posts"
      * @param type class to bind all child objects of path to
+     * Best practice is to implement 2 methods for instantiation and serializing of your objects:
+     * 1) `static create(snap: DataSnapshot)` and 2) `serialize(ref: DataReference)`. See example
      * @param options (optional) You can specify the functions to use to
      * serialize and/or instantiate your class. If you do not specificy a creator (constructor) method,
-     * AceBase will call YourClass.create(obj, ref) method if it exists, or execute: new YourClass(obj, ref).
-     * If you do not specifiy a serializer method, AceBase will call YourClass.prototype.serialize(ref) if it
-     * exists, or tries storing your object's fields unaltered. NOTE: 'this' in your creator function will point
-     * to YourClass, and 'this' in your serializer function will point to the instance of YourClass.
+     * AceBase will call `YourClass.create(snapshot)` method if it exists, or create an instance of
+     * YourClass with `new YourClass(snapshot)`.
+     * If you do not specifiy a serializer method, AceBase will call `YourClass.prototype.serialize(ref)`
+     * if it exists, or tries storing your object's fields unaltered. NOTE: `this` in your creator
+     * function will point to `YourClass`, and `this` in your serializer function will point to the
+     * `instance` of `YourClass`.
+     * @example
+     * class User {
+     *    static create(snap: DataSnapshot): User {
+     *        // Deserialize (instantiate) User from plain database object
+     *        let user = new User();
+     *        Object.assign(user, snap.val()); // Copy all properties to user
+     *        user.id = snap.ref.key; // Add the key as id
+     *        return user;
+     *    }
+     *    serialize(ref: DataReference) {
+     *        // Serialize user for database storage
+     *        return {
+     *            name: this.name
+     *            email: this.email
+     *        };
+     *    }
+     * }
+     * db.types.bind('users', User); // Automatically uses serialize and static create methods
      */
     bind(path, type, options = {}) {
         // Maps objects that are stored in a specific path to a constructor method,
@@ -4807,6 +4860,7 @@ class TypeMappings {
         };
     }
     /**
+     * (for internal use)
      * Serializes any child in given object that has a type mapping
      * @param {string} path | path to the object's location
      * @param {object} obj | object to serialize
@@ -4815,6 +4869,7 @@ class TypeMappings {
         return process(this.db, this[_mappings], path, obj, 'serialize');
     }
     /**
+     * (for internal use)
      * Deserialzes any child in given object that has a type mapping
      * @param {string} path | path to the object's location
      * @param {object} obj | object to deserialize
@@ -4841,7 +4896,8 @@ function numberToBytes(number) {
 }
 exports.numberToBytes = numberToBytes;
 function bytesToNumber(bytes) {
-    if (bytes.length !== 8) {
+    const length = Array.isArray(bytes) ? bytes.length : bytes.byteLength;
+    if (length !== 8) {
         throw new TypeError('must be 8 bytes');
     }
     const bin = new Uint8Array(bytes);
@@ -4976,7 +5032,8 @@ function decodeString(buffer) {
             buffer = Uint8Array.from(buffer); // convert to typed array
         }
         if (!(buffer instanceof Buffer) && 'buffer' in buffer && buffer.buffer instanceof ArrayBuffer) {
-            buffer = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength); // Convert typed array to node.js Buffer
+            const typedArray = buffer;
+            buffer = Buffer.from(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength); // Convert typed array to node.js Buffer
         }
         if (!(buffer instanceof Buffer)) {
             throw new Error('Unsupported buffer argument');
@@ -4987,7 +5044,8 @@ function decodeString(buffer) {
         // Older browsers. Manually decode!
         if (!(buffer instanceof Uint8Array) && 'buffer' in buffer && buffer['buffer'] instanceof ArrayBuffer) {
             // Convert TypedArray to Uint8Array
-            buffer = new Uint8Array(buffer['buffer'], buffer.byteOffset, buffer.byteLength);
+            const typedArray = buffer;
+            buffer = new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength);
         }
         if (buffer instanceof Buffer || buffer instanceof Array || buffer instanceof Uint8Array) {
             let str = '';
@@ -5257,16 +5315,12 @@ exports.defer = defer;
 },{"./partial-array":15,"./path-reference":17,"./process":18,"buffer":27}],27:[function(require,module,exports){
 
 },{}],28:[function(require,module,exports){
-const { SimpleCache } = require('acebase-core');
-const { AceBase, AceBaseLocalSettings } = require('./acebase-local');
-const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData } = require('./storage-custom');
-
-/**
- * @typedef {Object} IIndexedDBNodeData
- * @property {string} path
- * @property {ICustomStorageNodeMetaData} metadata
- */
-
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.BrowserAceBase = void 0;
+const acebase_core_1 = require("acebase-core");
+const acebase_local_1 = require("./acebase-local");
+const custom_1 = require("./storage/custom");
 const deprecatedConstructorError = `Using AceBase constructor in the browser to use localStorage is deprecated!
 Switch to:
 IndexedDB implementation (FASTER, MORE RELIABLE):
@@ -5276,12 +5330,11 @@ Or, new LocalStorage implementation:
 Or, write your own CustomStorage adapter:
     let myCustomStorage = new CustomStorageSettings({ ... });
     let db = new AceBase(name, { storage: myCustomStorage })`;
-
-class BrowserAceBase extends AceBase {
+class BrowserAceBase extends acebase_local_1.AceBase {
     /**
      * Constructor that is used in browser context
-     * @param {string} name database name
-     * @param {AceBaseLocalSettings} settings settings
+     * @param name database name
+     * @param settings settings
      */
     constructor(name, settings) {
         if (typeof settings !== 'object' || typeof settings.storage !== 'object') {
@@ -5293,62 +5346,47 @@ class BrowserAceBase extends AceBase {
             // If they want to use custom storage in the browser, they must
             // use the same constructor signature AceBase has:
             // let db = new AceBase('name', { storage: new CustomStorageSettings({ ... }) });
-
             throw new Error(deprecatedConstructorError);
         }
         super(name, settings);
         this.settings.ipcEvents = settings.multipleTabs === true;
     }
-
     /**
      * Creates an AceBase database instance using IndexedDB as storage engine
-     * @param {string} dbname Name of the database
-     * @param {object} [settings] optional settings
-     * @param {string} [settings.logLevel='error'] what level to use for logging to the console
-     * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
-     * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
-     * @param {boolean} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
-     * @param {number} [settings.cacheSeconds=60] How many seconds to keep node info in memory, to speed up IndexedDB performance.
-     * @param {number} [settings.lockTimeout=120] timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
-     * @param {boolean} [settings.sponsor=false] You can turn this on if you are a sponsor
+     * @param dbname Name of the database
+     * @param settings optional settings
      */
     static WithIndexedDB(dbname, settings) {
-
         settings = settings || {};
-        if (!settings.logLevel) { settings.logLevel = 'error'; }
-
+        if (!settings.logLevel) {
+            settings.logLevel = 'error';
+        }
         // We'll create an IndexedDB with name "dbname.acebase"
         const IndexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB; // browser prefixes not really needed, see https://caniuse.com/#feat=indexeddb
-        let request = IndexedDB.open(`${dbname}.acebase`, 1);
-
-        let readyResolve, readyReject, readyPromise = new Promise((rs,rj) => { readyResolve = rs; readyReject = rj; });
-
+        const request = IndexedDB.open(`${dbname}.acebase`, 1);
         request.onupgradeneeded = (e) => {
             // create datastore
-            let db = request.result;
-
+            const db = request.result;
             // Create "nodes" object store for metadata
-            db.createObjectStore('nodes', { keyPath: 'path'});
-
+            db.createObjectStore('nodes', { keyPath: 'path' });
             // Create "content" object store with all data
             db.createObjectStore('content');
         };
-
         let db;
-        request.onsuccess = e => {
-            db = request.result;
-            readyResolve();
-        };
-        request.onerror = e => {
-            readyReject(e);
-        };
-
-        const cache = new SimpleCache(typeof settings.cacheSeconds === 'number' ? settings.cacheSeconds : 60); // 60 second node cache by default
+        const readyPromise = new Promise((resolve, reject) => {
+            request.onsuccess = e => {
+                db = request.result;
+                resolve();
+            };
+            request.onerror = e => {
+                reject(e);
+            };
+        });
+        const cache = new acebase_core_1.SimpleCache(typeof settings.cacheSeconds === 'number' ? settings.cacheSeconds : 60); // 60 second node cache by default
         // cache.enabled = false;
-
-        const storageSettings = new CustomStorageSettings({
+        const storageSettings = new custom_1.CustomStorageSettings({
             name: 'IndexedDB',
-            locking: true, // IndexedDB transactions are short-lived, so we'll use AceBase's path based locking
+            locking: true,
             removeVoidProperties: settings.removeVoidProperties,
             maxInlineValueSize: settings.maxInlineValueSize,
             lockTimeout: settings.lockTimeout,
@@ -5366,14 +5404,21 @@ class BrowserAceBase extends AceBase {
                 return new IndexedDBStorageTransaction(context, target);
             },
         });
-        const acebase = new BrowserAceBase(dbname, { multipleTabs: settings.multipleTabs, logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
+        const acebase = new BrowserAceBase(dbname, {
+            logLevel: settings.logLevel,
+            storage: storageSettings,
+            sponsor: settings.sponsor,
+        });
         const ipc = acebase.api.storage.ipc;
-        ipc.on('notification', async notification => {
+        acebase.settings.ipcEvents = settings.multipleTabs === true;
+        ipc.on('notification', async (notification) => {
             const message = notification.data;
-            if (typeof message !== 'object') { return; }
+            if (typeof message !== 'object') {
+                return;
+            }
             if (message.action === 'cache.invalidate') {
                 // console.warn(`Invalidating cache for paths`, message.paths);
-                for (let path of message.paths) {
+                for (const path of message.paths) {
                     cache.remove(path);
                 }
             }
@@ -5381,63 +5426,52 @@ class BrowserAceBase extends AceBase {
         return acebase;
     }
 }
-
+exports.BrowserAceBase = BrowserAceBase;
 function _requestToPromise(request) {
     return new Promise((resolve, reject) => {
         request.onsuccess = event => {
             return resolve(request.result || null);
-        }
+        };
         request.onerror = reject;
     });
 }
-
-class IndexedDBStorageTransaction extends CustomStorageTransaction {
-
-    /** Creates a transaction object for IndexedDB usage. Because IndexedDB automatically commits
+class IndexedDBStorageTransaction extends custom_1.CustomStorageTransaction {
+    /**
+     * Creates a transaction object for IndexedDB usage. Because IndexedDB automatically commits
      * transactions when they have not been touched for a number of microtasks (eg promises
      * resolving whithout querying data), we will enqueue set and remove operations until commit
      * or rollback. We'll create separate IndexedDB transactions for get operations, caching their
      * values to speed up successive requests for the same data.
-     * @param {{debug: boolean, db: IDBDatabase, cache: SimpleCache<string, ICustomStorageNode> }} context
-     * @param {{path: string, write: boolean}} target
      */
     constructor(context, target) {
         super(target);
-        this.production = true; // Improves performance, only set when all works well
-        /** @type {{debug: boolean, db: IDBDatabase, cache: SimpleCache<string, ICustomStorageNode> }} */
         this.context = context;
+        this.production = true; // Improves performance, only set when all works well
         this._pending = [];
     }
-
-    /** @returns {IDBTransaction} */
     _createTransaction(write = false) {
         const tx = this.context.db.transaction(['nodes', 'content'], write ? 'readwrite' : 'readonly');
         return tx;
     }
-
     _splitMetadata(node) {
-        /** @type {ICustomStorageNode} */
-        const copy = {};
         const value = node.value;
-        Object.assign(copy, node);
+        const copy = Object.assign({}, node);
         delete copy.value;
-        /** @type {ICustomStorageNodeMetaData} */
         const metadata = copy;
         return { metadata, value };
     }
-
     async commit() {
         // console.log(`*** commit ${this._pending.length} operations ****`);
-        if (this._pending.length === 0) { return; }
+        if (this._pending.length === 0) {
+            return;
+        }
         const batch = this._pending.splice(0);
-
-        this.context.ipc.sendMessage({ type: 'notification', data: { action: 'cache.invalidate', paths: batch.map(op => op.path) } });
-
+        this.context.ipc.sendNotification({ action: 'cache.invalidate', paths: batch.map(op => op.path) });
         const tx = this._createTransaction(true);
         try {
             await new Promise((resolve, reject) => {
                 let stop = false, processed = 0;
-                const handleError = err => {
+                const handleError = (err) => {
                     stop = true;
                     reject(err);
                 };
@@ -5447,12 +5481,13 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     }
                 };
                 batch.forEach((op, i) => {
-                    if (stop) { return; }
+                    if (stop) {
+                        return;
+                    }
                     let r1, r2;
                     const path = op.path;
                     if (op.action === 'set') {
                         const { metadata, value } = this._splitMetadata(op.node);
-                        /** @type {IIndexedDBNodeData} */
                         const nodeInfo = { path, metadata };
                         r1 = tx.objectStore('nodes').put(nodeInfo); // Insert into "nodes" object store
                         r2 = tx.objectStore('content').put(value, path); // Add value to "content" object store
@@ -5468,7 +5503,9 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     }
                     let succeeded = 0;
                     r1.onsuccess = r2.onsuccess = () => {
-                        if (++succeeded === 2) { handleSuccess(); }
+                        if (++succeeded === 2) {
+                            handleSuccess();
+                        }
                     };
                     r1.onerror = r2.onerror = handleError;
                 });
@@ -5481,12 +5518,10 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
             throw err;
         }
     }
-
     async rollback(err) {
         // Nothing has committed yet, so we'll leave it like that
         this._pending = [];
     }
-
     async get(path) {
         // console.log(`*** get "${path}" ****`);
         if (this.context.cache.has(path)) {
@@ -5500,81 +5535,61 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
         try {
             const results = await Promise.all([r1, r2]);
             tx.commit && tx.commit();
-            /** @type {IIndexedDBNodeData} */
             const info = results[0];
             if (!info) {
                 // Node doesn't exist
                 this.context.cache.set(path, null);
                 return null;
             }
-            /** @type {ICustomStorageNode} */
             const node = info.metadata;
             node.value = results[1];
             this.context.cache.set(path, node);
             return node;
         }
-        catch(err) {
+        catch (err) {
             console.error(`IndexedDB get error`, err);
             tx.abort && tx.abort();
             throw err;
         }
     }
-
     set(path, node) {
         // Queue the operation until commit
         this._pending.push({ action: 'set', path, node });
     }
-
     remove(path) {
         // Queue the operation until commit
         this._pending.push({ action: 'remove', path });
     }
-
-    removeMultiple(paths) {
+    async removeMultiple(paths) {
         // Queues multiple items at once, dramatically improves performance for large datasets
         paths.forEach(path => {
             this._pending.push({ action: 'remove', path });
         });
     }
-
     childrenOf(path, include, checkCallback, addCallback) {
         // console.log(`*** childrenOf "${path}" ****`);
-        include.descendants = false;
-        return this._getChildrenOf(path, include, checkCallback, addCallback);
+        return this._getChildrenOf(path, Object.assign(Object.assign({}, include), { descendants: false }), checkCallback, addCallback);
     }
-
     descendantsOf(path, include, checkCallback, addCallback) {
         // console.log(`*** descendantsOf "${path}" ****`);
-        include.descendants = true;
-        return this._getChildrenOf(path, include, checkCallback, addCallback);
+        return this._getChildrenOf(path, Object.assign(Object.assign({}, include), { descendants: true }), checkCallback, addCallback);
     }
-
-    /**
-     *
-     * @param {string} path
-     * @param {object} include
-     * @param {boolean} include.descendants
-     * @param {boolean} include.metadata
-     * @param {boolean} include.value
-     * @param {(path: string, metadata?: ICustomStorageNodeMetaData) => boolean} checkCallback
-     * @param {(path: string, node: any) => boolean} addCallback
-     */
     _getChildrenOf(path, include, checkCallback, addCallback) {
         // Use cursor to loop from path on
         return new Promise((resolve, reject) => {
-            const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+            const pathInfo = custom_1.CustomStorageHelpers.PathInfo.get(path);
             const tx = this._createTransaction(false);
             const store = tx.objectStore('nodes');
             const query = IDBKeyRange.lowerBound(path, true);
-            /** @type {IDBRequest<IDBCursorWithValue>|IDBRequest<IDBCursor>} */
             const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
             cursor.onerror = e => {
-                tx.abort && tx.abort();
+                var _a;
+                (_a = tx.abort) === null || _a === void 0 ? void 0 : _a.call(tx);
                 reject(e);
-            }
-            cursor.onsuccess = async e => {
-                /** @type {string} */
-                const otherPath = cursor.result ? cursor.result.key : null;
+            };
+            cursor.onsuccess = async (e) => {
+                var _a, _b, _c;
+                const otherPath = (_b = (_a = cursor.result) === null || _a === void 0 ? void 0 : _a.key) !== null && _b !== void 0 ? _b : null;
                 let keepGoing = true;
                 if (otherPath === null) {
                     // No more results
@@ -5585,13 +5600,9 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     keepGoing = false;
                 }
                 else if (include.descendants || pathInfo.isParentOf(otherPath)) {
-
-                    /** @type {ICustomStorageNode|ICustomStorageNodeMetaData} */
                     let node;
                     if (include.metadata) {
-                        /** @type {IDBRequest<IDBCursorWithValue>} */
                         const valueCursor = cursor;
-                        /** @type {IIndexedDBNodeData} */
                         const data = valueCursor.result.value;
                         node = data.metadata;
                     }
@@ -5620,38 +5631,38 @@ class IndexedDBStorageTransaction extends CustomStorageTransaction {
                     }
                 }
                 if (keepGoing) {
-                    try { cursor.result.continue(); }
-                    catch(err) {
+                    try {
+                        cursor.result.continue();
+                    }
+                    catch (err) {
                         // We reached the end of the cursor?
                         keepGoing = false;
                     }
                 }
                 if (!keepGoing) {
-                    tx.commit && tx.commit();
+                    (_c = tx.commit) === null || _c === void 0 ? void 0 : _c.call(tx);
                     resolve();
                 }
             };
         });
     }
-
 }
 
-module.exports = { BrowserAceBase };
-},{"./acebase-local":29,"./storage-custom":42,"acebase-core":12}],29:[function(require,module,exports){
-const { AceBaseBase, AceBaseBaseSettings } = require('acebase-core');
-const { LocalApi } = require('./api-local');
-const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('./storage-custom');
-
-class AceBaseLocalSettings extends AceBaseBaseSettings {
-    /**
-     * 
-     * @param {AceBaseBaseSettings & { storage: import('./storage').StorageSettings, ipc: import('./storage').IPCClientSettings, transactions: import('..').TransactionLogSettings }} options 
-     */
+},{"./acebase-local":29,"./storage/custom":45,"acebase-core":12}],29:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AceBase = exports.AceBaseLocalSettings = void 0;
+const acebase_core_1 = require("acebase-core");
+const binary_1 = require("./storage/binary");
+const api_local_1 = require("./api-local");
+const custom_1 = require("./storage/custom");
+class AceBaseLocalSettings extends acebase_core_1.AceBaseBaseSettings {
     constructor(options) {
         super(options);
-        if (!options) { options = {}; }
+        if (!options) {
+            options = {};
+        }
         this.storage = options.storage || {};
-
         // Copy IPC and transaction settings to storage settings
         if (typeof options.ipc === 'object') {
             this.storage.ipc = options.ipc;
@@ -5661,78 +5672,66 @@ class AceBaseLocalSettings extends AceBaseBaseSettings {
         }
     }
 }
-
-class AceBase extends AceBaseBase {
-
+exports.AceBaseLocalSettings = AceBaseLocalSettings;
+class AceBase extends acebase_core_1.AceBaseBase {
     /**
-     * 
-     * @param {string} dbname Name of the database to open or create
-     * @param {AceBaseLocalSettings} options
+     * @param dbname Name of the database to open or create
      */
     constructor(dbname, options) {
         options = new AceBaseLocalSettings(options);
         options.info = options.info || 'realtime database';
         super(dbname, options);
-        const apiSettings = { 
+        const apiSettings = {
             db: this,
             storage: options.storage,
-            logLevel: options.logLevel
+            logLevel: options.logLevel,
         };
-        this.api = new LocalApi(dbname, apiSettings, () => {
-            this.emit("ready");
+        this.api = new api_local_1.LocalApi(dbname, apiSettings, () => {
+            this.emit('ready');
         });
         this.recovery = {
             repairNode: async (path, options) => {
-                if (!this.api.storage.repairNode) {
+                if (this.api.storage instanceof binary_1.AceBaseStorage) {
+                    await this.api.storage.repairNode(path, options);
+                }
+                else if (!this.api.storage.repairNode) {
                     throw new Error(`fixNode is not supported with chosen storage engine`);
                 }
-                await this.api.storage.repairNode(path, options);
             },
         };
     }
-
     close() {
         // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.
         return this.api.storage.close();
     }
-
     get settings() {
         const ipc = this.api.storage.ipc, debug = this.debug;
         return {
             get logLevel() { return debug.level; },
             set logLevel(level) { debug.setLevel(level); },
             get ipcEvents() { return ipc.eventsEnabled; },
-            set ipcEvents(enabled) { ipc.eventsEnabled = enabled; }
-        }
+            set ipcEvents(enabled) { ipc.eventsEnabled = enabled; },
+        };
     }
-
     /**
      * Creates an AceBase database instance using LocalStorage or SessionStorage as storage engine. When running in non-browser environments, set
      * settings.provider to a custom LocalStorage provider, eg 'node-localstorage'
-     * @param {string} dbname Name of the database
-     * @param {object} [settings] optional settings
-     * @param {string} [settings.logLevel] what level to use for logging to the console
-     * @param {boolean} [settings.temp] whether to use sessionStorage instead of localStorage
-     * @param {any} [settings.provider] Alternate localStorage provider for running in non-browser environments. Eg using 'node-localstorage'
-     * @param {boolean} [settings.removeVoidProperties=false] Whether to remove undefined property values of objects being stored, instead of throwing an error
-     * @param {number} [settings.maxInlineValueSize=50] Maximum size of binary data/strings to store in parent object records. Larger values are stored in their own records. Recommended to keep this at the default setting
-     * @param {boolean} [settings.multipleTabs=false] Whether to enable cross-tab synchronization
-     * @param {boolean} [settings.sponsor=false] You can turn this on if you are a sponsor
+     * @param dbname Name of the database
+     * @param settings optional settings
      */
     static WithLocalStorage(dbname, settings) {
-
         settings = settings || {};
-        if (!settings.logLevel) { settings.logLevel = 'error'; }
-
+        if (!settings.logLevel) {
+            settings.logLevel = 'error';
+        }
         // Determine whether to use localStorage or sessionStorage
         const localStorage = settings.provider ? settings.provider : settings.temp ? window.localStorage : window.sessionStorage;
-
         // Setup our CustomStorageSettings
-        const storageSettings = new CustomStorageSettings({
+        const storageSettings = new custom_1.CustomStorageSettings({
             name: 'LocalStorage',
             locking: true,
             removeVoidProperties: settings.removeVoidProperties,
-            maxInlineValueSize: settings.maxInlineValueSize, 
+            maxInlineValueSize: settings.maxInlineValueSize,
             ready() {
                 // LocalStorage is always ready
                 return Promise.resolve();
@@ -5742,67 +5741,56 @@ class AceBase extends AceBaseBase {
                 const context = {
                     debug: true,
                     dbname,
-                    localStorage
-                }
+                    localStorage,
+                };
                 const transaction = new LocalStorageTransaction(context, target);
                 return Promise.resolve(transaction);
-            }
+            },
         });
         const db = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
         db.settings.ipcEvents = settings.multipleTabs === true;
-
         return db;
     }
-
 }
-
+exports.AceBase = AceBase;
 // Setup CustomStorageTransaction for browser's LocalStorage
-class LocalStorageTransaction extends CustomStorageTransaction {
-
-    /**
-     * @param {{debug: boolean, dbname: string, localStorage: typeof window.localStorage}} context
-     * @param {{path: string, write: boolean}} target
-     */
+class LocalStorageTransaction extends custom_1.CustomStorageTransaction {
     constructor(context, target) {
         super(target);
         this.context = context;
         this._storageKeysPrefix = `${this.context.dbname}.acebase::`;
     }
-
     async commit() {
         // All changes have already been committed. TODO: use same approach as IndexedDB
     }
-    
     async rollback(err) {
         // Not able to rollback changes, because we did not keep track
     }
-
     async get(path) {
         // Gets value from localStorage, wrapped in Promise
         const json = this.context.localStorage.getItem(this.getStorageKeyForPath(path));
         const val = JSON.parse(json);
         return val;
     }
-
     async set(path, val) {
         // Sets value in localStorage, wrapped in Promise
         const json = JSON.stringify(val);
         this.context.localStorage.setItem(this.getStorageKeyForPath(path), json);
     }
-
     async remove(path) {
         // Removes a value from localStorage, wrapped in Promise
         this.context.localStorage.removeItem(this.getStorageKeyForPath(path));
     }
-
     async childrenOf(path, include, checkCallback, addCallback) {
         // Streams all child paths
         // Cannot query localStorage, so loop through all stored keys to find children
-        const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+        const pathInfo = custom_1.CustomStorageHelpers.PathInfo.get(path);
         for (let i = 0; i < this.context.localStorage.length; i++) {
             const key = this.context.localStorage.key(i);
-            if (!key.startsWith(this._storageKeysPrefix)) { continue; }                
-            let otherPath = this.getPathFromStorageKey(key);
+            if (!key.startsWith(this._storageKeysPrefix)) {
+                continue;
+            }
+            const otherPath = this.getPathFromStorageKey(key);
             if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
                 let node;
                 if (include.metadata || include.value) {
@@ -5810,19 +5798,22 @@ class LocalStorageTransaction extends CustomStorageTransaction {
                     node = JSON.parse(json);
                 }
                 const keepGoing = addCallback(otherPath, node);
-                if (!keepGoing) { break; }
+                if (!keepGoing) {
+                    break;
+                }
             }
         }
     }
-
     async descendantsOf(path, include, checkCallback, addCallback) {
         // Streams all descendant paths
         // Cannot query localStorage, so loop through all stored keys to find descendants
-        const pathInfo = CustomStorageHelpers.PathInfo.get(path);
+        const pathInfo = custom_1.CustomStorageHelpers.PathInfo.get(path);
         for (let i = 0; i < this.context.localStorage.length; i++) {
             const key = this.context.localStorage.key(i);
-            if (!key.startsWith(this._storageKeysPrefix)) { continue; }
-            let otherPath = this.getPathFromStorageKey(key);
+            if (!key.startsWith(this._storageKeysPrefix)) {
+                continue;
+            }
+            const otherPath = this.getPathFromStorageKey(key);
             if (pathInfo.isAncestorOf(otherPath) && checkCallback(otherPath)) {
                 let node;
                 if (include.metadata || include.value) {
@@ -5830,284 +5821,223 @@ class LocalStorageTransaction extends CustomStorageTransaction {
                     node = JSON.parse(json);
                 }
                 const keepGoing = addCallback(otherPath, node);
-                if (!keepGoing) { break; }
+                if (!keepGoing) {
+                    break;
+                }
             }
         }
     }
-
     /**
      * Helper function to get the path from a localStorage key
-     * @param {string} key 
      */
     getPathFromStorageKey(key) {
         return key.slice(this._storageKeysPrefix.length);
     }
-
     /**
      * Helper function to get the localStorage key for a path
-     * @param {string} path 
      */
     getStorageKeyForPath(path) {
         return `${this._storageKeysPrefix}${path}`;
     }
 }
 
-module.exports = { AceBase, AceBaseLocalSettings };
-},{"./api-local":30,"./storage-custom":42,"acebase-core":12}],30:[function(require,module,exports){
-const { Api } = require('acebase-core');
-const { AceBaseStorage, AceBaseStorageSettings } = require('./storage-acebase');
-const { SQLiteStorage, SQLiteStorageSettings } = require('./storage-sqlite');
-const { MSSQLStorage, MSSQLStorageSettings } = require('./storage-mssql');
-const { CustomStorage, CustomStorageSettings } = require('./storage-custom');
-const { VALUE_TYPES } = require('./node-value-types');
-const { query: executeQuery } = require('./query');
-
-/**
- * @typedef {import('./data-index').DataIndex} DataIndex
- * @typedef {import('./storage').StorageSettings} StorageSettings
- * @typedef {import('acebase-core').AceBaseBase} AceBaseBase
- */
-
-class LocalApi extends Api {
-    // All api methods for local database instance
-
-    /**
-     *
-     * @param {{db: AceBaseBase, storage: StorageSettings, logLevel?: string }} settings
-     */
+},{"./api-local":30,"./storage/binary":40,"./storage/custom":45,"acebase-core":12}],30:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LocalApi = void 0;
+const acebase_core_1 = require("acebase-core");
+const binary_1 = require("./storage/binary");
+const sqlite_1 = require("./storage/sqlite");
+const mssql_1 = require("./storage/mssql");
+const custom_1 = require("./storage/custom");
+const node_value_types_1 = require("./node-value-types");
+const query_1 = require("./query");
+class LocalApi extends acebase_core_1.Api {
     constructor(dbname = 'default', settings, readyCallback) {
         super();
         this.db = settings.db;
-
         if (typeof settings.storage === 'object') {
             settings.storage.logLevel = settings.logLevel;
-            if (SQLiteStorageSettings && (settings.storage instanceof SQLiteStorageSettings || settings.storage.type === 'sqlite')) {
-                this.storage = new SQLiteStorage(dbname, settings.storage);
+            if (sqlite_1.SQLiteStorageSettings && (settings.storage instanceof sqlite_1.SQLiteStorageSettings || settings.storage.type === 'sqlite')) {
+                this.storage = new sqlite_1.SQLiteStorage(dbname, settings.storage);
             }
-            else if (MSSQLStorageSettings && (settings.storage instanceof MSSQLStorageSettings || settings.storage.type === 'mssql')) {
-                this.storage = new MSSQLStorage(dbname, settings.storage);
+            else if (mssql_1.MSSQLStorageSettings && (settings.storage instanceof mssql_1.MSSQLStorageSettings || settings.storage.type === 'mssql')) {
+                this.storage = new mssql_1.MSSQLStorage(dbname, settings.storage);
             }
-            else if (CustomStorageSettings && (settings.storage instanceof CustomStorageSettings || settings.storage.type === 'custom')) {
-                this.storage = new CustomStorage(dbname, settings.storage);
+            else if (custom_1.CustomStorageSettings && (settings.storage instanceof custom_1.CustomStorageSettings || settings.storage.type === 'custom')) {
+                this.storage = new custom_1.CustomStorage(dbname, settings.storage);
             }
             else {
-                const storageSettings = settings.storage instanceof AceBaseStorageSettings
+                const storageSettings = settings.storage instanceof binary_1.AceBaseStorageSettings
                     ? settings.storage
-                    : new AceBaseStorageSettings(settings.storage);
-                this.storage = new AceBaseStorage(dbname, storageSettings);
+                    : new binary_1.AceBaseStorageSettings(settings.storage);
+                this.storage = new binary_1.AceBaseStorage(dbname, storageSettings);
             }
         }
         else {
-            settings.storage = new AceBaseStorageSettings({ logLevel: settings.logLevel });
-            this.storage = new AceBaseStorage(dbname, settings.storage);
+            settings.storage = new binary_1.AceBaseStorageSettings({ logLevel: settings.logLevel });
+            this.storage = new binary_1.AceBaseStorage(dbname, settings.storage);
         }
         this.storage.on('ready', readyCallback);
     }
-
-    stats(options) {
-        return Promise.resolve(this.storage.stats);
+    async stats(options) {
+        return this.storage.stats;
     }
-
     subscribe(path, event, callback) {
         this.storage.subscriptions.add(path, event, callback);
     }
-
-    unsubscribe(path, event = undefined, callback = undefined) {
+    unsubscribe(path, event, callback) {
         this.storage.subscriptions.remove(path, event, callback);
     }
-
     /**
      * Creates a new node or overwrites an existing node
-     * @param {Storage} storage
-     * @param {string} path
-     * @param {any} value Any value will do. If the value is small enough to be stored in a parent record, it will take care of it
-     * @param {object} [options]
-     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
-     * @param {any} [options.context=null] Context to be passed along with data events
-     * @returns {Promise<{ cursor?: string }>} returns a promise with the new cursor (if transaction logging is enabled)
+     * @param path
+     * @param value Any value will do. If the value is small enough to be stored in a parent record, it will take care of it
+     * @returns returns a promise with the new cursor (if transaction logging is enabled)
      */
-    async set(path, value, options = { suppress_events: false, context: null }) {
+    async set(path, value, options = {
+        suppress_events: false,
+        context: null,
+    }) {
         const cursor = await this.storage.setNode(path, value, { suppress_events: options.suppress_events, context: options.context });
-        return { cursor };
+        return Object.assign({}, (cursor && { cursor }));
     }
-
     /**
      * Updates an existing node, or creates a new node.
-     * @param {string} path
-     * @param {any} updates
-     * @param {object} [options]
-     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
-     * @param {any} [options.context=null] Context to be passed along with data events
-     * @returns {Promise<{ cursor?: string }>} returns a promise with the new cursor (if transaction logging is enabled)
+     * @returns returns a promise with the new cursor (if transaction logging is enabled)
      */
-    async update(path, updates, options = { suppress_events: false, context: null }) {
+    async update(path, updates, options = {
+        suppress_events: false,
+        context: null,
+    }) {
         const cursor = await this.storage.updateNode(path, updates, { suppress_events: options.suppress_events, context: options.context });
-        return { cursor };
+        return Object.assign({}, (cursor && { cursor }));
     }
-
     get transactionLoggingEnabled() {
         return this.storage.settings.transactions && this.storage.settings.transactions.log === true;
     }
-
     /**
      * Gets the value of a node
-     * @param {string} path
-     * @param {object} [options] when omitted retrieves all nested data. If include is set to an array of keys it will only return those children. If exclude is set to an array of keys, those values will not be included
-     * @param {string[]} [options.include] keys to include
-     * @param {string[]} [options.exclude] keys to exclude
-     * @param {boolean} [options.child_objects=true] whether to include child objects
-     * @returns {Promise<{ value: any, context: any, cursor?: string }>}
+     * @param options when omitted retrieves all nested data. If `include` is set to an array of keys it will only return those children.
+     * If `exclude` is set to an array of keys, those values will not be included
      */
     async get(path, options) {
-        // const context = {};
-        // if (this.transactionLoggingEnabled) {
-        //     context.acebase_cursor = ID.generate();
-        // }
-        if (!options) { options = {}; }
+        if (!options) {
+            options = {};
+        }
         if (typeof options.include !== 'undefined' && !(options.include instanceof Array)) {
             throw new TypeError(`options.include must be an array of key names`);
         }
         if (typeof options.exclude !== 'undefined' && !(options.exclude instanceof Array)) {
             throw new TypeError(`options.exclude must be an array of key names`);
         }
-        if (['undefined','boolean'].indexOf(typeof options.child_objects) < 0) {
+        if (['undefined', 'boolean'].indexOf(typeof options.child_objects) < 0) {
             throw new TypeError(`options.child_objects must be a boolean`);
         }
         const node = await this.storage.getNode(path, options);
         return { value: node.value, context: { acebase_cursor: node.cursor }, cursor: node.cursor };
     }
-
     /**
      * Performs a transaction on a Node
-     * @param {string} path
-     * @param {(currentValue: any) => Promise<any>} callback callback is called with the current value. The returned value (or promise) will be used as the new value. When the callbacks returns undefined, the transaction will be canceled. When callback returns null, the node will be removed.
-     * @param {object} [options]
-     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
-     * @param {any} [options.context=null]
-     * @returns {Promise<{ cursor?: string }>} returns a promise with the new cursor (if transaction logging is enabled)
+     * @param path
+     * @param callback callback is called with the current value. The returned value (or promise) will be used as the new value. When the callbacks returns undefined, the transaction will be canceled. When callback returns null, the node will be removed.
+     * @returns returns a promise with the new cursor (if transaction logging is enabled)
      */
-    async transaction(path, callback, options = { suppress_events: false, context: null }) {
+    async transaction(path, callback, options = {
+        suppress_events: false,
+        context: null,
+    }) {
         const cursor = await this.storage.transactNode(path, callback, { suppress_events: options.suppress_events, context: options.context });
-        return { cursor };
+        return Object.assign({}, (cursor && { cursor }));
     }
-
     async exists(path) {
         const nodeInfo = await this.storage.getNodeInfo(path);
         return nodeInfo.exists;
     }
-
     // query2(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined }) {
     //     /*
-
     //     Now that we're using indexes to filter data and order upon, each query requires a different strategy
     //     to get the results the quickest.
-
     //     So, we'll analyze the query first, build a strategy and then execute the strategy
-
     //     Analyze stage:
     //     - what path is being queried (wildcard path or single parent)
     //     - which indexes are available for the path
     //     - which indexes can be used for filtering
     //     - which indexes can be used for sorting
     //     - is take/skip used to limit the result set
-
     //     Strategy stage:
     //     - chain index filtering
     //     - ....
-
     //     TODO!
     //     */
     // }
-
     /**
-     *
-     * @param {string} path
-     * @param {object} query
-     * @param {Array<{ key: string, op: string, compare: any}>} query.filters
-     * @param {number} query.skip number of results to skip, useful for paging
-     * @param {number} query.take max number of results to return
-     * @param {Array<{ key: string, ascending: boolean }>} query.order
-     * @param {object} [options]
-     * @param {boolean} [options.snapshots=false] whether to return matching data, or paths to matching nodes only
-     * @param {string[]} [options.include] when using snapshots, keys or relative paths to include in result data
-     * @param {string[]} [options.exclude] when using snapshots, keys or relative paths to exclude from result data
-     * @param {boolean} [options.child_objects] when using snapshots, whether to include child objects in result data
-     * @param {(event: { name: string, [key: string]: any }) => void} [options.eventHandler]
-     * @param {object} [options.monitor] NEW (BETA) monitor changes
-     * @param {boolean} [options.monitor.add=false] monitor new matches (either because they were added, or changed and now match the query)
-     * @param {boolean} [options.monitor.change=false] monitor changed children that still match this query
-     * @param {boolean} [options.monitor.remove=false] monitor children that don't match this query anymore
-     * @returns {Promise<{ results: object[]|string[], context: any, stop(): Promise<void> }>} returns a promise that resolves with matching data or paths in `results`
+     * @returns Returns a promise that resolves with matching data or paths in `results`
      */
-    query(path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: event => {} }) {
-        return executeQuery(this, path, query, options);
+    async query(path, query, options = { snapshots: false }) {
+        const results = await (0, query_1.query)(this, path, query, options);
+        return results;
     }
-
     /**
      * Creates an index on key for all child nodes at path
-     * @param {string} path
-     * @param {string} key
-     * @param {object} [options]
-     * @returns {Promise<DataIndex>}
      */
     createIndex(path, key, options) {
         return this.storage.indexes.create(path, key, options);
     }
-
     /**
      * Gets all indexes
-     * @returns {Promise<DataIndex[]>}
      */
-    getIndexes() {
-        return Promise.resolve(this.storage.indexes.list());
+    async getIndexes() {
+        return this.storage.indexes.list();
     }
-
     /**
      * Deletes an existing index from the database
-     * @param {string} filePath
-     * @returns
      */
     async deleteIndex(filePath) {
         return this.storage.indexes.delete(filePath);
     }
-
     async reflect(path, type, args) {
         args = args || {};
         const getChildren = async (path, limit = 50, skip = 0, from = null) => {
-            if (typeof limit === 'string') { limit = parseInt(limit); }
-            if (typeof skip === 'string') { skip = parseInt(skip); }
-            if (['null','undefined'].includes(from)) { from = null; }
+            if (typeof limit === 'string') {
+                limit = parseInt(limit);
+            }
+            if (typeof skip === 'string') {
+                skip = parseInt(skip);
+            }
+            if (['null', 'undefined'].includes(from)) {
+                from = null;
+            }
             const children = [];
             let n = 0, stop = false, more = false; //stop = skip + limit,
             await this.storage.getChildren(path)
                 .next(childInfo => {
-                    if (stop) {
-                        // Stop 1 child too late on purpose to make sure there's more
-                        more = true;
-                        return false; // Stop iterating
-                    }
-                    n++;
-                    const include = from !== null ? childInfo.key > from : skip === 0 || n > skip;
-                    if (include) {
-                        children.push({
-                            key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index,
-                            type: childInfo.valueTypeName,
-                            value: childInfo.value,
-                            // address is now only added when storage is acebase. Not when eg sqlite, mssql
-                            address: typeof childInfo.address === 'object' && 'pageNr' in childInfo.address ? { pageNr: childInfo.address.pageNr, recordNr: childInfo.address.recordNr } : undefined,
-                        });
-                    }
-                    stop = limit > 0 && children.length === limit; // flag, but don't stop now. Otherwise we won't know if there's more
-                })
+                if (stop) {
+                    // Stop 1 child too late on purpose to make sure there's more
+                    more = true;
+                    return false; // Stop iterating
+                }
+                n++;
+                const include = from !== null ? childInfo.key > from : skip === 0 || n > skip;
+                if (include) {
+                    children.push(Object.assign({ key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index, type: childInfo.valueTypeName, value: childInfo.value }, (typeof childInfo.address === 'object' && 'pageNr' in childInfo.address && {
+                        address: {
+                            pageNr: childInfo.address.pageNr,
+                            recordNr: childInfo.address.recordNr,
+                        },
+                    })));
+                }
+                stop = limit > 0 && children.length === limit; // flag, but don't stop now. Otherwise we won't know if there's more
+            })
                 .catch(err => {
-                    // Node doesn't exist? No children..
-                });
+                // Node doesn't exist? No children..
+            });
             return {
                 more,
                 list: children,
             };
         };
-        switch(type) {
+        switch (type) {
             case 'children': {
                 return getChildren(path, args.limit, args.skip, args.from);
             }
@@ -6117,6 +6047,7 @@ class LocalApi extends Api {
                     exists: false,
                     type: 'unknown',
                     value: undefined,
+                    address: undefined,
                     children: {
                         count: 0,
                         more: false,
@@ -6128,8 +6059,13 @@ class LocalApi extends Api {
                 info.exists = nodeInfo.exists;
                 info.type = nodeInfo.exists ? nodeInfo.valueTypeName : undefined;
                 info.value = nodeInfo.value;
-                info.address = typeof nodeInfo.address === 'object' && 'pageNr' in nodeInfo.address ? { pageNr: nodeInfo.address.pageNr, recordNr: nodeInfo.address.recordNr } : undefined;
-                let isObjectOrArray = nodeInfo.exists && nodeInfo.address && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeInfo.type);
+                info.address = typeof nodeInfo.address === 'object' && 'pageNr' in nodeInfo.address
+                    ? {
+                        pageNr: nodeInfo.address.pageNr,
+                        recordNr: nodeInfo.address.recordNr,
+                    }
+                    : undefined;
+                const isObjectOrArray = nodeInfo.exists && nodeInfo.address && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
                 if (args.child_count === true) {
                     // set child count instead of enumerating
                     info.children = { count: isObjectOrArray ? nodeInfo.childCount : 0 };
@@ -6143,67 +6079,65 @@ class LocalApi extends Api {
             }
         }
     }
-
-    export(path, stream, options = { format: 'json' }) {
+    export(path, stream, options = {
+        format: 'json',
+        type_safe: true,
+    }) {
         return this.storage.exportNode(path, stream, options);
     }
-
-    import(path, read, options = { format: 'json', suppress_events: false, method: 'set' }) {
+    import(path, read, options = {
+        format: 'json',
+        suppress_events: false,
+        method: 'set',
+    }) {
         return this.storage.importNode(path, read, options);
     }
-
     async setSchema(path, schema) {
         return this.storage.setSchema(path, schema);
     }
-
     async getSchema(path) {
         return this.storage.getSchema(path);
     }
-
     async getSchemas() {
         return this.storage.getSchemas();
     }
-
     async validateSchema(path, value, isUpdate) {
         return this.storage.validateSchema(path, value, { updates: isUpdate });
     }
-
     /**
      * Gets all relevant mutations for specific events on a path and since specified cursor
-     * @param {object} filter
-     * @param {string} [filter.path] path to get all mutations for, only used if `for` property isn't used
-     * @param {Array<{ path: string, events: string[] }>} [filter.for] paths and events to get relevant mutations for
-     * @param {string} filter.cursor cursor to use
-     * @param {number} filter.timestamp timestamp to use
-     * @returns {Promise<{ used_cursor: string, new_cursor: string, mutations: object[] }>}
      */
     async getMutations(filter) {
-        if (typeof this.storage.getMutations !== 'function') { throw new Error('Used storage type does not support getMutations'); }
-        if (typeof filter !== 'object') { throw new Error('No filter specified'); }
-        if (typeof filter.cursor !== 'string' && typeof filter.timestamp !== 'number') { throw new Error('No cursor or timestamp given'); }
+        if (typeof this.storage.getMutations !== 'function') {
+            throw new Error('Used storage type does not support getMutations');
+        }
+        if (typeof filter !== 'object') {
+            throw new Error('No filter specified');
+        }
+        if (typeof filter.cursor !== 'string' && typeof filter.timestamp !== 'number') {
+            throw new Error('No cursor or timestamp given');
+        }
         return this.storage.getMutations(filter);
     }
-
     /**
      * Gets all relevant effective changes for specific events on a path and since specified cursor
-     * @param {object} filter
-     * @param {string} [filter.path] path to get all mutations for, only used if `for` property isn't used
-     * @param {Array<{ path: string, events: string[] }>} [filter.for] paths and events to get relevant mutations for
-     * @param {string} filter.cursor cursor to use
-     * @param {number} filter.timestamp timestamp to use
-     * @returns {Promise<{ used_cursor: string, new_cursor: string, changes: object[] }>}
      */
     async getChanges(filter) {
-        if (typeof this.storage.getChanges !== 'function') { throw new Error('Used storage type does not support getChanges'); }
-        if (typeof filter !== 'object') { throw new Error('No filter specified'); }
-        if (typeof filter.cursor !== 'string' && typeof filter.timestamp !== 'number') { throw new Error('No cursor or timestamp given'); }
+        if (typeof this.storage.getChanges !== 'function') {
+            throw new Error('Used storage type does not support getChanges');
+        }
+        if (typeof filter !== 'object') {
+            throw new Error('No filter specified');
+        }
+        if (typeof filter.cursor !== 'string' && typeof filter.timestamp !== 'number') {
+            throw new Error('No cursor or timestamp given');
+        }
         return this.storage.getChanges(filter);
     }
 }
+exports.LocalApi = LocalApi;
 
-module.exports = { LocalApi };
-
-},{"./node-value-types":38,"./query":41,"./storage-acebase":39,"./storage-custom":42,"./storage-mssql":39,"./storage-sqlite":39,"acebase-core":12}],31:[function(require,module,exports){
+},{"./node-value-types":39,"./query":42,"./storage/binary":40,"./storage/custom":45,"./storage/mssql":40,"./storage/sqlite":40,"acebase-core":12}],31:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AsyncTaskBatch = void 0;
@@ -6284,52 +6218,65 @@ class AsyncTaskBatch {
 exports.AsyncTaskBatch = AsyncTaskBatch;
 
 },{}],32:[function(require,module,exports){
+"use strict";
 /**
    ________________________________________________________________________________
-   
-      ___          ______                
-     / _ \         | ___ \               
-    / /_\ \ ___ ___| |_/ / __ _ ___  ___ 
+
+      ___          ______
+     / _ \         | ___ \
+    / /_\ \ ___ ___| |_/ / __ _ ___  ___
     |  _  |/ __/ _ \ ___ \/ _` / __|/ _ \
     | | | | (_|  __/ |_/ / (_| \__ \  __/
     \_| |_/\___\___\____/ \__,_|___/\___|
                         realtime database
 
-   Copyright 2018-2022 by Ewout Stortenbeker (me@appy.one)   
+   Copyright 2018-2022 by Ewout Stortenbeker (me@appy.one)
    Published under MIT license
 
    See docs at https://github.com/appy-one/acebase
    ________________________________________________________________________________
 
 */
-
-const { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, ID, proxyAccess } = require('acebase-core');
-const { AceBaseLocalSettings } = require('./acebase-local');
-const { BrowserAceBase } = require('./acebase-browser');
-const { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } = require('./storage-custom');
-
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.proxyAccess = exports.ID = exports.CustomStorageHelpers = exports.CustomStorageTransaction = exports.CustomStorageSettings = exports.TypeMappings = exports.PathReference = exports.EventSubscription = exports.DataSnapshot = exports.DataReference = exports.AceBaseLocalSettings = exports.AceBase = void 0;
+const acebase_core_1 = require("acebase-core");
+Object.defineProperty(exports, "DataReference", { enumerable: true, get: function () { return acebase_core_1.DataReference; } });
+Object.defineProperty(exports, "DataSnapshot", { enumerable: true, get: function () { return acebase_core_1.DataSnapshot; } });
+Object.defineProperty(exports, "EventSubscription", { enumerable: true, get: function () { return acebase_core_1.EventSubscription; } });
+Object.defineProperty(exports, "PathReference", { enumerable: true, get: function () { return acebase_core_1.PathReference; } });
+Object.defineProperty(exports, "TypeMappings", { enumerable: true, get: function () { return acebase_core_1.TypeMappings; } });
+Object.defineProperty(exports, "ID", { enumerable: true, get: function () { return acebase_core_1.ID; } });
+Object.defineProperty(exports, "proxyAccess", { enumerable: true, get: function () { return acebase_core_1.proxyAccess; } });
+const acebase_local_1 = require("./acebase-local");
+Object.defineProperty(exports, "AceBaseLocalSettings", { enumerable: true, get: function () { return acebase_local_1.AceBaseLocalSettings; } });
+const acebase_browser_1 = require("./acebase-browser");
+Object.defineProperty(exports, "AceBase", { enumerable: true, get: function () { return acebase_browser_1.BrowserAceBase; } });
+const custom_1 = require("./storage/custom");
+Object.defineProperty(exports, "CustomStorageSettings", { enumerable: true, get: function () { return custom_1.CustomStorageSettings; } });
+Object.defineProperty(exports, "CustomStorageTransaction", { enumerable: true, get: function () { return custom_1.CustomStorageTransaction; } });
+Object.defineProperty(exports, "CustomStorageHelpers", { enumerable: true, get: function () { return custom_1.CustomStorageHelpers; } });
 const acebase = {
-    AceBase: BrowserAceBase, 
-    AceBaseLocalSettings,
-    DataReference, 
-    DataSnapshot, 
-    EventSubscription, 
-    PathReference, 
-    TypeMappings,
-    CustomStorageSettings,
-    CustomStorageTransaction,
-    CustomStorageHelpers,
-    ID,
-    proxyAccess
+    AceBase: acebase_browser_1.BrowserAceBase,
+    AceBaseLocalSettings: acebase_local_1.AceBaseLocalSettings,
+    DataReference: acebase_core_1.DataReference,
+    DataSnapshot: acebase_core_1.DataSnapshot,
+    EventSubscription: acebase_core_1.EventSubscription,
+    PathReference: acebase_core_1.PathReference,
+    TypeMappings: acebase_core_1.TypeMappings,
+    CustomStorageSettings: custom_1.CustomStorageSettings,
+    CustomStorageTransaction: custom_1.CustomStorageTransaction,
+    CustomStorageHelpers: custom_1.CustomStorageHelpers,
+    ID: acebase_core_1.ID,
+    proxyAccess: acebase_core_1.proxyAccess,
 };
-
 // Expose classes to window.acebase:
 window.acebase = acebase;
 // Expose BrowserAceBase class as window.AceBase:
-window.AceBase = BrowserAceBase;
+window.AceBase = acebase_browser_1.BrowserAceBase;
 // Expose classes for module imports:
-module.exports = acebase;
-},{"./acebase-browser":28,"./acebase-local":29,"./storage-custom":42,"acebase-core":12}],33:[function(require,module,exports){
+exports.default = acebase;
+
+},{"./acebase-browser":28,"./acebase-local":29,"./storage/custom":45,"acebase-core":12}],33:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IPCPeer = void 0;
@@ -6964,7 +6911,42 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock":37,"acebase-core":12}],35:[function(require,module,exports){
+},{"../node-lock":38,"acebase-core":12}],35:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.RemovedNodeAddress = exports.NodeAddress = void 0;
+class NodeAddress {
+    constructor(path) {
+        this.path = path;
+    }
+    toString() {
+        return `"/${this.path}"`;
+    }
+    /**
+     * Compares this address to another address
+     */
+    equals(address) {
+        return this.path === address.path;
+    }
+}
+exports.NodeAddress = NodeAddress;
+class RemovedNodeAddress extends NodeAddress {
+    constructor(path) {
+        super(path);
+    }
+    toString() {
+        return `"/${this.path}" (removed)`;
+    }
+    /**
+     * Compares this address to another address
+     */
+    equals(address) {
+        return address instanceof RemovedNodeAddress && this.path === address.path;
+    }
+}
+exports.RemovedNodeAddress = RemovedNodeAddress;
+
+},{}],36:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeRevisionError = exports.NodeNotFoundError = void 0;
@@ -6975,7 +6957,7 @@ class NodeRevisionError extends Error {
 }
 exports.NodeRevisionError = NodeRevisionError;
 
-},{}],36:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeInfo = void 0;
@@ -7015,7 +6997,7 @@ class NodeInfo {
             return `"${this.path}" doesn't exist`;
         }
         if (this.address) {
-            return `"${this.path}" is ${this.valueTypeName} stored at ${this.address.pageNr},${this.address.recordNr}`;
+            return `"${this.path}" is ${this.valueTypeName} stored at ${this.address.toString()}`;
         }
         else {
             return `"${this.path}" is ${this.valueTypeName} with value ${this.value}`;
@@ -7024,7 +7006,7 @@ class NodeInfo {
 }
 exports.NodeInfo = NodeInfo;
 
-},{"./node-value-types":38,"acebase-core":12}],37:[function(require,module,exports){
+},{"./node-value-types":39,"acebase-core":12}],38:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeLock = exports.NodeLocker = exports.LOCK_STATE = void 0;
@@ -7308,12 +7290,12 @@ class NodeLock {
 }
 exports.NodeLock = NodeLock;
 
-},{"acebase-core":12}],38:[function(require,module,exports){
+},{"acebase-core":12}],39:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getValueType = exports.getNodeValueType = exports.getValueTypeName = exports.VALUE_TYPES = void 0;
 const acebase_core_1 = require("acebase-core");
-exports.VALUE_TYPES = {
+exports.VALUE_TYPES = Object.freeze({
     // Native types:
     OBJECT: 1,
     ARRAY: 2,
@@ -7327,7 +7309,7 @@ exports.VALUE_TYPES = {
     REFERENCE: 9, // Absolute or relative path to other node
     // Future:
     // DOCUMENT: 10,     // JSON/XML documents that are contained entirely within the stored node
-};
+});
 function getValueTypeName(valueType) {
     switch (valueType) {
         case exports.VALUE_TYPES.ARRAY: return 'array';
@@ -7400,9 +7382,9 @@ function getValueType(value) {
 }
 exports.getValueType = getValueType;
 
-},{"acebase-core":12}],39:[function(require,module,exports){
+},{"acebase-core":12}],40:[function(require,module,exports){
 // Not supported in current environment
-},{}],40:[function(require,module,exports){
+},{}],41:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pfs = void 0;
@@ -7412,7 +7394,7 @@ class pfs {
 }
 exports.pfs = pfs;
 
-},{}],41:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.query = void 0;
@@ -7450,7 +7432,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
         matches.sort((a, b) => {
             const compare = (i) => {
                 const o = querySort[i];
-                const trailKeys = acebase_core_1.PathInfo.getPathKeys(o.key);
+                const trailKeys = acebase_core_1.PathInfo.getPathKeys(typeof o.key === 'number' ? `[${o.key}]` : o.key);
                 const left = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, a.val);
                 const right = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, b.val);
                 if (left === null) {
@@ -8142,1544 +8124,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
 }
 exports.query = query;
 
-},{"./async-task-batch":31,"./data-index":39,"./node-errors":35,"./node-value-types":38,"acebase-core":12}],42:[function(require,module,exports){
-const { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils } = require('acebase-core');
-const { compareValues } = Utils;
-const { NodeInfo } = require('./node-info');
-const { NodeLocker } = require('./node-lock');
-const { VALUE_TYPES } = require('./node-value-types');
-const { NodeNotFoundError, NodeRevisionError } = require('./node-errors');
-const { Storage, StorageSettings } = require('./storage');
-
-/** Interface for metadata being stored for nodes */
-class ICustomStorageNodeMetaData {
-    constructor() {
-        /** cuid (time sortable revision id). Nodes stored in the same operation share this id */
-        this.revision = '';
-        /** Number of revisions, starting with 1. Resets to 1 after deletion and recreation */
-        this.revision_nr = 0;
-        /** Creation date/time in ms since epoch UTC */
-        this.created = 0;
-        /** Last modification date/time in ms since epoch UTC */
-        this.modified = 0;
-        /** Type of the node's value. 1=object, 2=array, 3=number, 4=boolean, 5=string, 6=date, 7=reserved, 8=binary, 9=reference */
-        this.type = 0;
-    }
-}
-
-/** Interface for metadata combined with a stored value */
-class ICustomStorageNode extends ICustomStorageNodeMetaData {
-    constructor() {
-        super();
-        /** @type {any} only Object, Array, large string and binary values. */
-        this.value = null;
-    }
-}
-
-/** Enables get/set/remove operations to be wrapped in transactions to improve performance and reliability. */
-class CustomStorageTransaction {
-
-    /**
-     * @param {{ path: string, write: boolean }} target Which path the transaction is taking place on, and whether it is a read or read/write lock. If your storage backend does not support transactions, is synchronous, or if you are able to lock resources based on path: use storage.nodeLocker to ensure threadsafe transactions
-     */
-    constructor(target) {
-        this.production = false;  // dev mode by default
-        this.target = {
-            get originalPath() { return target.path; },
-            path: target.path,
-            get write() { return target.write; },
-        };
-        /** @type {string} Transaction ID */
-        this.id = ID.generate();
-    }
-
-    /**
-     * @param {string} path
-     * @returns {Promise<ICustomStorageNode>}
-     */
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    async get(path) { throw new Error(`CustomStorageTransaction.get must be overridden by subclass`); }
-
-    /**
-     * @param {string} path
-     * @param {ICustomStorageNode} node
-     * @returns {Promise<any>}
-     */
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    async set(path, node) { throw new Error(`CustomStorageTransaction.set must be overridden by subclass`); }
-
-    /**
-     * @param {string} path
-     * @returns {Promise<any>}
-     */
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    async remove(path) { throw new Error(`CustomStorageTransaction.remove must be overridden by subclass`); }
-
-    /**
-     *
-     * @param {string} path Parent path to load children of
-     * @param {object} include
-     * @param {boolean} include.metadata Whether metadata needs to be loaded
-     * @param {boolean} include.value  Whether value needs to be loaded
-     * @param {(childPath: string) => boolean} checkCallback callback method to precheck if child needs to be added, perform before loading metadata/value if possible
-     * @param {(childPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean} addCallback callback method that adds the child node. Returns whether or not to keep calling with more children
-     * @returns {Promise<any>} Returns a promise that resolves when there are no more children to be streamed
-     */
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    async childrenOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.childrenOf must be overridden by subclass`); }
-
-    /**
-     *
-     * @param {string} path Parent path to load descendants of
-     * @param {object} include
-     * @param {boolean} include.metadata Whether metadata needs to be loaded
-     * @param {boolean} include.value  Whether value needs to be loaded
-     * @param {(descPath: string, metadata?: ICustomStorageNodeMetaData) => boolean} checkCallback callback method to precheck if descendant needs to be added, perform before loading metadata/value if possible. NOTE: if include.metadata === true, you should load and pass the metadata to the checkCallback if doing so has no or small performance impact
-     * @param {(descPath: string, node?: ICustomStorageNodeMetaData|ICustomStorageNode) => boolean} addCallback callback method that adds the descendant node. Returns whether or not to keep calling with more children
-     * @returns {Promise<any>} Returns a promise that resolves when there are no more descendants to be streamed
-     */
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    async descendantsOf(path, include, checkCallback, addCallback) { throw new Error(`CustomStorageTransaction.descendantsOf must be overridden by subclass`); }
-
-    /**
-     * Returns the number of children stored in their own records. This implementation uses `childrenOf` to count, override if storage supports a quicker way.
-     * Eg: For SQL databases, you can implement this with a single query like `SELECT count(*) FROM nodes WHERE ${CustomStorageHelpers.ChildPathsSql(path)}`
-     * @param {string} path
-     * @returns {Promise<number>} Returns a promise that resolves with the number of children
-     */
-    async getChildCount(path) {
-        let childCount = 0;
-        await this.childrenOf(path, { metadata: false, value: false }, () => { childCount++; return false; });
-        return childCount;
-    }
-
-    /**
-     * NOT USED YET
-     * Default implementation of getMultiple that executes .get for each given path. Override for custom logic
-     * @param {string[]} paths
-     * @returns {Promise<Map<string, ICustomStorageNode>>} Returns promise with a Map of paths to nodes
-     */
-    async getMultiple(paths) {
-        const map = new Map();
-        await Promise.all(paths.map(path => this.get(path).then(val => map.set(path, val))));
-        return map;
-    }
-
-    /**
-     * NOT USED YET
-     * Default implementation of setMultiple that executes .set for each given path. Override for custom logic
-     * @param {Array<{ path: string, node: ICustomStorageNode }>} nodes
-     */
-    async setMultiple(nodes) {
-        await Promise.all(nodes.map(({ path, node }) => this.set(path, node)));
-    }
-
-    /**
-     * Default implementation of removeMultiple that executes .remove for each given path. Override for custom logic
-     * @param {string[]} paths
-     */
-    async removeMultiple(paths) {
-        await Promise.all(paths.map(path => this.remove(path)));
-    }
-
-    /**
-     * @param {Error} reason
-     * @returns {Promise<any>}
-     */
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    async rollback(reason) { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
-
-    /**
-     * @returns {Promise<any>}
-     */
-    async commit() { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
-
-    /**
-     * Moves the transaction path to the parent node. If node locking is used, it will request a new lock
-     * Used internally, must not be overridden unless custom locking mechanism is required
-     * @param {string} targetPath;
-     */
-    async moveToParentPath(targetPath) {
-        const currentPath = (this._lock && this._lock.path) || this.target.path;
-        if (currentPath === targetPath) {
-            return targetPath; // Already on the right path
-        }
-        const pathInfo = CustomStorageHelpers.PathInfo.get(targetPath);
-        if (pathInfo.isParentOf(currentPath)) {
-            if (this._lock) {
-                this._lock = await this._lock.moveToParent();
-            }
-        }
-        else {
-            throw new Error(`Locking issue. Locked path "${this._lock.path}" is not a child/descendant of "${targetPath}"`);
-        }
-        this.target.path = targetPath;
-        return targetPath;
-    }
-}
-
-/**
- * Allows data to be stored in a custom storage backend of your choice! Simply provide a couple of functions
- * to get, set and remove data and you're done.
- */
-class CustomStorageSettings extends StorageSettings {
-
-    /**
-     * @param {object} settings
-     * @param {string} [settings.name] Name of the custom storage adapter
-     * @param {boolean} [settings.locking=true] Whether default node locking should be used. Set to false if your storage backend disallows multiple simultanious write transactions (eg IndexedDB). Set to true if your storage backend does not support transactions (eg LocalStorage) or allows multiple simultanious write transactions (eg AceBase binary).
-     * @param {number} [settings.lockTimeout=120] If default node locking is used, timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
-     * @param {() => Promise<any>} settings.ready Function that returns a Promise that resolves once your data store backend is ready for use
-     * @param {(target: { path: string, write: boolean }) => Promise<CustomStorageTransaction>} settings.getTransaction Function that starts a transaction for read/write operations on a specific path and/or child paths
-     */
-    constructor(settings) {
-        super(settings);
-        if (typeof settings !== 'object') {
-            throw new Error('settings missing');
-        }
-        if (typeof settings.ready !== 'function') {
-            throw new Error(`ready must be a function`);
-        }
-        if (typeof settings.getTransaction !== 'function') {
-            throw new Error(`getTransaction must be a function`);
-        }
-        this.name = settings.name;
-        // this.info = `${this.name || 'CustomStorage'} realtime database`;
-        this.locking = settings.locking !== false;
-        if (this.locking) {
-            this.lockTimeout = typeof settings.lockTimeout === 'number' ? settings.lockTimeout : 120;
-        }
-        this.ready = settings.ready;
-
-        // Hijack getTransaction to add locking
-        const useLocking = this.locking;
-        const nodeLocker = useLocking ? new NodeLocker(console, this.lockTimeout) : null;
-        this.getTransaction = async ({ path, write }) => {
-            // console.log(`${write ? 'WRITE' : 'READ'} transaction requested for path "${path}"`)
-            const transaction = await settings.getTransaction({ path, write });
-            console.assert(typeof transaction.id === 'string', `transaction id not set`);
-            // console.log(`Got transaction ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
-
-            // Hijack rollback and commit
-            const rollback = transaction.rollback;
-            const commit = transaction.commit;
-            transaction.commit = async () => {
-                // console.log(`COMMIT ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
-                const ret = await commit.call(transaction);
-                // console.log(`COMMIT DONE ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
-                if (useLocking) {
-                    await transaction._lock.release('commit');
-                }
-                return ret;
-            };
-            transaction.rollback = async (reason) => {
-                // const reasonText = reason instanceof Error ? reason.message : reason.toString();
-                // console.error(`ROLLBACK ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}":`, reason);
-                const ret = await rollback.call(transaction, reason);
-                // console.log(`ROLLBACK DONE ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
-                if (useLocking) {
-                    await transaction._lock.release('rollback');
-                }
-                return ret;
-            };
-
-            if (useLocking) {
-                // Lock the path before continuing
-                transaction._lock = await nodeLocker.lock(path, transaction.id, write, `${this.name}::getTransaction`);
-            }
-            return transaction;
-        };
-    }
-}
-
-class CustomStorageNodeAddress {
-    constructor(containerPath) {
-        this.path = containerPath;
-    }
-}
-
-class CustomStorageNodeInfo extends NodeInfo {
-    constructor(info) {
-        super(info);
-
-        /** @type {CustomStorageNodeAddress} */
-        this.address; // no assignment, only typedef
-
-        /** @type {string} */
-        this.revision = info.revision;
-        /** @type {number} */
-        this.revision_nr = info.revision_nr;
-        /** @type {Date} */
-        this.created = info.created;
-        /** @type {Date} */
-        this.modified = info.modified;
-    }
-}
-
-/**
- * Helper functions to build custom storage classes with
- */
-class CustomStorageHelpers {
-    /**
-     * Helper function that returns a SQL where clause for all children of given path
-     * @param {string} path Path to get children of
-     * @param {string} [columnName] Name of the Path column in your SQL db, default is 'path'
-     * @returns {string} Returns the SQL where clause
-     */
-    static ChildPathsSql(path, columnName = 'path') {
-        const where = path === ''
-            ? `${columnName} <> '' AND ${columnName} NOT LIKE '%/%'`
-            : `(${columnName} LIKE '${path}/%' OR ${columnName} LIKE '${path}[%') AND ${columnName} NOT LIKE '${path}/%/%' AND ${columnName} NOT LIKE '${path}[%]/%' AND ${columnName} NOT LIKE '${path}[%][%'`;
-        return where;
-    }
-
-    /**
-     * Helper function that returns a regular expression to test if paths are children of the given path
-     * @param {string} path Path to test children of
-     * @returns {RegExp} Returns regular expression to test paths with
-     */
-    static ChildPathsRegex(path) {
-        return new RegExp(`^${path}(?:/[^/[]+|\\[[0-9]+\\])$`);
-    }
-
-    /**
-     * Helper function that returns a SQL where clause for all descendants of given path
-     * @param {string} path Path to get descendants of
-     * @param {string} [columnName] Name of the Path column in your SQL db, default is 'path'
-     * @returns {string} Returns the SQL where clause
-     */
-    static DescendantPathsSql(path, columnName = 'path') {
-        const where = path === ''
-            ? `${columnName} <> ''`
-            : `${columnName} LIKE '${path}/%' OR ${columnName} LIKE '${path}[%'`;
-        return where;
-    }
-    /**
-     * Helper function that returns a regular expression to test if paths are descendants of the given path
-     * @param {string} path Path to test descendants of
-     * @returns {RegExp} Returns regular expression to test paths with
-     */
-    static DescendantPathsRegex(path) {
-        return new RegExp(`^${path}(?:/[^/[]+|\\[[0-9]+\\])`);
-    }
-
-    /**
-     * PathInfo helper class. Can be used to extract keys from a given path, get parent paths, check if a path is a child or descendant of other path etc
-     * @example
-     * var pathInfo = CustomStorage.PathInfo.get('my/path/to/data');
-     * pathInfo.key === 'data';
-     * pathInfo.parentPath === 'my/path/to';
-     * pathInfo.pathKeys; // ['my','path','to','data'];
-     * pathInfo.isChildOf('my/path/to') === true;
-     * pathInfo.isDescendantOf('my/path') === true;
-     * pathInfo.isParentOf('my/path/to/data/child') === true;
-     * pathInfo.isAncestorOf('my/path/to/data/child/grandchild') === true;
-     * pathInfo.childPath('child') === 'my/path/to/data/child';
-     * pathInfo.childPath(0) === 'my/path/to/data[0]';
-     */
-    static get PathInfo() {
-        return PathInfo;
-    }
-}
-
-class CustomStorage extends Storage {
-
-    /**
-     *
-     * @param {string} dbname
-     * @param {CustomStorageSettings} settings
-     */
-    constructor(dbname, settings) {
-        super(dbname, settings);
-
-        this._init();
-    }
-
-    async _init() {
-        /** @type {CustomStorageSettings} */
-        this._customImplementation = this.settings;
-        this.debug.log(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
-        this.debug.log(`- Type: CustomStorage`.colorize(ColorStyle.dim));
-        this.debug.log(`- Path: ${this.settings.path}`.colorize(ColorStyle.dim));
-        this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(ColorStyle.dim));
-        this.debug.log(`- Autoremove undefined props: ${this.settings.removeVoidProperties}`.colorize(ColorStyle.dim));
-
-        // Create root node if it's not there yet
-        await this._customImplementation.ready();
-        const transaction = await this._customImplementation.getTransaction({ path: '', write: true });
-        const info = await this.getNodeInfo('', { transaction });
-        if (!info.exists) {
-            await this._writeNode('', {}, { transaction });
-        }
-        await transaction.commit();
-        if (this.indexes.supported) {
-            await this.indexes.load();
-        }
-        this.emit('ready');
-    }
-
-    /**
-     *
-     * @param {string} path
-     * @param {ICustomStorageNode} node
-     * @param {object} options
-     * @param {CustomStorageTransaction} options.transaction
-     * @returns {Promise<void>}
-     */
-    _storeNode(path, node, options) {
-        // serialize the value to store
-        const getTypedChildValue = val => {
-            if (val === null) {
-                throw new Error(`Not allowed to store null values. remove the property`);
-            }
-            else if (['string','number','boolean'].includes(typeof val)) {
-                return val;
-            }
-            else if (val instanceof Date) {
-                return { type: VALUE_TYPES.DATETIME, value: val.getTime() };
-            }
-            else if (val instanceof PathReference) {
-                return { type: VALUE_TYPES.REFERENCE, value: val.path };
-            }
-            else if (val instanceof ArrayBuffer) {
-                return { type: VALUE_TYPES.BINARY, value: ascii85.encode(val) };
-            }
-            else if (typeof val === 'object') {
-                console.assert(Object.keys(val).length === 0, 'child object stored in parent can only be empty');
-                return val;
-            }
-        };
-
-        const unprocessed = `Caller should have pre-processed the value by converting it to a string`;
-        if (node.type === VALUE_TYPES.ARRAY && node.value instanceof Array) {
-            // Convert array to object with numeric properties
-            // NOTE: caller should have done this already
-            console.warn(`Unprocessed array. ${unprocessed}`);
-            const obj = {};
-            for (let i = 0; i < node.value.length; i++) {
-                obj[i] = node.value[i];
-            }
-            node.value = obj;
-        }
-        if (node.type === VALUE_TYPES.BINARY && typeof node.value !== 'string') {
-            console.warn(`Unprocessed binary value. ${unprocessed}`);
-            node.value = ascii85.encode(node.value);
-        }
-        if (node.type === VALUE_TYPES.REFERENCE && node.value instanceof PathReference) {
-            console.warn(`Unprocessed path reference. ${unprocessed}`);
-            node.value = node.value.path;
-        }
-        if ([VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type)) {
-            const original = node.value;
-            node.value = {};
-            // If original is an array, it'll automatically be converted to an object now
-            Object.keys(original).forEach(key => {
-                node.value[key] = getTypedChildValue(original[key]);
-            });
-        }
-
-        return options.transaction.set(path, node);
-    }
-
-    /**
-     *
-     * @param {ICustomStorageNode} node
-     */
-    _processReadNodeValue(node) {
-
-        const getTypedChildValue = val => {
-            // Typed value stored in parent record
-            if (val.type === VALUE_TYPES.BINARY) {
-                // binary stored in a parent record as a string
-                return ascii85.decode(val.value);
-            }
-            else if (val.type === VALUE_TYPES.DATETIME) {
-                // Date value stored as number
-                return new Date(val.value);
-            }
-            else if (val.type === VALUE_TYPES.REFERENCE) {
-                // Path reference stored as string
-                return new PathReference(val.value);
-            }
-            else {
-                throw new Error(`Unhandled child value type ${val.type}`);
-            }
-        };
-
-        switch (node.type) {
-
-            case VALUE_TYPES.ARRAY:
-            case VALUE_TYPES.OBJECT: {
-                // check if any value needs to be converted
-                // NOTE: Arrays are stored with numeric properties
-                const obj = node.value;
-                Object.keys(obj).forEach(key => {
-                    let item = obj[key];
-                    if (typeof item === 'object' && 'type' in item) {
-                        obj[key] = getTypedChildValue(item);
-                    }
-                });
-                node.value = obj;
-                break;
-            }
-
-            case VALUE_TYPES.BINARY: {
-                node.value = ascii85.decode(node.value);
-                break;
-            }
-
-            case VALUE_TYPES.REFERENCE: {
-                node.value = new PathReference(node.value);
-                break;
-            }
-
-            case VALUE_TYPES.STRING: {
-                // No action needed
-                // node.value = node.value;
-                break;
-            }
-
-            default:
-                throw new Error(`Invalid standalone record value type`); // should never happen
-        }
-    }
-
-    /**
-     * @param {string} path
-     * @param {object} options
-     * @param {CustomStorageTransaction} options.transaction
-     * @returns {Promise<ICustomStorageNode>}
-     */
-    async _readNode(path, options) {
-        // deserialize a stored value (always an object with "type", "value", "revision", "revision_nr", "created", "modified")
-        let node = await options.transaction.get(path);
-        if (node === null) { return null; }
-        if (typeof node !== 'object') {
-            throw new Error(`CustomStorageTransaction.get must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
-        }
-
-        this._processReadNodeValue(node);
-        return node;
-    }
-
-    _getTypeFromStoredValue(val) {
-        let type;
-        if (typeof val === 'string') {
-            type = VALUE_TYPES.STRING;
-        }
-        else if (typeof val === 'number') {
-            type = VALUE_TYPES.NUMBER;
-        }
-        else if (typeof val === 'boolean') {
-            type = VALUE_TYPES.BOOLEAN;
-        }
-        else if (val instanceof Array) {
-            type = VALUE_TYPES.ARRAY;
-        }
-        else if (typeof val === 'object') {
-            if ('type' in val) {
-                type = val.type;
-                val = val.value;
-                if (type === VALUE_TYPES.DATETIME) {
-                    val = new Date(val);
-                }
-                else if (type === VALUE_TYPES.REFERENCE) {
-                    val = new PathReference(val);
-                }
-            }
-            else {
-                type = VALUE_TYPES.OBJECT;
-            }
-        }
-        else {
-            throw new Error(`Unknown value type`);
-        }
-        return { type, value: val };
-    }
-
-
-    /**
-     * Creates or updates a node in its own record. DOES NOT CHECK if path exists in parent node, or if parent paths exist! Calling code needs to do this
-     * @param {string} path
-     * @param {any} value
-     * @param {object} options
-     * @param {CustomStorageTransaction} options.transaction
-     * @param {boolean} [options.merge=false]
-     * @param {string} [options.revision]
-     * @param {any} [options.currentValue]
-     * @returns {Promise<void>}
-     */
-    async _writeNode(path, value, options) {
-        if (!options.merge && this.valueFitsInline(value) && path !== '') {
-            throw new Error(`invalid value to store in its own node`);
-        }
-        else if (path === '' && (typeof value !== 'object' || value instanceof Array)) {
-            throw new Error(`Invalid root node value. Must be an object`);
-        }
-
-        // Check if the value for this node changed, to prevent recursive calls to
-        // perform unnecessary writes that do not change any data
-        if (typeof options.diff === 'undefined' && typeof options.currentValue !== 'undefined') {
-            const diff = compareValues(options.currentValue, value);
-            if (options.merge && typeof diff === 'object') {
-                diff.removed = diff.removed.filter(key => value[key] === null); // Only keep "removed" items that are really being removed by setting to null
-            }
-            options.diff = diff;
-        }
-        if (options.diff === 'identical') {
-            return; // Done!
-        }
-
-        const transaction = options.transaction;
-
-        // Get info about current node at path
-        const currentRow = options.currentValue === null
-            ? null // No need to load info if currentValue is null (we already know it doesn't exist)
-            : await this._readNode(path, { transaction });
-
-        if (options.merge && currentRow) {
-            if (currentRow.type === VALUE_TYPES.ARRAY && !(value instanceof Array) && typeof value === 'object' && Object.keys(value).some(key => isNaN(key))) {
-                throw new Error(`Cannot merge existing array of path "${path}" with an object`);
-            }
-            if (value instanceof Array && currentRow.type !== VALUE_TYPES.ARRAY) {
-                throw new Error(`Cannot merge existing object of path "${path}" with an array`);
-            }
-        }
-
-        const revision = options.revision || ID.generate();
-        let mainNode = {
-            type: currentRow && currentRow.type === VALUE_TYPES.ARRAY ? VALUE_TYPES.ARRAY : VALUE_TYPES.OBJECT,
-            value: {},
-        };
-        const childNodeValues = {};
-        if (value instanceof Array) {
-            mainNode.type = VALUE_TYPES.ARRAY;
-            // Convert array to object with numeric properties
-            const obj = {};
-            for (let i = 0; i < value.length; i++) {
-                obj[i] = value[i];
-            }
-            value = obj;
-        }
-        else if (value instanceof PathReference) {
-            mainNode.type = VALUE_TYPES.REFERENCE;
-            mainNode.value = value.path;
-        }
-        else if (value instanceof ArrayBuffer) {
-            mainNode.type = VALUE_TYPES.BINARY;
-            mainNode.value = ascii85.encode(value);
-        }
-        else if (typeof value === 'string') {
-            mainNode.type = VALUE_TYPES.STRING;
-            mainNode.value = value;
-        }
-
-        const currentIsObjectOrArray = currentRow ? [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(currentRow.type) : false;
-        const newIsObjectOrArray = [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(mainNode.type);
-        const children = {
-            current: [],
-            new: [],
-        };
-
-        let currentObject = null;
-        if (currentIsObjectOrArray) {
-            currentObject = currentRow.value;
-            children.current = Object.keys(currentObject);
-            // if (currentObject instanceof Array) { // ALWAYS FALSE BECAUSE THEY ARE STORED AS OBJECTS WITH NUMERIC PROPERTIES
-            //     // Convert array to object with numeric properties
-            //     const obj = {};
-            //     for (let i = 0; i < value.length; i++) {
-            //         obj[i] = value[i];
-            //     }
-            //     currentObject = obj;
-            // }
-            if (newIsObjectOrArray) {
-                mainNode.value = currentObject;
-            }
-        }
-        if (newIsObjectOrArray) {
-            // Object or array. Determine which properties can be stored in the main node,
-            // and which should be stored in their own nodes
-            if (!options.merge) {
-                // Check which keys are present in the old object, but not in newly given object
-                Object.keys(mainNode.value).forEach(key => {
-                    if (!(key in value)) {
-                        // Property that was in old object, is not in new value -> set to null to mark deletion!
-                        value[key] = null;
-                    }
-                });
-            }
-            Object.keys(value).forEach(key => {
-                const val = value[key];
-                delete mainNode.value[key]; // key is being overwritten, moved from inline to dedicated, or deleted. TODO: check if this needs to be done SQLite & MSSQL implementations too
-                if (val === null) { //  || typeof val === 'undefined'
-                    // This key is being removed
-                    return;
-                }
-                else if (typeof val === 'undefined') {
-                    if (this.settings.removeVoidProperties === true) {
-                        delete value[key]; // Kill the property in the passed object as well, to prevent differences in stored and working values
-                        return;
-                    }
-                    else {
-                        throw new Error(`Property "${key}" has invalid value. Cannot store undefined values. Set removeVoidProperties option to true to automatically remove undefined properties`);
-                    }
-                }
-                // Where to store this value?
-                if (this.valueFitsInline(val)) {
-                    // Store in main node
-                    mainNode.value[key] = val;
-                }
-                else {
-                    // Store in child node
-                    childNodeValues[key] = val;
-                }
-            });
-        }
-
-        // Insert or update node
-        const isArray = mainNode.type === VALUE_TYPES.ARRAY;
-        if (currentRow) {
-            // update
-            this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(ColorStyle.cyan));
-
-            // If existing is an array or object, we have to find out which children are affected
-            if (currentIsObjectOrArray || newIsObjectOrArray) {
-
-                // Get current child nodes in dedicated child records
-                const pathInfo = PathInfo.get(path);
-                const keys = [];
-                let checkExecuted = false;
-                const includeChildCheck = childPath => {
-                    checkExecuted = true;
-                    if (!transaction.production && !pathInfo.isParentOf(childPath)) {
-                        // Double check failed
-                        throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
-                    }
-                    return true;
-                };
-                const addChildPath = childPath => {
-                    if (!checkExecuted) {
-                        throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
-                    }
-                    const key = PathInfo.get(childPath).key;
-                    keys.push(key.toString()); // .toString to make sure all keys are compared as strings
-                    return true; // Keep streaming
-                };
-                await transaction.childrenOf(path, { metadata: false, value: false }, includeChildCheck, addChildPath);
-
-                children.current = children.current.concat(keys);
-                if (newIsObjectOrArray) {
-                    if (options && options.merge) {
-                        children.new = children.current.slice();
-                    }
-                    Object.keys(value).forEach(key => {
-                        if (!children.new.includes(key)) {
-                            children.new.push(key);
-                        }
-                    });
-                }
-
-                const changes = {
-                    insert: children.new.filter(key => !children.current.includes(key)),
-                    update: [],
-                    delete: options && options.merge ? Object.keys(value).filter(key => value[key] === null) : children.current.filter(key => !children.new.includes(key)),
-                };
-                changes.update = children.new.filter(key => children.current.includes(key) && !changes.delete.includes(key));
-
-                if (isArray && options.merge && (changes.insert.length > 0 || changes.delete.length > 0)) {
-                    // deletes or inserts of individual array entries are not allowed, unless it is the last entry:
-                    // - deletes would cause the paths of following items to change, which is unwanted because the actual data does not change,
-                    // eg: removing index 3 on array of size 10 causes entries with index 4 to 9 to 'move' to indexes 3 to 8
-                    // - inserts might introduce gaps in indexes,
-                    // eg: adding to index 7 on an array of size 3 causes entries with indexes 3 to 6 to go 'missing'
-                    const newArrayKeys = changes.update.concat(changes.insert);
-                    const isExhaustive = newArrayKeys.every((k, index, arr) => arr.includes(index.toString()));
-                    if (!isExhaustive) {
-                        throw new Error(`Elements cannot be inserted beyond, or removed before the end of an array. Rewrite the whole array at path "${path}" or change your schema to use an object collection instead`);
-                    }
-                }
-
-                // (over)write all child nodes that must be stored in their own record
-                const writePromises = Object.keys(childNodeValues).map(key => {
-                    if (isArray) { key = parseInt(key); }
-                    const childDiff = typeof options.diff === 'object' ? options.diff.forChild(key) : undefined;
-                    if (childDiff === 'identical') {
-                        // console.warn(`Skipping _writeNode recursion for child "${key}"`);
-                        return; // Skip
-                    }
-                    const childPath = pathInfo.childPath(key); // PathInfo.getChildPath(path, key);
-                    const childValue = childNodeValues[key];
-
-                    // Pass current child value to _writeNode
-                    const currentChildValue = typeof options.currentValue === 'undefined'  // Fixing issue #20
-                        ? undefined
-                        : options.currentValue !== null && typeof options.currentValue === 'object' && key in options.currentValue
-                            ? options.currentValue[key]
-                            : null;
-
-                    return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: currentChildValue, diff: childDiff });
-                });
-
-                // Delete all child nodes that were stored in their own record, but are being removed
-                // Also delete nodes that are being moved from a dedicated record to inline
-                const movingNodes = newIsObjectOrArray ? keys.filter(key => key in mainNode.value) : []; // moving from dedicated to inline value
-                const deleteDedicatedKeys = changes.delete.concat(movingNodes);
-                const deletePromises = deleteDedicatedKeys.map(key => {
-                    if (isArray) { key = parseInt(key); }
-                    const childPath = pathInfo.childPath(key); //PathInfo.getChildPath(path, key);
-                    return this._deleteNode(childPath, { transaction });
-                });
-
-                const promises = writePromises.concat(deletePromises);
-                await Promise.all(promises);
-            }
-
-            // Update main node
-            // TODO: Check if revision should change?
-            const p = this._storeNode(path, {
-                type: mainNode.type,
-                value: mainNode.value,
-                revision: currentRow.revision,
-                revision_nr: currentRow.revision_nr + 1,
-                created: currentRow.created,
-                modified: Date.now(),
-            }, {
-                transaction,
-            });
-            if (p instanceof Promise) {
-                return await p;
-            }
-        }
-        else {
-            // Current node does not exist, create it and any child nodes
-            // write all child nodes that must be stored in their own record
-            this.debug.log(`Node "/${path}" is being created`.colorize(ColorStyle.cyan));
-
-            if (isArray) {
-                // Check if the array is "intact" (all entries have an index from 0 to the end with no gaps)
-                const arrayKeys = Object.keys(mainNode.value).concat(Object.keys(childNodeValues));
-                const isExhaustive = arrayKeys.every((k, index, arr) => arr.includes(index.toString()));
-                if (!isExhaustive) {
-                    throw new Error(`Cannot store arrays with missing entries`);
-                }
-            }
-
-            const promises = Object.keys(childNodeValues).map(key => {
-                if (isArray) { key = parseInt(key); }
-                const childPath = PathInfo.getChildPath(path, key);
-                const childValue = childNodeValues[key];
-                return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: null });
-            });
-
-            // Create current node
-            const p = this._storeNode(path, {
-                type: mainNode.type,
-                value: mainNode.value,
-                revision,
-                revision_nr: 1,
-                created: Date.now(),
-                modified: Date.now(),
-            }, {
-                transaction,
-            });
-            promises.push(p);
-            return Promise.all(promises);
-        }
-    }
-
-    /**
-     * Deletes (dedicated) node and all subnodes without checking for existence. Use with care - all removed nodes will lose their revision stats! DOES NOT REMOVE INLINE CHILD NODES!
-     * @param {string} path
-     * @param {object} options
-     * @param {CustomStorageTransaction} options.transaction
-     */
-    async _deleteNode(path, options) {
-        const pathInfo = PathInfo.get(path);
-        this.debug.log(`Node "/${path}" is being deleted`.colorize(ColorStyle.cyan));
-
-        const deletePaths = [path];
-        let checkExecuted = false;
-        const includeDescendantCheck = (descPath) => {
-            checkExecuted = true;
-            if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
-                // Double check failed
-                throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
-            }
-            return true;
-        };
-        const addDescendant = (descPath) => {
-            if (!checkExecuted) {
-                throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
-            }
-            deletePaths.push(descPath);
-            return true;
-        };
-        const transaction = options.transaction;
-        await transaction.descendantsOf(path, { metadata: false, value: false }, includeDescendantCheck, addDescendant);
-
-        this.debug.log(`Nodes ${deletePaths.map(p => `"/${p}"`).join(',')} are being deleted`.colorize(ColorStyle.cyan));
-        return transaction.removeMultiple(deletePaths);
-    }
-
-    /**
-     * Enumerates all children of a given Node for reflection purposes
-     * @param {string} path
-     * @param {object} [options]
-     * @param {CustomStorageTransaction} [options.transaction]
-     * @param {string[]|number[]} [options.keyFilter]
-     */
-    getChildren(path, options) {
-        // return generator
-        options = options || {};
-        var callback; //, resolve, reject;
-        const generator = {
-            /**
-             *
-             * @param {(child: NodeInfo) => boolean} valueCallback callback function to run for each child. Return false to stop iterating
-             * @returns {Promise<bool>} returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
-             */
-            next(valueCallback) {
-                callback = valueCallback;
-                return start();
-            },
-        };
-        const start = async () => {
-            const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
-            try {
-                let canceled = false;
-                await (async () => {
-                    let node = await this._readNode(path, { transaction });
-                    if (!node) { throw new NodeNotFoundError(`Node "/${path}" does not exist`); }
-
-                    if (![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type)) {
-                        // No children
-                        return;
-                    }
-                    const isArray = node.type === VALUE_TYPES.ARRAY;
-                    const value = node.value;
-                    let keys = Object.keys(value);
-                    if (options.keyFilter) {
-                        keys = keys.filter(key => options.keyFilter.includes(key));
-                    }
-                    const pathInfo = PathInfo.get(path);
-                    keys.length > 0 && keys.every(key => {
-                        let child = this._getTypeFromStoredValue(value[key]);
-
-                        const info = new CustomStorageNodeInfo({
-                            path: pathInfo.childPath(key),
-                            key: isArray ? null : key,
-                            index: isArray ? key : null,
-                            type: child.type,
-                            address: null,
-                            exists: true,
-                            value: child.value,
-                            revision: node.revision,
-                            revision_nr: node.revision_nr,
-                            created: node.created,
-                            modified: node.modified,
-                        });
-
-                        canceled = callback(info) === false;
-                        return !canceled; // stop .every loop if canceled
-                    });
-                    if (canceled) {
-                        return;
-                    }
-
-                    // Go on... get other children
-                    let checkExecuted = false;
-                    const includeChildCheck = (childPath) => {
-                        checkExecuted = true;
-                        if (!transaction.production && !pathInfo.isParentOf(childPath)) {
-                            // Double check failed
-                            throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
-                        }
-                        if (options.keyFilter) {
-                            const key = PathInfo.get(childPath).key;
-                            return options.keyFilter.includes(key);
-                        }
-                        return true;
-                    };
-
-                    /**
-                     *
-                     * @param {string} childPath
-                     * @param {ICustomStorageNodeMetaData} node
-                     */
-                    const addChildNode = (childPath, node) => {
-                        if (!checkExecuted) {
-                            throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
-                        }
-                        const key = PathInfo.get(childPath).key;
-                        const info = new CustomStorageNodeInfo({
-                            path: childPath,
-                            type: node.type,
-                            key: isArray ? null : key,
-                            index: isArray ? key : null,
-                            address: new CustomStorageNodeAddress(childPath),
-                            exists: true,
-                            value: null, // not loaded
-                            revision: node.revision,
-                            revision_nr: node.revision_nr,
-                            created: new Date(node.created),
-                            modified: new Date(node.modified),
-                        });
-
-                        canceled = callback(info) === false;
-                        return !canceled;
-                    };
-                    await transaction.childrenOf(path, { metadata: true, value: false }, includeChildCheck, addChildNode);
-                })();
-                if (!options.transaction) {
-                    // transaction was created by us, commit
-                    await transaction.commit();
-                }
-                return canceled;
-            }
-            catch (err) {
-                if (!options.transaction) {
-                    // transaction was created by us, rollback
-                    await transaction.rollback(err);
-                }
-                throw err;
-            }
-
-            // })
-            // .then(() => {
-            //     lock.release();
-            //     return canceled;
-            // })
-            // .catch(err => {
-            //     lock.release();
-            //     throw err;
-            // });
-        }; // start()
-        return generator;
-    }
-
-    /**
-     *
-     * @param {string} path
-     * @param {object} [options]
-     * @param {string[]} [options.include]
-     * @param {string[]} [options.exclude]
-     * @param {boolean} [options.child_objects=true]
-     * @param {CustomStorageTransaction} [options.transaction]
-     * @returns {Promise<ICustomStorageNode>}
-     */
-    async getNode(path, options) {
-        // path = path.replace(/'/g, '');  // prevent sql injection, remove single quotes
-
-        options = options || {};
-        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
-        // let lock;
-        // return this.nodeLocker.lock(path, tid, false, 'getNode')
-        // .then(async l => {
-        //     lock = l;
-        try {
-            const node = await (async () => {
-                // Get path, path/* and path[*
-                const filtered = (options.include && options.include.length > 0) || (options.exclude && options.exclude.length > 0) || options.child_objects === false;
-                const pathInfo = PathInfo.get(path);
-                const targetNode = await this._readNode(path, { transaction });
-                if (!targetNode) {
-                    // Lookup parent node
-                    if (path === '') { return { value: null }; } // path is root. There is no parent.
-                    const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                    console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
-                    // return lock.moveToParent()
-                    // .then(async parentLock => {
-                    //     lock = parentLock;
-                    let parentNode = await this._readNode(pathInfo.parentPath, { transaction });
-                    if (parentNode && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode.value) {
-                        const childValueInfo = this._getTypeFromStoredValue(parentNode.value[pathInfo.key]);
-                        return {
-                            revision: parentNode.revision,
-                            revision_nr: parentNode.revision_nr,
-                            created: parentNode.created,
-                            modified: parentNode.modified,
-                            type: childValueInfo.type,
-                            value: childValueInfo.value,
-                        };
-                    }
-                    return { value: null };
-                    // });
-                }
-
-                const isArray = targetNode.type === VALUE_TYPES.ARRAY;
-                /**
-                 * Convert include & exclude filters to PathInfo instances for easier handling
-                 * @param {string[]} arr
-                 * @returns {PathInfo[]}
-                 */
-                const convertFilterArray = (arr) => {
-                    const isNumber = key => /^[0-9]+$/.test(key);
-                    return arr.map(path => PathInfo.get(isArray && isNumber(path) ? `[${path}]` : path));
-                };
-                const includeFilter = options.include ? convertFilterArray(options.include) : [];
-                const excludeFilter = options.exclude ? convertFilterArray(options.exclude) : [];
-
-                /**
-                 * Apply include filters to prevent unwanted properties stored inline to be added.
-                 *
-                 * Removes properties that are not on the trail of any include filter, but were loaded because they are
-                 * stored inline in the parent node.
-                 *
-                 * Example:
-                 * data of `"users/someuser/posts/post1"`: `{ title: 'My first post', posted: (date), history: {} }`
-                 * code: `db.ref('users/someuser').get({ include: ['posts/*\/title'] })`
-                 * descPath: `"users/someuser/posts/post1"`,
-                 * trailKeys: `["posts", "post1"]`,
-                 * includeFilter[0]: `["posts", "*", "title"]`
-                 * properties `posted` and `history` must be removed from the object
-                 *
-                 * @param {string} descPath
-                 * @param {ICustomStorageNode} node
-                 */
-                const applyFiltersOnInlineData = (descPath, node) => {
-                    if ([VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type) && includeFilter.length > 0) {
-                        const trailKeys = PathInfo.getPathKeys(descPath).slice(pathInfo.keys.length);
-                        const checkPathInfo = new PathInfo(trailKeys);
-                        const remove = [];
-                        const includes = includeFilter.filter(info => info.isDescendantOf(checkPathInfo));
-                        if (includes.length > 0) {
-                            const isArray = node.type === VALUE_TYPES.ARRAY;
-                            remove.push(...Object.keys(node.value).map(key => isArray ? +key : key)); // Mark all at first
-                            for (let info of includes) {
-                                const targetProp = info.keys[trailKeys.length];
-                                if (typeof targetProp === 'string' && (targetProp === '*' || targetProp.startsWith('$'))) {
-                                    remove.splice(0);
-                                    break;
-                                }
-                                const index = remove.indexOf(targetProp);
-                                index >= 0 && remove.splice(index, 1);
-                            }
-                        }
-                        const hasIncludeOnChild = includeFilter.some(info => info.isChildOf(checkPathInfo));
-                        const hasExcludeOnChild = excludeFilter.some(info => info.isChildOf(checkPathInfo));
-                        if (hasExcludeOnChild && !hasIncludeOnChild) {
-                            // do not remove children that are NOT in direct exclude filters (which includes them again)
-                            const excludes = excludeFilter.filter(info => info.isChildOf(checkPathInfo));
-                            for (let i = 0; i < remove.length; i++) {
-                                if (!excludes.find(info => info.equals(remove[i]))) {
-                                    remove.splice(i, 1);
-                                    i--;
-                                }
-                            }
-                        }
-                        // remove.length > 0 && this.debug.log(`Remove properties:`, remove);
-                        for (let key of remove) {
-                            delete node.value[key];
-                        }
-                    }
-                };
-
-                applyFiltersOnInlineData(path, targetNode);
-
-                let checkExecuted = false;
-                const includeDescendantCheck = (descPath, metadata) => {
-                    checkExecuted = true;
-                    if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
-                        // Double check failed
-                        throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
-                    }
-                    if (!filtered) { return true; }
-
-                    // Apply include & exclude filters
-                    const descPathKeys = PathInfo.getPathKeys(descPath);
-                    const trailKeys = descPathKeys.slice(pathInfo.keys.length);
-                    const checkPathInfo = new PathInfo(trailKeys);
-                    let include = (includeFilter.length > 0
-                        ? includeFilter.some(info => checkPathInfo.isOnTrailOf(info))
-                        : true)
-                        && (excludeFilter.length > 0
-                            ? !excludeFilter.some(info => info.equals(checkPathInfo) || info.isAncestorOf(checkPathInfo))
-                            : true);
-
-                    // Apply child_objects filter. If metadata is not loaded, we can only skip deeper descendants here - any child object that does get through will be ignored by addDescendant
-                    if (include
-                        && options.child_objects === false
-                        && (pathInfo.isParentOf(descPath) && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(metadata ? metadata.type : -1)
-                        || PathInfo.getPathKeys(descPath).length > pathInfo.pathKeys.length + 1)
-                    ) {
-                        include = false;
-                    }
-                    return include;
-                };
-
-                const descRows = [];
-                /**
-                 *
-                 * @param {string} descPath
-                 * @param {ICustomStorageNode} node
-                 */
-                const addDescendant = (descPath, node) => {
-                    // console.warn(`Adding descendant "${descPath}"`);
-                    if (!checkExecuted) {
-                        throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
-                    }
-                    if (options.child_objects === false && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type)) {
-                        // child objects are filtered out, but this one got through because includeDescendantCheck did not have access to its metadata,
-                        // which is ok because doing that might drastically improve performance in client code. Skip it now.
-                        return true;
-                    }
-
-                    // Apply include filters to prevent unwanted properties stored inline to be added
-                    applyFiltersOnInlineData(descPath, node);
-
-                    // Process the value
-                    this._processReadNodeValue(node);
-
-                    // Add node
-                    node.path = descPath;
-                    descRows.push(node);
-
-                    return true; // Keep streaming
-                };
-
-                await transaction.descendantsOf(path, { metadata: true, value: true }, includeDescendantCheck, addDescendant);
-
-                this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}descendants from ${descRows.length + 1} records`.colorize(ColorStyle.magenta));
-
-                const result = targetNode;
-
-                const objectToArray = obj => {
-                    // Convert object value to array
-                    const arr = [];
-                    Object.keys(obj).forEach(key => {
-                        let index = parseInt(key);
-                        arr[index] = obj[index];
-                    });
-                    return arr;
-                };
-
-                if (targetNode.type === VALUE_TYPES.ARRAY) {
-                    result.value = objectToArray(result.value);
-                }
-
-                if (targetNode.type === VALUE_TYPES.OBJECT || targetNode.type === VALUE_TYPES.ARRAY) {
-                    // target node is an object or array
-                    // merge with other found (child) nodes
-                    const targetPathKeys = PathInfo.getPathKeys(path);
-                    let value = targetNode.value;
-                    for (let i = 0; i < descRows.length; i++) {
-                        const otherNode = descRows[i];
-                        const pathKeys = PathInfo.getPathKeys(otherNode.path);
-                        const trailKeys = pathKeys.slice(targetPathKeys.length);
-                        let parent = value;
-                        for (let j = 0 ; j < trailKeys.length; j++) {
-                            console.assert(typeof parent === 'object', 'parent must be an object/array to have children!!');
-                            const key = trailKeys[j];
-                            const isLast = j === trailKeys.length-1;
-                            const nodeType = isLast
-                                ? otherNode.type
-                                : typeof trailKeys[j+1] === 'number'
-                                    ? VALUE_TYPES.ARRAY
-                                    : VALUE_TYPES.OBJECT;
-                            let nodeValue;
-                            if (!isLast) {
-                                nodeValue = nodeType === VALUE_TYPES.OBJECT ? {} : [];
-                            }
-                            else {
-                                nodeValue = otherNode.value;
-                                if (nodeType === VALUE_TYPES.ARRAY) {
-                                    nodeValue = objectToArray(nodeValue);
-                                }
-                            }
-                            if (key in parent) {
-                                // Merge with parent
-                                const mergePossible = typeof parent[key] === typeof nodeValue && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeType);
-                                if (!mergePossible) {
-                                    // Ignore the value in the child record, see issue #20: "Assertion failed: Merging child values can only be done if existing and current values are both an array or object"
-                                    this.debug.error(`The value stored in node "${otherNode.path}" cannot be merged with the parent node, value will be ignored. This error should disappear once the target node value is updated. See issue #20 for more information`, { path, parent, key, nodeType, nodeValue });
-                                }
-                                else {
-                                    Object.keys(nodeValue).forEach(childKey => {
-                                        if (childKey in parent[key]) {
-                                            throw new Error( `Custom storage merge error: child key "${childKey}" is in parent value already! Make sure the get/childrenOf/descendantsOf methods of the custom storage class return values that can be modified by AceBase without affecting the stored source`);
-                                        }
-                                        parent[key][childKey] = nodeValue[childKey];
-                                    });
-                                }
-                            }
-                            else {
-                                parent[key] = nodeValue;
-                            }
-                            parent = parent[key];
-                        }
-                    }
-                }
-                else if (descRows.length > 0) {
-                    throw new Error(`multiple records found for non-object value!`);
-                }
-
-                // Post process filters to remove any data that got through because they were
-                // not stored in dedicated records. This will happen with smaller values because
-                // they are stored inline in their parent node.
-                // eg:
-                // { number: 1, small_string: 'small string', bool: true, obj: {}, arr: [] }
-                // All properties of this object are stored inline,
-                // if exclude: ['obj'], or child_objects: false was passed, these will still
-                // have to be removed from the value
-
-                if (options.child_objects === false) {
-                    Object.keys(result.value).forEach(key => {
-                        if (typeof result.value[key] === 'object' && result.value[key].constructor === Object) {
-                            // This can only happen if the object was empty
-                            console.assert(Object.keys(result.value[key]).length === 0);
-                            delete result.value[key];
-                        }
-                    });
-                }
-
-                if (options.include) {
-                    // TODO: remove any unselected children that did get through
-                }
-
-                if (options.exclude) {
-                    const process = (obj, keys) => {
-                        if (typeof obj !== 'object') { return; }
-                        const key = keys[0];
-                        if (key === '*') {
-                            Object.keys(obj).forEach(k => {
-                                process(obj[k], keys.slice(1));
-                            });
-                        }
-                        else if (keys.length > 1) {
-                            key in obj && process(obj[key], keys.slice(1));
-                        }
-                        else {
-                            delete obj[key];
-                        }
-                    };
-                    options.exclude.forEach(path => {
-                        const checkKeys = PathInfo.getPathKeys(path);
-                        process(result.value, checkKeys);
-                    });
-                }
-
-                return result;
-            })();
-            if (!options.transaction) {
-                // transaction was created by us, commit
-                await transaction.commit();
-            }
-            return node;
-        }
-        catch (err) {
-            if (!options.transaction) {
-                // transaction was created by us, rollback
-                await transaction.rollback(err);
-            }
-            throw err;
-        }
-    }
-
-    /**
-     *
-     * @param {string} path
-     * @param {object} [options]
-     * @param {CustomStorageTransaction} [options.transaction]
-     * @param {boolean} [options.include_child_count=false] whether to include child count if node is an object or array
-     * @returns {Promise<CustomStorageNodeInfo>}
-     */
-    async getNodeInfo(path, options) {
-        options = options || {};
-        const pathInfo = PathInfo.get(path);
-        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
-        try {
-            const node = await this._readNode(path, { transaction });
-            const info = new CustomStorageNodeInfo({
-                path,
-                key: typeof pathInfo.key === 'string' ? pathInfo.key : null,
-                index: typeof pathInfo.key === 'number' ? pathInfo.key : null,
-                type: node ? node.type : 0,
-                exists: node !== null,
-                address: node ? new CustomStorageNodeAddress(path) : null,
-                created: node ? new Date(node.created) : null,
-                modified: node ? new Date(node.modified) : null,
-                revision: node ? node.revision : null,
-                revision_nr: node ? node.revision_nr : null,
-            });
-
-            if (!node && path !== '') {
-                // Try parent node
-
-                const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
-                const parent = await this._readNode(pathInfo.parentPath, { transaction });
-                if (parent && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parent.type) && pathInfo.key in parent.value) {
-                    // Stored in parent node
-                    info.exists = true;
-                    info.value = parent.value[pathInfo.key];
-                    info.address = null;
-                    info.type = parent.type;
-                    info.created = new Date(parent.created);
-                    info.modified = new Date(parent.modified);
-                    info.revision = parent.revision;
-                    info.revision_nr = parent.revision_nr;
-                }
-                else {
-                    // Parent doesn't exist, so the node we're looking for cannot exist either
-                    info.address = null;
-                }
-            }
-
-            if (options.include_child_count) {
-                info.childCount = 0;
-                if ([VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(info.valueType) && info.address) {
-                    // Get number of children
-                    info.childCount = node.value ? Object.keys(node.value).length : 0;
-                    info.childCount += await transaction.getChildCount(path);
-                }
-            }
-
-            if (!options.transaction) {
-                // transaction was created by us, commit
-                await transaction.commit();
-            }
-            return info;
-        }
-        catch (err) {
-            if (!options.transaction) {
-                // transaction was created by us, rollback
-                await transaction.rollback(err);
-            }
-            throw err;
-        }
-    }
-
-    // TODO: Move to Storage base class?
-    /**
-     *
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options]
-     * @param {string} [options.assert_revision]
-     * @param {CustomStorageTransaction} [options.transaction]
-     * @param {boolean} [options.suppress_events=false]
-     * @param {any} [options.context]
-     * @returns {Promise<CustomStorageNodeInfo>}
-     */
-    async setNode(path, value, options = { suppress_events: false, context: null }) {
-        const pathInfo = PathInfo.get(path);
-        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
-        try {
-
-            if (path === '') {
-                if (value === null || typeof value !== 'object' || value instanceof Array || value instanceof ArrayBuffer || ('buffer' in value && value.buffer instanceof ArrayBuffer)) {
-                    throw new Error(`Invalid value for root node: ${value}`);
-                }
-                await this._writeNodeWithTracking('', value, { merge: false, transaction, suppress_events: options.suppress_events, context: options.context });
-            }
-            else if (typeof options.assert_revision !== 'undefined') {
-                const info = await this.getNodeInfo(path, { transaction });
-                if (info.revision !== options.assert_revision) {
-                    throw new NodeRevisionError(`revision '${info.revision}' does not match requested revision '${options.assert_revision}'`);
-                }
-                if (info.address && info.address.path === path && value !== null && !this.valueFitsInline(value)) {
-                    // Overwrite node
-                    await this._writeNodeWithTracking(path, value, { merge: false, transaction, suppress_events: options.suppress_events, context: options.context });
-                }
-                else {
-                    // Update parent node
-                    const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                    console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
-                    await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, transaction, suppress_events: options.suppress_events, context: options.context });
-                }
-            }
-            else {
-                // Delegate operation to update on parent node
-                const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
-                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction, suppress_events: options.suppress_events, context: options.context });
-            }
-            if (!options.transaction) {
-                // transaction was created by us, commit
-                await transaction.commit();
-            }
-        }
-        catch (err) {
-            if (!options.transaction) {
-                // transaction was created by us, rollback
-                await transaction.rollback(err);
-            }
-            throw err;
-        }
-    }
-
-    // TODO: Move to Storage base class?
-    /**
-     *
-     * @param {string} path
-     * @param {*} updates
-     * @param {object} [options]
-     * @param {CustomStorageTransaction} [options.transaction]
-     * @param {boolean} [options.suppress_events=false]
-     * @param {any} [options.context]
-     */
-    async updateNode(path, updates, options = { suppress_events: false, context: null }) {
-
-        if (typeof updates !== 'object') {
-            throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
-        }
-        else if (Object.keys(updates).length === 0) {
-            return; // Nothing to update. Done!
-        }
-
-        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
-
-        try {
-            // Get info about current node
-            const nodeInfo = await this.getNodeInfo(path, { transaction });
-            const pathInfo = PathInfo.get(path);
-            if (nodeInfo.exists && nodeInfo.address && nodeInfo.address.path === path) {
-                // Node exists and is stored in its own record.
-                // Update it
-                await this._writeNodeWithTracking(path, updates, { transaction, merge: true, suppress_events: options.suppress_events, context: options.context });
-            }
-            else if (nodeInfo.exists) {
-                // Node exists, but is stored in its parent node.
-                const pathInfo = PathInfo.get(path);
-                const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
-                await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, merge: true, suppress_events: options.suppress_events, context: options.context });
-            }
-            else {
-                // The node does not exist, it's parent doesn't have it either. Update the parent instead
-                const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
-                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, suppress_events: options.suppress_events, context: options.context });
-            }
-            if (!options.transaction) {
-                // transaction was created by us, commit
-                await transaction.commit();
-            }
-        }
-        catch (err) {
-            if (!options.transaction) {
-                // transaction was created by us, rollback
-                await transaction.rollback(err);
-            }
-            throw err;
-        }
-    }
-
-}
-
-module.exports = {
-    CustomStorageNodeAddress,
-    CustomStorageNodeInfo,
-    CustomStorage,
-    CustomStorageSettings,
-    CustomStorageHelpers,
-    CustomStorageTransaction,
-    ICustomStorageNodeMetaData,
-    ICustomStorageNode,
-};
-
-},{"./node-errors":35,"./node-info":36,"./node-lock":37,"./node-value-types":38,"./storage":44,"acebase-core":12}],43:[function(require,module,exports){
+},{"./async-task-batch":31,"./data-index":40,"./node-errors":36,"./node-value-types":39,"acebase-core":12}],43:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
@@ -9756,7 +8201,1296 @@ async function createIndex(context, path, key, options) {
 }
 exports.createIndex = createIndex;
 
-},{"../data-index":39,"../promise-fs":40,"acebase-core":12}],44:[function(require,module,exports){
+},{"../data-index":40,"../promise-fs":41,"acebase-core":12}],44:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CustomStorageHelpers = void 0;
+const acebase_core_1 = require("acebase-core");
+/**
+ * Helper functions to build custom storage classes with
+ */
+class CustomStorageHelpers {
+    /**
+     * Helper function that returns a SQL where clause for all children of given path
+     * @param path Path to get children of
+     * @param columnName Name of the Path column in your SQL db, default is 'path'
+     * @returns Returns the SQL where clause
+     */
+    static ChildPathsSql(path, columnName = 'path') {
+        const where = path === ''
+            ? `${columnName} <> '' AND ${columnName} NOT LIKE '%/%'`
+            : `(${columnName} LIKE '${path}/%' OR ${columnName} LIKE '${path}[%') AND ${columnName} NOT LIKE '${path}/%/%' AND ${columnName} NOT LIKE '${path}[%]/%' AND ${columnName} NOT LIKE '${path}[%][%'`;
+        return where;
+    }
+    /**
+     * Helper function that returns a regular expression to test if paths are children of the given path
+     * @param path Path to test children of
+     * @returns Returns regular expression to test paths with
+     */
+    static ChildPathsRegex(path) {
+        return new RegExp(`^${path}(?:/[^/[]+|\\[[0-9]+\\])$`);
+    }
+    /**
+     * Helper function that returns a SQL where clause for all descendants of given path
+     * @param path Path to get descendants of
+     * @param columnName Name of the Path column in your SQL db, default is 'path'
+     * @returns Returns the SQL where clause
+     */
+    static DescendantPathsSql(path, columnName = 'path') {
+        const where = path === ''
+            ? `${columnName} <> ''`
+            : `${columnName} LIKE '${path}/%' OR ${columnName} LIKE '${path}[%'`;
+        return where;
+    }
+    /**
+     * Helper function that returns a regular expression to test if paths are descendants of the given path
+     * @param path Path to test descendants of
+     * @returns Returns regular expression to test paths with
+     */
+    static DescendantPathsRegex(path) {
+        return new RegExp(`^${path}(?:/[^/[]+|\\[[0-9]+\\])`);
+    }
+    /**
+     * PathInfo helper class. Can be used to extract keys from a given path, get parent paths, check if a path is a child or descendant of other path etc
+     * @example
+     * var pathInfo = CustomStorage.PathInfo.get('my/path/to/data');
+     * pathInfo.key === 'data';
+     * pathInfo.parentPath === 'my/path/to';
+     * pathInfo.pathKeys; // ['my','path','to','data'];
+     * pathInfo.isChildOf('my/path/to') === true;
+     * pathInfo.isDescendantOf('my/path') === true;
+     * pathInfo.isParentOf('my/path/to/data/child') === true;
+     * pathInfo.isAncestorOf('my/path/to/data/child/grandchild') === true;
+     * pathInfo.childPath('child') === 'my/path/to/data/child';
+     * pathInfo.childPath(0) === 'my/path/to/data[0]';
+     */
+    static get PathInfo() {
+        return acebase_core_1.PathInfo;
+    }
+}
+exports.CustomStorageHelpers = CustomStorageHelpers;
+
+},{"acebase-core":12}],45:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CustomStorage = exports.CustomStorageNodeInfo = exports.CustomStorageNodeAddress = exports.CustomStorageSettings = exports.CustomStorageTransaction = exports.ICustomStorageNode = exports.ICustomStorageNodeMetaData = exports.CustomStorageHelpers = void 0;
+const acebase_core_1 = require("acebase-core");
+const { compareValues } = acebase_core_1.Utils;
+const node_info_1 = require("../../node-info");
+const node_lock_1 = require("../../node-lock");
+const node_value_types_1 = require("../../node-value-types");
+const node_errors_1 = require("../../node-errors");
+const index_1 = require("../index");
+const helpers_1 = require("./helpers");
+const node_address_1 = require("../../node-address");
+var helpers_2 = require("./helpers");
+Object.defineProperty(exports, "CustomStorageHelpers", { enumerable: true, get: function () { return helpers_2.CustomStorageHelpers; } });
+/** Interface for metadata being stored for nodes */
+class ICustomStorageNodeMetaData {
+    constructor() {
+        /** cuid (time sortable revision id). Nodes stored in the same operation share this id */
+        this.revision = '';
+        /** Number of revisions, starting with 1. Resets to 1 after deletion and recreation */
+        this.revision_nr = 0;
+        /** Creation date/time in ms since epoch UTC */
+        this.created = 0;
+        /** Last modification date/time in ms since epoch UTC */
+        this.modified = 0;
+        /** Type of the node's value. 1=object, 2=array, 3=number, 4=boolean, 5=string, 6=date, 7=reserved, 8=binary, 9=reference */
+        this.type = 0;
+    }
+}
+exports.ICustomStorageNodeMetaData = ICustomStorageNodeMetaData;
+/** Interface for metadata combined with a stored value */
+class ICustomStorageNode extends ICustomStorageNodeMetaData {
+    constructor() {
+        super();
+        /** only Object, Array, large string and binary values. */
+        this.value = null;
+    }
+}
+exports.ICustomStorageNode = ICustomStorageNode;
+/** Enables get/set/remove operations to be wrapped in transactions to improve performance and reliability. */
+class CustomStorageTransaction {
+    /**
+     * @param target Which path the transaction is taking place on, and whether it is a read or read/write lock. If your storage backend does not support transactions, is synchronous, or if you are able to lock resources based on path: use storage.nodeLocker to ensure threadsafe transactions
+     */
+    constructor(target) {
+        this.production = false; // dev mode by default
+        this.target = {
+            get originalPath() { return target.path; },
+            path: target.path,
+            get write() { return target.write; },
+        };
+        this.id = acebase_core_1.ID.generate();
+    }
+    /**
+     * Returns the number of children stored in their own records. This implementation uses `childrenOf` to count, override if storage supports a quicker way.
+     * Eg: For SQL databases, you can implement this with a single query like `SELECT count(*) FROM nodes WHERE ${CustomStorageHelpers.ChildPathsSql(path)}`
+     * @param path
+     * @returns Returns a promise that resolves with the number of children
+     */
+    async getChildCount(path) {
+        let childCount = 0;
+        await this.childrenOf(path, { metadata: false, value: false }, () => { childCount++; return false; });
+        return childCount;
+    }
+    /**
+     * NOT USED YET
+     * Default implementation of getMultiple that executes .get for each given path. Override for custom logic
+     * @param paths
+     * @returns Returns promise with a Map of paths to nodes
+     */
+    async getMultiple(paths) {
+        const map = new Map();
+        await Promise.all(paths.map(path => this.get(path).then(val => map.set(path, val))));
+        return map;
+    }
+    /**
+     * NOT USED YET
+     * Default implementation of setMultiple that executes .set for each given path. Override for custom logic
+     * @param nodes
+     */
+    async setMultiple(nodes) {
+        await Promise.all(nodes.map(({ path, node }) => this.set(path, node)));
+    }
+    /**
+     * Default implementation of removeMultiple that executes .remove for each given path. Override for custom logic
+     * @param paths
+     */
+    async removeMultiple(paths) {
+        await Promise.all(paths.map(path => this.remove(path)));
+    }
+    /**
+     * @returns {Promise<any>}
+     */
+    async commit() { throw new Error(`CustomStorageTransaction.rollback must be overridden by subclass`); }
+    /**
+     * Moves the transaction path to the parent node. If node locking is used, it will request a new lock
+     * Used internally, must not be overridden unless custom locking mechanism is required
+     * @param targetPath
+     */
+    async moveToParentPath(targetPath) {
+        const currentPath = (this._lock && this._lock.path) || this.target.path;
+        if (currentPath === targetPath) {
+            return targetPath; // Already on the right path
+        }
+        const pathInfo = helpers_1.CustomStorageHelpers.PathInfo.get(targetPath);
+        if (pathInfo.isParentOf(currentPath)) {
+            if (this._lock) {
+                this._lock = await this._lock.moveToParent();
+            }
+        }
+        else {
+            throw new Error(`Locking issue. Locked path "${this._lock.path}" is not a child/descendant of "${targetPath}"`);
+        }
+        this.target.path = targetPath;
+        return targetPath;
+    }
+}
+exports.CustomStorageTransaction = CustomStorageTransaction;
+/**
+ * Allows data to be stored in a custom storage backend of your choice! Simply provide a couple of functions
+ * to get, set and remove data and you're done.
+ */
+class CustomStorageSettings extends index_1.StorageSettings {
+    constructor(settings) {
+        super(settings);
+        /**
+         * Whether default node locking should be used. Set to false if your storage backend disallows multiple simultanious write transactions (eg IndexedDB). Set to true if your storage backend does not support transactions (eg LocalStorage) or allows multiple simultanious write transactions (eg AceBase binary).
+         * @default true
+         */
+        this.locking = true;
+        /**
+         * If default node locking is used, timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+         * @default 120
+         */
+        this.lockTimeout = 120;
+        if (typeof settings !== 'object') {
+            throw new Error('settings missing');
+        }
+        if (typeof settings.ready !== 'function') {
+            throw new Error(`ready must be a function`);
+        }
+        if (typeof settings.getTransaction !== 'function') {
+            throw new Error(`getTransaction must be a function`);
+        }
+        this.name = settings.name;
+        // this.info = `${this.name || 'CustomStorage'} realtime database`;
+        this.locking = settings.locking !== false;
+        if (this.locking) {
+            this.lockTimeout = typeof settings.lockTimeout === 'number' ? settings.lockTimeout : 120;
+        }
+        this.ready = settings.ready;
+        // Hijack getTransaction to add locking
+        const useLocking = this.locking;
+        const nodeLocker = useLocking ? new node_lock_1.NodeLocker(console, this.lockTimeout) : null;
+        this.getTransaction = async ({ path, write }) => {
+            // console.log(`${write ? 'WRITE' : 'READ'} transaction requested for path "${path}"`)
+            const transaction = await settings.getTransaction({ path, write });
+            console.assert(typeof transaction.id === 'string', `transaction id not set`);
+            // console.log(`Got transaction ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
+            // Hijack rollback and commit
+            const rollback = transaction.rollback;
+            const commit = transaction.commit;
+            transaction.commit = async () => {
+                // console.log(`COMMIT ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
+                const ret = await commit.call(transaction);
+                // console.log(`COMMIT DONE ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
+                if (useLocking) {
+                    await transaction._lock.release('commit');
+                }
+                return ret;
+            };
+            transaction.rollback = async (reason) => {
+                // const reasonText = reason instanceof Error ? reason.message : reason.toString();
+                // console.error(`ROLLBACK ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}":`, reason);
+                const ret = await rollback.call(transaction, reason);
+                // console.log(`ROLLBACK DONE ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
+                if (useLocking) {
+                    await transaction._lock.release('rollback');
+                }
+                return ret;
+            };
+            if (useLocking) {
+                // Lock the path before continuing
+                transaction._lock = await nodeLocker.lock(path, transaction.id, write, `${this.name}::getTransaction`);
+            }
+            return transaction;
+        };
+    }
+}
+exports.CustomStorageSettings = CustomStorageSettings;
+class CustomStorageNodeAddress {
+    constructor(containerPath) {
+        this.path = containerPath;
+    }
+}
+exports.CustomStorageNodeAddress = CustomStorageNodeAddress;
+class CustomStorageNodeInfo extends node_info_1.NodeInfo {
+    constructor(info) {
+        super(info);
+        this.revision = info.revision;
+        this.revision_nr = info.revision_nr;
+        this.created = info.created;
+        this.modified = info.modified;
+    }
+}
+exports.CustomStorageNodeInfo = CustomStorageNodeInfo;
+class CustomStorage extends index_1.Storage {
+    constructor(dbname, settings) {
+        super(dbname, settings);
+        this._customImplementation = settings;
+        this._init();
+    }
+    async _init() {
+        this.debug.log(`Database "${this.name}" details:`.colorize(acebase_core_1.ColorStyle.dim));
+        this.debug.log(`- Type: CustomStorage`.colorize(acebase_core_1.ColorStyle.dim));
+        this.debug.log(`- Path: ${this.settings.path}`.colorize(acebase_core_1.ColorStyle.dim));
+        this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(acebase_core_1.ColorStyle.dim));
+        this.debug.log(`- Autoremove undefined props: ${this.settings.removeVoidProperties}`.colorize(acebase_core_1.ColorStyle.dim));
+        // Create root node if it's not there yet
+        await this._customImplementation.ready();
+        const transaction = await this._customImplementation.getTransaction({ path: '', write: true });
+        const info = await this.getNodeInfo('', { transaction });
+        if (!info.exists) {
+            await this._writeNode('', {}, { transaction });
+        }
+        await transaction.commit();
+        if (this.indexes.supported) {
+            await this.indexes.load();
+        }
+        this.emit('ready');
+    }
+    _storeNode(path, node, options) {
+        // serialize the value to store
+        const getTypedChildValue = (val) => {
+            if (val === null) {
+                throw new Error(`Not allowed to store null values. remove the property`);
+            }
+            else if (['string', 'number', 'boolean'].includes(typeof val)) {
+                return val;
+            }
+            else if (val instanceof Date) {
+                return { type: node_value_types_1.VALUE_TYPES.DATETIME, value: val.getTime() };
+            }
+            else if (val instanceof acebase_core_1.PathReference) {
+                return { type: node_value_types_1.VALUE_TYPES.REFERENCE, value: val.path };
+            }
+            else if (val instanceof ArrayBuffer) {
+                return { type: node_value_types_1.VALUE_TYPES.BINARY, value: acebase_core_1.ascii85.encode(val) };
+            }
+            else if (typeof val === 'object') {
+                console.assert(Object.keys(val).length === 0, 'child object stored in parent can only be empty');
+                return val;
+            }
+        };
+        const unprocessed = `Caller should have pre-processed the value by converting it to a string`;
+        if (node.type === node_value_types_1.VALUE_TYPES.ARRAY && node.value instanceof Array) {
+            // Convert array to object with numeric properties
+            // NOTE: caller should have done this already
+            console.warn(`Unprocessed array. ${unprocessed}`);
+            const obj = {};
+            for (let i = 0; i < node.value.length; i++) {
+                obj[i] = node.value[i];
+            }
+            node.value = obj;
+        }
+        if (node.type === node_value_types_1.VALUE_TYPES.BINARY && typeof node.value !== 'string') {
+            console.warn(`Unprocessed binary value. ${unprocessed}`);
+            node.value = acebase_core_1.ascii85.encode(node.value);
+        }
+        if (node.type === node_value_types_1.VALUE_TYPES.REFERENCE && node.value instanceof acebase_core_1.PathReference) {
+            console.warn(`Unprocessed path reference. ${unprocessed}`);
+            node.value = node.value.path;
+        }
+        if ([node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(node.type)) {
+            const original = node.value;
+            node.value = {};
+            // If original is an array, it'll automatically be converted to an object now
+            Object.keys(original).forEach(key => {
+                node.value[key] = getTypedChildValue(original[key]);
+            });
+        }
+        return options.transaction.set(path, node);
+    }
+    _processReadNodeValue(node) {
+        const getTypedChildValue = (val) => {
+            // Typed value stored in parent record
+            if (val.type === node_value_types_1.VALUE_TYPES.BINARY) {
+                // binary stored in a parent record as a string
+                return acebase_core_1.ascii85.decode(val.value);
+            }
+            else if (val.type === node_value_types_1.VALUE_TYPES.DATETIME) {
+                // Date value stored as number
+                return new Date(val.value);
+            }
+            else if (val.type === node_value_types_1.VALUE_TYPES.REFERENCE) {
+                // Path reference stored as string
+                return new acebase_core_1.PathReference(val.value);
+            }
+            else {
+                throw new Error(`Unhandled child value type ${val.type}`);
+            }
+        };
+        switch (node.type) {
+            case node_value_types_1.VALUE_TYPES.ARRAY:
+            case node_value_types_1.VALUE_TYPES.OBJECT: {
+                // check if any value needs to be converted
+                // NOTE: Arrays are stored with numeric properties
+                const obj = node.value;
+                Object.keys(obj).forEach(key => {
+                    const item = obj[key];
+                    if (typeof item === 'object' && 'type' in item) {
+                        obj[key] = getTypedChildValue(item);
+                    }
+                });
+                node.value = obj;
+                break;
+            }
+            case node_value_types_1.VALUE_TYPES.BINARY: {
+                node.value = acebase_core_1.ascii85.decode(node.value);
+                break;
+            }
+            case node_value_types_1.VALUE_TYPES.REFERENCE: {
+                node.value = new acebase_core_1.PathReference(node.value);
+                break;
+            }
+            case node_value_types_1.VALUE_TYPES.STRING: {
+                // No action needed
+                // node.value = node.value;
+                break;
+            }
+            default:
+                throw new Error(`Invalid standalone record value type`); // should never happen
+        }
+    }
+    async _readNode(path, options) {
+        // deserialize a stored value (always an object with "type", "value", "revision", "revision_nr", "created", "modified")
+        const node = await options.transaction.get(path);
+        if (node === null) {
+            return null;
+        }
+        if (typeof node !== 'object') {
+            throw new Error(`CustomStorageTransaction.get must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
+        }
+        this._processReadNodeValue(node);
+        return node;
+    }
+    _getTypeFromStoredValue(val) {
+        let type;
+        if (typeof val === 'string') {
+            type = node_value_types_1.VALUE_TYPES.STRING;
+        }
+        else if (typeof val === 'number') {
+            type = node_value_types_1.VALUE_TYPES.NUMBER;
+        }
+        else if (typeof val === 'boolean') {
+            type = node_value_types_1.VALUE_TYPES.BOOLEAN;
+        }
+        else if (val instanceof Array) {
+            type = node_value_types_1.VALUE_TYPES.ARRAY;
+        }
+        else if (typeof val === 'object') {
+            if ('type' in val) {
+                const serialized = val;
+                type = serialized.type;
+                val = serialized.value;
+                if (type === node_value_types_1.VALUE_TYPES.DATETIME) {
+                    val = new Date(val);
+                }
+                else if (type === node_value_types_1.VALUE_TYPES.REFERENCE) {
+                    val = new acebase_core_1.PathReference(val);
+                }
+            }
+            else {
+                type = node_value_types_1.VALUE_TYPES.OBJECT;
+            }
+        }
+        else {
+            throw new Error(`Unknown value type`);
+        }
+        return { type, value: val };
+    }
+    /**
+     * Creates or updates a node in its own record. DOES NOT CHECK if path exists in parent node, or if parent paths exist! Calling code needs to do this
+     */
+    async _writeNode(path, value, options) {
+        if (!options.merge && this.valueFitsInline(value) && path !== '') {
+            throw new Error(`invalid value to store in its own node`);
+        }
+        else if (path === '' && (typeof value !== 'object' || value instanceof Array)) {
+            throw new Error(`Invalid root node value. Must be an object`);
+        }
+        // Check if the value for this node changed, to prevent recursive calls to
+        // perform unnecessary writes that do not change any data
+        if (typeof options.diff === 'undefined' && typeof options.currentValue !== 'undefined') {
+            const diff = compareValues(options.currentValue, value);
+            if (options.merge && typeof diff === 'object') {
+                diff.removed = diff.removed.filter(key => value[key] === null); // Only keep "removed" items that are really being removed by setting to null
+            }
+            options.diff = diff;
+        }
+        if (options.diff === 'identical') {
+            return; // Done!
+        }
+        const transaction = options.transaction;
+        // Get info about current node at path
+        const currentRow = options.currentValue === null
+            ? null // No need to load info if currentValue is null (we already know it doesn't exist)
+            : await this._readNode(path, { transaction });
+        if (options.merge && currentRow) {
+            if (currentRow.type === node_value_types_1.VALUE_TYPES.ARRAY && !(value instanceof Array) && typeof value === 'object' && Object.keys(value).some(key => isNaN(parseInt(key)))) {
+                throw new Error(`Cannot merge existing array of path "${path}" with an object`);
+            }
+            if (value instanceof Array && currentRow.type !== node_value_types_1.VALUE_TYPES.ARRAY) {
+                throw new Error(`Cannot merge existing object of path "${path}" with an array`);
+            }
+        }
+        const revision = options.revision || acebase_core_1.ID.generate();
+        const mainNode = {
+            type: currentRow && currentRow.type === node_value_types_1.VALUE_TYPES.ARRAY ? node_value_types_1.VALUE_TYPES.ARRAY : node_value_types_1.VALUE_TYPES.OBJECT,
+            value: {},
+        };
+        const childNodeValues = {};
+        if (value instanceof Array) {
+            mainNode.type = node_value_types_1.VALUE_TYPES.ARRAY;
+            // Convert array to object with numeric properties
+            const obj = {};
+            for (let i = 0; i < value.length; i++) {
+                obj[i] = value[i];
+            }
+            value = obj;
+        }
+        else if (value instanceof acebase_core_1.PathReference) {
+            mainNode.type = node_value_types_1.VALUE_TYPES.REFERENCE;
+            mainNode.value = value.path;
+        }
+        else if (value instanceof ArrayBuffer) {
+            mainNode.type = node_value_types_1.VALUE_TYPES.BINARY;
+            mainNode.value = acebase_core_1.ascii85.encode(value);
+        }
+        else if (typeof value === 'string') {
+            mainNode.type = node_value_types_1.VALUE_TYPES.STRING;
+            mainNode.value = value;
+        }
+        const currentIsObjectOrArray = currentRow ? [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(currentRow.type) : false;
+        const newIsObjectOrArray = [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(mainNode.type);
+        const children = {
+            current: [],
+            new: [],
+        };
+        let currentObject = null;
+        if (currentIsObjectOrArray) {
+            currentObject = currentRow.value;
+            children.current = Object.keys(currentObject);
+            // if (currentObject instanceof Array) { // ALWAYS FALSE BECAUSE THEY ARE STORED AS OBJECTS WITH NUMERIC PROPERTIES
+            //     // Convert array to object with numeric properties
+            //     const obj = {};
+            //     for (let i = 0; i < value.length; i++) {
+            //         obj[i] = value[i];
+            //     }
+            //     currentObject = obj;
+            // }
+            if (newIsObjectOrArray) {
+                mainNode.value = currentObject;
+            }
+        }
+        if (newIsObjectOrArray) {
+            // Object or array. Determine which properties can be stored in the main node,
+            // and which should be stored in their own nodes
+            if (!options.merge) {
+                // Check which keys are present in the old object, but not in newly given object
+                Object.keys(mainNode.value).forEach(key => {
+                    if (!(key in value)) {
+                        // Property that was in old object, is not in new value -> set to null to mark deletion!
+                        value[key] = null;
+                    }
+                });
+            }
+            Object.keys(value).forEach(key => {
+                const val = value[key];
+                delete mainNode.value[key]; // key is being overwritten, moved from inline to dedicated, or deleted. TODO: check if this needs to be done SQLite & MSSQL implementations too
+                if (val === null) { //  || typeof val === 'undefined'
+                    // This key is being removed
+                    return;
+                }
+                else if (typeof val === 'undefined') {
+                    if (this.settings.removeVoidProperties === true) {
+                        delete value[key]; // Kill the property in the passed object as well, to prevent differences in stored and working values
+                        return;
+                    }
+                    else {
+                        throw new Error(`Property "${key}" has invalid value. Cannot store undefined values. Set removeVoidProperties option to true to automatically remove undefined properties`);
+                    }
+                }
+                // Where to store this value?
+                if (this.valueFitsInline(val)) {
+                    // Store in main node
+                    mainNode.value[key] = val;
+                }
+                else {
+                    // Store in child node
+                    childNodeValues[key] = val;
+                }
+            });
+        }
+        // Insert or update node
+        const isArray = mainNode.type === node_value_types_1.VALUE_TYPES.ARRAY;
+        if (currentRow) {
+            // update
+            this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(acebase_core_1.ColorStyle.cyan));
+            // If existing is an array or object, we have to find out which children are affected
+            if (currentIsObjectOrArray || newIsObjectOrArray) {
+                // Get current child nodes in dedicated child records
+                const pathInfo = acebase_core_1.PathInfo.get(path);
+                const keys = [];
+                let checkExecuted = false;
+                const includeChildCheck = (childPath) => {
+                    checkExecuted = true;
+                    if (!transaction.production && !pathInfo.isParentOf(childPath)) {
+                        // Double check failed
+                        throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
+                    }
+                    return true;
+                };
+                const addChildPath = (childPath) => {
+                    if (!checkExecuted) {
+                        throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                    }
+                    const key = acebase_core_1.PathInfo.get(childPath).key;
+                    keys.push(key.toString()); // .toString to make sure all keys are compared as strings
+                    return true; // Keep streaming
+                };
+                await transaction.childrenOf(path, { metadata: false, value: false }, includeChildCheck, addChildPath);
+                children.current = children.current.concat(keys);
+                if (newIsObjectOrArray) {
+                    if (options && options.merge) {
+                        children.new = children.current.slice();
+                    }
+                    Object.keys(value).forEach(key => {
+                        if (!children.new.includes(key)) {
+                            children.new.push(key);
+                        }
+                    });
+                }
+                const changes = {
+                    insert: children.new.filter(key => !children.current.includes(key)),
+                    update: [],
+                    delete: options && options.merge ? Object.keys(value).filter(key => value[key] === null) : children.current.filter(key => !children.new.includes(key)),
+                };
+                changes.update = children.new.filter(key => children.current.includes(key) && !changes.delete.includes(key));
+                if (isArray && options.merge && (changes.insert.length > 0 || changes.delete.length > 0)) {
+                    // deletes or inserts of individual array entries are not allowed, unless it is the last entry:
+                    // - deletes would cause the paths of following items to change, which is unwanted because the actual data does not change,
+                    // eg: removing index 3 on array of size 10 causes entries with index 4 to 9 to 'move' to indexes 3 to 8
+                    // - inserts might introduce gaps in indexes,
+                    // eg: adding to index 7 on an array of size 3 causes entries with indexes 3 to 6 to go 'missing'
+                    const newArrayKeys = changes.update.concat(changes.insert);
+                    const isExhaustive = newArrayKeys.every((k, index, arr) => arr.includes(index.toString()));
+                    if (!isExhaustive) {
+                        throw new Error(`Elements cannot be inserted beyond, or removed before the end of an array. Rewrite the whole array at path "${path}" or change your schema to use an object collection instead`);
+                    }
+                }
+                // (over)write all child nodes that must be stored in their own record
+                const writePromises = Object.keys(childNodeValues).map(key => {
+                    const keyOrIndex = isArray ? parseInt(key) : key;
+                    const childDiff = typeof options.diff === 'object' ? options.diff.forChild(keyOrIndex) : undefined;
+                    if (childDiff === 'identical') {
+                        // console.warn(`Skipping _writeNode recursion for child "${keyOrIndex}"`);
+                        return; // Skip
+                    }
+                    const childPath = pathInfo.childPath(keyOrIndex); // PathInfo.getChildPath(path, key);
+                    const childValue = childNodeValues[keyOrIndex];
+                    // Pass current child value to _writeNode
+                    const currentChildValue = typeof options.currentValue === 'undefined' // Fixing issue #20
+                        ? undefined
+                        : options.currentValue !== null && typeof options.currentValue === 'object' && keyOrIndex in options.currentValue
+                            ? options.currentValue[keyOrIndex]
+                            : null;
+                    return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: currentChildValue, diff: childDiff });
+                });
+                // Delete all child nodes that were stored in their own record, but are being removed
+                // Also delete nodes that are being moved from a dedicated record to inline
+                const movingNodes = newIsObjectOrArray ? keys.filter(key => key in mainNode.value) : []; // moving from dedicated to inline value
+                const deleteDedicatedKeys = changes.delete.concat(movingNodes);
+                const deletePromises = deleteDedicatedKeys.map(key => {
+                    const keyOrIndex = isArray ? parseInt(key) : key;
+                    const childPath = pathInfo.childPath(keyOrIndex);
+                    return this._deleteNode(childPath, { transaction });
+                });
+                const promises = writePromises.concat(deletePromises);
+                await Promise.all(promises);
+            }
+            // Update main node
+            // TODO: Check if revision should change?
+            const p = this._storeNode(path, {
+                type: mainNode.type,
+                value: mainNode.value,
+                revision: currentRow.revision,
+                revision_nr: currentRow.revision_nr + 1,
+                created: currentRow.created,
+                modified: Date.now(),
+            }, {
+                transaction,
+            });
+            if (p instanceof Promise) {
+                return await p;
+            }
+        }
+        else {
+            // Current node does not exist, create it and any child nodes
+            // write all child nodes that must be stored in their own record
+            this.debug.log(`Node "/${path}" is being created`.colorize(acebase_core_1.ColorStyle.cyan));
+            if (isArray) {
+                // Check if the array is "intact" (all entries have an index from 0 to the end with no gaps)
+                const arrayKeys = Object.keys(mainNode.value).concat(Object.keys(childNodeValues));
+                const isExhaustive = arrayKeys.every((k, index, arr) => arr.includes(index.toString()));
+                if (!isExhaustive) {
+                    throw new Error(`Cannot store arrays with missing entries`);
+                }
+            }
+            const promises = Object.keys(childNodeValues).map(key => {
+                const keyOrIndex = isArray ? parseInt(key) : key;
+                const childPath = acebase_core_1.PathInfo.getChildPath(path, keyOrIndex);
+                const childValue = childNodeValues[keyOrIndex];
+                return this._writeNode(childPath, childValue, { transaction, revision, merge: false, currentValue: null });
+            });
+            // Create current node
+            const p = this._storeNode(path, {
+                type: mainNode.type,
+                value: mainNode.value,
+                revision,
+                revision_nr: 1,
+                created: Date.now(),
+                modified: Date.now(),
+            }, {
+                transaction,
+            });
+            if (p instanceof Promise) {
+                promises.push(p);
+            }
+            await Promise.all(promises);
+        }
+    }
+    /**
+     * Deletes (dedicated) node and all subnodes without checking for existence. Use with care - all removed nodes will lose their revision stats! DOES NOT REMOVE INLINE CHILD NODES!
+     */
+    async _deleteNode(path, options) {
+        const pathInfo = acebase_core_1.PathInfo.get(path);
+        this.debug.log(`Node "/${path}" is being deleted`.colorize(acebase_core_1.ColorStyle.cyan));
+        const deletePaths = [path];
+        let checkExecuted = false;
+        const includeDescendantCheck = (descPath) => {
+            checkExecuted = true;
+            if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
+                // Double check failed
+                throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
+            }
+            return true;
+        };
+        const addDescendant = (descPath) => {
+            if (!checkExecuted) {
+                throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+            }
+            deletePaths.push(descPath);
+            return true;
+        };
+        const transaction = options.transaction;
+        await transaction.descendantsOf(path, { metadata: false, value: false }, includeDescendantCheck, addDescendant);
+        this.debug.log(`Nodes ${deletePaths.map(p => `"/${p}"`).join(',')} are being deleted`.colorize(acebase_core_1.ColorStyle.cyan));
+        return transaction.removeMultiple(deletePaths);
+    }
+    /**
+     * Enumerates all children of a given Node for reflection purposes
+     */
+    getChildren(path, options = {}) {
+        let callback;
+        const generator = {
+            /**
+             *
+             * @param valueCallback callback function to run for each child. Return false to stop iterating
+             * @returns returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
+             */
+            next(valueCallback) {
+                callback = valueCallback;
+                return start();
+            },
+        };
+        const start = async () => {
+            const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
+            try {
+                let canceled = false;
+                await (async () => {
+                    const node = await this._readNode(path, { transaction });
+                    if (!node) {
+                        throw new node_errors_1.NodeNotFoundError(`Node "/${path}" does not exist`);
+                    }
+                    if (![node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(node.type)) {
+                        // No children
+                        return;
+                    }
+                    const isArray = node.type === node_value_types_1.VALUE_TYPES.ARRAY;
+                    const value = node.value;
+                    let keys = Object.keys(value).map(key => isArray ? parseInt(key) : key);
+                    if (options.keyFilter) {
+                        keys = keys.filter(key => options.keyFilter.includes(key));
+                    }
+                    const pathInfo = acebase_core_1.PathInfo.get(path);
+                    keys.length > 0 && keys.every(key => {
+                        const child = this._getTypeFromStoredValue(value[key]);
+                        const info = new CustomStorageNodeInfo({
+                            path: pathInfo.childPath(key),
+                            key: isArray ? null : key,
+                            index: isArray ? key : null,
+                            type: child.type,
+                            address: null,
+                            exists: true,
+                            value: child.value,
+                            revision: node.revision,
+                            revision_nr: node.revision_nr,
+                            created: new Date(node.created),
+                            modified: new Date(node.modified),
+                        });
+                        canceled = callback(info) === false;
+                        return !canceled; // stop .every loop if canceled
+                    });
+                    if (canceled) {
+                        return;
+                    }
+                    // Go on... get other children
+                    let checkExecuted = false;
+                    const includeChildCheck = (childPath) => {
+                        checkExecuted = true;
+                        if (!transaction.production && !pathInfo.isParentOf(childPath)) {
+                            // Double check failed
+                            throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
+                        }
+                        if (options.keyFilter) {
+                            const key = acebase_core_1.PathInfo.get(childPath).key;
+                            return options.keyFilter.includes(key);
+                        }
+                        return true;
+                    };
+                    const addChildNode = (childPath, node) => {
+                        if (!checkExecuted) {
+                            throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                        }
+                        const key = acebase_core_1.PathInfo.get(childPath).key;
+                        const info = new CustomStorageNodeInfo({
+                            path: childPath,
+                            type: node.type,
+                            key: isArray ? null : key,
+                            index: isArray ? key : null,
+                            address: new node_address_1.NodeAddress(childPath),
+                            exists: true,
+                            value: null,
+                            revision: node.revision,
+                            revision_nr: node.revision_nr,
+                            created: new Date(node.created),
+                            modified: new Date(node.modified),
+                        });
+                        canceled = callback(info) === false;
+                        return !canceled;
+                    };
+                    await transaction.childrenOf(path, { metadata: true, value: false }, includeChildCheck, addChildNode);
+                })();
+                if (!options.transaction) {
+                    // transaction was created by us, commit
+                    await transaction.commit();
+                }
+                return canceled;
+            }
+            catch (err) {
+                if (!options.transaction) {
+                    // transaction was created by us, rollback
+                    await transaction.rollback(err);
+                }
+                throw err;
+            }
+            // })
+            // .then(() => {
+            //     lock.release();
+            //     return canceled;
+            // })
+            // .catch(err => {
+            //     lock.release();
+            //     throw err;
+            // });
+        }; // start()
+        return generator;
+    }
+    async getNode(path, options) {
+        // path = path.replace(/'/g, '');  // prevent sql injection, remove single quotes
+        options = options || {};
+        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
+        // let lock;
+        // return this.nodeLocker.lock(path, tid, false, 'getNode')
+        // .then(async l => {
+        //     lock = l;
+        try {
+            const node = await (async () => {
+                // Get path, path/* and path[*
+                const filtered = (options.include && options.include.length > 0) || (options.exclude && options.exclude.length > 0) || options.child_objects === false;
+                const pathInfo = acebase_core_1.PathInfo.get(path);
+                const targetNode = await this._readNode(path, { transaction });
+                if (!targetNode) {
+                    // Lookup parent node
+                    if (path === '') {
+                        return { value: null };
+                    } // path is root. There is no parent.
+                    const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
+                    console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                    const parentNode = await this._readNode(pathInfo.parentPath, { transaction });
+                    if (parentNode && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode.value) {
+                        const childValueInfo = this._getTypeFromStoredValue(parentNode.value[pathInfo.key]);
+                        return {
+                            revision: parentNode.revision,
+                            revision_nr: parentNode.revision_nr,
+                            created: parentNode.created,
+                            modified: parentNode.modified,
+                            type: childValueInfo.type,
+                            value: childValueInfo.value,
+                        };
+                    }
+                    return { value: null };
+                }
+                const isArray = targetNode.type === node_value_types_1.VALUE_TYPES.ARRAY;
+                /**
+                 * Convert include & exclude filters to PathInfo instances for easier handling
+                 */
+                const convertFilterArray = (arr) => {
+                    const isNumber = (key) => /^[0-9]+$/.test(key);
+                    return arr.map(path => acebase_core_1.PathInfo.get(isArray && isNumber(path) ? `[${path}]` : path));
+                };
+                const includeFilter = options.include ? convertFilterArray(options.include) : [];
+                const excludeFilter = options.exclude ? convertFilterArray(options.exclude) : [];
+                /**
+                 * Apply include filters to prevent unwanted properties stored inline to be added.
+                 *
+                 * Removes properties that are not on the trail of any include filter, but were loaded because they are
+                 * stored inline in the parent node.
+                 *
+                 * Example:
+                 * data of `"users/someuser/posts/post1"`: `{ title: 'My first post', posted: (date), history: {} }`
+                 * code: `db.ref('users/someuser').get({ include: ['posts/*\/title'] })`
+                 * descPath: `"users/someuser/posts/post1"`,
+                 * trailKeys: `["posts", "post1"]`,
+                 * includeFilter[0]: `["posts", "*", "title"]`
+                 * properties `posted` and `history` must be removed from the object
+                 */
+                const applyFiltersOnInlineData = (descPath, node) => {
+                    if ([node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(node.type) && includeFilter.length > 0) {
+                        const trailKeys = acebase_core_1.PathInfo.getPathKeys(descPath).slice(pathInfo.keys.length);
+                        const checkPathInfo = new acebase_core_1.PathInfo(trailKeys);
+                        const remove = [];
+                        const includes = includeFilter.filter(info => info.isDescendantOf(checkPathInfo));
+                        if (includes.length > 0) {
+                            const isArray = node.type === node_value_types_1.VALUE_TYPES.ARRAY;
+                            remove.push(...Object.keys(node.value).map(key => isArray ? +key : key)); // Mark all at first
+                            for (const info of includes) {
+                                const targetProp = info.keys[trailKeys.length];
+                                if (typeof targetProp === 'string' && (targetProp === '*' || targetProp.startsWith('$'))) {
+                                    remove.splice(0);
+                                    break;
+                                }
+                                const index = remove.indexOf(targetProp);
+                                index >= 0 && remove.splice(index, 1);
+                            }
+                        }
+                        const hasIncludeOnChild = includeFilter.some(info => info.isChildOf(checkPathInfo));
+                        const hasExcludeOnChild = excludeFilter.some(info => info.isChildOf(checkPathInfo));
+                        if (hasExcludeOnChild && !hasIncludeOnChild) {
+                            // do not remove children that are NOT in direct exclude filters (which includes them again)
+                            const excludes = excludeFilter.filter(info => info.isChildOf(checkPathInfo));
+                            for (let i = 0; i < remove.length; i++) {
+                                if (!excludes.find(info => info.equals(remove[i]))) {
+                                    remove.splice(i, 1);
+                                    i--;
+                                }
+                            }
+                        }
+                        // remove.length > 0 && this.debug.log(`Remove properties:`, remove);
+                        for (const key of remove) {
+                            delete node.value[key];
+                        }
+                    }
+                };
+                applyFiltersOnInlineData(path, targetNode);
+                let checkExecuted = false;
+                const includeDescendantCheck = (descPath, metadata) => {
+                    checkExecuted = true;
+                    if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
+                        // Double check failed
+                        throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
+                    }
+                    if (!filtered) {
+                        return true;
+                    }
+                    // Apply include & exclude filters
+                    const descPathKeys = acebase_core_1.PathInfo.getPathKeys(descPath);
+                    const trailKeys = descPathKeys.slice(pathInfo.keys.length);
+                    const checkPathInfo = new acebase_core_1.PathInfo(trailKeys);
+                    let include = (includeFilter.length > 0
+                        ? includeFilter.some(info => checkPathInfo.isOnTrailOf(info))
+                        : true)
+                        && (excludeFilter.length > 0
+                            ? !excludeFilter.some(info => info.equals(checkPathInfo) || info.isAncestorOf(checkPathInfo))
+                            : true);
+                    // Apply child_objects filter. If metadata is not loaded, we can only skip deeper descendants here - any child object that does get through will be ignored by addDescendant
+                    if (include
+                        && options.child_objects === false
+                        && (pathInfo.isParentOf(descPath) && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(metadata ? metadata.type : -1)
+                            || acebase_core_1.PathInfo.getPathKeys(descPath).length > pathInfo.pathKeys.length + 1)) {
+                        include = false;
+                    }
+                    return include;
+                };
+                const descRows = [];
+                const addDescendant = (descPath, node) => {
+                    // console.warn(`Adding descendant "${descPath}"`);
+                    if (!checkExecuted) {
+                        throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+                    }
+                    if (options.child_objects === false && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(node.type)) {
+                        // child objects are filtered out, but this one got through because includeDescendantCheck did not have access to its metadata,
+                        // which is ok because doing that might drastically improve performance in client code. Skip it now.
+                        return true;
+                    }
+                    // Apply include filters to prevent unwanted properties stored inline to be added
+                    applyFiltersOnInlineData(descPath, node);
+                    // Process the value
+                    this._processReadNodeValue(node);
+                    // Add node
+                    const row = node;
+                    row.path = descPath;
+                    descRows.push(row);
+                    return true; // Keep streaming
+                };
+                await transaction.descendantsOf(path, { metadata: true, value: true }, includeDescendantCheck, addDescendant);
+                this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}descendants from ${descRows.length + 1} records`.colorize(acebase_core_1.ColorStyle.magenta));
+                const result = targetNode;
+                const objectToArray = (obj) => {
+                    // Convert object value to array
+                    const arr = [];
+                    Object.keys(obj).forEach(key => {
+                        const index = parseInt(key);
+                        arr[index] = obj[index];
+                    });
+                    return arr;
+                };
+                if (targetNode.type === node_value_types_1.VALUE_TYPES.ARRAY) {
+                    result.value = objectToArray(result.value);
+                }
+                if (targetNode.type === node_value_types_1.VALUE_TYPES.OBJECT || targetNode.type === node_value_types_1.VALUE_TYPES.ARRAY) {
+                    // target node is an object or array
+                    // merge with other found (child) nodes
+                    const targetPathKeys = acebase_core_1.PathInfo.getPathKeys(path);
+                    const value = targetNode.value;
+                    for (let i = 0; i < descRows.length; i++) {
+                        const otherNode = descRows[i];
+                        const pathKeys = acebase_core_1.PathInfo.getPathKeys(otherNode.path);
+                        const trailKeys = pathKeys.slice(targetPathKeys.length);
+                        let parent = value;
+                        for (let j = 0; j < trailKeys.length; j++) {
+                            console.assert(typeof parent === 'object', 'parent must be an object/array to have children!!');
+                            const key = trailKeys[j];
+                            const isLast = j === trailKeys.length - 1;
+                            const nodeType = isLast
+                                ? otherNode.type
+                                : typeof trailKeys[j + 1] === 'number'
+                                    ? node_value_types_1.VALUE_TYPES.ARRAY
+                                    : node_value_types_1.VALUE_TYPES.OBJECT;
+                            let nodeValue;
+                            if (!isLast) {
+                                nodeValue = nodeType === node_value_types_1.VALUE_TYPES.OBJECT ? {} : [];
+                            }
+                            else {
+                                nodeValue = otherNode.value;
+                                if (nodeType === node_value_types_1.VALUE_TYPES.ARRAY) {
+                                    nodeValue = objectToArray(nodeValue);
+                                }
+                            }
+                            if (key in parent) {
+                                // Merge with parent
+                                const mergePossible = typeof parent[key] === typeof nodeValue && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(nodeType);
+                                if (!mergePossible) {
+                                    // Ignore the value in the child record, see issue #20: "Assertion failed: Merging child values can only be done if existing and current values are both an array or object"
+                                    this.debug.error(`The value stored in node "${otherNode.path}" cannot be merged with the parent node, value will be ignored. This error should disappear once the target node value is updated. See issue #20 for more information`, { path, parent, key, nodeType, nodeValue });
+                                }
+                                else {
+                                    Object.keys(nodeValue).forEach(childKey => {
+                                        if (childKey in parent[key]) {
+                                            throw new Error(`Custom storage merge error: child key "${childKey}" is in parent value already! Make sure the get/childrenOf/descendantsOf methods of the custom storage class return values that can be modified by AceBase without affecting the stored source`);
+                                        }
+                                        parent[key][childKey] = nodeValue[childKey];
+                                    });
+                                }
+                            }
+                            else {
+                                parent[key] = nodeValue;
+                            }
+                            parent = parent[key];
+                        }
+                    }
+                }
+                else if (descRows.length > 0) {
+                    throw new Error(`multiple records found for non-object value!`);
+                }
+                // Post process filters to remove any data that got through because they were
+                // not stored in dedicated records. This will happen with smaller values because
+                // they are stored inline in their parent node.
+                // eg:
+                // { number: 1, small_string: 'small string', bool: true, obj: {}, arr: [] }
+                // All properties of this object are stored inline,
+                // if exclude: ['obj'], or child_objects: false was passed, these will still
+                // have to be removed from the value
+                if (options.child_objects === false) {
+                    Object.keys(result.value).forEach(key => {
+                        if (typeof result.value[key] === 'object' && result.value[key].constructor === Object) {
+                            // This can only happen if the object was empty
+                            console.assert(Object.keys(result.value[key]).length === 0);
+                            delete result.value[key];
+                        }
+                    });
+                }
+                if (options.include) {
+                    // TODO: remove any unselected children that did get through
+                }
+                if (options.exclude) {
+                    const process = (obj, keys) => {
+                        if (typeof obj !== 'object') {
+                            return;
+                        }
+                        const key = keys[0];
+                        if (key === '*') {
+                            Object.keys(obj).forEach(k => {
+                                process(obj[k], keys.slice(1));
+                            });
+                        }
+                        else if (keys.length > 1) {
+                            key in obj && process(obj[key], keys.slice(1));
+                        }
+                        else {
+                            delete obj[key];
+                        }
+                    };
+                    options.exclude.forEach(path => {
+                        const checkKeys = acebase_core_1.PathInfo.getPathKeys(path);
+                        process(result.value, checkKeys);
+                    });
+                }
+                return result;
+            })();
+            if (!options.transaction) {
+                // transaction was created by us, commit
+                await transaction.commit();
+            }
+            return node;
+        }
+        catch (err) {
+            if (!options.transaction) {
+                // transaction was created by us, rollback
+                await transaction.rollback(err);
+            }
+            throw err;
+        }
+    }
+    async getNodeInfo(path, options = {}) {
+        options = options || {};
+        const pathInfo = acebase_core_1.PathInfo.get(path);
+        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
+        try {
+            const node = await this._readNode(path, { transaction });
+            const info = new CustomStorageNodeInfo({
+                path,
+                key: typeof pathInfo.key === 'string' ? pathInfo.key : null,
+                index: typeof pathInfo.key === 'number' ? pathInfo.key : null,
+                type: node ? node.type : 0,
+                exists: node !== null,
+                address: node ? new node_address_1.NodeAddress(path) : null,
+                created: node ? new Date(node.created) : null,
+                modified: node ? new Date(node.modified) : null,
+                revision: node ? node.revision : null,
+                revision_nr: node ? node.revision_nr : null,
+            });
+            if (!node && path !== '') {
+                // Try parent node
+                const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
+                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                const parent = await this._readNode(pathInfo.parentPath, { transaction });
+                if (parent && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(parent.type) && pathInfo.key in parent.value) {
+                    // Stored in parent node
+                    info.exists = true;
+                    info.value = parent.value[pathInfo.key];
+                    info.address = null;
+                    info.type = parent.type;
+                    info.created = new Date(parent.created);
+                    info.modified = new Date(parent.modified);
+                    info.revision = parent.revision;
+                    info.revision_nr = parent.revision_nr;
+                }
+                else {
+                    // Parent doesn't exist, so the node we're looking for cannot exist either
+                    info.address = null;
+                }
+            }
+            if (options.include_child_count) {
+                info.childCount = 0;
+                if ([node_value_types_1.VALUE_TYPES.ARRAY, node_value_types_1.VALUE_TYPES.OBJECT].includes(info.valueType) && info.address) {
+                    // Get number of children
+                    info.childCount = node.value ? Object.keys(node.value).length : 0;
+                    info.childCount += await transaction.getChildCount(path);
+                }
+            }
+            if (!options.transaction) {
+                // transaction was created by us, commit
+                await transaction.commit();
+            }
+            return info;
+        }
+        catch (err) {
+            if (!options.transaction) {
+                // transaction was created by us, rollback
+                await transaction.rollback(err);
+            }
+            throw err;
+        }
+    }
+    // TODO: Move to Storage base class?
+    async setNode(path, value, options = { suppress_events: false, context: null }) {
+        const pathInfo = acebase_core_1.PathInfo.get(path);
+        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
+        try {
+            if (path === '') {
+                if (value === null || typeof value !== 'object' || value instanceof Array || value instanceof ArrayBuffer || ('buffer' in value && value.buffer instanceof ArrayBuffer)) {
+                    throw new Error(`Invalid value for root node: ${value}`);
+                }
+                await this._writeNodeWithTracking('', value, { merge: false, transaction, suppress_events: options.suppress_events, context: options.context });
+            }
+            else if (typeof options.assert_revision !== 'undefined') {
+                const info = await this.getNodeInfo(path, { transaction });
+                if (info.revision !== options.assert_revision) {
+                    throw new node_errors_1.NodeRevisionError(`revision '${info.revision}' does not match requested revision '${options.assert_revision}'`);
+                }
+                if (info.address && info.address.path === path && value !== null && !this.valueFitsInline(value)) {
+                    // Overwrite node
+                    await this._writeNodeWithTracking(path, value, { merge: false, transaction, suppress_events: options.suppress_events, context: options.context });
+                }
+                else {
+                    // Update parent node
+                    const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
+                    console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                    await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, transaction, suppress_events: options.suppress_events, context: options.context });
+                }
+            }
+            else {
+                // Delegate operation to update on parent node
+                const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
+                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction, suppress_events: options.suppress_events, context: options.context });
+            }
+            if (!options.transaction) {
+                // transaction was created by us, commit
+                await transaction.commit();
+            }
+        }
+        catch (err) {
+            if (!options.transaction) {
+                // transaction was created by us, rollback
+                await transaction.rollback(err);
+            }
+            throw err;
+        }
+    }
+    // TODO: Move to Storage base class?
+    async updateNode(path, updates, options = { suppress_events: false, context: null }) {
+        if (typeof updates !== 'object') {
+            throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
+        }
+        else if (Object.keys(updates).length === 0) {
+            return; // Nothing to update. Done!
+        }
+        const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
+        try {
+            // Get info about current node
+            const nodeInfo = await this.getNodeInfo(path, { transaction });
+            const pathInfo = acebase_core_1.PathInfo.get(path);
+            if (nodeInfo.exists && nodeInfo.address && nodeInfo.address.path === path) {
+                // Node exists and is stored in its own record.
+                // Update it
+                await this._writeNodeWithTracking(path, updates, { transaction, merge: true, suppress_events: options.suppress_events, context: options.context });
+            }
+            else if (nodeInfo.exists) {
+                // Node exists, but is stored in its parent node.
+                const pathInfo = acebase_core_1.PathInfo.get(path);
+                const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
+                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, merge: true, suppress_events: options.suppress_events, context: options.context });
+            }
+            else {
+                // The node does not exist, it's parent doesn't have it either. Update the parent instead
+                const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
+                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, suppress_events: options.suppress_events, context: options.context });
+            }
+            if (!options.transaction) {
+                // transaction was created by us, commit
+                await transaction.commit();
+            }
+        }
+        catch (err) {
+            if (!options.transaction) {
+                // transaction was created by us, rollback
+                await transaction.rollback(err);
+            }
+            throw err;
+        }
+    }
+}
+exports.CustomStorage = CustomStorage;
+
+},{"../../node-address":35,"../../node-errors":36,"../../node-info":37,"../../node-lock":38,"../../node-value-types":39,"../index":46,"./helpers":44,"acebase-core":12}],46:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Storage = exports.StorageSettings = exports.SchemaValidationError = void 0;
@@ -10277,10 +10011,8 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     }
     /**
      * Wrapper for _writeNode, handles triggering change events, index updating.
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options]
-     * @returns {Promise<IWriteNodeResult>} Returns a promise that resolves with an object that contains storage specific details, plus the applied mutations if transaction logging is enabled
+     * @returns Returns a promise that resolves with an object that contains storage specific details,
+     * plus the applied mutations if transaction logging is enabled
      */
     async _writeNodeWithTracking(path, value, options = {
         merge: false,
@@ -10487,7 +10219,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 let results = [];
                 let trailPath = '';
                 while (trailKeys.length > 0) {
-                    /** @type {string|number} trailKeys.shift() as string|number */
                     const subKey = trailKeys.shift();
                     if (typeof subKey === 'string' && (subKey === '*' || subKey.startsWith('$'))) {
                         // Recursion needed
@@ -10894,7 +10625,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             }
             const criteriaKeys = criteria.reduce((keys, cr) => {
                 let key = cr.key;
-                if (key.includes('/')) {
+                if (typeof key === 'string' && key.includes('/')) {
                     // Descendant key criterium, use child key only (eg 'address' of 'address/city')
                     key = key.slice(0, key.indexOf('/'));
                 }
@@ -10908,16 +10639,18 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             const delayedMatchPromises = [];
             try {
                 await this.getChildren(path, { tid, keyFilter: criteriaKeys }).next(childInfo => {
-                    unseenKeys.includes(childInfo.key) && unseenKeys.splice(unseenKeys.indexOf(childInfo.key), 1);
+                    var _a;
+                    const keyOrIndex = (_a = childInfo.key) !== null && _a !== void 0 ? _a : childInfo.index;
+                    unseenKeys.includes(keyOrIndex) && unseenKeys.splice(unseenKeys.indexOf(childInfo.key), 1);
                     const keyCriteria = criteria
-                        .filter(cr => cr.key === childInfo.key)
+                        .filter(cr => cr.key === keyOrIndex)
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
                     const keyResult = keyCriteria.length > 0 ? checkChild(childInfo, keyCriteria) : { isMatch: true, promises: [] };
                     isMatch = keyResult.isMatch;
                     if (isMatch) {
                         delayedMatchPromises.push(...keyResult.promises);
                         const childCriteria = criteria
-                            .filter(cr => cr.key.startsWith(`${childInfo.key}/`))
+                            .filter(cr => typeof cr.key === 'string' && cr.key.startsWith(`${typeof keyOrIndex === 'number' ? `[${keyOrIndex}]` : keyOrIndex}/`))
                             .map(cr => {
                             const key = cr.key.slice(cr.key.indexOf('/') + 1);
                             return { key, op: cr.op, compare: cr.compare };
@@ -10941,16 +10674,16 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                     return false;
                 }
                 // Now, also check keys that weren't found in the node. (a criterium may be "!exists")
-                isMatch = unseenKeys.every(key => {
-                    const childInfo = new node_info_1.NodeInfo({ key, exists: false });
+                isMatch = unseenKeys.every(keyOrIndex => {
+                    const childInfo = new node_info_1.NodeInfo(Object.assign(Object.assign(Object.assign({}, (typeof keyOrIndex === 'number' && { index: keyOrIndex })), (typeof keyOrIndex === 'string' && { key: keyOrIndex })), { exists: false }));
                     const childCriteria = criteria
-                        .filter(cr => cr.key.startsWith(`${key}/`))
+                        .filter(cr => typeof cr.key === 'string' && cr.key.startsWith(`${typeof keyOrIndex === 'number' ? `[${keyOrIndex}]` : keyOrIndex}/`))
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
                     if (childCriteria.length > 0 && !checkChild(childInfo, childCriteria).isMatch) {
                         return false;
                     }
                     const keyCriteria = criteria
-                        .filter(cr => cr.key === key)
+                        .filter(cr => cr.key === keyOrIndex)
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
                     if (keyCriteria.length === 0) {
                         return true; // There were only child criteria, and they matched (otherwise we wouldn't be here)
@@ -11778,7 +11511,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
 }
 exports.Storage = Storage;
 
-},{"../data-index":39,"../ipc":33,"../node-errors":35,"../node-info":36,"../node-value-types":38,"../promise-fs":40,"./indexes":45,"acebase-core":12}],45:[function(require,module,exports){
+},{"../data-index":40,"../ipc":33,"../node-errors":36,"../node-info":37,"../node-value-types":39,"../promise-fs":41,"./indexes":47,"acebase-core":12}],47:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;

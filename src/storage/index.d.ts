@@ -1,6 +1,6 @@
 import { DebugLogger, SimpleEventEmitter, DataRetrievalOptions, ISchemaCheckResult } from 'acebase-core';
 import { NodeInfo } from '../node-info';
-import { IPCPeer } from '../ipc';
+import { IPCPeer, RemoteIPCPeer } from '../ipc';
 import { DataIndex } from '../data-index';
 import { CreateIndexOptions } from './indexes';
 export declare class SchemaValidationError extends Error {
@@ -9,7 +9,7 @@ export declare class SchemaValidationError extends Error {
 }
 export interface IWriteNodeResult {
     mutations: Array<{
-        target: Array<string | number>;
+        target: (string | number)[];
         prev: any;
         val: any;
     }>;
@@ -90,14 +90,15 @@ export declare class StorageSettings {
 }
 export declare type SubscriptionCallback = (err: Error, path: string, newValue: any, oldValue: any, context: any) => void;
 export declare type InternalDataRetrievalOptions = DataRetrievalOptions & {
-    tid?: string;
+    tid?: string | number;
 };
 export declare class Storage extends SimpleEventEmitter {
     name: string;
     settings: StorageSettings;
     debug: DebugLogger;
-    private ipc;
-    protected nodeLocker: {
+    stats: any;
+    ipc: IPCPeer | RemoteIPCPeer;
+    nodeLocker: {
         lock(path: string, tid: string, write: boolean, comment?: string): ReturnType<IPCPeer['lock']>;
     };
     private _lastTid;
@@ -245,22 +246,20 @@ export declare class Storage extends SimpleEventEmitter {
     };
     /**
      * Wrapper for _writeNode, handles triggering change events, index updating.
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options]
-     * @returns {Promise<IWriteNodeResult>} Returns a promise that resolves with an object that contains storage specific details, plus the applied mutations if transaction logging is enabled
+     * @returns Returns a promise that resolves with an object that contains storage specific details,
+     * plus the applied mutations if transaction logging is enabled
      */
     _writeNodeWithTracking(path: string, value: any, options?: Partial<{
         merge: boolean;
         transaction: unknown;
-        tid: string;
-        _customWriteFunction: unknown;
+        tid: string | number;
+        _customWriteFunction: () => any;
         waitForIndexUpdates: boolean;
         suppress_events: boolean;
         context: any;
         impact: ReturnType<Storage['getUpdateImpact']>;
         currentValue: any;
-    }>): Promise<any>;
+    }>): Promise<IWriteNodeResult>;
     /**
      * Enumerates all children of a given Node for reflection purposes
      * @param path
@@ -309,7 +308,7 @@ export declare class Storage extends SimpleEventEmitter {
         /**
          * optional transaction id for node locking purposes
          */
-        tid: string;
+        tid: string | number;
         /**
          * transaction as implemented by sqlite/mssql storage
          */
@@ -404,9 +403,9 @@ export declare class Storage extends SimpleEventEmitter {
      * @returns returns a promise that resolves with a boolean indicating if it matched the criteria
      */
     matchNode(path: string, criteria: Array<{
-        key: string;
+        key: string | number;
         op: string;
-        compare: string;
+        compare: any;
     }>, options?: {
         /**
          * optional transaction id for node locking purposes

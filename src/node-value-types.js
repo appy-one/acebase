@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getValueType = exports.getNodeValueType = exports.getValueTypeName = exports.VALUE_TYPES = void 0;
 const acebase_core_1 = require("acebase-core");
-exports.VALUE_TYPES = {
+exports.VALUE_TYPES = Object.freeze({
     // Native types:
     OBJECT: 1,
     ARRAY: 2,
@@ -16,7 +16,7 @@ exports.VALUE_TYPES = {
     REFERENCE: 9, // Absolute or relative path to other node
     // Future:
     // DOCUMENT: 10,     // JSON/XML documents that are contained entirely within the stored node
-};
+});
 function getValueTypeName(valueType) {
     switch (valueType) {
         case exports.VALUE_TYPES.ARRAY: return 'array';

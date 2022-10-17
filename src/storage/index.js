@@ -518,10 +518,8 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     }
     /**
      * Wrapper for _writeNode, handles triggering change events, index updating.
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options]
-     * @returns {Promise<IWriteNodeResult>} Returns a promise that resolves with an object that contains storage specific details, plus the applied mutations if transaction logging is enabled
+     * @returns Returns a promise that resolves with an object that contains storage specific details,
+     * plus the applied mutations if transaction logging is enabled
      */
     async _writeNodeWithTracking(path, value, options = {
         merge: false,
@@ -728,7 +726,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 let results = [];
                 let trailPath = '';
                 while (trailKeys.length > 0) {
-                    /** @type {string|number} trailKeys.shift() as string|number */
                     const subKey = trailKeys.shift();
                     if (typeof subKey === 'string' && (subKey === '*' || subKey.startsWith('$'))) {
                         // Recursion needed
@@ -1135,7 +1132,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             }
             const criteriaKeys = criteria.reduce((keys, cr) => {
                 let key = cr.key;
-                if (key.includes('/')) {
+                if (typeof key === 'string' && key.includes('/')) {
                     // Descendant key criterium, use child key only (eg 'address' of 'address/city')
                     key = key.slice(0, key.indexOf('/'));
                 }
@@ -1149,16 +1146,18 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             const delayedMatchPromises = [];
             try {
                 await this.getChildren(path, { tid, keyFilter: criteriaKeys }).next(childInfo => {
-                    unseenKeys.includes(childInfo.key) && unseenKeys.splice(unseenKeys.indexOf(childInfo.key), 1);
+                    var _a;
+                    const keyOrIndex = (_a = childInfo.key) !== null && _a !== void 0 ? _a : childInfo.index;
+                    unseenKeys.includes(keyOrIndex) && unseenKeys.splice(unseenKeys.indexOf(childInfo.key), 1);
                     const keyCriteria = criteria
-                        .filter(cr => cr.key === childInfo.key)
+                        .filter(cr => cr.key === keyOrIndex)
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
                     const keyResult = keyCriteria.length > 0 ? checkChild(childInfo, keyCriteria) : { isMatch: true, promises: [] };
                     isMatch = keyResult.isMatch;
                     if (isMatch) {
                         delayedMatchPromises.push(...keyResult.promises);
                         const childCriteria = criteria
-                            .filter(cr => cr.key.startsWith(`${childInfo.key}/`))
+                            .filter(cr => typeof cr.key === 'string' && cr.key.startsWith(`${typeof keyOrIndex === 'number' ? `[${keyOrIndex}]` : keyOrIndex}/`))
                             .map(cr => {
                             const key = cr.key.slice(cr.key.indexOf('/') + 1);
                             return { key, op: cr.op, compare: cr.compare };
@@ -1182,16 +1181,16 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                     return false;
                 }
                 // Now, also check keys that weren't found in the node. (a criterium may be "!exists")
-                isMatch = unseenKeys.every(key => {
-                    const childInfo = new node_info_1.NodeInfo({ key, exists: false });
+                isMatch = unseenKeys.every(keyOrIndex => {
+                    const childInfo = new node_info_1.NodeInfo(Object.assign(Object.assign(Object.assign({}, (typeof keyOrIndex === 'number' && { index: keyOrIndex })), (typeof keyOrIndex === 'string' && { key: keyOrIndex })), { exists: false }));
                     const childCriteria = criteria
-                        .filter(cr => cr.key.startsWith(`${key}/`))
+                        .filter(cr => typeof cr.key === 'string' && cr.key.startsWith(`${typeof keyOrIndex === 'number' ? `[${keyOrIndex}]` : keyOrIndex}/`))
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
                     if (childCriteria.length > 0 && !checkChild(childInfo, childCriteria).isMatch) {
                         return false;
                     }
                     const keyCriteria = criteria
-                        .filter(cr => cr.key === key)
+                        .filter(cr => cr.key === keyOrIndex)
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
                     if (keyCriteria.length === 0) {
                         return true; // There were only child criteria, and they matched (otherwise we wouldn't be here)

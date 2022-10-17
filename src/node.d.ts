@@ -1,13 +1,13 @@
 export declare class Node {
-    static get VALUE_TYPES(): {
-        OBJECT: number;
-        ARRAY: number;
-        NUMBER: number;
-        BOOLEAN: number;
-        STRING: number;
-        BIGINT: number;
-        DATETIME: number;
-        BINARY: number;
-        REFERENCE: number;
-    };
+    static get VALUE_TYPES(): Readonly<{
+        OBJECT: 1;
+        ARRAY: 2;
+        NUMBER: 3;
+        BOOLEAN: 4;
+        STRING: 5;
+        BIGINT: 7;
+        DATETIME: 6;
+        BINARY: 8;
+        REFERENCE: 9;
+    }>;
 }

@@ -35,7 +35,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
         matches.sort((a, b) => {
             const compare = (i) => {
                 const o = querySort[i];
-                const trailKeys = acebase_core_1.PathInfo.getPathKeys(o.key);
+                const trailKeys = acebase_core_1.PathInfo.getPathKeys(typeof o.key === 'number' ? `[${o.key}]` : o.key);
                 const left = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, a.val);
                 const right = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, b.val);
                 if (left === null) {
