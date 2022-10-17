@@ -25,7 +25,7 @@ export class SchemaValidationError extends Error {
 }
 
 export interface IWriteNodeResult {
-    mutations: Array<{ target: Array<string|number>, prev: any, val: any }>
+    mutations: Array<{ target: (string | number)[], prev: any, val: any }>;
 }
 
 /**
@@ -131,14 +131,15 @@ export class StorageSettings {
 
 export type SubscriptionCallback = (err: Error, path: string, newValue: any, oldValue: any, context: any) => void;
 
-export type InternalDataRetrievalOptions = DataRetrievalOptions  & { tid?: string };
+export type InternalDataRetrievalOptions = DataRetrievalOptions  & { tid?: string | number };
 
 export class Storage extends SimpleEventEmitter {
 
     public debug: DebugLogger;
+    public stats: any;
 
-    private ipc: IPCPeer | RemoteIPCPeer;
-    protected nodeLocker: {
+    public ipc: IPCPeer | RemoteIPCPeer;
+    public nodeLocker: {
         lock(path: string, tid: string, write: boolean, comment?: string): ReturnType<IPCPeer['lock']>;
     };
 
@@ -646,16 +647,14 @@ export class Storage extends SimpleEventEmitter {
 
     /**
      * Wrapper for _writeNode, handles triggering change events, index updating.
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options]
-     * @returns {Promise<IWriteNodeResult>} Returns a promise that resolves with an object that contains storage specific details, plus the applied mutations if transaction logging is enabled
+     * @returns Returns a promise that resolves with an object that contains storage specific details,
+     * plus the applied mutations if transaction logging is enabled
      */
     async _writeNodeWithTracking(path: string, value: any, options: Partial<{
         merge: boolean;
         transaction: unknown;
-        tid: string;
-        _customWriteFunction: unknown;
+        tid: string | number;
+        _customWriteFunction: () => any;
         waitForIndexUpdates: boolean;
         suppress_events: boolean;
         context: any;
@@ -667,7 +666,7 @@ export class Storage extends SimpleEventEmitter {
         suppress_events: false,
         context: null,
         impact: null,
-    }) {
+    }): Promise<IWriteNodeResult> {
         options = options || {};
         if (!options.tid && !options.transaction) { throw new Error('_writeNodeWithTracking MUST be executed with a tid OR transaction!'); }
         options.merge = options.merge === true;
@@ -828,13 +827,13 @@ export class Storage extends SimpleEventEmitter {
         const indexUpdates = [] as Promise<unknown>[];
         indexes.map(index => ({ index, keys: PathInfo.getPathKeys(index.path) }))
             .sort((a, b) => {
-            // Deepest paths should fire first, then bubble up the tree
+                // Deepest paths should fire first, then bubble up the tree
                 if (a.keys.length < b.keys.length) { return 1; }
                 else if (a.keys.length > b.keys.length) { return -1; }
                 return 0;
             })
             .forEach(({ index }) => {
-            // Index is either on the top event path, or on a child path
+                // Index is either on the top event path, or on a child path
 
                 // Example situation:
                 // path = "users/ewout/posts/1" (a post was added)
@@ -872,10 +871,9 @@ export class Storage extends SimpleEventEmitter {
                     let results = [] as any[];
                     let trailPath = '';
                     while (trailKeys.length > 0) {
-                    /** @type {string|number} trailKeys.shift() as string|number */
                         const subKey = trailKeys.shift();
                         if (typeof subKey === 'string' && (subKey === '*' || subKey.startsWith('$'))) {
-                        // Recursion needed
+                            // Recursion needed
                             const allKeys = oldValue === null ? [] : Object.keys(oldValue);
                             newValue !== null && Object.keys(newValue).forEach(key => {
                                 if (allKeys.indexOf(key) < 0) {
@@ -1213,7 +1211,7 @@ export class Storage extends SimpleEventEmitter {
         /**
          * optional transaction id for node locking purposes
          */
-        tid: string;
+        tid: string | number;
         /**
          * transaction as implemented by sqlite/mssql storage
          */
@@ -1282,7 +1280,7 @@ export class Storage extends SimpleEventEmitter {
          * Whether to supress any value events from firing
          */
          suppress_events: boolean;
-        }>): Promise<string|void> {
+    }>): Promise<string|void> {
         throw new Error('This method must be implemented by subclass');
     }
 
@@ -1374,7 +1372,7 @@ export class Storage extends SimpleEventEmitter {
      * @param options optional options used by implementation for recursive calls
      * @returns returns a promise that resolves with a boolean indicating if it matched the criteria
      */
-    async matchNode(path: string, criteria: Array<{ key: string, op: string, compare: string }>, options?: {
+    async matchNode(path: string, criteria: Array<{ key: string | number, op: string, compare: any }>, options?: {
         /**
          * optional transaction id for node locking purposes
          */
@@ -1382,31 +1380,32 @@ export class Storage extends SimpleEventEmitter {
     }): Promise<boolean> {
 
         const tid = options?.tid ?? ID.generate();
-        const checkNode = async (path: string, criteria: Array<{ key: string, op: string, compare?: string }>) => {
+        const checkNode = async (path: string, criteria: Array<{ key: string | number, op: string, compare?: any }>) => {
             if (criteria.length === 0) {
                 return Promise.resolve(true); // No criteria, so yes... It matches!
             }
             const criteriaKeys = criteria.reduce((keys, cr) => {
                 let key = cr.key;
-                if (key.includes('/')) {
+                if (typeof key === 'string' && key.includes('/')) {
                     // Descendant key criterium, use child key only (eg 'address' of 'address/city')
                     key = key.slice(0, key.indexOf('/'));
                 }
-                if (keys.indexOf(key) < 0) {
-                    keys.push(key);
+                if ((keys as any[]).indexOf(key) < 0) {
+                    (keys as any[]).push(key);
                 }
                 return keys;
-            }, []);
+            }, [] as string[] | number[]);
             const unseenKeys = criteriaKeys.slice();
 
             let isMatch = true;
             const delayedMatchPromises = [] as Promise<{ isMatch: boolean }>[];
             try {
                 await this.getChildren(path, { tid, keyFilter: criteriaKeys }).next(childInfo => {
-                    unseenKeys.includes(childInfo.key) && unseenKeys.splice(unseenKeys.indexOf(childInfo.key), 1);
+                    const keyOrIndex = childInfo.key ?? childInfo.index;
+                    (unseenKeys as any[]).includes(keyOrIndex) && unseenKeys.splice((unseenKeys as any[]).indexOf(childInfo.key), 1);
 
                     const keyCriteria = criteria
-                        .filter(cr => cr.key === childInfo.key)
+                        .filter(cr => cr.key === keyOrIndex)
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
 
                     const keyResult = keyCriteria.length > 0 ? checkChild(childInfo, keyCriteria) : { isMatch: true, promises: [] as Promise<{ isMatch: boolean }>[] };
@@ -1415,9 +1414,9 @@ export class Storage extends SimpleEventEmitter {
                         delayedMatchPromises.push(...keyResult.promises);
 
                         const childCriteria = criteria
-                            .filter(cr => cr.key.startsWith(`${childInfo.key}/`))
+                            .filter(cr => typeof cr.key === 'string' && cr.key.startsWith(`${typeof keyOrIndex === 'number' ? `[${keyOrIndex}]` : keyOrIndex}/`))
                             .map(cr => {
-                                const key = cr.key.slice(cr.key.indexOf('/') + 1);
+                                const key = (cr.key as string).slice((cr.key as string).indexOf('/') + 1);
                                 return { key, op: cr.op, compare: cr.compare };
                             });
 
@@ -1441,12 +1440,16 @@ export class Storage extends SimpleEventEmitter {
                 if (!isMatch) { return false; }
 
                 // Now, also check keys that weren't found in the node. (a criterium may be "!exists")
-                isMatch = unseenKeys.every(key => {
+                isMatch = (unseenKeys as (string|number)[]).every(keyOrIndex => {
 
-                    const childInfo = new NodeInfo({ key, exists: false });
+                    const childInfo = new NodeInfo({
+                        ...(typeof keyOrIndex === 'number' && { index: keyOrIndex }),
+                        ...(typeof keyOrIndex === 'string' && { key: keyOrIndex }),
+                        exists: false,
+                    });
 
                     const childCriteria = criteria
-                        .filter(cr => cr.key.startsWith(`${key}/`))
+                        .filter(cr => typeof cr.key === 'string' && cr.key.startsWith(`${typeof keyOrIndex === 'number' ? `[${keyOrIndex}]` : keyOrIndex}/`))
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
 
                     if (childCriteria.length > 0 && !checkChild(childInfo, childCriteria).isMatch) {
@@ -1454,7 +1457,7 @@ export class Storage extends SimpleEventEmitter {
                     }
 
                     const keyCriteria = criteria
-                        .filter(cr => cr.key === key)
+                        .filter(cr => cr.key === keyOrIndex)
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
 
                     if (keyCriteria.length === 0) {
