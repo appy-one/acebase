@@ -7,7 +7,7 @@ import { NodeCache } from '../../node-cache';
 import { BinaryNodeInfo } from './node-info';
 // import { NodeLock } from '../../node-lock';
 import { NodeNotFoundError } from '../../node-errors';
-import { InternalDataRetrievalOptions, IWriteNodeResult, Storage, StorageSettings } from '../index';
+import { InternalDataRetrievalOptions, IWriteNodeResult, Storage, StorageEnv, StorageSettings } from '../index';
 import { VALUE_TYPES } from '../../node-value-types';
 import { BinaryBPlusTree, BPlusTreeBuilder, BinaryWriter } from '../../btree';
 import { Uint8ArrayBuilder } from '../../binary';
@@ -56,13 +56,12 @@ export class AceBaseStorageSettings extends StorageSettings {
      */
     fst2 = false;
 
-    constructor(settings: Partial<AceBaseStorageSettings>) {
+    constructor(settings: Partial<AceBaseStorageSettings> = {}) {
         super(settings);
-        settings = settings || {};
-        this.recordSize = settings.recordSize || 128;
-        this.pageSize = settings.pageSize || 1024;
-        this.type = settings.type || 'data';
-        this.readOnly = settings.readOnly === true;
+        if (typeof settings.recordSize === 'number') { this.recordSize = settings.recordSize; }
+        if (typeof settings.pageSize === 'number') { this.pageSize = settings.pageSize; }
+        if (typeof settings.type === 'string') { this.type = settings.type; }
+        if (typeof settings.readOnly === 'boolean') { this.readOnly = settings.readOnly; }
         this.transactions = new AceBaseTransactionLogSettings(settings.transactions);
     }
 }
@@ -96,11 +95,10 @@ class AceBaseTransactionLogSettings {
      *
      * Still under development, disabled by default. See transaction-logs.spec for tests
      */
-    constructor(settings: Partial<AceBaseTransactionLogSettings>) {
-        settings = settings || {};
-        this.log = settings.log === true; //!== false;
-        this.maxAge = typeof settings.maxAge === 'number' ? settings.maxAge : 30; // 30 days
-        this.noWait = settings.noWait === true;
+    constructor(settings: Partial<AceBaseTransactionLogSettings> = {}) {
+        if (typeof settings.log === 'boolean') { this.log = settings.log; }
+        if (typeof settings.maxAge === 'number') { this.maxAge = settings.maxAge; }
+        if (typeof settings.noWait === 'boolean') { this.noWait = settings.noWait; }
     }
 }
 
@@ -125,9 +123,9 @@ export class AceBaseStorage extends Storage {
     /**
      * Stores data in a binary file
      */
-    constructor(name: string, settings: AceBaseStorageSettings) {
+    constructor(name: string, settings: AceBaseStorageSettings, env: StorageEnv) {
         console.assert(settings instanceof AceBaseStorageSettings, 'settings must be an instance of AceBaseStorageSettings');
-        super(name, settings);
+        super(name, settings, env);
 
         if (settings.maxInlineValueSize > 64) {
             throw new Error('maxInlineValueSize cannot be larger than 64'); // This is technically not possible because we store inline length with 6 bits: range = 0 to 2^6-1 = 0 - 63 // NOTE: lengths are stored MINUS 1, because an empty value is stored as tiny value, so "a"'s stored inline length is 0, allowing values up to 64 bytes
@@ -151,8 +149,8 @@ export class AceBaseStorage extends Storage {
         this.type = settings.type;
         if (this.type === 'data' && settings.transactions.log === true) {
             // Get/create storage for mutations logging
-            const txSettings = new AceBaseStorageSettings({ type: 'transaction', logLevel: 'error', path: settings.path, removeVoidProperties: true, transactions: settings.transactions });
-            this.txStorage = new AceBaseStorage(name, txSettings);
+            const txSettings = new AceBaseStorageSettings({ type: 'transaction', path: settings.path, removeVoidProperties: true, transactions: settings.transactions });
+            this.txStorage = new AceBaseStorage(name, txSettings, { logLevel: 'error' });
         }
 
         this.once('ready', () => {
