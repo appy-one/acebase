@@ -1624,7 +1624,16 @@ export class Storage extends SimpleEventEmitter {
             : writeFn;
 
         const stringifyValue = (type: number, val: any) => {
-            const escape = (str: string) => str.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+            const escape = (str: string) => str
+                .replace(/\\/g, '\\\\')         // forward slashes
+                .replace(/"/g, '\\"')           // quotes
+                .replace(/\r/g, '\\r')          // carriage return
+                .replace(/\n/g, '\\n')          // line feed
+                .replace(/\t/g, '\\t')          // tabs
+                .replace(/[\u0000-\u001f]/g,    // other control characters
+                    ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`
+                );
+
             if (type === VALUE_TYPES.DATETIME) {
                 val = `"${val.toISOString()}"`;
                 if (options.type_safe) {
