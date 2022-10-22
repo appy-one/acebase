@@ -5,9 +5,10 @@ import { MSSQLStorage, MSSQLStorageSettings } from './storage/mssql';
 import { CustomStorage, CustomStorageSettings } from './storage/custom';
 import { VALUE_TYPES } from './node-value-types';
 import { query as executeQuery } from './query';
-import { Storage, StorageSettings } from './storage';
+import { Storage, StorageEnv } from './storage';
 import { CreateIndexOptions } from './storage/indexes';
 import type { BinaryNodeAddress } from './storage/binary/node-address';
+import { AceBaseLocalSettings } from '.';
 
 export class LocalApi extends Api {
     // All api methods for local database instance
@@ -15,31 +16,31 @@ export class LocalApi extends Api {
     public storage: Storage;
     public logLevel: LoggingLevel;
 
-    constructor(dbname = 'default', settings: { db: AceBaseBase, storage: StorageSettings, logLevel?: LoggingLevel }, readyCallback: () => any) {
+    constructor(dbname = 'default', init: { db: AceBaseBase, settings: AceBaseLocalSettings }, readyCallback: () => any) {
         super();
-        this.db = settings.db;
+        this.db = init.db;
 
-        if (typeof settings.storage === 'object') {
-            settings.storage.logLevel = settings.logLevel;
-            if (SQLiteStorageSettings && (settings.storage instanceof SQLiteStorageSettings || settings.storage.type === 'sqlite')) {
-                this.storage = new SQLiteStorage(dbname, settings.storage);
+        const storageEnv: StorageEnv = { logLevel: init.settings.logLevel };
+        if (typeof init.settings.storage === 'object') {
+            // settings.storage.logLevel = settings.logLevel;
+            if (SQLiteStorageSettings && (init.settings.storage instanceof SQLiteStorageSettings)) { //  || env.settings.storage.type === 'sqlite'
+                this.storage = new SQLiteStorage(dbname, init.settings.storage, storageEnv);
             }
-            else if (MSSQLStorageSettings && (settings.storage instanceof MSSQLStorageSettings || settings.storage.type === 'mssql')) {
-                this.storage = new MSSQLStorage(dbname, settings.storage);
+            else if (MSSQLStorageSettings && (init.settings.storage instanceof MSSQLStorageSettings)) { //  || env.settings.storage.type === 'mssql'
+                this.storage = new MSSQLStorage(dbname, init.settings.storage, storageEnv);
             }
-            else if (CustomStorageSettings && (settings.storage instanceof CustomStorageSettings || settings.storage.type === 'custom')) {
-                this.storage = new CustomStorage(dbname, settings.storage as CustomStorageSettings);
+            else if (CustomStorageSettings && (init.settings.storage instanceof CustomStorageSettings)) { //  || settings.storage.type === 'custom'
+                this.storage = new CustomStorage(dbname, init.settings.storage as CustomStorageSettings, storageEnv);
             }
             else {
-                const storageSettings = settings.storage instanceof AceBaseStorageSettings
-                    ? settings.storage
-                    : new AceBaseStorageSettings(settings.storage as AceBaseStorageSettings);
-                this.storage = new AceBaseStorage(dbname, storageSettings);
+                const storageSettings = init.settings.storage instanceof AceBaseStorageSettings
+                    ? init.settings.storage
+                    : new AceBaseStorageSettings(init.settings.storage as AceBaseStorageSettings);
+                this.storage = new AceBaseStorage(dbname, storageSettings, storageEnv);
             }
         }
         else {
-            settings.storage = new AceBaseStorageSettings({ logLevel: settings.logLevel });
-            this.storage = new AceBaseStorage(dbname, settings.storage as AceBaseStorageSettings);
+            this.storage = new AceBaseStorage(dbname, new AceBaseStorageSettings(), storageEnv);
         }
         this.storage.on('ready', readyCallback);
     }
