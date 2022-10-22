@@ -1,4 +1,4 @@
-import { Storage, StorageSettings } from '..';
+import { Storage, StorageEnv, StorageSettings } from '..';
 import { NodeInfo } from '../../node-info';
 import { VALUE_TYPES } from '../../node-value-types';
 import { NodeAddress } from '../../node-address';
@@ -95,7 +95,7 @@ export declare class MSSQLStorage extends Storage {
      * @param name database name
      * @param settings settings to connect to a SQL Server database
      */
-    constructor(name: string, settings?: Partial<MSSQLStorageSettings>);
+    constructor(name: string, settings: Partial<MSSQLStorageSettings>, env: StorageEnv);
     init(): Promise<void>;
     private _executeRequest;
     private _get;

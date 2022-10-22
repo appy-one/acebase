@@ -9,30 +9,30 @@ const custom_1 = require("./storage/custom");
 const node_value_types_1 = require("./node-value-types");
 const query_1 = require("./query");
 class LocalApi extends acebase_core_1.Api {
-    constructor(dbname = 'default', settings, readyCallback) {
+    constructor(dbname = 'default', init, readyCallback) {
         super();
-        this.db = settings.db;
-        if (typeof settings.storage === 'object') {
-            settings.storage.logLevel = settings.logLevel;
-            if (sqlite_1.SQLiteStorageSettings && (settings.storage instanceof sqlite_1.SQLiteStorageSettings || settings.storage.type === 'sqlite')) {
-                this.storage = new sqlite_1.SQLiteStorage(dbname, settings.storage);
+        this.db = init.db;
+        const storageEnv = { logLevel: init.settings.logLevel };
+        if (typeof init.settings.storage === 'object') {
+            // settings.storage.logLevel = settings.logLevel;
+            if (sqlite_1.SQLiteStorageSettings && (init.settings.storage instanceof sqlite_1.SQLiteStorageSettings)) { //  || env.settings.storage.type === 'sqlite'
+                this.storage = new sqlite_1.SQLiteStorage(dbname, init.settings.storage, storageEnv);
             }
-            else if (mssql_1.MSSQLStorageSettings && (settings.storage instanceof mssql_1.MSSQLStorageSettings || settings.storage.type === 'mssql')) {
-                this.storage = new mssql_1.MSSQLStorage(dbname, settings.storage);
+            else if (mssql_1.MSSQLStorageSettings && (init.settings.storage instanceof mssql_1.MSSQLStorageSettings)) { //  || env.settings.storage.type === 'mssql'
+                this.storage = new mssql_1.MSSQLStorage(dbname, init.settings.storage, storageEnv);
             }
-            else if (custom_1.CustomStorageSettings && (settings.storage instanceof custom_1.CustomStorageSettings || settings.storage.type === 'custom')) {
-                this.storage = new custom_1.CustomStorage(dbname, settings.storage);
+            else if (custom_1.CustomStorageSettings && (init.settings.storage instanceof custom_1.CustomStorageSettings)) { //  || settings.storage.type === 'custom'
+                this.storage = new custom_1.CustomStorage(dbname, init.settings.storage, storageEnv);
             }
             else {
-                const storageSettings = settings.storage instanceof binary_1.AceBaseStorageSettings
-                    ? settings.storage
-                    : new binary_1.AceBaseStorageSettings(settings.storage);
-                this.storage = new binary_1.AceBaseStorage(dbname, storageSettings);
+                const storageSettings = init.settings.storage instanceof binary_1.AceBaseStorageSettings
+                    ? init.settings.storage
+                    : new binary_1.AceBaseStorageSettings(init.settings.storage);
+                this.storage = new binary_1.AceBaseStorage(dbname, storageSettings, storageEnv);
             }
         }
         else {
-            settings.storage = new binary_1.AceBaseStorageSettings({ logLevel: settings.logLevel });
-            this.storage = new binary_1.AceBaseStorage(dbname, settings.storage);
+            this.storage = new binary_1.AceBaseStorage(dbname, new binary_1.AceBaseStorageSettings(), storageEnv);
         }
         this.storage.on('ready', readyCallback);
     }

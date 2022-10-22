@@ -4,6 +4,7 @@ exports.BrowserAceBase = void 0;
 const acebase_core_1 = require("acebase-core");
 const acebase_local_1 = require("./acebase-local");
 const custom_1 = require("./storage/custom");
+const settings_1 = require("./storage/custom/indexed-db/settings");
 const deprecatedConstructorError = `Using AceBase constructor in the browser to use localStorage is deprecated!
 Switch to:
 IndexedDB implementation (FASTER, MORE RELIABLE):
@@ -39,11 +40,8 @@ class BrowserAceBase extends acebase_local_1.AceBase {
      * @param dbname Name of the database
      * @param settings optional settings
      */
-    static WithIndexedDB(dbname, settings) {
-        settings = settings || {};
-        if (!settings.logLevel) {
-            settings.logLevel = 'error';
-        }
+    static WithIndexedDB(dbname, init = {}) {
+        const settings = new settings_1.IndexedDBStorageSettings(init);
         // We'll create an IndexedDB with name "dbname.acebase"
         const IndexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB; // browser prefixes not really needed, see https://caniuse.com/#feat=indexeddb
         const request = IndexedDB.open(`${dbname}.acebase`, 1);

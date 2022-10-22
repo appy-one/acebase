@@ -103,9 +103,9 @@ class MSSQLStorage extends __1.Storage {
      * @param name database name
      * @param settings settings to connect to a SQL Server database
      */
-    constructor(name, settings = {}) {
+    constructor(name, settings, env) {
         settings = new MSSQLStorageSettings(settings);
-        super(name, settings);
+        super(name, settings, env);
         // Lazy load MSSQL so it is only `require`d once MSSQLStorage is actually requested
         if (this.settings.driver === 'native') {
             // Use Microsft native V8 driver

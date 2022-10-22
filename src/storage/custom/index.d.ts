@@ -1,7 +1,7 @@
 import { Utils } from 'acebase-core';
 import { NodeInfo } from '../../node-info';
 import { NodeLock } from '../../node-lock';
-import { Storage, StorageSettings } from '../index';
+import { Storage, StorageEnv, StorageSettings } from '../index';
 import { NodeAddress } from '../../node-address';
 export { CustomStorageHelpers } from './helpers';
 /** Interface for metadata being stored for nodes */
@@ -125,15 +125,13 @@ export declare class CustomStorageSettings extends StorageSettings {
      */
     name?: string;
     /**
-     * Whether default node locking should be used. Set to false if your storage backend disallows multiple simultanious write transactions (eg IndexedDB). Set to true if your storage backend does not support transactions (eg LocalStorage) or allows multiple simultanious write transactions (eg AceBase binary).
+     * Whether default node locking should be used.
+     * Set to false if your storage backend disallows multiple simultanious write transactions.
+     * Set to true if your storage backend does not support transactions (eg LocalStorage) or allows
+     * multiple simultanious write transactions (eg AceBase binary).
      * @default true
      */
     locking: boolean;
-    /**
-     * If default node locking is used, timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
-     * @default 120
-     */
-    lockTimeout: number;
     /**
      * Function that returns a Promise that resolves once your data store backend is ready for use
      */
@@ -161,23 +159,17 @@ export declare class CustomStorageNodeInfo extends NodeInfo {
 }
 export declare class CustomStorage extends Storage {
     private _customImplementation;
-    constructor(dbname: string, settings: CustomStorageSettings);
-    _init(): Promise<void>;
-    _storeNode(path: string, node: ICustomStorageNode, options: {
-        transaction: CustomStorageTransaction;
-    }): void | Promise<void>;
-    _processReadNodeValue(node: ICustomStorageNode): void;
-    _readNode(path: string, options: {
-        transaction: CustomStorageTransaction;
-    }): Promise<ICustomStorageNode>;
-    _getTypeFromStoredValue(val: unknown): {
-        type: number;
-        value: unknown;
-    };
+    constructor(dbname: string, settings: CustomStorageSettings, env: StorageEnv);
+    private _init;
+    private throwImplementationError;
+    private _storeNode;
+    private _processReadNodeValue;
+    private _readNode;
+    private _getTypeFromStoredValue;
     /**
      * Creates or updates a node in its own record. DOES NOT CHECK if path exists in parent node, or if parent paths exist! Calling code needs to do this
      */
-    _writeNode(path: string, value: any, options: {
+    protected _writeNode(path: string, value: any, options: {
         transaction: CustomStorageTransaction;
         /** @default false */
         merge?: boolean;
@@ -188,9 +180,7 @@ export declare class CustomStorage extends Storage {
     /**
      * Deletes (dedicated) node and all subnodes without checking for existence. Use with care - all removed nodes will lose their revision stats! DOES NOT REMOVE INLINE CHILD NODES!
      */
-    _deleteNode(path: string, options: {
-        transaction: CustomStorageTransaction;
-    }): Promise<void>;
+    private _deleteNode;
     /**
      * Enumerates all children of a given Node for reflection purposes
      */

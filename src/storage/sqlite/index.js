@@ -38,9 +38,9 @@ class SQLiteStorage extends __1.Storage {
      * @param name database name
      * @param settings
      */
-    constructor(name, settings = { path: '.' }) {
+    constructor(name, settings, env) {
         settings = new SQLiteStorageSettings(settings);
-        super(name, settings);
+        super(name, settings, env);
         // Lazy load sqlite3 so it is only `require`d once SQLiteStorage is actually requested
         try {
             // eslint-disable-next-line @typescript-eslint/no-var-requires

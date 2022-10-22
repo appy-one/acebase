@@ -28,13 +28,39 @@ const debug_1 = require("./debug");
 const simple_colors_1 = require("./simple-colors");
 class AceBaseBaseSettings {
     constructor(options) {
+        /**
+         * What level to use for console logging.
+         * @default 'log'
+         */
+        this.logLevel = 'log';
+        /**
+         * Whether to use colors in the console logs output
+         * @default true
+         */
+        this.logColors = true;
+        /**
+         * @internal (for internal use)
+         */
+        this.info = 'realtime database';
+        /**
+         * You can turn this on if you are a sponsor. See https://github.com/appy-one/acebase/discussions/100 for more info
+         */
+        this.sponsor = false;
         if (typeof options !== 'object') {
             options = {};
         }
-        this.logLevel = options.logLevel || 'log';
-        this.logColors = typeof options.logColors === 'boolean' ? options.logColors : true;
-        this.info = typeof options.info === 'string' ? options.info : undefined;
-        this.sponsor = typeof options.sponsor === 'boolean' ? options.sponsor : false;
+        if (typeof options.logLevel === 'string') {
+            this.logLevel = options.logLevel;
+        }
+        if (typeof options.logColors === 'boolean') {
+            this.logColors = options.logColors;
+        }
+        if (typeof options.info === 'string') {
+            this.info = options.info;
+        }
+        if (typeof options.sponsor === 'boolean') {
+            this.sponsor = options.sponsor;
+        }
     }
 }
 exports.AceBaseBaseSettings = AceBaseBaseSettings;
@@ -42,10 +68,10 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
     /**
      * @param dbname Name of the database to open or create
      */
-    constructor(dbname, options) {
+    constructor(dbname, options = {}) {
         super();
         this._ready = false;
-        options = new AceBaseBaseSettings(options || {});
+        options = new AceBaseBaseSettings(options);
         this.name = dbname;
         // Setup console logging
         this.debug = new debug_1.DebugLogger(options.logLevel, `[${dbname}]`);
@@ -1707,7 +1733,20 @@ class DataReference {
     /**
      * The key or index of this node
      */
-    get key() { return this[_private].key; }
+    get key() {
+        const key = this[_private].key;
+        return typeof key === 'number' ? `[${key}]` : key;
+    }
+    /**
+     * If the "key" is a number, it is an index!
+     */
+    get index() {
+        const key = this[_private].key;
+        if (typeof key !== 'number') {
+            throw new Error(`"${key}" is not a number`);
+        }
+        return key;
+    }
     /**
      * Returns a new reference to this node's parent
      */
@@ -4494,33 +4533,34 @@ const deserialize2 = (data) => {
         // primitive value, not serialized
         return data;
     }
-    switch (data['.type']) {
-        case undefined: {
-            // No type given: this is a plain object or array
-            if (data instanceof Array) {
-                // Plain array, deserialize items into a copy
-                const copy = [];
-                const arr = data;
-                for (let i = 0; i < arr.length; i++) {
-                    copy.push((0, exports.deserialize2)(arr[i]));
-                }
-                return copy;
+    if (typeof data['.type'] === 'undefined') {
+        // No type given: this is a plain object or array
+        if (data instanceof Array) {
+            // Plain array, deserialize items into a copy
+            const copy = [];
+            const arr = data;
+            for (let i = 0; i < arr.length; i++) {
+                copy.push((0, exports.deserialize2)(arr[i]));
             }
-            else {
-                // Plain object, deserialize properties into a copy
-                const copy = {};
-                const obj = data;
-                for (const prop in obj) {
-                    copy[prop] = (0, exports.deserialize2)(obj[prop]);
-                }
-                return copy;
-            }
+            return copy;
         }
-        case 'bigint': {
+        else {
+            // Plain object, deserialize properties into a copy
+            const copy = {};
+            const obj = data;
+            for (const prop in obj) {
+                copy[prop] = (0, exports.deserialize2)(obj[prop]);
+            }
+            return copy;
+        }
+    }
+    else if (typeof data['.type'] === 'string') {
+        const dataType = data['.type'].toLowerCase();
+        if (dataType === 'bigint') {
             const val = data['.val'];
             return BigInt(val);
         }
-        case 'array': {
+        else if (dataType === 'array') {
             // partial ("sparse") array, deserialize children into a copy
             const copy = {};
             for (const index in data) {
@@ -4529,21 +4569,21 @@ const deserialize2 = (data) => {
             delete copy['.type'];
             return new partial_array_1.PartialArray(copy);
         }
-        case 'date': {
+        else if (dataType === 'date') {
             // Date was serialized as a string (UTC)
             const val = data['.val'];
             return new Date(val);
         }
-        case 'binary': {
+        else if (dataType === 'binary') {
             // ascii85 encoded binary data
             const val = data['.val'];
             return ascii85_1.ascii85.decode(val);
         }
-        case 'reference': {
+        else if (dataType === 'reference') {
             const val = data['.val'];
             return new path_reference_1.PathReference(val);
         }
-        case 'regexp': {
+        else if (dataType === 'regexp') {
             const val = data['.val'];
             if (typeof val === 'string') {
                 // serialized as '/(pattern)/flags'
@@ -5321,6 +5361,7 @@ exports.BrowserAceBase = void 0;
 const acebase_core_1 = require("acebase-core");
 const acebase_local_1 = require("./acebase-local");
 const custom_1 = require("./storage/custom");
+const settings_1 = require("./storage/custom/indexed-db/settings");
 const deprecatedConstructorError = `Using AceBase constructor in the browser to use localStorage is deprecated!
 Switch to:
 IndexedDB implementation (FASTER, MORE RELIABLE):
@@ -5356,11 +5397,8 @@ class BrowserAceBase extends acebase_local_1.AceBase {
      * @param dbname Name of the database
      * @param settings optional settings
      */
-    static WithIndexedDB(dbname, settings) {
-        settings = settings || {};
-        if (!settings.logLevel) {
-            settings.logLevel = 'error';
-        }
+    static WithIndexedDB(dbname, init = {}) {
+        const settings = new settings_1.IndexedDBStorageSettings(init);
         // We'll create an IndexedDB with name "dbname.acebase"
         const IndexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB; // browser prefixes not really needed, see https://caniuse.com/#feat=indexeddb
         const request = IndexedDB.open(`${dbname}.acebase`, 1);
@@ -5648,27 +5686,29 @@ class IndexedDBStorageTransaction extends custom_1.CustomStorageTransaction {
     }
 }
 
-},{"./acebase-local":29,"./storage/custom":45,"acebase-core":12}],29:[function(require,module,exports){
+},{"./acebase-local":29,"./storage/custom":45,"./storage/custom/indexed-db/settings":46,"acebase-core":12}],29:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AceBase = exports.AceBaseLocalSettings = void 0;
+exports.AceBase = exports.AceBaseLocalSettings = exports.IndexedDBStorageSettings = exports.LocalStorageSettings = void 0;
 const acebase_core_1 = require("acebase-core");
 const binary_1 = require("./storage/binary");
 const api_local_1 = require("./api-local");
-const custom_1 = require("./storage/custom");
+const local_storage_1 = require("./storage/custom/local-storage");
+Object.defineProperty(exports, "LocalStorageSettings", { enumerable: true, get: function () { return local_storage_1.LocalStorageSettings; } });
+const settings_1 = require("./storage/custom/indexed-db/settings");
+Object.defineProperty(exports, "IndexedDBStorageSettings", { enumerable: true, get: function () { return settings_1.IndexedDBStorageSettings; } });
 class AceBaseLocalSettings extends acebase_core_1.AceBaseBaseSettings {
-    constructor(options) {
+    constructor(options = {}) {
         super(options);
-        if (!options) {
-            options = {};
-        }
-        this.storage = options.storage || {};
-        // Copy IPC and transaction settings to storage settings
-        if (typeof options.ipc === 'object') {
-            this.storage.ipc = options.ipc;
-        }
-        if (typeof options.transactions === 'object') {
-            this.storage.transactions = options.transactions;
+        if (options.storage) {
+            this.storage = options.storage;
+            // If they were set on global settings, copy IPC and transaction settings to storage settings
+            if (options.ipc) {
+                this.storage.ipc = options.ipc;
+            }
+            if (options.transactions) {
+                this.storage.transactions = options.transactions;
+            }
         }
     }
 }
@@ -5677,14 +5717,12 @@ class AceBase extends acebase_core_1.AceBaseBase {
     /**
      * @param dbname Name of the database to open or create
      */
-    constructor(dbname, options) {
-        options = new AceBaseLocalSettings(options);
-        options.info = options.info || 'realtime database';
-        super(dbname, options);
+    constructor(dbname, init = {}) {
+        const settings = new AceBaseLocalSettings(init);
+        super(dbname, settings);
         const apiSettings = {
             db: this,
-            storage: options.storage,
-            logLevel: options.logLevel,
+            settings,
         };
         this.api = new api_local_1.LocalApi(dbname, apiSettings, () => {
             this.emit('ready');
@@ -5719,129 +5757,22 @@ class AceBase extends acebase_core_1.AceBaseBase {
      * @param dbname Name of the database
      * @param settings optional settings
      */
-    static WithLocalStorage(dbname, settings) {
-        settings = settings || {};
-        if (!settings.logLevel) {
-            settings.logLevel = 'error';
-        }
-        // Determine whether to use localStorage or sessionStorage
-        const localStorage = settings.provider ? settings.provider : settings.temp ? window.localStorage : window.sessionStorage;
-        // Setup our CustomStorageSettings
-        const storageSettings = new custom_1.CustomStorageSettings({
-            name: 'LocalStorage',
-            locking: true,
-            removeVoidProperties: settings.removeVoidProperties,
-            maxInlineValueSize: settings.maxInlineValueSize,
-            ready() {
-                // LocalStorage is always ready
-                return Promise.resolve();
-            },
-            getTransaction(target) {
-                // Create an instance of our transaction class
-                const context = {
-                    debug: true,
-                    dbname,
-                    localStorage,
-                };
-                const transaction = new LocalStorageTransaction(context, target);
-                return Promise.resolve(transaction);
-            },
-        });
-        const db = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
-        db.settings.ipcEvents = settings.multipleTabs === true;
+    static WithLocalStorage(dbname, settings = {}) {
+        const db = (0, local_storage_1.createLocalStorageInstance)(dbname, settings);
         return db;
+    }
+    /**
+     * Creates an AceBase database instance using IndexedDB as storage engine. Only available in browser contexts!
+     * @param dbname Name of the database
+     * @param settings optional settings
+     */
+    static WithIndexedDB(dbname, init = {}) {
+        throw new Error(`IndexedDB storage can only be used in browser contexts`);
     }
 }
 exports.AceBase = AceBase;
-// Setup CustomStorageTransaction for browser's LocalStorage
-class LocalStorageTransaction extends custom_1.CustomStorageTransaction {
-    constructor(context, target) {
-        super(target);
-        this.context = context;
-        this._storageKeysPrefix = `${this.context.dbname}.acebase::`;
-    }
-    async commit() {
-        // All changes have already been committed. TODO: use same approach as IndexedDB
-    }
-    async rollback(err) {
-        // Not able to rollback changes, because we did not keep track
-    }
-    async get(path) {
-        // Gets value from localStorage, wrapped in Promise
-        const json = this.context.localStorage.getItem(this.getStorageKeyForPath(path));
-        const val = JSON.parse(json);
-        return val;
-    }
-    async set(path, val) {
-        // Sets value in localStorage, wrapped in Promise
-        const json = JSON.stringify(val);
-        this.context.localStorage.setItem(this.getStorageKeyForPath(path), json);
-    }
-    async remove(path) {
-        // Removes a value from localStorage, wrapped in Promise
-        this.context.localStorage.removeItem(this.getStorageKeyForPath(path));
-    }
-    async childrenOf(path, include, checkCallback, addCallback) {
-        // Streams all child paths
-        // Cannot query localStorage, so loop through all stored keys to find children
-        const pathInfo = custom_1.CustomStorageHelpers.PathInfo.get(path);
-        for (let i = 0; i < this.context.localStorage.length; i++) {
-            const key = this.context.localStorage.key(i);
-            if (!key.startsWith(this._storageKeysPrefix)) {
-                continue;
-            }
-            const otherPath = this.getPathFromStorageKey(key);
-            if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
-                let node;
-                if (include.metadata || include.value) {
-                    const json = this.context.localStorage.getItem(key);
-                    node = JSON.parse(json);
-                }
-                const keepGoing = addCallback(otherPath, node);
-                if (!keepGoing) {
-                    break;
-                }
-            }
-        }
-    }
-    async descendantsOf(path, include, checkCallback, addCallback) {
-        // Streams all descendant paths
-        // Cannot query localStorage, so loop through all stored keys to find descendants
-        const pathInfo = custom_1.CustomStorageHelpers.PathInfo.get(path);
-        for (let i = 0; i < this.context.localStorage.length; i++) {
-            const key = this.context.localStorage.key(i);
-            if (!key.startsWith(this._storageKeysPrefix)) {
-                continue;
-            }
-            const otherPath = this.getPathFromStorageKey(key);
-            if (pathInfo.isAncestorOf(otherPath) && checkCallback(otherPath)) {
-                let node;
-                if (include.metadata || include.value) {
-                    const json = this.context.localStorage.getItem(key);
-                    node = JSON.parse(json);
-                }
-                const keepGoing = addCallback(otherPath, node);
-                if (!keepGoing) {
-                    break;
-                }
-            }
-        }
-    }
-    /**
-     * Helper function to get the path from a localStorage key
-     */
-    getPathFromStorageKey(key) {
-        return key.slice(this._storageKeysPrefix.length);
-    }
-    /**
-     * Helper function to get the localStorage key for a path
-     */
-    getStorageKeyForPath(path) {
-        return `${this._storageKeysPrefix}${path}`;
-    }
-}
 
-},{"./api-local":30,"./storage/binary":40,"./storage/custom":45,"acebase-core":12}],30:[function(require,module,exports){
+},{"./api-local":30,"./storage/binary":40,"./storage/custom/indexed-db/settings":46,"./storage/custom/local-storage":47,"acebase-core":12}],30:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalApi = void 0;
@@ -5853,30 +5784,30 @@ const custom_1 = require("./storage/custom");
 const node_value_types_1 = require("./node-value-types");
 const query_1 = require("./query");
 class LocalApi extends acebase_core_1.Api {
-    constructor(dbname = 'default', settings, readyCallback) {
+    constructor(dbname = 'default', init, readyCallback) {
         super();
-        this.db = settings.db;
-        if (typeof settings.storage === 'object') {
-            settings.storage.logLevel = settings.logLevel;
-            if (sqlite_1.SQLiteStorageSettings && (settings.storage instanceof sqlite_1.SQLiteStorageSettings || settings.storage.type === 'sqlite')) {
-                this.storage = new sqlite_1.SQLiteStorage(dbname, settings.storage);
+        this.db = init.db;
+        const storageEnv = { logLevel: init.settings.logLevel };
+        if (typeof init.settings.storage === 'object') {
+            // settings.storage.logLevel = settings.logLevel;
+            if (sqlite_1.SQLiteStorageSettings && (init.settings.storage instanceof sqlite_1.SQLiteStorageSettings)) { //  || env.settings.storage.type === 'sqlite'
+                this.storage = new sqlite_1.SQLiteStorage(dbname, init.settings.storage, storageEnv);
             }
-            else if (mssql_1.MSSQLStorageSettings && (settings.storage instanceof mssql_1.MSSQLStorageSettings || settings.storage.type === 'mssql')) {
-                this.storage = new mssql_1.MSSQLStorage(dbname, settings.storage);
+            else if (mssql_1.MSSQLStorageSettings && (init.settings.storage instanceof mssql_1.MSSQLStorageSettings)) { //  || env.settings.storage.type === 'mssql'
+                this.storage = new mssql_1.MSSQLStorage(dbname, init.settings.storage, storageEnv);
             }
-            else if (custom_1.CustomStorageSettings && (settings.storage instanceof custom_1.CustomStorageSettings || settings.storage.type === 'custom')) {
-                this.storage = new custom_1.CustomStorage(dbname, settings.storage);
+            else if (custom_1.CustomStorageSettings && (init.settings.storage instanceof custom_1.CustomStorageSettings)) { //  || settings.storage.type === 'custom'
+                this.storage = new custom_1.CustomStorage(dbname, init.settings.storage, storageEnv);
             }
             else {
-                const storageSettings = settings.storage instanceof binary_1.AceBaseStorageSettings
-                    ? settings.storage
-                    : new binary_1.AceBaseStorageSettings(settings.storage);
-                this.storage = new binary_1.AceBaseStorage(dbname, storageSettings);
+                const storageSettings = init.settings.storage instanceof binary_1.AceBaseStorageSettings
+                    ? init.settings.storage
+                    : new binary_1.AceBaseStorageSettings(init.settings.storage);
+                this.storage = new binary_1.AceBaseStorage(dbname, storageSettings, storageEnv);
             }
         }
         else {
-            settings.storage = new binary_1.AceBaseStorageSettings({ logLevel: settings.logLevel });
-            this.storage = new binary_1.AceBaseStorage(dbname, settings.storage);
+            this.storage = new binary_1.AceBaseStorage(dbname, new binary_1.AceBaseStorageSettings(), storageEnv);
         }
         this.storage.on('ready', readyCallback);
     }
@@ -6238,7 +6169,7 @@ exports.AsyncTaskBatch = AsyncTaskBatch;
 
 */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.proxyAccess = exports.ID = exports.CustomStorageHelpers = exports.CustomStorageTransaction = exports.CustomStorageSettings = exports.TypeMappings = exports.PathReference = exports.EventSubscription = exports.DataSnapshot = exports.DataReference = exports.AceBaseLocalSettings = exports.AceBase = void 0;
+exports.SchemaValidationError = exports.StorageSettings = exports.ICustomStorageNodeMetaData = exports.ICustomStorageNode = exports.CustomStorageHelpers = exports.CustomStorageSettings = exports.CustomStorageTransaction = exports.MSSQLStorageSettings = exports.SQLiteStorageSettings = exports.AceBaseStorageSettings = exports.IndexedDBStorageSettings = exports.LocalStorageSettings = exports.AceBaseLocalSettings = exports.AceBase = exports.PartialArray = exports.proxyAccess = exports.ID = exports.ObjectCollection = exports.TypeMappings = exports.PathReference = exports.EventSubscription = exports.EventStream = exports.DataReferencesArray = exports.DataSnapshotsArray = exports.DataReference = exports.DataSnapshot = void 0;
 const acebase_core_1 = require("acebase-core");
 Object.defineProperty(exports, "DataReference", { enumerable: true, get: function () { return acebase_core_1.DataReference; } });
 Object.defineProperty(exports, "DataSnapshot", { enumerable: true, get: function () { return acebase_core_1.DataSnapshot; } });
@@ -6247,14 +6178,15 @@ Object.defineProperty(exports, "PathReference", { enumerable: true, get: functio
 Object.defineProperty(exports, "TypeMappings", { enumerable: true, get: function () { return acebase_core_1.TypeMappings; } });
 Object.defineProperty(exports, "ID", { enumerable: true, get: function () { return acebase_core_1.ID; } });
 Object.defineProperty(exports, "proxyAccess", { enumerable: true, get: function () { return acebase_core_1.proxyAccess; } });
+Object.defineProperty(exports, "DataSnapshotsArray", { enumerable: true, get: function () { return acebase_core_1.DataSnapshotsArray; } });
+Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return acebase_core_1.ObjectCollection; } });
+Object.defineProperty(exports, "DataReferencesArray", { enumerable: true, get: function () { return acebase_core_1.DataReferencesArray; } });
+Object.defineProperty(exports, "EventStream", { enumerable: true, get: function () { return acebase_core_1.EventStream; } });
+Object.defineProperty(exports, "PartialArray", { enumerable: true, get: function () { return acebase_core_1.PartialArray; } });
 const acebase_local_1 = require("./acebase-local");
-Object.defineProperty(exports, "AceBaseLocalSettings", { enumerable: true, get: function () { return acebase_local_1.AceBaseLocalSettings; } });
 const acebase_browser_1 = require("./acebase-browser");
 Object.defineProperty(exports, "AceBase", { enumerable: true, get: function () { return acebase_browser_1.BrowserAceBase; } });
 const custom_1 = require("./storage/custom");
-Object.defineProperty(exports, "CustomStorageSettings", { enumerable: true, get: function () { return custom_1.CustomStorageSettings; } });
-Object.defineProperty(exports, "CustomStorageTransaction", { enumerable: true, get: function () { return custom_1.CustomStorageTransaction; } });
-Object.defineProperty(exports, "CustomStorageHelpers", { enumerable: true, get: function () { return custom_1.CustomStorageHelpers; } });
 const acebase = {
     AceBase: acebase_browser_1.BrowserAceBase,
     AceBaseLocalSettings: acebase_local_1.AceBaseLocalSettings,
@@ -6268,6 +6200,7 @@ const acebase = {
     CustomStorageHelpers: custom_1.CustomStorageHelpers,
     ID: acebase_core_1.ID,
     proxyAccess: acebase_core_1.proxyAccess,
+    DataSnapshotsArray: acebase_core_1.DataSnapshotsArray,
 };
 // Expose classes to window.acebase:
 window.acebase = acebase;
@@ -6275,8 +6208,27 @@ window.acebase = acebase;
 window.AceBase = acebase_browser_1.BrowserAceBase;
 // Expose classes for module imports:
 exports.default = acebase;
+var acebase_local_2 = require("./acebase-local");
+Object.defineProperty(exports, "AceBaseLocalSettings", { enumerable: true, get: function () { return acebase_local_2.AceBaseLocalSettings; } });
+Object.defineProperty(exports, "LocalStorageSettings", { enumerable: true, get: function () { return acebase_local_2.LocalStorageSettings; } });
+Object.defineProperty(exports, "IndexedDBStorageSettings", { enumerable: true, get: function () { return acebase_local_2.IndexedDBStorageSettings; } });
+var binary_1 = require("./storage/binary");
+Object.defineProperty(exports, "AceBaseStorageSettings", { enumerable: true, get: function () { return binary_1.AceBaseStorageSettings; } });
+var sqlite_1 = require("./storage/sqlite");
+Object.defineProperty(exports, "SQLiteStorageSettings", { enumerable: true, get: function () { return sqlite_1.SQLiteStorageSettings; } });
+var mssql_1 = require("./storage/mssql");
+Object.defineProperty(exports, "MSSQLStorageSettings", { enumerable: true, get: function () { return mssql_1.MSSQLStorageSettings; } });
+var custom_2 = require("./storage/custom");
+Object.defineProperty(exports, "CustomStorageTransaction", { enumerable: true, get: function () { return custom_2.CustomStorageTransaction; } });
+Object.defineProperty(exports, "CustomStorageSettings", { enumerable: true, get: function () { return custom_2.CustomStorageSettings; } });
+Object.defineProperty(exports, "CustomStorageHelpers", { enumerable: true, get: function () { return custom_2.CustomStorageHelpers; } });
+Object.defineProperty(exports, "ICustomStorageNode", { enumerable: true, get: function () { return custom_2.ICustomStorageNode; } });
+Object.defineProperty(exports, "ICustomStorageNodeMetaData", { enumerable: true, get: function () { return custom_2.ICustomStorageNodeMetaData; } });
+var storage_1 = require("./storage");
+Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return storage_1.StorageSettings; } });
+Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return storage_1.SchemaValidationError; } });
 
-},{"./acebase-browser":28,"./acebase-local":29,"./storage/custom":45,"acebase-core":12}],33:[function(require,module,exports){
+},{"./acebase-browser":28,"./acebase-local":29,"./storage":50,"./storage/binary":40,"./storage/custom":45,"./storage/mssql":40,"./storage/sqlite":40,"acebase-core":12}],33:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IPCPeer = void 0;
@@ -8397,15 +8349,13 @@ class CustomStorageSettings extends index_1.StorageSettings {
     constructor(settings) {
         super(settings);
         /**
-         * Whether default node locking should be used. Set to false if your storage backend disallows multiple simultanious write transactions (eg IndexedDB). Set to true if your storage backend does not support transactions (eg LocalStorage) or allows multiple simultanious write transactions (eg AceBase binary).
+         * Whether default node locking should be used.
+         * Set to false if your storage backend disallows multiple simultanious write transactions.
+         * Set to true if your storage backend does not support transactions (eg LocalStorage) or allows
+         * multiple simultanious write transactions (eg AceBase binary).
          * @default true
          */
         this.locking = true;
-        /**
-         * If default node locking is used, timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
-         * @default 120
-         */
-        this.lockTimeout = 120;
         if (typeof settings !== 'object') {
             throw new Error('settings missing');
         }
@@ -8478,8 +8428,8 @@ class CustomStorageNodeInfo extends node_info_1.NodeInfo {
 }
 exports.CustomStorageNodeInfo = CustomStorageNodeInfo;
 class CustomStorage extends index_1.Storage {
-    constructor(dbname, settings) {
-        super(dbname, settings);
+    constructor(dbname, settings, env) {
+        super(dbname, settings, env);
         this._customImplementation = settings;
         this._init();
     }
@@ -8501,6 +8451,9 @@ class CustomStorage extends index_1.Storage {
             await this.indexes.load();
         }
         this.emit('ready');
+    }
+    throwImplementationError(message) {
+        throw new Error(`CustomStorage "${this._customImplementation.name}" ${message}`);
     }
     _storeNode(path, node, options) {
         // serialize the value to store
@@ -8612,7 +8565,7 @@ class CustomStorage extends index_1.Storage {
             return null;
         }
         if (typeof node !== 'object') {
-            throw new Error(`CustomStorageTransaction.get must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
+            this.throwImplementationError(`transaction.get must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
         }
         this._processReadNodeValue(node);
         return node;
@@ -8790,13 +8743,13 @@ class CustomStorage extends index_1.Storage {
                     checkExecuted = true;
                     if (!transaction.production && !pathInfo.isParentOf(childPath)) {
                         // Double check failed
-                        throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
+                        this.throwImplementationError(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
                     }
                     return true;
                 };
                 const addChildPath = (childPath) => {
                     if (!checkExecuted) {
-                        throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                        this.throwImplementationError(`childrenOf did not call checkCallback before addCallback`);
                     }
                     const key = acebase_core_1.PathInfo.get(childPath).key;
                     keys.push(key.toString()); // .toString to make sure all keys are compared as strings
@@ -8925,13 +8878,13 @@ class CustomStorage extends index_1.Storage {
             checkExecuted = true;
             if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
                 // Double check failed
-                throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
+                this.throwImplementationError(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
             }
             return true;
         };
         const addDescendant = (descPath) => {
             if (!checkExecuted) {
-                throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+                this.throwImplementationError(`descendantsOf did not call checkCallback before addCallback`);
             }
             deletePaths.push(descPath);
             return true;
@@ -9004,7 +8957,7 @@ class CustomStorage extends index_1.Storage {
                         checkExecuted = true;
                         if (!transaction.production && !pathInfo.isParentOf(childPath)) {
                             // Double check failed
-                            throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
+                            this.throwImplementationError(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
                         }
                         if (options.keyFilter) {
                             const key = acebase_core_1.PathInfo.get(childPath).key;
@@ -9014,7 +8967,7 @@ class CustomStorage extends index_1.Storage {
                     };
                     const addChildNode = (childPath, node) => {
                         if (!checkExecuted) {
-                            throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                            this.throwImplementationError(`childrenOf did not call checkCallback before addCallback`);
                         }
                         const key = acebase_core_1.PathInfo.get(childPath).key;
                         const info = new CustomStorageNodeInfo({
@@ -9048,15 +9001,6 @@ class CustomStorage extends index_1.Storage {
                 }
                 throw err;
             }
-            // })
-            // .then(() => {
-            //     lock.release();
-            //     return canceled;
-            // })
-            // .catch(err => {
-            //     lock.release();
-            //     throw err;
-            // });
         }; // start()
         return generator;
     }
@@ -9064,10 +9008,6 @@ class CustomStorage extends index_1.Storage {
         // path = path.replace(/'/g, '');  // prevent sql injection, remove single quotes
         options = options || {};
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
-        // let lock;
-        // return this.nodeLocker.lock(path, tid, false, 'getNode')
-        // .then(async l => {
-        //     lock = l;
         try {
             const node = await (async () => {
                 // Get path, path/* and path[*
@@ -9162,7 +9102,7 @@ class CustomStorage extends index_1.Storage {
                     checkExecuted = true;
                     if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
                         // Double check failed
-                        throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
+                        this.throwImplementationError(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
                     }
                     if (!filtered) {
                         return true;
@@ -9190,7 +9130,7 @@ class CustomStorage extends index_1.Storage {
                 const addDescendant = (descPath, node) => {
                     // console.warn(`Adding descendant "${descPath}"`);
                     if (!checkExecuted) {
-                        throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+                        this.throwImplementationError('descendantsOf did not call checkCallback before addCallback');
                     }
                     if (options.child_objects === false && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(node.type)) {
                         // child objects are filtered out, but this one got through because includeDescendantCheck did not have access to its metadata,
@@ -9261,7 +9201,7 @@ class CustomStorage extends index_1.Storage {
                                 else {
                                     Object.keys(nodeValue).forEach(childKey => {
                                         if (childKey in parent[key]) {
-                                            throw new Error(`Custom storage merge error: child key "${childKey}" is in parent value already! Make sure the get/childrenOf/descendantsOf methods of the custom storage class return values that can be modified by AceBase without affecting the stored source`);
+                                            this.throwImplementationError(`Custom storage merge error: child key "${childKey}" is in parent value already! Make sure the get/childrenOf/descendantsOf methods of the custom storage class return values that can be modified by AceBase without affecting the stored source`);
                                         }
                                         parent[key][childKey] = nodeValue[childKey];
                                     });
@@ -9275,7 +9215,7 @@ class CustomStorage extends index_1.Storage {
                     }
                 }
                 else if (descRows.length > 0) {
-                    throw new Error(`multiple records found for non-object value!`);
+                    this.throwImplementationError(`multiple records found for non-object value!`);
                 }
                 // Post process filters to remove any data that got through because they were
                 // not stored in dedicated records. This will happen with smaller values because
@@ -9490,7 +9430,228 @@ class CustomStorage extends index_1.Storage {
 }
 exports.CustomStorage = CustomStorage;
 
-},{"../../node-address":35,"../../node-errors":36,"../../node-info":37,"../../node-lock":38,"../../node-value-types":39,"../index":46,"./helpers":44,"acebase-core":12}],46:[function(require,module,exports){
+},{"../../node-address":35,"../../node-errors":36,"../../node-info":37,"../../node-lock":38,"../../node-value-types":39,"../index":50,"./helpers":44,"acebase-core":12}],46:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.IndexedDBStorageSettings = void 0;
+const __1 = require("../..");
+class IndexedDBStorageSettings extends __1.StorageSettings {
+    constructor(settings) {
+        super(settings);
+        /**
+         * Whether to enable cross-tab synchronization
+         * @default false
+         */
+        this.multipleTabs = false;
+        /**
+         * How many seconds to keep node info in memory, to speed up IndexedDB performance.
+         * @default 60
+         */
+        this.cacheSeconds = 60;
+        /**
+         * You can turn this on if you are a sponsor
+         * @default false
+         */
+        this.sponsor = false;
+        if (typeof settings.logLevel === 'string') {
+            this.logLevel = settings.logLevel;
+        }
+        if (typeof settings.multipleTabs === 'boolean') {
+            this.multipleTabs = settings.multipleTabs;
+        }
+        if (typeof settings.cacheSeconds === 'number') {
+            this.cacheSeconds = settings.cacheSeconds;
+        }
+        if (typeof settings.sponsor === 'boolean') {
+            this.sponsor = settings.sponsor;
+        }
+        ['type', 'ipc', 'path'].forEach((prop) => {
+            if (prop in settings) {
+                console.warn(`${prop} setting is not supported for AceBase IndexedDBStorage`);
+            }
+        });
+    }
+}
+exports.IndexedDBStorageSettings = IndexedDBStorageSettings;
+
+},{"../..":50}],47:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createLocalStorageInstance = exports.LocalStorageTransaction = exports.LocalStorageSettings = void 0;
+const __1 = require("..");
+const __2 = require("../../..");
+const settings_1 = require("./settings");
+Object.defineProperty(exports, "LocalStorageSettings", { enumerable: true, get: function () { return settings_1.LocalStorageSettings; } });
+const transaction_1 = require("./transaction");
+Object.defineProperty(exports, "LocalStorageTransaction", { enumerable: true, get: function () { return transaction_1.LocalStorageTransaction; } });
+function createLocalStorageInstance(dbname, init = {}) {
+    const settings = new settings_1.LocalStorageSettings(init);
+    // Determine whether to use localStorage or sessionStorage
+    const localStorage = settings.provider ? settings.provider : settings.temp ? window.localStorage : window.sessionStorage;
+    // Setup our CustomStorageSettings
+    const storageSettings = new __1.CustomStorageSettings({
+        name: 'LocalStorage',
+        locking: true,
+        removeVoidProperties: settings.removeVoidProperties,
+        maxInlineValueSize: settings.maxInlineValueSize,
+        ready() {
+            // LocalStorage is always ready
+            return Promise.resolve();
+        },
+        getTransaction(target) {
+            // Create an instance of our transaction class
+            const context = {
+                debug: true,
+                dbname,
+                localStorage,
+            };
+            const transaction = new transaction_1.LocalStorageTransaction(context, target);
+            return Promise.resolve(transaction);
+        },
+    });
+    const db = new __2.AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
+    db.settings.ipcEvents = settings.multipleTabs === true;
+    return db;
+}
+exports.createLocalStorageInstance = createLocalStorageInstance;
+
+},{"..":45,"../../..":32,"./settings":48,"./transaction":49}],48:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LocalStorageSettings = void 0;
+const __1 = require("../..");
+class LocalStorageSettings extends __1.StorageSettings {
+    constructor(settings) {
+        super(settings);
+        /**
+         * whether to use sessionStorage instead of localStorage
+         * @default false
+         */
+        this.temp = false;
+        /**
+         * Whether to enable cross-tab synchronization
+         * @default false
+         */
+        this.multipleTabs = false;
+        if (typeof settings.temp === 'boolean') {
+            this.temp = settings.temp;
+        }
+        if (typeof settings.provider === 'object') {
+            this.provider = settings.provider;
+        }
+        if (typeof settings.multipleTabs === 'boolean') {
+            this.multipleTabs = settings.multipleTabs;
+        }
+        if (typeof settings.logLevel === 'string') {
+            this.logLevel = settings.logLevel;
+        }
+        if (typeof settings.sponsor === 'boolean') {
+            this.sponsor = settings.sponsor;
+        }
+        ['type', 'ipc', 'path'].forEach((prop) => {
+            if (prop in settings) {
+                console.warn(`${prop} setting is not supported for AceBase LocalStorage`);
+            }
+        });
+    }
+}
+exports.LocalStorageSettings = LocalStorageSettings;
+
+},{"../..":50}],49:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LocalStorageTransaction = void 0;
+const __1 = require("..");
+// Setup CustomStorageTransaction for browser's LocalStorage
+class LocalStorageTransaction extends __1.CustomStorageTransaction {
+    constructor(context, target) {
+        super(target);
+        this.context = context;
+        this._storageKeysPrefix = `${this.context.dbname}.acebase::`;
+    }
+    async commit() {
+        // All changes have already been committed. TODO: use same approach as IndexedDB
+    }
+    async rollback(err) {
+        // Not able to rollback changes, because we did not keep track
+    }
+    async get(path) {
+        // Gets value from localStorage, wrapped in Promise
+        const json = this.context.localStorage.getItem(this.getStorageKeyForPath(path));
+        const val = JSON.parse(json);
+        return val;
+    }
+    async set(path, val) {
+        // Sets value in localStorage, wrapped in Promise
+        const json = JSON.stringify(val);
+        this.context.localStorage.setItem(this.getStorageKeyForPath(path), json);
+    }
+    async remove(path) {
+        // Removes a value from localStorage, wrapped in Promise
+        this.context.localStorage.removeItem(this.getStorageKeyForPath(path));
+    }
+    async childrenOf(path, include, checkCallback, addCallback) {
+        // Streams all child paths
+        // Cannot query localStorage, so loop through all stored keys to find children
+        const pathInfo = __1.CustomStorageHelpers.PathInfo.get(path);
+        for (let i = 0; i < this.context.localStorage.length; i++) {
+            const key = this.context.localStorage.key(i);
+            if (!key.startsWith(this._storageKeysPrefix)) {
+                continue;
+            }
+            const otherPath = this.getPathFromStorageKey(key);
+            if (pathInfo.isParentOf(otherPath) && checkCallback(otherPath)) {
+                let node;
+                if (include.metadata || include.value) {
+                    const json = this.context.localStorage.getItem(key);
+                    node = JSON.parse(json);
+                }
+                const keepGoing = addCallback(otherPath, node);
+                if (!keepGoing) {
+                    break;
+                }
+            }
+        }
+    }
+    async descendantsOf(path, include, checkCallback, addCallback) {
+        // Streams all descendant paths
+        // Cannot query localStorage, so loop through all stored keys to find descendants
+        const pathInfo = __1.CustomStorageHelpers.PathInfo.get(path);
+        for (let i = 0; i < this.context.localStorage.length; i++) {
+            const key = this.context.localStorage.key(i);
+            if (!key.startsWith(this._storageKeysPrefix)) {
+                continue;
+            }
+            const otherPath = this.getPathFromStorageKey(key);
+            if (pathInfo.isAncestorOf(otherPath) && checkCallback(otherPath)) {
+                let node;
+                if (include.metadata || include.value) {
+                    const json = this.context.localStorage.getItem(key);
+                    node = JSON.parse(json);
+                }
+                const keepGoing = addCallback(otherPath, node);
+                if (!keepGoing) {
+                    break;
+                }
+            }
+        }
+    }
+    /**
+     * Helper function to get the path from a localStorage key
+     */
+    getPathFromStorageKey(key) {
+        return key.slice(this._storageKeysPrefix.length);
+    }
+    /**
+     * Helper function to get the localStorage key for a path
+     */
+    getStorageKeyForPath(path) {
+        return `${this._storageKeysPrefix}${path}`;
+    }
+}
+exports.LocalStorageTransaction = LocalStorageTransaction;
+
+},{"..":45}],50:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Storage = exports.StorageSettings = exports.SchemaValidationError = void 0;
@@ -9522,18 +9683,46 @@ exports.SchemaValidationError = SchemaValidationError;
  */
 class StorageSettings {
     constructor(settings = {}) {
-        this.maxInlineValueSize = typeof settings.maxInlineValueSize === 'number' ? settings.maxInlineValueSize : 50;
-        this.removeVoidProperties = settings.removeVoidProperties === true;
-        this.path = settings.path || '.';
+        /**
+         * in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
+         * @default 50
+         */
+        this.maxInlineValueSize = 50;
+        /**
+         * Instead of throwing errors on undefined values, remove the properties automatically. Default is false
+         * @default false
+         */
+        this.removeVoidProperties = false;
+        /**
+         * Target path to store database files in, default is `'.'`
+         * @default '.'
+         */
+        this.path = '.';
+        /**
+         * timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+         * @default 120
+         */
+        this.lockTimeout = 120;
+        /**
+         * optional type of storage class - used by `AceBaseStorage` to create different specific db files (data, transaction, auth etc)
+         * TODO: move to `AcebaseStorageSettings`
+         */
+        this.type = 'data';
+        if (typeof settings.maxInlineValueSize === 'number') {
+            this.maxInlineValueSize = settings.maxInlineValueSize;
+        }
+        if (typeof settings.removeVoidProperties === 'boolean') {
+            this.removeVoidProperties = settings.removeVoidProperties;
+        }
+        if (typeof settings.path === 'string') {
+            this.path = settings.path;
+        }
         if (this.path.endsWith('/')) {
             this.path = this.path.slice(0, -1);
         }
-        this.logLevel = settings.logLevel || 'log';
-        this.info = settings.info || 'realtime database';
-        this.type = settings.type || 'data';
-        this.ipc = settings.ipc;
-        this.lockTimeout = typeof settings.lockTimeout === 'number' ? settings.lockTimeout : 120;
-        this.transactions = typeof settings.transactions === 'object' ? settings.transactions : { log: false };
+        if (typeof settings.lockTimeout === 'number') {
+            this.lockTimeout = settings.lockTimeout;
+        }
     }
 }
 exports.StorageSettings = StorageSettings;
@@ -9544,7 +9733,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
      * @param name name of the database
      * @param settings instance of AceBaseStorageSettings or SQLiteStorageSettings
      */
-    constructor(name, settings) {
+    constructor(name, settings, env) {
         super();
         this.name = name;
         this.settings = settings;
@@ -9848,7 +10037,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 });
             },
         };
-        this.debug = new acebase_core_1.DebugLogger(settings.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
+        this.debug = new acebase_core_1.DebugLogger(env.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
         if (settings.ipc) {
@@ -10854,7 +11043,15 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             ? writeFn.write.bind(writeFn) // Using the "old" stream argument. Use its write method for backward compatibility
             : writeFn;
         const stringifyValue = (type, val) => {
-            const escape = (str) => str.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+            const escape = (str) => str
+                .replace(/\\/g, '\\\\') // forward slashes
+                .replace(/"/g, '\\"') // quotes
+                .replace(/\r/g, '\\r') // carriage return
+                .replace(/\n/g, '\\n') // line feed
+                .replace(/\t/g, '\\t') // tabs
+                .replace(/[\u0000-\u001f]/g, // other control characters
+            // other control characters
+            ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
             if (type === node_value_types_1.VALUE_TYPES.DATETIME) {
                 val = `"${val.toISOString()}"`;
                 if (options.type_safe) {
@@ -11511,7 +11708,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
 }
 exports.Storage = Storage;
 
-},{"../data-index":40,"../ipc":33,"../node-errors":36,"../node-info":37,"../node-value-types":39,"../promise-fs":41,"./indexes":47,"acebase-core":12}],47:[function(require,module,exports){
+},{"../data-index":40,"../ipc":33,"../node-errors":36,"../node-info":37,"../node-value-types":39,"../promise-fs":41,"./indexes":51,"acebase-core":12}],51:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;

@@ -124,15 +124,13 @@ class CustomStorageSettings extends index_1.StorageSettings {
     constructor(settings) {
         super(settings);
         /**
-         * Whether default node locking should be used. Set to false if your storage backend disallows multiple simultanious write transactions (eg IndexedDB). Set to true if your storage backend does not support transactions (eg LocalStorage) or allows multiple simultanious write transactions (eg AceBase binary).
+         * Whether default node locking should be used.
+         * Set to false if your storage backend disallows multiple simultanious write transactions.
+         * Set to true if your storage backend does not support transactions (eg LocalStorage) or allows
+         * multiple simultanious write transactions (eg AceBase binary).
          * @default true
          */
         this.locking = true;
-        /**
-         * If default node locking is used, timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
-         * @default 120
-         */
-        this.lockTimeout = 120;
         if (typeof settings !== 'object') {
             throw new Error('settings missing');
         }
@@ -205,8 +203,8 @@ class CustomStorageNodeInfo extends node_info_1.NodeInfo {
 }
 exports.CustomStorageNodeInfo = CustomStorageNodeInfo;
 class CustomStorage extends index_1.Storage {
-    constructor(dbname, settings) {
-        super(dbname, settings);
+    constructor(dbname, settings, env) {
+        super(dbname, settings, env);
         this._customImplementation = settings;
         this._init();
     }
@@ -228,6 +226,9 @@ class CustomStorage extends index_1.Storage {
             await this.indexes.load();
         }
         this.emit('ready');
+    }
+    throwImplementationError(message) {
+        throw new Error(`CustomStorage "${this._customImplementation.name}" ${message}`);
     }
     _storeNode(path, node, options) {
         // serialize the value to store
@@ -339,7 +340,7 @@ class CustomStorage extends index_1.Storage {
             return null;
         }
         if (typeof node !== 'object') {
-            throw new Error(`CustomStorageTransaction.get must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
+            this.throwImplementationError(`transaction.get must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
         }
         this._processReadNodeValue(node);
         return node;
@@ -517,13 +518,13 @@ class CustomStorage extends index_1.Storage {
                     checkExecuted = true;
                     if (!transaction.production && !pathInfo.isParentOf(childPath)) {
                         // Double check failed
-                        throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
+                        this.throwImplementationError(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
                     }
                     return true;
                 };
                 const addChildPath = (childPath) => {
                     if (!checkExecuted) {
-                        throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                        this.throwImplementationError(`childrenOf did not call checkCallback before addCallback`);
                     }
                     const key = acebase_core_1.PathInfo.get(childPath).key;
                     keys.push(key.toString()); // .toString to make sure all keys are compared as strings
@@ -652,13 +653,13 @@ class CustomStorage extends index_1.Storage {
             checkExecuted = true;
             if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
                 // Double check failed
-                throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
+                this.throwImplementationError(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
             }
             return true;
         };
         const addDescendant = (descPath) => {
             if (!checkExecuted) {
-                throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+                this.throwImplementationError(`descendantsOf did not call checkCallback before addCallback`);
             }
             deletePaths.push(descPath);
             return true;
@@ -731,7 +732,7 @@ class CustomStorage extends index_1.Storage {
                         checkExecuted = true;
                         if (!transaction.production && !pathInfo.isParentOf(childPath)) {
                             // Double check failed
-                            throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
+                            this.throwImplementationError(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
                         }
                         if (options.keyFilter) {
                             const key = acebase_core_1.PathInfo.get(childPath).key;
@@ -741,7 +742,7 @@ class CustomStorage extends index_1.Storage {
                     };
                     const addChildNode = (childPath, node) => {
                         if (!checkExecuted) {
-                            throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                            this.throwImplementationError(`childrenOf did not call checkCallback before addCallback`);
                         }
                         const key = acebase_core_1.PathInfo.get(childPath).key;
                         const info = new CustomStorageNodeInfo({
@@ -775,15 +776,6 @@ class CustomStorage extends index_1.Storage {
                 }
                 throw err;
             }
-            // })
-            // .then(() => {
-            //     lock.release();
-            //     return canceled;
-            // })
-            // .catch(err => {
-            //     lock.release();
-            //     throw err;
-            // });
         }; // start()
         return generator;
     }
@@ -791,10 +783,6 @@ class CustomStorage extends index_1.Storage {
         // path = path.replace(/'/g, '');  // prevent sql injection, remove single quotes
         options = options || {};
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
-        // let lock;
-        // return this.nodeLocker.lock(path, tid, false, 'getNode')
-        // .then(async l => {
-        //     lock = l;
         try {
             const node = await (async () => {
                 // Get path, path/* and path[*
@@ -889,7 +877,7 @@ class CustomStorage extends index_1.Storage {
                     checkExecuted = true;
                     if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
                         // Double check failed
-                        throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
+                        this.throwImplementationError(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
                     }
                     if (!filtered) {
                         return true;
@@ -917,7 +905,7 @@ class CustomStorage extends index_1.Storage {
                 const addDescendant = (descPath, node) => {
                     // console.warn(`Adding descendant "${descPath}"`);
                     if (!checkExecuted) {
-                        throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+                        this.throwImplementationError('descendantsOf did not call checkCallback before addCallback');
                     }
                     if (options.child_objects === false && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(node.type)) {
                         // child objects are filtered out, but this one got through because includeDescendantCheck did not have access to its metadata,
@@ -988,7 +976,7 @@ class CustomStorage extends index_1.Storage {
                                 else {
                                     Object.keys(nodeValue).forEach(childKey => {
                                         if (childKey in parent[key]) {
-                                            throw new Error(`Custom storage merge error: child key "${childKey}" is in parent value already! Make sure the get/childrenOf/descendantsOf methods of the custom storage class return values that can be modified by AceBase without affecting the stored source`);
+                                            this.throwImplementationError(`Custom storage merge error: child key "${childKey}" is in parent value already! Make sure the get/childrenOf/descendantsOf methods of the custom storage class return values that can be modified by AceBase without affecting the stored source`);
                                         }
                                         parent[key][childKey] = nodeValue[childKey];
                                     });
@@ -1002,7 +990,7 @@ class CustomStorage extends index_1.Storage {
                     }
                 }
                 else if (descRows.length > 0) {
-                    throw new Error(`multiple records found for non-object value!`);
+                    this.throwImplementationError(`multiple records found for non-object value!`);
                 }
                 // Post process filters to remove any data that got through because they were
                 // not stored in dedicated records. This will happen with smaller values because

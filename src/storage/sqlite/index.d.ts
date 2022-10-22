@@ -1,4 +1,4 @@
-import { Storage, StorageSettings } from '..';
+import { Storage, StorageEnv, StorageSettings } from '..';
 import { NodeInfo } from '../../node-info';
 import { VALUE_TYPES } from '../../node-value-types';
 import { NodeAddress } from '../../node-address';
@@ -24,7 +24,7 @@ export declare class SQLiteStorage extends Storage {
      * @param name database name
      * @param settings
      */
-    constructor(name: string, settings?: Partial<SQLiteStorageSettings>);
+    constructor(name: string, settings: Partial<SQLiteStorageSettings>, env: StorageEnv);
     _get(sql: string, params?: any): Promise<any[]>;
     _getOne(sql: string, params?: any): Promise<any>;
     _exec(sql: string, params?: any): Promise<SQLiteStorage>;

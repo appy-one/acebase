@@ -18,7 +18,7 @@
 
 */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.proxyAccess = exports.ID = exports.CustomStorageHelpers = exports.CustomStorageTransaction = exports.CustomStorageSettings = exports.TypeMappings = exports.PathReference = exports.EventSubscription = exports.DataSnapshot = exports.DataReference = exports.AceBaseLocalSettings = exports.AceBase = void 0;
+exports.SchemaValidationError = exports.StorageSettings = exports.ICustomStorageNodeMetaData = exports.ICustomStorageNode = exports.CustomStorageHelpers = exports.CustomStorageSettings = exports.CustomStorageTransaction = exports.MSSQLStorageSettings = exports.SQLiteStorageSettings = exports.AceBaseStorageSettings = exports.IndexedDBStorageSettings = exports.LocalStorageSettings = exports.AceBaseLocalSettings = exports.AceBase = exports.PartialArray = exports.proxyAccess = exports.ID = exports.ObjectCollection = exports.TypeMappings = exports.PathReference = exports.EventSubscription = exports.EventStream = exports.DataReferencesArray = exports.DataSnapshotsArray = exports.DataReference = exports.DataSnapshot = void 0;
 const acebase_core_1 = require("acebase-core");
 Object.defineProperty(exports, "DataReference", { enumerable: true, get: function () { return acebase_core_1.DataReference; } });
 Object.defineProperty(exports, "DataSnapshot", { enumerable: true, get: function () { return acebase_core_1.DataSnapshot; } });
@@ -27,14 +27,15 @@ Object.defineProperty(exports, "PathReference", { enumerable: true, get: functio
 Object.defineProperty(exports, "TypeMappings", { enumerable: true, get: function () { return acebase_core_1.TypeMappings; } });
 Object.defineProperty(exports, "ID", { enumerable: true, get: function () { return acebase_core_1.ID; } });
 Object.defineProperty(exports, "proxyAccess", { enumerable: true, get: function () { return acebase_core_1.proxyAccess; } });
+Object.defineProperty(exports, "DataSnapshotsArray", { enumerable: true, get: function () { return acebase_core_1.DataSnapshotsArray; } });
+Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return acebase_core_1.ObjectCollection; } });
+Object.defineProperty(exports, "DataReferencesArray", { enumerable: true, get: function () { return acebase_core_1.DataReferencesArray; } });
+Object.defineProperty(exports, "EventStream", { enumerable: true, get: function () { return acebase_core_1.EventStream; } });
+Object.defineProperty(exports, "PartialArray", { enumerable: true, get: function () { return acebase_core_1.PartialArray; } });
 const acebase_local_1 = require("./acebase-local");
-Object.defineProperty(exports, "AceBaseLocalSettings", { enumerable: true, get: function () { return acebase_local_1.AceBaseLocalSettings; } });
 const acebase_browser_1 = require("./acebase-browser");
 Object.defineProperty(exports, "AceBase", { enumerable: true, get: function () { return acebase_browser_1.BrowserAceBase; } });
 const custom_1 = require("./storage/custom");
-Object.defineProperty(exports, "CustomStorageSettings", { enumerable: true, get: function () { return custom_1.CustomStorageSettings; } });
-Object.defineProperty(exports, "CustomStorageTransaction", { enumerable: true, get: function () { return custom_1.CustomStorageTransaction; } });
-Object.defineProperty(exports, "CustomStorageHelpers", { enumerable: true, get: function () { return custom_1.CustomStorageHelpers; } });
 const acebase = {
     AceBase: acebase_browser_1.BrowserAceBase,
     AceBaseLocalSettings: acebase_local_1.AceBaseLocalSettings,
@@ -48,6 +49,7 @@ const acebase = {
     CustomStorageHelpers: custom_1.CustomStorageHelpers,
     ID: acebase_core_1.ID,
     proxyAccess: acebase_core_1.proxyAccess,
+    DataSnapshotsArray: acebase_core_1.DataSnapshotsArray,
 };
 // Expose classes to window.acebase:
 window.acebase = acebase;
@@ -55,4 +57,23 @@ window.acebase = acebase;
 window.AceBase = acebase_browser_1.BrowserAceBase;
 // Expose classes for module imports:
 exports.default = acebase;
+var acebase_local_2 = require("./acebase-local");
+Object.defineProperty(exports, "AceBaseLocalSettings", { enumerable: true, get: function () { return acebase_local_2.AceBaseLocalSettings; } });
+Object.defineProperty(exports, "LocalStorageSettings", { enumerable: true, get: function () { return acebase_local_2.LocalStorageSettings; } });
+Object.defineProperty(exports, "IndexedDBStorageSettings", { enumerable: true, get: function () { return acebase_local_2.IndexedDBStorageSettings; } });
+var binary_1 = require("./storage/binary");
+Object.defineProperty(exports, "AceBaseStorageSettings", { enumerable: true, get: function () { return binary_1.AceBaseStorageSettings; } });
+var sqlite_1 = require("./storage/sqlite");
+Object.defineProperty(exports, "SQLiteStorageSettings", { enumerable: true, get: function () { return sqlite_1.SQLiteStorageSettings; } });
+var mssql_1 = require("./storage/mssql");
+Object.defineProperty(exports, "MSSQLStorageSettings", { enumerable: true, get: function () { return mssql_1.MSSQLStorageSettings; } });
+var custom_2 = require("./storage/custom");
+Object.defineProperty(exports, "CustomStorageTransaction", { enumerable: true, get: function () { return custom_2.CustomStorageTransaction; } });
+Object.defineProperty(exports, "CustomStorageSettings", { enumerable: true, get: function () { return custom_2.CustomStorageSettings; } });
+Object.defineProperty(exports, "CustomStorageHelpers", { enumerable: true, get: function () { return custom_2.CustomStorageHelpers; } });
+Object.defineProperty(exports, "ICustomStorageNode", { enumerable: true, get: function () { return custom_2.ICustomStorageNode; } });
+Object.defineProperty(exports, "ICustomStorageNodeMetaData", { enumerable: true, get: function () { return custom_2.ICustomStorageNodeMetaData; } });
+var storage_1 = require("./storage");
+Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return storage_1.StorageSettings; } });
+Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return storage_1.SchemaValidationError; } });
 //# sourceMappingURL=browser.js.map

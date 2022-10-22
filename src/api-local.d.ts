@@ -1,14 +1,14 @@
 import { AceBaseBase, IStreamLike, Api, EventSubscriptionCallback, ReflectionType, StreamReadFunction, StreamWriteFunction, TransactionLogFilter, LoggingLevel, Query, QueryOptions } from 'acebase-core';
-import { Storage, StorageSettings } from './storage';
+import { Storage } from './storage';
 import { CreateIndexOptions } from './storage/indexes';
+import { AceBaseLocalSettings } from '.';
 export declare class LocalApi extends Api {
     db: AceBaseBase;
     storage: Storage;
     logLevel: LoggingLevel;
-    constructor(dbname: string, settings: {
+    constructor(dbname: string, init: {
         db: AceBaseBase;
-        storage: StorageSettings;
-        logLevel?: LoggingLevel;
+        settings: AceBaseLocalSettings;
     }, readyCallback: () => any);
     stats(options?: any): Promise<any>;
     subscribe(path: string, event: string, callback: EventSubscriptionCallback): void;

@@ -29,18 +29,46 @@ exports.SchemaValidationError = SchemaValidationError;
  */
 class StorageSettings {
     constructor(settings = {}) {
-        this.maxInlineValueSize = typeof settings.maxInlineValueSize === 'number' ? settings.maxInlineValueSize : 50;
-        this.removeVoidProperties = settings.removeVoidProperties === true;
-        this.path = settings.path || '.';
+        /**
+         * in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
+         * @default 50
+         */
+        this.maxInlineValueSize = 50;
+        /**
+         * Instead of throwing errors on undefined values, remove the properties automatically. Default is false
+         * @default false
+         */
+        this.removeVoidProperties = false;
+        /**
+         * Target path to store database files in, default is `'.'`
+         * @default '.'
+         */
+        this.path = '.';
+        /**
+         * timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+         * @default 120
+         */
+        this.lockTimeout = 120;
+        /**
+         * optional type of storage class - used by `AceBaseStorage` to create different specific db files (data, transaction, auth etc)
+         * TODO: move to `AcebaseStorageSettings`
+         */
+        this.type = 'data';
+        if (typeof settings.maxInlineValueSize === 'number') {
+            this.maxInlineValueSize = settings.maxInlineValueSize;
+        }
+        if (typeof settings.removeVoidProperties === 'boolean') {
+            this.removeVoidProperties = settings.removeVoidProperties;
+        }
+        if (typeof settings.path === 'string') {
+            this.path = settings.path;
+        }
         if (this.path.endsWith('/')) {
             this.path = this.path.slice(0, -1);
         }
-        this.logLevel = settings.logLevel || 'log';
-        this.info = settings.info || 'realtime database';
-        this.type = settings.type || 'data';
-        this.ipc = settings.ipc;
-        this.lockTimeout = typeof settings.lockTimeout === 'number' ? settings.lockTimeout : 120;
-        this.transactions = typeof settings.transactions === 'object' ? settings.transactions : { log: false };
+        if (typeof settings.lockTimeout === 'number') {
+            this.lockTimeout = settings.lockTimeout;
+        }
     }
 }
 exports.StorageSettings = StorageSettings;
@@ -51,7 +79,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
      * @param name name of the database
      * @param settings instance of AceBaseStorageSettings or SQLiteStorageSettings
      */
-    constructor(name, settings) {
+    constructor(name, settings, env) {
         super();
         this.name = name;
         this.settings = settings;
@@ -355,7 +383,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 });
             },
         };
-        this.debug = new acebase_core_1.DebugLogger(settings.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
+        this.debug = new acebase_core_1.DebugLogger(env.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
         if (settings.ipc) {
@@ -1361,7 +1389,15 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             ? writeFn.write.bind(writeFn) // Using the "old" stream argument. Use its write method for backward compatibility
             : writeFn;
         const stringifyValue = (type, val) => {
-            const escape = (str) => str.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+            const escape = (str) => str
+                .replace(/\\/g, '\\\\') // forward slashes
+                .replace(/"/g, '\\"') // quotes
+                .replace(/\r/g, '\\r') // carriage return
+                .replace(/\n/g, '\\n') // line feed
+                .replace(/\t/g, '\\t') // tabs
+                .replace(/[\u0000-\u001f]/g, // other control characters
+            // other control characters
+            ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
             if (type === node_value_types_1.VALUE_TYPES.DATETIME) {
                 val = `"${val.toISOString()}"`;
                 if (options.type_safe) {

@@ -2,7 +2,7 @@
 import { BinaryNodeAddress } from './node-address';
 import { NodeCache } from '../../node-cache';
 import { BinaryNodeInfo } from './node-info';
-import { InternalDataRetrievalOptions, Storage, StorageSettings } from '../index';
+import { InternalDataRetrievalOptions, Storage, StorageEnv, StorageSettings } from '../index';
 export interface IAppliedMutations {
     path: string;
     list: Array<{
@@ -38,7 +38,7 @@ export declare class AceBaseStorageSettings extends StorageSettings {
      * Use future FST version (not implemented yet)
      */
     fst2: boolean;
-    constructor(settings: Partial<AceBaseStorageSettings>);
+    constructor(settings?: Partial<AceBaseStorageSettings>);
 }
 declare class AceBaseTransactionLogSettings {
     /**
@@ -65,7 +65,7 @@ declare class AceBaseTransactionLogSettings {
      *
      * Still under development, disabled by default. See transaction-logs.spec for tests
      */
-    constructor(settings: Partial<AceBaseTransactionLogSettings>);
+    constructor(settings?: Partial<AceBaseTransactionLogSettings>);
 }
 export declare class AceBaseStorage extends Storage {
     settings: AceBaseStorageSettings;
@@ -83,7 +83,7 @@ export declare class AceBaseStorage extends Storage {
     /**
      * Stores data in a binary file
      */
-    constructor(name: string, settings: AceBaseStorageSettings);
+    constructor(name: string, settings: AceBaseStorageSettings, env: StorageEnv);
     get isReady(): boolean;
     get fileName(): string;
     isLocked: (forUs?: boolean) => boolean;

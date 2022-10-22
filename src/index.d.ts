@@ -16,10 +16,10 @@
    ________________________________________________________________________________
 
 */
-export { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMappings, ID, proxyAccess, ObjectCollection, PartialArray } from 'acebase-core';
-export { AceBase, AceBaseLocalSettings } from './acebase-local';
+export { DataSnapshot, DataReference, DataSnapshotsArray, DataReferencesArray, EventStream, EventSubscription, PathReference, TypeMappings, TypeMappingOptions, IReflectionNodeInfo, IReflectionChildrenInfo, IStreamLike, ILiveDataProxy, ILiveDataProxyValue, IObjectCollection, ObjectCollection, ID, proxyAccess, PartialArray, } from 'acebase-core';
+export { AceBase, AceBaseLocalSettings, LocalStorageSettings, IndexedDBStorageSettings, } from './acebase-local';
 export { AceBaseStorageSettings } from './storage/binary';
 export { SQLiteStorageSettings } from './storage/sqlite';
 export { MSSQLStorageSettings } from './storage/mssql';
-export { CustomStorageTransaction, CustomStorageSettings, CustomStorageHelpers } from './storage/custom';
-export { SchemaValidationError } from './storage';
+export { CustomStorageTransaction, CustomStorageSettings, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData, } from './storage/custom';
+export { StorageSettings, TransactionLogSettings, IPCClientSettings, SchemaValidationError, } from './storage';

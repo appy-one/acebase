@@ -18,7 +18,7 @@ const node_lock_1 = require("../../node-lock");
 const { concatTypedArrays, bytesToNumber, bytesToBigint, numberToBytes, bigintToBytes, encodeString, decodeString, cloneObject } = acebase_core_1.Utils;
 const REMOVED_CHILD_DATA_IMPLEMENTED = false; // not used yet - allows marking of deleted children without having to rewrite the whole node
 class AceBaseStorageSettings extends index_1.StorageSettings {
-    constructor(settings) {
+    constructor(settings = {}) {
         super(settings);
         /**
          * record size in bytes, defaults to 128 (recommended). Max is 65536
@@ -42,11 +42,18 @@ class AceBaseStorageSettings extends index_1.StorageSettings {
          * Use future FST version (not implemented yet)
          */
         this.fst2 = false;
-        settings = settings || {};
-        this.recordSize = settings.recordSize || 128;
-        this.pageSize = settings.pageSize || 1024;
-        this.type = settings.type || 'data';
-        this.readOnly = settings.readOnly === true;
+        if (typeof settings.recordSize === 'number') {
+            this.recordSize = settings.recordSize;
+        }
+        if (typeof settings.pageSize === 'number') {
+            this.pageSize = settings.pageSize;
+        }
+        if (typeof settings.type === 'string') {
+            this.type = settings.type;
+        }
+        if (typeof settings.readOnly === 'boolean') {
+            this.readOnly = settings.readOnly;
+        }
         this.transactions = new AceBaseTransactionLogSettings(settings.transactions);
     }
 }
@@ -62,7 +69,7 @@ class AceBaseTransactionLogSettings {
      *
      * Still under development, disabled by default. See transaction-logs.spec for tests
      */
-    constructor(settings) {
+    constructor(settings = {}) {
         /**
          * Whether transaction logging is enabled.
          * @default false
@@ -77,19 +84,24 @@ class AceBaseTransactionLogSettings {
          * Whether write operations wait for the transaction to be logged before resolving their promises.
          */
         this.noWait = false;
-        settings = settings || {};
-        this.log = settings.log === true; //!== false;
-        this.maxAge = typeof settings.maxAge === 'number' ? settings.maxAge : 30; // 30 days
-        this.noWait = settings.noWait === true;
+        if (typeof settings.log === 'boolean') {
+            this.log = settings.log;
+        }
+        if (typeof settings.maxAge === 'number') {
+            this.maxAge = settings.maxAge;
+        }
+        if (typeof settings.noWait === 'boolean') {
+            this.noWait = settings.noWait;
+        }
     }
 }
 class AceBaseStorage extends index_1.Storage {
     /**
      * Stores data in a binary file
      */
-    constructor(name, settings) {
+    constructor(name, settings, env) {
         console.assert(settings instanceof AceBaseStorageSettings, 'settings must be an instance of AceBaseStorageSettings');
-        super(name, settings);
+        super(name, settings, env);
         this._ready = false;
         this.nodeCache = new node_cache_1.NodeCache();
         if (settings.maxInlineValueSize > 64) {
@@ -112,8 +124,8 @@ class AceBaseStorage extends index_1.Storage {
         this.type = settings.type;
         if (this.type === 'data' && settings.transactions.log === true) {
             // Get/create storage for mutations logging
-            const txSettings = new AceBaseStorageSettings({ type: 'transaction', logLevel: 'error', path: settings.path, removeVoidProperties: true, transactions: settings.transactions });
-            this.txStorage = new AceBaseStorage(name, txSettings);
+            const txSettings = new AceBaseStorageSettings({ type: 'transaction', path: settings.path, removeVoidProperties: true, transactions: settings.transactions });
+            this.txStorage = new AceBaseStorage(name, txSettings, { logLevel: 'error' });
         }
         this.once('ready', () => {
             this._ready = true;

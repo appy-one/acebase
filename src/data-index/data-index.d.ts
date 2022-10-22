@@ -29,7 +29,7 @@ export declare class DataIndex {
     textLocale: string;
     textLocaleKey?: string;
     includeKeys: string[];
-    protected indexMetadataKeys: string[];
+    indexMetadataKeys: string[];
     private _buildError;
     private _updateQueue;
     private _cache;
