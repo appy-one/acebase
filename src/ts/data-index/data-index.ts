@@ -167,7 +167,7 @@ export class DataIndex {
     public textLocale: string;
     public textLocaleKey?: string;
     public includeKeys: string[];
-    protected indexMetadataKeys: string[];
+    public indexMetadataKeys: string[];
     private _buildError: Error = null;
     private _updateQueue: Array<{
         path: string;
