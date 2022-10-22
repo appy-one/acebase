@@ -1,4 +1,4 @@
-import { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, SchemaDefinition, DataRetrievalOptions, ISchemaCheckResult } from 'acebase-core';
+import { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, SchemaDefinition, DataRetrievalOptions, ISchemaCheckResult, LoggingLevel } from 'acebase-core';
 import { VALUE_TYPES } from '../node-value-types';
 import { NodeRevisionError } from '../node-errors';
 import { NodeInfo } from '../node-info';
@@ -52,7 +52,7 @@ export interface IPCClientSettings {
     /**
      * Token used in the IPC Server configuration (optional). The server will refuse connections using the wrong token.
      */
-    token: string;
+    token?: string;
 
     /**
      * Determines the role of this IPC client. Only 1 process can be assigned the 'master' role, all other processes must use the role 'worker'
@@ -70,63 +70,58 @@ export interface TransactionLogSettings {
  * Storage Settings
  */
 export class StorageSettings {
-    logLevel: 'error'|'verbose'|'log'|'warn';
 
     /**
-     *  in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
+     * in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
      * @default 50
      */
-    maxInlineValueSize: number;
+    maxInlineValueSize = 50;
 
     /**
      * Instead of throwing errors on undefined values, remove the properties automatically. Default is false
      * @default false
      */
-    removeVoidProperties: boolean;
+    removeVoidProperties = false;
 
     /**
      * Target path to store database files in, default is `'.'`
      * @default '.'
      */
-    path: string;
+    path = '.';
 
     /**
-     * optional info to be written to the console output underneith the logo
-     * @default 'realtime database'
+     * timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+     * @default 120
      */
-    info?: string;
+    lockTimeout = 120;
 
     /**
-     * optional type of storage class - used by `AceBaseStorage` to create different db files in the future (data, transaction, auth etc)
+     * optional type of storage class - used by `AceBaseStorage` to create different specific db files (data, transaction, auth etc)
      * TODO: move to `AcebaseStorageSettings`
      */
-    type?: string;
+    type = 'data';
 
     /**
-     * External IPC server configuration. You need this if you are running multiple AceBase processes using the same database files in a pm2 or cloud-based cluster so the individual processes can communicate with each other.
+     * IPC settings if you are using AceBase in pm2 or cloud-based clusters
      */
     ipc?: IPCClientSettings;
 
     /**
-     * timeout setting for read /and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
-     * @default 120
+     * Settings for optional transaction logging
      */
-    lockTimeout?: number;
-
     transactions?: TransactionLogSettings;
 
     constructor(settings: Partial<StorageSettings> = {}) {
-        this.maxInlineValueSize = typeof settings.maxInlineValueSize === 'number' ? settings.maxInlineValueSize : 50;
-        this.removeVoidProperties = settings.removeVoidProperties === true;
-        this.path = settings.path || '.';
+        if (typeof settings.maxInlineValueSize === 'number') { this.maxInlineValueSize =  settings.maxInlineValueSize; }
+        if (typeof settings.removeVoidProperties === 'boolean') { this.removeVoidProperties = settings.removeVoidProperties; }
+        if (typeof settings.path === 'string') { this.path = settings.path; }
         if (this.path.endsWith('/')) { this.path = this.path.slice(0, -1); }
-        this.logLevel = settings.logLevel || 'log';
-        this.info = settings.info || 'realtime database';
-        this.type = settings.type || 'data';
-        this.ipc = settings.ipc;
-        this.lockTimeout = typeof settings.lockTimeout === 'number' ? settings.lockTimeout : 120;
-        this.transactions = typeof settings.transactions === 'object' ? settings.transactions : { log: false };
+        if (typeof settings.lockTimeout === 'number') { this.lockTimeout = settings.lockTimeout; }
     }
+}
+
+export interface StorageEnv {
+    logLevel: LoggingLevel;
 }
 
 export type SubscriptionCallback = (err: Error, path: string, newValue: any, oldValue: any, context: any) => void;
@@ -157,9 +152,10 @@ export class Storage extends SimpleEventEmitter {
      * @param name name of the database
      * @param settings instance of AceBaseStorageSettings or SQLiteStorageSettings
      */
-    constructor(public name: string, public settings: StorageSettings) {
+    constructor(public name: string, public settings: StorageSettings, env: StorageEnv) {
         super();
-        this.debug = new DebugLogger(settings.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
+
+        this.debug = new DebugLogger(env.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
