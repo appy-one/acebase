@@ -1,5 +1,5 @@
 import { ID, PathReference, PathInfo, ascii85, ColorStyle } from 'acebase-core';
-import { Storage, StorageSettings } from '..';
+import { Storage, StorageEnv, StorageSettings } from '..';
 import { NodeInfo } from '../../node-info';
 import { VALUE_TYPES } from '../../node-value-types';
 import { NodeNotFoundError, NodeRevisionError } from '../../node-errors';
@@ -153,10 +153,10 @@ export class MSSQLStorage extends Storage {
      * @param name database name
      * @param settings settings to connect to a SQL Server database
      */
-    constructor(name: string, settings: Partial<MSSQLStorageSettings> = {}) {
+    constructor(name: string, settings: Partial<MSSQLStorageSettings>, env: StorageEnv) {
 
         settings = new MSSQLStorageSettings(settings);
-        super(name, settings as MSSQLStorageSettings);
+        super(name, settings as MSSQLStorageSettings, env);
 
         // Lazy load MSSQL so it is only `require`d once MSSQLStorage is actually requested
         if (this.settings.driver === 'native') {

@@ -1,5 +1,5 @@
 import { ID, PathReference, PathInfo, ascii85, ColorStyle } from 'acebase-core';
-import { Storage, StorageSettings } from '..';
+import { Storage, StorageEnv, StorageSettings } from '..';
 import { NodeInfo } from '../../node-info';
 import { VALUE_TYPES } from '../../node-value-types';
 import { NodeNotFoundError, NodeRevisionError } from '../../node-errors';
@@ -48,10 +48,10 @@ export class SQLiteStorage extends Storage {
      * @param name database name
      * @param settings
      */
-    constructor(name: string, settings: Partial<SQLiteStorageSettings> = { path: '.' }) {
+    constructor(name: string, settings: Partial<SQLiteStorageSettings>, env: StorageEnv) {
 
         settings = new SQLiteStorageSettings(settings);
-        super(name, settings as SQLiteStorageSettings);
+        super(name, settings as SQLiteStorageSettings, env);
 
         // Lazy load sqlite3 so it is only `require`d once SQLiteStorage is actually requested
         try {
