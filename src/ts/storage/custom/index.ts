@@ -4,7 +4,7 @@ import { NodeInfo } from '../../node-info';
 import { NodeLock, NodeLocker } from '../../node-lock';
 import { VALUE_TYPES } from '../../node-value-types';
 import { NodeNotFoundError, NodeRevisionError } from '../../node-errors';
-import { Storage, StorageSettings } from '../index';
+import { Storage, StorageEnv, StorageSettings } from '../index';
 import { CustomStorageHelpers } from './helpers';
 import { NodeAddress } from '../../node-address';
 export { CustomStorageHelpers } from './helpers';
@@ -191,16 +191,13 @@ export class CustomStorageSettings extends StorageSettings {
     name?: string;
 
     /**
-     * Whether default node locking should be used. Set to false if your storage backend disallows multiple simultanious write transactions (eg IndexedDB). Set to true if your storage backend does not support transactions (eg LocalStorage) or allows multiple simultanious write transactions (eg AceBase binary).
+     * Whether default node locking should be used.
+     * Set to false if your storage backend disallows multiple simultanious write transactions.
+     * Set to true if your storage backend does not support transactions (eg LocalStorage) or allows
+     * multiple simultanious write transactions (eg AceBase binary).
      * @default true
      */
     locking = true;
-
-    /**
-     * If default node locking is used, timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
-     * @default 120
-     */
-    lockTimeout = 120;
 
     /**
      * Function that returns a Promise that resolves once your data store backend is ready for use
@@ -298,14 +295,14 @@ export class CustomStorageNodeInfo extends NodeInfo {
 export class CustomStorage extends Storage {
     private _customImplementation: CustomStorageSettings;
 
-    constructor(dbname: string, settings: CustomStorageSettings) {
-        super(dbname, settings);
+    constructor(dbname: string, settings: CustomStorageSettings, env: StorageEnv) {
+        super(dbname, settings, env);
 
         this._customImplementation = settings;
         this._init();
     }
 
-    async _init() {
+    private async _init() {
         this.debug.log(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
         this.debug.log(`- Type: CustomStorage`.colorize(ColorStyle.dim));
         this.debug.log(`- Path: ${this.settings.path}`.colorize(ColorStyle.dim));
@@ -326,7 +323,11 @@ export class CustomStorage extends Storage {
         this.emit('ready');
     }
 
-    _storeNode(path: string, node: ICustomStorageNode, options: { transaction: CustomStorageTransaction }): void | Promise<void> {
+    private throwImplementationError(message: string) {
+        throw new Error(`CustomStorage "${this._customImplementation.name}" ${message}`);
+    }
+
+    private _storeNode(path: string, node: ICustomStorageNode, options: { transaction: CustomStorageTransaction }): void | Promise<void> {
         // serialize the value to store
         const getTypedChildValue = (val: any) => {
             if (val === null) {
@@ -381,7 +382,7 @@ export class CustomStorage extends Storage {
         return options.transaction.set(path, node);
     }
 
-    _processReadNodeValue(node: ICustomStorageNode) {
+    private _processReadNodeValue(node: ICustomStorageNode) {
 
         const getTypedChildValue = (val: { type: number; value: any }) => {
             // Typed value stored in parent record
@@ -440,19 +441,19 @@ export class CustomStorage extends Storage {
         }
     }
 
-    async _readNode(path: string, options: { transaction: CustomStorageTransaction }): Promise<ICustomStorageNode> {
+    private async _readNode(path: string, options: { transaction: CustomStorageTransaction }): Promise<ICustomStorageNode> {
         // deserialize a stored value (always an object with "type", "value", "revision", "revision_nr", "created", "modified")
         const node = await options.transaction.get(path);
         if (node === null) { return null; }
         if (typeof node !== 'object') {
-            throw new Error(`CustomStorageTransaction.get must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
+            this.throwImplementationError(`transaction.get must return an ICustomStorageNode object. Use JSON.parse if your set function stored it as a string`);
         }
 
         this._processReadNodeValue(node);
         return node;
     }
 
-    _getTypeFromStoredValue(val: unknown) {
+    private _getTypeFromStoredValue(val: unknown) {
         let type;
         if (typeof val === 'string') {
             type = VALUE_TYPES.STRING;
@@ -488,11 +489,10 @@ export class CustomStorage extends Storage {
         return { type, value: val };
     }
 
-
     /**
      * Creates or updates a node in its own record. DOES NOT CHECK if path exists in parent node, or if parent paths exist! Calling code needs to do this
      */
-    async _writeNode(path: string, value: any, options: {
+    protected async _writeNode(path: string, value: any, options: {
         transaction: CustomStorageTransaction;
         /** @default false */
         merge?: boolean;
@@ -644,13 +644,13 @@ export class CustomStorage extends Storage {
                     checkExecuted = true;
                     if (!transaction.production && !pathInfo.isParentOf(childPath)) {
                         // Double check failed
-                        throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
+                        this.throwImplementationError(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
                     }
                     return true;
                 };
                 const addChildPath = (childPath: string) => {
                     if (!checkExecuted) {
-                        throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                        this.throwImplementationError(`childrenOf did not call checkCallback before addCallback`);
                     }
                     const key = PathInfo.get(childPath).key;
                     keys.push(key.toString()); // .toString to make sure all keys are compared as strings
@@ -783,7 +783,7 @@ export class CustomStorage extends Storage {
     /**
      * Deletes (dedicated) node and all subnodes without checking for existence. Use with care - all removed nodes will lose their revision stats! DOES NOT REMOVE INLINE CHILD NODES!
      */
-    async _deleteNode(path: string, options: { transaction: CustomStorageTransaction }) {
+    private async _deleteNode(path: string, options: { transaction: CustomStorageTransaction }) {
         const pathInfo = PathInfo.get(path);
         this.debug.log(`Node "/${path}" is being deleted`.colorize(ColorStyle.cyan));
 
@@ -793,13 +793,13 @@ export class CustomStorage extends Storage {
             checkExecuted = true;
             if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
                 // Double check failed
-                throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
+                this.throwImplementationError(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
             }
             return true;
         };
         const addDescendant = (descPath: string) => {
             if (!checkExecuted) {
-                throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+                this.throwImplementationError(`descendantsOf did not call checkCallback before addCallback`);
             }
             deletePaths.push(descPath);
             return true;
@@ -878,7 +878,7 @@ export class CustomStorage extends Storage {
                         checkExecuted = true;
                         if (!transaction.production && !pathInfo.isParentOf(childPath)) {
                             // Double check failed
-                            throw new Error(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
+                            this.throwImplementationError(`"${childPath}" is not a child of "${path}" - childrenOf must only check and return paths that are children`);
                         }
                         if (options.keyFilter) {
                             const key = PathInfo.get(childPath).key;
@@ -889,7 +889,7 @@ export class CustomStorage extends Storage {
 
                     const addChildNode = (childPath: string, node: ICustomStorageNodeMetaData) => {
                         if (!checkExecuted) {
-                            throw new Error(`${this._customImplementation.info} childrenOf did not call checkCallback before addCallback`);
+                            this.throwImplementationError(`childrenOf did not call checkCallback before addCallback`);
                         }
                         const key = PathInfo.get(childPath).key;
                         const info = new CustomStorageNodeInfo({
@@ -925,15 +925,6 @@ export class CustomStorage extends Storage {
                 throw err;
             }
 
-            // })
-            // .then(() => {
-            //     lock.release();
-            //     return canceled;
-            // })
-            // .catch(err => {
-            //     lock.release();
-            //     throw err;
-            // });
         }; // start()
         return generator;
     }
@@ -949,10 +940,6 @@ export class CustomStorage extends Storage {
 
         options = options || {};
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: false });
-        // let lock;
-        // return this.nodeLocker.lock(path, tid, false, 'getNode')
-        // .then(async l => {
-        //     lock = l;
         try {
             const node = await (async () => {
                 // Get path, path/* and path[*
@@ -1049,7 +1036,7 @@ export class CustomStorage extends Storage {
                     checkExecuted = true;
                     if (!transaction.production && !pathInfo.isAncestorOf(descPath)) {
                         // Double check failed
-                        throw new Error(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
+                        this.throwImplementationError(`"${descPath}" is not a descendant of "${path}" - descendantsOf must only check and return paths that are descendants`);
                     }
                     if (!filtered) { return true; }
 
@@ -1074,13 +1061,12 @@ export class CustomStorage extends Storage {
                     }
                     return include;
                 };
-
                 type DescendantRow = ICustomStorageNode & { path: string };
                 const descRows = [] as DescendantRow[];
                 const addDescendant = (descPath: string, node: ICustomStorageNode) => {
                     // console.warn(`Adding descendant "${descPath}"`);
                     if (!checkExecuted) {
-                        throw new Error(`${this._customImplementation.info} descendantsOf did not call checkCallback before addCallback`);
+                        this.throwImplementationError('descendantsOf did not call checkCallback before addCallback');
                     }
                     if (options.child_objects === false && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(node.type)) {
                         // child objects are filtered out, but this one got through because includeDescendantCheck did not have access to its metadata,
@@ -1161,7 +1147,7 @@ export class CustomStorage extends Storage {
                                 else {
                                     Object.keys(nodeValue).forEach(childKey => {
                                         if (childKey in parent[key]) {
-                                            throw new Error( `Custom storage merge error: child key "${childKey}" is in parent value already! Make sure the get/childrenOf/descendantsOf methods of the custom storage class return values that can be modified by AceBase without affecting the stored source`);
+                                            this.throwImplementationError( `Custom storage merge error: child key "${childKey}" is in parent value already! Make sure the get/childrenOf/descendantsOf methods of the custom storage class return values that can be modified by AceBase without affecting the stored source`);
                                         }
                                         parent[key][childKey] = nodeValue[childKey];
                                     });
@@ -1175,7 +1161,7 @@ export class CustomStorage extends Storage {
                     }
                 }
                 else if (descRows.length > 0) {
-                    throw new Error(`multiple records found for non-object value!`);
+                    this.throwImplementationError(`multiple records found for non-object value!`);
                 }
 
                 // Post process filters to remove any data that got through because they were
