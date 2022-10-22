@@ -13,7 +13,7 @@
     "./src/data-index/index.js": "./src/not-supported.js",
     "./src/btree/index.js": "./src/not-supported.js"
   },
-  "types": "./index.d.ts",
+  "types": "./src/index.d.ts",
   "private": false,
   "repository": "github:appy-one/acebase",
   "scripts": {
