@@ -24,7 +24,13 @@
             { "ignoreRestArgs": false, "fixToUnknown": true }
         ],
         "comma-dangle": "off",
-        "@typescript-eslint/comma-dangle": ["error", "always-multiline"],
+        "@typescript-eslint/comma-dangle": ["error", {
+            "arrays": "always-multiline",
+            "objects": "always-multiline",
+            "imports": "always-multiline",
+            "exports": "always-multiline",
+            "functions": "only-multiline"
+        }],
         "no-trailing-spaces": "error",
         "eol-last": "error"
     },
