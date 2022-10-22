@@ -514,7 +514,7 @@ export class DataIndex {
     // }
 
     _updateTree(path: string, oldValue: IndexableValue, newValue: IndexableValue, oldRecordPointer: IndexRecordPointer, newRecordPointer: IndexRecordPointer, metadata: IndexMetaData) {
-        const canBeIndexed = ['number','boolean','string'].indexOf(typeof newValue) >= 0 || newValue instanceof Date;
+        const canBeIndexed = ['number','boolean','string','bigint'].indexOf(typeof newValue) >= 0 || newValue instanceof Date;
         const operations = [];
         if (oldValue !== null) {
             const op = BinaryBPlusTree.TransactionOperation.remove(oldValue, oldRecordPointer);
