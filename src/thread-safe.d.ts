@@ -54,7 +54,7 @@ export declare class ThreadSafeLock2 extends SimpleEventEmitter {
 export declare abstract class ThreadSafe2 {
     /**
      *
-     * @param target Target object to lock. Do not use object references!
+     * @param target Target to lock. Preferably use unique strings, don't use object references unless you know what you are doing
      * @param options Locking options
      * @returns returns a lock
      */

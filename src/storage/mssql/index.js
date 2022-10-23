@@ -1032,6 +1032,9 @@ class MSSQLStorage extends __1.Storage {
         suppress_events: false,
         context: null,
     }) {
+        if (this.settings.readOnly) {
+            throw new Error(`Database is opened in read-only mode`);
+        }
         const pathInfo = acebase_core_1.PathInfo.get(path);
         const tid = (options && options.tid) || acebase_core_1.ID.generate();
         let lock = await this.nodeLocker.lock(path, tid.toString(), true, 'setNode');
@@ -1071,6 +1074,9 @@ class MSSQLStorage extends __1.Storage {
         suppress_events: false,
         context: null,
     }) {
+        if (this.settings.readOnly) {
+            throw new Error(`Database is opened in read-only mode`);
+        }
         if (typeof updates !== 'object') { //  || Object.keys(updates).length === 0
             throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
         }

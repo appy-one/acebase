@@ -35,10 +35,6 @@ class AceBaseStorageSettings extends index_1.StorageSettings {
          */
         this.type = 'data';
         /**
-         * Whether to open the database file in readonly mode
-         */
-        this.readOnly = false;
-        /**
          * Use future FST version (not implemented yet)
          */
         this.fst2 = false;
@@ -50,9 +46,6 @@ class AceBaseStorageSettings extends index_1.StorageSettings {
         }
         if (typeof settings.type === 'string') {
             this.type = settings.type;
-        }
-        if (typeof settings.readOnly === 'boolean') {
-            this.readOnly = settings.readOnly;
         }
         this.transactions = new AceBaseTransactionLogSettings(settings.transactions);
     }
@@ -859,7 +852,7 @@ class AceBaseStorage extends index_1.Storage {
     get fileName() { return `${this.settings.path}/${this.name}.acebase/${this.type}.db`; }
     async writeData(fileIndex, buffer, offset = 0, length = -1) {
         if (this.settings.readOnly) {
-            const err = new Error(`Cannot write to readonly database ${name}`);
+            const err = new Error(`Cannot write to readonly database ${this.fileName}`);
             err.code = 'EPERM'; // This is what NodeJS would throw below
             throw err;
         }

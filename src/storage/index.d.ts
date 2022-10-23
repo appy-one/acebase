@@ -72,9 +72,14 @@ export declare class StorageSettings {
     lockTimeout: number;
     /**
      * optional type of storage class - used by `AceBaseStorage` to create different specific db files (data, transaction, auth etc)
-     * TODO: move to `AcebaseStorageSettings`
+     * @see AceBaseStorageSettings see `AceBaseStorageSettings.type` for more info
      */
     type: string;
+    /**
+     * Whether the database should be opened in readonly mode
+     * @default false
+     */
+    readOnly: boolean;
     /**
      * IPC settings if you are using AceBase in pm2 or cloud-based clusters
      */

@@ -2951,7 +2951,7 @@ var schema_1 = require("./schema");
 Object.defineProperty(exports, "SchemaDefinition", { enumerable: true, get: function () { return schema_1.SchemaDefinition; } });
 var partial_array_1 = require("./partial-array");
 Object.defineProperty(exports, "PartialArray", { enumerable: true, get: function () { return partial_array_1.PartialArray; } });
-var object_collection_1 = require("./object-collection");
+const object_collection_1 = require("./object-collection");
 Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return object_collection_1.ObjectCollection; } });
 
 },{"./acebase-base":1,"./api":2,"./ascii85":3,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./object-collection":13,"./partial-array":15,"./path-info":16,"./path-reference":17,"./schema":19,"./simple-cache":20,"./simple-colors":21,"./simple-event-emitter":22,"./subscription":23,"./transport":24,"./type-mappings":25,"./utils":26}],13:[function(require,module,exports){
@@ -9339,6 +9339,9 @@ class CustomStorage extends index_1.Storage {
     }
     // TODO: Move to Storage base class?
     async setNode(path, value, options = { suppress_events: false, context: null }) {
+        if (this.settings.readOnly) {
+            throw new Error(`Database is opened in read-only mode`);
+        }
         const pathInfo = acebase_core_1.PathInfo.get(path);
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
         try {
@@ -9385,6 +9388,9 @@ class CustomStorage extends index_1.Storage {
     }
     // TODO: Move to Storage base class?
     async updateNode(path, updates, options = { suppress_events: false, context: null }) {
+        if (this.settings.readOnly) {
+            throw new Error(`Database is opened in read-only mode`);
+        }
         if (typeof updates !== 'object') {
             throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
         }
@@ -9705,9 +9711,14 @@ class StorageSettings {
         this.lockTimeout = 120;
         /**
          * optional type of storage class - used by `AceBaseStorage` to create different specific db files (data, transaction, auth etc)
-         * TODO: move to `AcebaseStorageSettings`
+         * @see AceBaseStorageSettings see `AceBaseStorageSettings.type` for more info
          */
         this.type = 'data';
+        /**
+         * Whether the database should be opened in readonly mode
+         * @default false
+         */
+        this.readOnly = false;
         if (typeof settings.maxInlineValueSize === 'number') {
             this.maxInlineValueSize = settings.maxInlineValueSize;
         }
@@ -9722,6 +9733,15 @@ class StorageSettings {
         }
         if (typeof settings.lockTimeout === 'number') {
             this.lockTimeout = settings.lockTimeout;
+        }
+        if (typeof settings.type === 'string') {
+            this.type = settings.type;
+        }
+        if (typeof settings.readOnly === 'boolean') {
+            this.readOnly = settings.readOnly;
+        }
+        if (typeof settings.ipc === 'object') {
+            this.ipc = settings.ipc;
         }
     }
 }

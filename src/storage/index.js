@@ -51,9 +51,14 @@ class StorageSettings {
         this.lockTimeout = 120;
         /**
          * optional type of storage class - used by `AceBaseStorage` to create different specific db files (data, transaction, auth etc)
-         * TODO: move to `AcebaseStorageSettings`
+         * @see AceBaseStorageSettings see `AceBaseStorageSettings.type` for more info
          */
         this.type = 'data';
+        /**
+         * Whether the database should be opened in readonly mode
+         * @default false
+         */
+        this.readOnly = false;
         if (typeof settings.maxInlineValueSize === 'number') {
             this.maxInlineValueSize = settings.maxInlineValueSize;
         }
@@ -68,6 +73,15 @@ class StorageSettings {
         }
         if (typeof settings.lockTimeout === 'number') {
             this.lockTimeout = settings.lockTimeout;
+        }
+        if (typeof settings.type === 'string') {
+            this.type = settings.type;
+        }
+        if (typeof settings.readOnly === 'boolean') {
+            this.readOnly = settings.readOnly;
+        }
+        if (typeof settings.ipc === 'object') {
+            this.ipc = settings.ipc;
         }
     }
 }

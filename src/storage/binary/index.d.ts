@@ -31,10 +31,6 @@ export declare class AceBaseStorageSettings extends StorageSettings {
      */
     transactions: AceBaseTransactionLogSettings;
     /**
-     * Whether to open the database file in readonly mode
-     */
-    readOnly: boolean;
-    /**
      * Use future FST version (not implemented yet)
      */
     fst2: boolean;

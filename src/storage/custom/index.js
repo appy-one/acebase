@@ -1114,6 +1114,9 @@ class CustomStorage extends index_1.Storage {
     }
     // TODO: Move to Storage base class?
     async setNode(path, value, options = { suppress_events: false, context: null }) {
+        if (this.settings.readOnly) {
+            throw new Error(`Database is opened in read-only mode`);
+        }
         const pathInfo = acebase_core_1.PathInfo.get(path);
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
         try {
@@ -1160,6 +1163,9 @@ class CustomStorage extends index_1.Storage {
     }
     // TODO: Move to Storage base class?
     async updateNode(path, updates, options = { suppress_events: false, context: null }) {
+        if (this.settings.readOnly) {
+            throw new Error(`Database is opened in read-only mode`);
+        }
         if (typeof updates !== 'object') {
             throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
         }

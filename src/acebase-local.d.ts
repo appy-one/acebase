@@ -31,7 +31,18 @@ export declare class AceBase extends AceBaseBase {
      */
     constructor(dbname: string, init?: Partial<AceBaseLocalSettings>);
     recovery: {
-        repairNode(path: string, options: any): Promise<void>;
+        repairNode(path: string, options?: {
+            /**
+             * Included for testing purposes: whether to proceed if the target node does not appear broken.
+             * @default false
+             */
+            ignoreIntact?: boolean;
+            /**
+             * Whether to mark the target as removed (getting its value will yield `"[[removed]]"`). Set to `false` to completely remove it.
+             * @default true
+             */
+            markAsRemoved?: boolean;
+        }): Promise<void>;
     };
     close(): Promise<void>;
     get settings(): {

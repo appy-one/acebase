@@ -155,12 +155,12 @@ const locks2 = new Map();
 class ThreadSafe2 {
     /**
      *
-     * @param target Target object to lock. Do not use object references!
+     * @param target Target to lock. Preferably use unique strings, don't use object references unless you know what you are doing
      * @param options Locking options
      * @returns returns a lock
      */
     static async lock(target, shared = false) {
-        const timeout = 60 * 1000;
+        // const timeout = 60 * 1000;
         if (!locks2.has(target)) {
             // New lock
             const lock = new ThreadSafeLock2(target, shared);

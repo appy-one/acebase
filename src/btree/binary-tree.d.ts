@@ -13,7 +13,7 @@ import { BPlusTree } from './tree';
 import { BPlusTreeBuilder } from './tree-builder';
 declare type WriteFunction = (data: number[] | Uint8Array, index: number) => any | Promise<any>;
 export declare class BlacklistingSearchOperator {
-    check: (entry: BinaryBPlusTreeLeafEntry) => BinaryBPlusTreeLeafEntryValue[];
+    check: (entry: BinaryBPlusTreeLeafEntry) => BinaryBPlusTreeLeafEntryValue[] | void;
     /**
      * @param callback callback that runs for each entry, must return an array of the entry values to be blacklisted
      */
@@ -92,7 +92,7 @@ export declare class BinaryBPlusTree {
      * @param include what data to include in results. `filter`: recordPointers to filter upon
      * @returns {Promise<{ entries?: BinaryBPlusTreeLeafEntry[], keys?: Array, keyCount?: number, valueCount?: number, values?: BinaryBPlusTreeLeafEntryValue[] }}
      */
-    search(op: string | BlacklistingSearchOperator, param: NodeEntryKeyType | NodeEntryKeyType[], include?: {
+    search(op: string | BlacklistingSearchOperator, param: NodeEntryKeyType | NodeEntryKeyType[] | RegExp, include?: {
         entries?: boolean;
         values?: boolean;
         keys?: boolean;
@@ -184,8 +184,8 @@ export declare class BinaryBPlusTree {
         keepEntries?: number;
         cancelCallback?: () => unknown;
     }): Promise<any>;
-    add(key: NodeEntryKeyType, recordPointer: LeafEntryRecordPointer, metadata: LeafEntryMetaData): Promise<any>;
-    _add(key: NodeEntryKeyType, recordPointer: LeafEntryRecordPointer, metadata: LeafEntryMetaData): Promise<any>;
+    add(key: NodeEntryKeyType, recordPointer: LeafEntryRecordPointer, metadata?: LeafEntryMetaData): Promise<any>;
+    _add(key: NodeEntryKeyType, recordPointer: LeafEntryRecordPointer, metadata?: LeafEntryMetaData): Promise<any>;
     _process(operations: BinaryBPlusTreeTransactionOperation[]): Promise<void>;
     remove(key: NodeEntryKeyType, recordPointer?: LeafEntryRecordPointer): Promise<void | unknown[]>;
     _remove(key: NodeEntryKeyType, recordPointer?: LeafEntryRecordPointer): Promise<void | unknown[]>;
