@@ -1,6 +1,6 @@
 /// <reference types="@types/jasmine" />
-const { AceBase } = require("..");
-const { createTempDB } = require("./tempdb");
+const { AceBase } = require('..');
+const { createTempDB } = require('./tempdb');
 
 describe('BETA - Transaction logging', () => {
     /** @type {AceBase} */
@@ -116,7 +116,7 @@ describe('BETA - Transaction logging', () => {
         // Delete some records
         await video1Ref.remove();
         await video4Ref.remove();
- 
+
         // Get changes with cursor (from video 4 creation)
         result = await db.api.storage.getChanges({ path: 'library', cursor: video4Ref.key });
         console.log(result);
@@ -151,7 +151,7 @@ describe('BETA - Transaction logging', () => {
             expect(typeof result.new_cursor).toBe('string');
             // 1: Creation of 1st song (creation of "library" depending on execution order of other spec)
             // 2: Creation of 2nd song
-            expect(result.mutations.length).toBe(2); 
+            expect(result.mutations.length).toBe(2);
         }
 
         // Get changes without cursor and remember returned cursor
@@ -163,9 +163,9 @@ describe('BETA - Transaction logging', () => {
             expect(result.changes.length).toBe(1); // compressed to 1 'update' mutation on "library2/songs"
 
             // Remember this cursor
-            cursor = result.new_cursor;            
+            cursor = result.new_cursor;
         }
-        
+
         // Add more songs
         await db.ref('library2/songs').push({ title: 'All Along The Watchtower', artist: 'Jimi Hendrix' });
         await db.ref('library2/songs').push({ title: 'While My Guitar Gently Weeps', artist: 'George Harrison' });
@@ -182,5 +182,5 @@ describe('BETA - Transaction logging', () => {
 
     afterAll(async () => {
         await removeDB();
-    })
+    });
 });

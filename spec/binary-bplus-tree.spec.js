@@ -27,8 +27,8 @@ describe('Unique Binary B+Tree', () => {
         tree.id = id;
         tree.autoGrow = AUTO_GROW;
         return tree;
-    }
-    
+    };
+
     it('is an instance', async () => {
         const tree = await createBinaryTree();
         expect(tree).toBeInstanceOf(BinaryBPlusTree);
@@ -102,7 +102,7 @@ describe('Unique Binary B+Tree', () => {
                 for (let i = 0; i < leaf.entries.length; i++) {
                     count++;
                     const entry = leaf.entries[i];
-                    if (i > 0) { 
+                    if (i > 0) {
                         // key > last
                         expect(entry.key).toBeGreaterThan(lastEntry.key);
                     }
@@ -122,7 +122,7 @@ describe('Unique Binary B+Tree', () => {
                 for (let i = leaf.entries.length - 1; i >= 0 ; i--) {
                     count++;
                     const entry = leaf.entries[i];
-                    if (i < leaf.entries.length - 1) { 
+                    if (i < leaf.entries.length - 1) {
                         // key < last
                         expect(entry.key).toBeLessThan(lastEntry.key);
                     }
@@ -164,7 +164,7 @@ describe('Unique Binary B+Tree', () => {
                 let excludeIndex = Math.floor(Math.random() * keys.length);
                 let excludeKey = keys[excludeIndex];
                 let expectedKeys = keys.slice(0, excludeIndex).concat(keys.slice(excludeIndex+1));
-                result = await tree.search('!=', excludeKey, options);
+                let result = await tree.search('!=', excludeKey, options);
                 checkResults(result, expectedKeys, `!= "${excludeKey}": expecting ${expectedKeys.length} results`);
             });
 
@@ -179,7 +179,7 @@ describe('Unique Binary B+Tree', () => {
             it('with "<=" operator', async () => {
                 // Find first 10 keys
                 let expectedKeys = keys.slice(0, 10);
-                let key = expectedKeys.slice(-1)[0]
+                let key = expectedKeys.slice(-1)[0];
                 let result = await tree.search('<=', key, options);
                 checkResults(result, expectedKeys, `<= "${key}": expecting ${expectedKeys.length} results`);
             });
@@ -201,7 +201,7 @@ describe('Unique Binary B+Tree', () => {
 
             it('with "like" operator', async () => {
                 // All keys that start with the same 10 characters as the first key
-                let str = keys[0].slice(0, 10); 
+                let str = keys[0].slice(0, 10);
                 let expectedKeys = keys.filter(key => key.startsWith(str));
                 let result = await tree.search('like', `${str}*`, options);
                 checkResults(result, expectedKeys, `like "${str}*": expecting ${expectedKeys.length} keys to start with "${str}"`);
@@ -237,7 +237,7 @@ describe('Unique Binary B+Tree', () => {
                 let [startIndex, endIndex] = [Math.floor(Math.random() * keys.length), Math.floor(Math.random() * keys.length)].sort((a,b) => a-b); // eg: [2,6]
                 let expectedKeys = keys.filter((key, index) => index < startIndex || index > endIndex); // eg: expect [1,2, 7,8,9] for indexes 2 and 6 of keys [1,2,3,4,5,6,7,8,9]
                 let firstKey = keys[startIndex], lastKey = keys[endIndex];                // eg: 3 and 6
-                
+
                 let result = await tree.search('!between', [firstKey, lastKey], options);
                 checkResults(result, expectedKeys, `!between "${firstKey}" and "${lastKey}": expecting ${expectedKeys.length} results`);
 
@@ -248,7 +248,7 @@ describe('Unique Binary B+Tree', () => {
             it('with "in" operator', async () => {
                 // Find 5 random keys
                 let r = () => Math.floor(Math.random() * keys.length);
-                let randomIndexes = [r(), r(), r(), r(), r()].reduce((indexes, index) => (!indexes.includes(index) ? indexes.push(index) : 1) && indexes, []);
+                let randomIndexes = [r(), r(), r(), r(), r()].reduce((indexes, index) => ((!indexes.includes(index) ? indexes.push(index) : 1), indexes), []);
                 let expectedKeys = randomIndexes.map(index => keys[index]);
                 let result = await tree.search('in', expectedKeys, options);
                 checkResults(result, expectedKeys, `in [${expectedKeys.map(key => `"${key}"`).join(',')}]: expecting ${expectedKeys.length} results`);
@@ -257,7 +257,7 @@ describe('Unique Binary B+Tree', () => {
             it('with "!in" operator', async () => {
                 // Find 5 random keys
                 let r = () => Math.floor(Math.random() * keys.length);
-                let randomIndexes = [r(), r(), r(), r(), r()].reduce((indexes, index) => (!indexes.includes(index) ? indexes.push(index) : 1) && indexes, []);
+                let randomIndexes = [r(), r(), r(), r(), r()].reduce((indexes, index) => ((!indexes.includes(index) ? indexes.push(index) : 1), indexes), []);
                 let blacklistedKeys = randomIndexes.map(index => keys[index]);
                 let expectedKeys = keys.reduce((allowed, key) => (!blacklistedKeys.includes(key) ? allowed.push(key) : 1) && allowed, []);
                 let result = await tree.search('!in', blacklistedKeys, options);
@@ -267,14 +267,14 @@ describe('Unique Binary B+Tree', () => {
             it('with "exists" operator', async () => {
                 // Finds all keys with a defined value, same as search("!=", undefined)
                 // --> all keys in our test
-                result = await tree.search('exists', undefined, options);
+                let result = await tree.search('exists', undefined, options);
                 checkResults(result, keys, `exists: expecting ${keys.length} (all) results`);
             });
 
             it('with "!exists" operator', async () => {
                 // Finds results for key with undefined value, same as search("==", undefined)
                 // --> no keys in our test
-                result = await tree.search('!exists', undefined, options);
+                let result = await tree.search('!exists', undefined, options);
                 checkResults(result, [], `!exists: expecting NO results`);
             });
 
@@ -339,13 +339,13 @@ describe('Unique Binary B+Tree', () => {
                     await tree.remove(key); // Try again
                 }
             }
-            
+
             console.log(`Removed ${keys.length} entries from tree, ${rebuilds} rebuilds were needed`);
 
             // Expect the tree to be empty now
             const leafStats = await tree.getFirstLeaf({ stats: true });
             expect(leafStats.entries.length).toEqual(0);
-        })
+        });
     });
 
     it('returns null for keys not present', async () => {

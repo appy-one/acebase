@@ -1,15 +1,15 @@
 /// <reference types="@types/jasmine" />
-const { createTempDB } = require("./tempdb");
+const { createTempDB } = require('./tempdb');
 const util = require('util');
 const fs = require('fs');
-const { PathReference, ID } = require("acebase-core");
+const { PathReference, ID } = require('acebase-core');
 
 describe('bulk import', () => {
     let db, removeDB;
 
     beforeAll(async ()=> {
-        ({ db, removeDB } = await createTempDB({ config(options) { 
-            options.logLevel = 'warn'; 
+        ({ db, removeDB } = await createTempDB({ config(options) {
+            options.logLevel = 'warn';
             options.storage.lockTimeout = 120;
             options.storage.pageSize = 8192; // 65536;
             options.storage.recordSize = 1024;
@@ -37,28 +37,28 @@ describe('bulk import', () => {
                 const line = `${key}\t${data}`;
                 await callback(line, n);
             }
-        }
-        
+        };
+
         let giantObj = {};
         await processLines(path + '/data.tsv', async (line, num) => {
             if (num % 10000 === 0) {
-                log('on line', frac(num, numStargazerRows))
+                log('on line', frac(num, numStargazerRows));
                 // log('putting batch in database:')
-                await db.ref('gazers').update(giantObj)
-                log('batch done')
+                await db.ref('gazers').update(giantObj);
+                log('batch done');
                 // log('freeing old obj hopefully')
-                giantObj = {}
+                giantObj = {};
             }
-            const cols = line.split('\t')
-            const head = cols[0].replace('/', '!!')
-            const tail = cols.slice(1)
+            const cols = line.split('\t');
+            const head = cols[0].replace('/', '!!');
+            const tail = cols.slice(1);
             // const obj = tail.reduce((obj, item, i) => obj[i] = item, {}); // SAME SPEED
             // const str = tail.join(','); // MUCH SLOWER?!!!
-            giantObj[head] = tail //str //obj //tail
+            giantObj[head] = tail; //str //obj //tail
         });
 
         // Add last batch
         await db.ref('gazers').update(giantObj);
 
-    }, 24 * 60 * 60 * 1000)
+    }, 24 * 60 * 60 * 1000);
 });

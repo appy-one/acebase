@@ -6,7 +6,7 @@ describe('readonly databases', () => {
 
     it('cannot be created', async () => {
         try {
-            const { db, removeDB } = await createTempDB({ config(options) { options.storage = { readOnly: true } } });
+            const { db, removeDB } = await createTempDB({ config(options) { options.storage = { readOnly: true }; } });
             await removeDB();
             fail('readOnly database cannot be created');
         }

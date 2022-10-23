@@ -15,5 +15,5 @@ describe('Geohash', () => {
 
         coords = decode('u173z5sw');
         expect(coords).toEqual({ lat: 52.35921, lon: 4.88428 });
-    })
-})
+    });
+});

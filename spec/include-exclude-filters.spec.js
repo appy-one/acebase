@@ -1,5 +1,5 @@
 /// <reference types="@types/jasmine" />
-const { createTempDB } = require("./tempdb");
+const { createTempDB } = require('./tempdb');
 
 describe('Include/exclude filters', () => {
     let db, removeDB;
@@ -17,7 +17,7 @@ describe('Include/exclude filters', () => {
         const testData = require('./dataset/users.json');
         await db.ref('users').set(testData);
 
-        let snap = await db.ref('users/someuser').get({ exclude: ['posts', 'instruments'] })
+        let snap = await db.ref('users/someuser').get({ exclude: ['posts', 'instruments'] });
         let user = snap.val();
         expect(user.name).toBe('Some random user');
         expect(user.country).toBe('Deserted Island');

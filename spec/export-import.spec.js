@@ -1,8 +1,8 @@
 /// <reference types="@types/jasmine" />
-const { createTempDB } = require("./tempdb");
+const { createTempDB } = require('./tempdb');
 const util = require('util');
 const fs = require('fs');
-const { PathReference } = require("acebase-core");
+const { PathReference } = require('acebase-core');
 
 describe('export/import', () => {
     let db, removeDB;
@@ -20,17 +20,19 @@ describe('export/import', () => {
         await ref.set({ text: 'Strings with multiple \\ backslashes \\ are \\ exported ok' });
         let json = '';
         await ref.export(str => json += str);
-        expect(json).toEqual(`{"text":"Strings with multiple \\ backslashes \\ are \\ exported ok"}`);
+        expect(json).toEqual(`{"text":"Strings with multiple \\\\ backslashes \\\\ are \\\\ exported ok"}`);
+        const obj = JSON.parse(json);
+        expect(obj.text).toEqual('Strings with multiple \\ backslashes \\ are \\ exported ok');
     });
-    
+
     it('typesafety', async () => {
         // Test typesafety of non-JSON data, inspired by issue #57 https://github.com/appy-one/acebase/issues/57
         const ref = db.ref('typesafety');
-        const obj = { 
+        const obj = {
             text: 'Checking typesafety',
             date: new Date(),
             binary: new Uint8Array([98, 105, 110, 97, 114, 121, 32, 100, 97, 116, 97]), // TextEncoder().encode('binary data'),
-            reference: new PathReference('some/other/data')
+            reference: new PathReference('some/other/data'),
         };
         await ref.set(obj);
 

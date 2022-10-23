@@ -66,7 +66,7 @@ describe('quicksort', () => {
 
             return {
                 native: native.end - native.start,
-                quick: quick.end - quick.start
+                quick: quick.end - quick.start,
             };
         };
 

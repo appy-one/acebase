@@ -26,7 +26,7 @@ describe('transactions', () => {
             // Return nothing
         });
         snap = await ref.get();
-        expect(snap.exists()).toBeFalse();        
+        expect(snap.exists()).toBeFalse();
 
         await removeDB();
     });
@@ -89,17 +89,17 @@ describe('transactions', () => {
     });
 
     it('can run in serial', async () => {
-        
+
         // Create temp db
         const { db, removeDB } = await createTempDB();
 
-        db.ref("accounts").on("child_changed").subscribe(snap => {
+        db.ref('accounts').on('child_changed').subscribe(snap => {
             console.log(`Account ${snap.key} changed, balance = ${snap.val().balance}`);
         });
-    
+
         // Test serial transaction (1 followed by another when done)
-        const ref = db.ref("accounts/my_account");
-        
+        const ref = db.ref('accounts/my_account');
+
         // Initialize account value
         await ref.set({ balance: 50 });
 
@@ -110,17 +110,17 @@ describe('transactions', () => {
             account.balance -= 15;
             return account;
         });
-        
+
         // Perform transaction on "account/balance" node
-        const childRef = await ref.child("balance").transaction(snap => {
+        const childRef = await ref.child('balance').transaction(snap => {
             let balance = snap.val();
             expect(balance).toEqual(35);
             balance -= 10;
             return balance;
         });
-        
+
         // Assert the resolved ref points to the child node
-        expect(childRef.path).toEqual(ref.child("balance").path);
+        expect(childRef.path).toEqual(ref.child('balance').path);
 
         // Get "account" value through childRef.parent
         const snap = await childRef.parent.get();
@@ -155,11 +155,11 @@ describe('transactions', () => {
             return account;
         };
 
-        const ref = db.ref("accounts/my_account");
+        const ref = db.ref('accounts/my_account');
 
         // Initialize account balance
         await ref.set({
-            balance: startBalance
+            balance: startBalance,
         });
 
         // First transaction:
@@ -171,7 +171,7 @@ describe('transactions', () => {
         let t2 = ref.transaction(snap => {
             return withdraw(snap, 275);
         });
-        
+
         // Third transaction:
         let t3 = ref.transaction(snap => {
             return withdraw(snap, 450);
@@ -181,7 +181,7 @@ describe('transactions', () => {
         await Promise.all([t1, t2, t3]);
 
         // console.log(`All parallel transactions processed`);
-        
+
         // Check final balance
         const snap = await ref.get();
         const balance = snap.val().balance;
@@ -195,9 +195,9 @@ describe('transactions', () => {
     it('handles errors', async () => {
         const { db, removeDB } = await createTempDB();
 
-        const ref = db.ref("accounts/my_account");
+        const ref = db.ref('accounts/my_account');
         await ref.set({
-            balance: 50
+            balance: 50,
         });
 
         // Test transaction throwing an error
@@ -207,22 +207,22 @@ describe('transactions', () => {
         await expectAsync(promise).toBeRejected();
 
         // Test transaction returning rejected promise
-        promise = ref.child("balance").transaction(snap => {
+        promise = ref.child('balance').transaction(snap => {
             return Promise.reject(new Error(`Not enough money!`));
         });
         await expectAsync(promise).toBeRejected();
 
         // Test transaction with async error
-        promise = ref.child("balance").transaction(async snap => {
+        promise = ref.child('balance').transaction(async snap => {
             throw new Error(`Not enough money!`);
         });
         await expectAsync(promise).toBeRejected();
-        
+
         // Nothing should have changed, check that
         const snap = await ref.get();
         let balance = snap.val().balance;
-        expect(balance).toEqual(50); 
-    
+        expect(balance).toEqual(50);
+
         await removeDB();
     });
 
@@ -231,7 +231,7 @@ describe('transactions', () => {
         // use 100 concurrent transactions to update a single value
         const { db, removeDB } = await createTempDB();
 
-        const ref = await db.ref("value").set(0);
+        const ref = await db.ref('value').set(0);
         const promises = [];
         for (let i = 0; i < 100; i++) {
             let p = ref.transaction(snap => {
@@ -245,5 +245,5 @@ describe('transactions', () => {
         expect(snap.val()).toEqual(100);
 
         await removeDB();
-    })
-})
+    });
+});

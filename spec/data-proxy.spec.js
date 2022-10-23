@@ -1,5 +1,5 @@
 const { createTempDB } = require('./tempdb');
-const { proxyAccess, IObservableLike, ObjectCollection } = require('acebase-core');
+const { proxyAccess, ObjectCollection } = require('acebase-core');
 const util = require('util');
 
 describe('DataProxy', () => {

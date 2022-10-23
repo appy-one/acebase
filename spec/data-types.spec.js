@@ -1,6 +1,6 @@
 /// <reference types="@types/jasmine" />
-const { PathReference } = require("acebase-core");
-const { createTempDB } = require("./tempdb");
+const { PathReference } = require('acebase-core');
+const { createTempDB } = require('./tempdb');
 
 describe('Data type', () => {
     let db, removeDB;
@@ -9,17 +9,17 @@ describe('Data type', () => {
         db = tmp.db;
         removeDB = tmp.removeDB;
     });
-    
+
     it('boolean', async () => {
         // Set to true
         await db.ref('datatypes').update({ boolean: true });
-        
+
         let snap = await db.ref('datatypes/boolean').get();
         expect(snap.val()).toBeTrue();
 
         // Set to false
         await db.ref('datatypes').update({ boolean: false });
-        
+
         snap = await db.ref('datatypes/boolean').get();
         expect(snap.val()).toBeFalse();
     });
@@ -44,7 +44,7 @@ describe('Data type', () => {
         await db.ref('datatypes').update({ number: Number.MAX_SAFE_INTEGER });
         snap = await db.ref('datatypes/number').get();
         expect(snap.val()).toBe(Number.MAX_SAFE_INTEGER);
-        
+
         // Set to Number.MAX_VALUE
         await db.ref('datatypes').update({ number: Number.MAX_VALUE });
         snap = await db.ref('datatypes/number').get();
@@ -79,7 +79,7 @@ describe('Data type', () => {
         await db.ref('datatypes').update({ number: Number.NaN });
         snap = await db.ref('datatypes/number').get();
         expect(snap.val()).toBeNaN();
-        
+
         // Set to positive infinity
         await db.ref('datatypes').update({ number: Number.POSITIVE_INFINITY });
         snap = await db.ref('datatypes/number').get();
@@ -105,7 +105,7 @@ describe('Data type', () => {
         expect(snap.val()).toBe('small value');
 
         // Set to small string (stored as "larger value")
-        const larger = `this string will be too long to store inline (in the parent nodes's record). The default inline value length is 50 bytes`
+        const larger = `this string will be too long to store inline (in the parent nodes's record). The default inline value length is 50 bytes`;
         await db.ref('datatypes').update({ string: larger });
         snap = await db.ref('datatypes/string').get();
         expect(snap.val()).toBe(larger);
@@ -124,7 +124,7 @@ describe('Data type', () => {
         }
         await db.ref('datatypes').update({ string: str5mb });
         snap = await db.ref('datatypes/string').get();
-        expect(snap.val()).toBe(str5mb);        
+        expect(snap.val()).toBe(str5mb);
     });
 
     it('date', async () => {
@@ -160,7 +160,7 @@ describe('Data type', () => {
         // Test larger value
         data = new Uint8Array(250);
         for(let i = 0 ; i < data.length; i++) {
-            data[i] = i; 
+            data[i] = i;
         }
         await db.ref('datatypes').update({ binary: data });
         snap = await db.ref('datatypes/binary').get();
@@ -170,7 +170,7 @@ describe('Data type', () => {
         // Test 5MB value
         data = new Uint8Array(5 * 1000 * 1000);
         for(let i = 0 ; i < data.length; i++) {
-            data[i] = i % 255; 
+            data[i] = i % 255;
         }
         await db.ref('datatypes').update({ binary: data });
         snap = await db.ref('datatypes/binary').get();
@@ -179,14 +179,14 @@ describe('Data type', () => {
         const stored = new Uint8Array(snap.val());
         let isEqual = true;
         for(let i = 0; i < data.length && isEqual; i++) {
-            isEqual = data[i] === stored[i]; 
+            isEqual = data[i] === stored[i];
         }
         expect(isEqual).toBeTrue();
     });
 
     it('reference', async () => {
         // Test path reference - which is undocumented and currently has no benefits over using plain strings
-        const refPath = 'path/to/somehwere/else'
+        const refPath = 'path/to/somehwere/else';
         await db.ref('datatypes').update({ ref: new PathReference(refPath) });
         let snap = await db.ref('datatypes/ref').get();
         expect(snap.val()).toBeInstanceOf(PathReference);
@@ -219,5 +219,5 @@ describe('Data type', () => {
 
     afterAll(async () => {
         await removeDB();
-    })
+    });
 });
