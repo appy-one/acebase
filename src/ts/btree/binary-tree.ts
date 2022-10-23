@@ -29,7 +29,7 @@ const { bigintToBytes } = Utils;
 type WriteFunction = (data: number[] | Uint8Array, index: number) => any | Promise<any>;
 export class BlacklistingSearchOperator {
 
-    check: (entry: BinaryBPlusTreeLeafEntry) => BinaryBPlusTreeLeafEntryValue[];
+    check: (entry: BinaryBPlusTreeLeafEntry) => BinaryBPlusTreeLeafEntryValue[] | void;
 
     /**
      * @param callback callback that runs for each entry, must return an array of the entry values to be blacklisted
@@ -1044,7 +1044,7 @@ export class BinaryBPlusTree {
      * @param include what data to include in results. `filter`: recordPointers to filter upon
      * @returns {Promise<{ entries?: BinaryBPlusTreeLeafEntry[], keys?: Array, keyCount?: number, valueCount?: number, values?: BinaryBPlusTreeLeafEntryValue[] }}
      */
-    search(op: string | BlacklistingSearchOperator, param: NodeEntryKeyType | NodeEntryKeyType[], include: { entries?: boolean; values?: boolean; keys?: boolean; count?: boolean; filter?: BinaryBPlusTreeLeafEntry[] } = { entries: true, values: false, keys: false, count: false }) {
+    search(op: string | BlacklistingSearchOperator, param: NodeEntryKeyType | NodeEntryKeyType[] | RegExp, include: { entries?: boolean; values?: boolean; keys?: boolean; count?: boolean; filter?: BinaryBPlusTreeLeafEntry[] } = { entries: true, values: false, keys: false, count: false }) {
         return this._threadSafe('shared', () => this._search(op, param, include));
     }
 
@@ -1055,7 +1055,7 @@ export class BinaryBPlusTree {
      * @param include what data to include in results. `filter`: recordPointers to filter upon
      * @returns {Promise<{ entries?: BinaryBPlusTreeLeafEntry[]; keys?: Array; keyCount?: number; valueCount?: number; values?: BinaryBPlusTreeLeafEntryValue[] }>}
      */
-    private _search(op: string | BlacklistingSearchOperator, param: NodeEntryKeyType | NodeEntryKeyType[], include: { entries?: boolean; values?: boolean; keys?: boolean; count?: boolean; filter?: BinaryBPlusTreeLeafEntry[] } = { entries: true, values: false, keys: false, count: false }) {
+    private _search(op: string | BlacklistingSearchOperator, param: NodeEntryKeyType | NodeEntryKeyType[] | RegExp, include: { entries?: boolean; values?: boolean; keys?: boolean; count?: boolean; filter?: BinaryBPlusTreeLeafEntry[] } = { entries: true, values: false, keys: false, count: false }) {
         // TODO: async'ify
 
         if (typeof op === 'string' && ['in','!in','between','!between'].includes(op) && !(param instanceof Array)) {
@@ -2483,11 +2483,11 @@ export class BinaryBPlusTree {
     //     console.warn(`TREE TEST SUCCESSFUL`);
     // }
 
-    async add(key: NodeEntryKeyType, recordPointer: LeafEntryRecordPointer, metadata: LeafEntryMetaData) {
+    async add(key: NodeEntryKeyType, recordPointer: LeafEntryRecordPointer, metadata?: LeafEntryMetaData) {
         return this._threadSafe('exclusive', () => this._add(key, recordPointer, metadata));
     }
 
-    async _add(key: NodeEntryKeyType, recordPointer: LeafEntryRecordPointer, metadata: LeafEntryMetaData) {
+    async _add(key: NodeEntryKeyType, recordPointer: LeafEntryRecordPointer, metadata?: LeafEntryMetaData) {
         if (!this.info) {
             await this._loadInfo();
         }
