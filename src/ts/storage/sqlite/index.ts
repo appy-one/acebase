@@ -1118,6 +1118,9 @@ export class SQLiteStorage extends Storage {
             context: null,
         },
     ): Promise<void> {
+        if (this.settings.readOnly) {
+            throw new Error(`Database is opened in read-only mode`);
+        }
         const pathInfo = PathInfo.get(path);
 
         const tid = (options && options.tid) || ID.generate();
@@ -1167,7 +1170,9 @@ export class SQLiteStorage extends Storage {
             context: null,
         },
     ): Promise<void> {
-
+        if (this.settings.readOnly) {
+            throw new Error(`Database is opened in read-only mode`);
+        }
         if (typeof updates !== 'object') { //  || Object.keys(updates).length === 0
             throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
         }

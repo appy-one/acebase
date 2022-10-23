@@ -1307,11 +1307,13 @@ export class CustomStorage extends Storage {
             suppress_events?: boolean;
             context?: any;
         } = { suppress_events: false, context: null },
-    ) { // : Promise<CustomStorageNodeInfo>
+    ) {
+        if (this.settings.readOnly) {
+            throw new Error(`Database is opened in read-only mode`);
+        }
         const pathInfo = PathInfo.get(path);
         const transaction = options.transaction || await this._customImplementation.getTransaction({ path, write: true });
         try {
-
             if (path === '') {
                 if (value === null || typeof value !== 'object' || value instanceof Array || value instanceof ArrayBuffer || ('buffer' in value && value.buffer instanceof ArrayBuffer)) {
                     throw new Error(`Invalid value for root node: ${value}`);
@@ -1365,7 +1367,9 @@ export class CustomStorage extends Storage {
             context?: any;
         } = { suppress_events: false, context: null },
     ) {
-
+        if (this.settings.readOnly) {
+            throw new Error(`Database is opened in read-only mode`);
+        }
         if (typeof updates !== 'object') {
             throw new Error(`invalid updates argument`); //. Must be a non-empty object or array
         }
