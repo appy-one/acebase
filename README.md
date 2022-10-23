@@ -1648,7 +1648,7 @@ The following types are supported:
 await db.schema.set('users/$uid', {
     name: 'string',
     email: 'string',
-    "birthdate?": 'Date' // optional birthdate
+    "birthdate?": 'Date', // optional birthdate
     "address?": { // optional address
         street: 'string',
         nr: 'number | string',
