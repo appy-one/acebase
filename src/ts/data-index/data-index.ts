@@ -2,7 +2,7 @@ import { PathInfo, Utils, ID, ColorStyle, Transport } from 'acebase-core';
 import { ThreadSafe } from '../thread-safe';
 import type { Storage } from '../storage';
 import { pfs } from '../promise-fs';
-import { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryBPlusTreeLeaf, BinaryBPlusTreeLeafEntry, BinaryWriter, BinaryReader, BlacklistingSearchOperator } from '../btree';
+import { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryBPlusTreeLeafEntry, BinaryWriter, BinaryReader, BlacklistingSearchOperator } from '../btree';
 import { DataIndexOptions } from './options';
 import { FileSystemError, IndexableValue, IndexableValueOrArray, IndexMetaData, IndexRecordPointer } from './shared';
 import { getValueType, VALUE_TYPES }  from '../node-value-types';
