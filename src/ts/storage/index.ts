@@ -97,9 +97,15 @@ export class StorageSettings {
 
     /**
      * optional type of storage class - used by `AceBaseStorage` to create different specific db files (data, transaction, auth etc)
-     * TODO: move to `AcebaseStorageSettings`
+     * @see AceBaseStorageSettings see `AceBaseStorageSettings.type` for more info
      */
     type = 'data';
+
+    /**
+     * Whether the database should be opened in readonly mode
+     * @default false
+     */
+    readOnly = false;
 
     /**
      * IPC settings if you are using AceBase in pm2 or cloud-based clusters
@@ -117,6 +123,9 @@ export class StorageSettings {
         if (typeof settings.path === 'string') { this.path = settings.path; }
         if (this.path.endsWith('/')) { this.path = this.path.slice(0, -1); }
         if (typeof settings.lockTimeout === 'number') { this.lockTimeout = settings.lockTimeout; }
+        if (typeof settings.type === 'string') { this.type = settings.type; }
+        if (typeof settings.readOnly === 'boolean') { this.readOnly = settings.readOnly; }
+        if (typeof settings.ipc === 'object') { this.ipc = settings.ipc; }
     }
 }
 
@@ -1123,7 +1132,7 @@ export class Storage extends SimpleEventEmitter {
                 }
                 const isNotifyEvent = sub.type.startsWith('notify_');
                 if (['mutated','notify_mutated'].includes(sub.type)) {
-                // Send all mutations 1 by 1
+                    // Send all mutations 1 by 1
                     batch.forEach((mutation, index) => {
                         const context = options.context; // const context = cloneObject(options.context);
                         // context.acebase_mutated_event = { nr: index + 1, total: batch.length }; // Add context info about number of mutations
@@ -1133,9 +1142,9 @@ export class Storage extends SimpleEventEmitter {
                     });
                 }
                 else if (['mutations','notify_mutations'].includes(sub.type)) {
-                // Send 1 batch with all mutations
-                // const oldValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.oldValue })); // batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.oldValue, obj), {});
-                // const newValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.newValue })) //batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.newValue, obj), {});
+                    // Send 1 batch with all mutations
+                    // const oldValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.oldValue })); // batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.oldValue, obj), {});
+                    // const newValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.newValue })) //batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.newValue, obj), {});
                     const values = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(m.path.slice(sub.subscriptionPath.length)), prev: m.oldValue, val: m.newValue }));
                     this.subscriptions.trigger(sub.type, sub.subscriptionPath, sub.subscriptionPath, null, values, options.context);
                 }
