@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import { pfs } from '../../promise-fs';
-import { ID, PathInfo, PathReference, Utils, ColorStyle, PartialArray, DataRetrievalOptions } from 'acebase-core';
+import { ID, PathInfo, PathReference, Utils, ColorStyle, PartialArray } from 'acebase-core';
 import { NodeChangeTracker, NodeChange } from '../../node-changes';
 import { BinaryNodeAddress } from './node-address';
 import { NodeCache } from '../../node-cache';
@@ -56,7 +56,6 @@ export class AceBaseStorageSettings extends StorageSettings {
         if (typeof settings.recordSize === 'number') { this.recordSize = settings.recordSize; }
         if (typeof settings.pageSize === 'number') { this.pageSize = settings.pageSize; }
         if (typeof settings.type === 'string') { this.type = settings.type; }
-        if (typeof settings.readOnly === 'boolean') { this.readOnly = settings.readOnly; }
         this.transactions = new AceBaseTransactionLogSettings(settings.transactions);
     }
 }
@@ -913,7 +912,7 @@ export class AceBaseStorage extends Storage {
 
     public async writeData(fileIndex: number, buffer: Buffer | ArrayBuffer | ArrayBufferView | Uint8Array, offset = 0, length = -1) {
         if (this.settings.readOnly) {
-            const err = new Error(`Cannot write to readonly database ${name}`);
+            const err = new Error(`Cannot write to readonly database ${this.fileName}`);
             (err as any).code = 'EPERM'; // This is what NodeJS would throw below
             throw err;
         }
