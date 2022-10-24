@@ -10,3 +10,4 @@ export declare class BinaryBPlusTreeNodeEntry {
     constructor(key: NodeEntryKeyType);
     getLtChild(): Promise<BinaryBPlusTreeNodeInfo>;
 }
+//# sourceMappingURL=binary-tree-node-entry.d.ts.map

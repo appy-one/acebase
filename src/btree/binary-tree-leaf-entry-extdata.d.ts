@@ -22,3 +22,4 @@ export interface IBinaryBPlusTreeLeafEntryExtData {
     addValue: (recordPointer: LeafEntryRecordPointer, metadata: LeafEntryMetaData) => Promise<void>;
     removeValue: (recordPointer: LeafEntryRecordPointer) => Promise<void>;
 }
+//# sourceMappingURL=binary-tree-leaf-entry-extdata.d.ts.map

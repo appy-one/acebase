@@ -7,3 +7,4 @@ export declare class BPlusTreeNodeEntry {
     ltChild: BPlusTreeNode | BPlusTreeLeaf;
     constructor(node: BPlusTreeNode, key: NodeEntryKeyType);
 }
+//# sourceMappingURL=tree-node-entry.d.ts.map

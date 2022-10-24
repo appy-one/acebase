@@ -38,3 +38,4 @@ export declare class BinaryBPlusTreeNodeInfo {
     get index(): number;
     set index(value: number);
 }
+//# sourceMappingURL=binary-tree-node-info.d.ts.map

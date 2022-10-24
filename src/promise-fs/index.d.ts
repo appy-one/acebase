@@ -198,3 +198,4 @@ export declare abstract class pfs {
      */
     static fdatasync(fd: number): Promise<void>;
 }
+//# sourceMappingURL=index.d.ts.map

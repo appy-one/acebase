@@ -31,3 +31,4 @@ export declare class AsyncTaskBatch {
     start(): void;
     finish(): Promise<any[]>;
 }
+//# sourceMappingURL=async-task-batch.d.ts.map

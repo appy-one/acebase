@@ -47,3 +47,4 @@ export declare class NodeCache {
      */
     find(path: string, checkAnnounced?: boolean): NodeInfo | Promise<NodeInfo>;
 }
+//# sourceMappingURL=node-cache.d.ts.map

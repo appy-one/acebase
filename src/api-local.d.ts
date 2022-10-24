@@ -192,3 +192,4 @@ export declare class LocalApi extends Api {
         }[];
     }>;
 }
+//# sourceMappingURL=api-local.d.ts.map

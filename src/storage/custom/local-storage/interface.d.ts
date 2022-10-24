@@ -5,3 +5,4 @@ export interface LocalStorageLike {
     key(index: number): string;
     length: number;
 }
+//# sourceMappingURL=interface.d.ts.map

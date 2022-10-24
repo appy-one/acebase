@@ -510,3 +510,4 @@ export declare class Storage extends SimpleEventEmitter {
         updates: boolean;
     }): ISchemaCheckResult;
 }
+//# sourceMappingURL=index.d.ts.map

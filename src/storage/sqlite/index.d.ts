@@ -102,3 +102,4 @@ export declare class SQLiteStorage extends Storage {
         context?: any;
     }): Promise<void>;
 }
+//# sourceMappingURL=index.d.ts.map

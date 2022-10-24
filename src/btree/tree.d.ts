@@ -75,3 +75,4 @@ export declare class BPlusTree {
         isNotEqual(val1: unknown, val2: unknown): boolean;
     };
 }
+//# sourceMappingURL=tree.d.ts.map

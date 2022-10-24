@@ -215,3 +215,4 @@ export interface ICustomRequestMessage extends IRequestMessage {
     data: any;
 }
 export {};
+//# sourceMappingURL=ipc.d.ts.map

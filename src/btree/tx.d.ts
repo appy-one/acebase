@@ -19,3 +19,4 @@ export declare class TX {
     }): void;
     execute(parallel?: boolean): Promise<any>;
 }
+//# sourceMappingURL=tx.d.ts.map

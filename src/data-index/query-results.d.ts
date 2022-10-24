@@ -20,3 +20,4 @@ export declare class IndexQueryResults extends Array<IndexQueryResult> {
     constructor(length: number);
     constructor(...results: IndexQueryResult[]);
 }
+//# sourceMappingURL=query-results.d.ts.map

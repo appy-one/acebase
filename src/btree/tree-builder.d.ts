@@ -25,3 +25,4 @@ export declare class BPlusTreeBuilder {
     dumpToFile(filename: string): void;
     static fromFile(filename: string): BPlusTreeBuilder;
 }
+//# sourceMappingURL=tree-builder.d.ts.map

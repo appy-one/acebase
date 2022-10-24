@@ -11,3 +11,4 @@ export declare class Node {
         REFERENCE: 9;
     }>;
 }
+//# sourceMappingURL=node.d.ts.map

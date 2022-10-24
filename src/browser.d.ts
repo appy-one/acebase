@@ -44,3 +44,4 @@ export { SQLiteStorageSettings } from './storage/sqlite';
 export { MSSQLStorageSettings } from './storage/mssql';
 export { CustomStorageTransaction, CustomStorageSettings, CustomStorageHelpers, ICustomStorageNode, ICustomStorageNodeMetaData, } from './storage/custom';
 export { StorageSettings, TransactionLogSettings, IPCClientSettings, SchemaValidationError, } from './storage';
+//# sourceMappingURL=browser.d.ts.map

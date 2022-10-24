@@ -11,3 +11,4 @@ export declare class BPlusTreeLeafEntryValue {
     /** @deprecated use .recordPointer instead */
     get value(): LeafEntryRecordPointer;
 }
+//# sourceMappingURL=tree-leaf-entry-value.d.ts.map

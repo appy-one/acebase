@@ -8,3 +8,4 @@ export declare type IndexableValue = NodeEntryKeyType;
 export declare type IndexableValueOrArray = IndexableValue | IndexableValue[];
 export declare type IndexRecordPointer = LeafEntryRecordPointer;
 export declare type IndexMetaData = LeafEntryMetaData;
+//# sourceMappingURL=shared.d.ts.map

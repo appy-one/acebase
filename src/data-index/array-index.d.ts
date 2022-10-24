@@ -19,3 +19,4 @@ export declare class ArrayIndex extends DataIndex {
         filter?: IndexQueryResults;
     }): Promise<IndexQueryResults>;
 }
+//# sourceMappingURL=array-index.d.ts.map

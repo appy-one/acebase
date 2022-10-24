@@ -37,3 +37,4 @@ export declare class LocalStorageTransaction extends CustomStorageTransaction {
      */
     getStorageKeyForPath(path: string): string;
 }
+//# sourceMappingURL=transaction.d.ts.map

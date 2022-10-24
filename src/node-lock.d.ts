@@ -88,3 +88,4 @@ export declare class NodeLock {
     release(comment?: string): Promise<NodeLock>;
     moveToParent(): Promise<NodeLock>;
 }
+//# sourceMappingURL=node-lock.d.ts.map

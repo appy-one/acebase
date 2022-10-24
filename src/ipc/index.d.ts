@@ -11,3 +11,4 @@ export declare class IPCPeer extends AceBaseIPCPeer {
     sendMessage(msg: IMessage): void;
     exit(code?: number): Promise<void>;
 }
+//# sourceMappingURL=index.d.ts.map

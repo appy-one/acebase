@@ -39,3 +39,4 @@ export declare class LocalStorageSettings extends StorageSettings {
      */
     type: string;
 }
+//# sourceMappingURL=settings.d.ts.map

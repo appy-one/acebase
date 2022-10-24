@@ -24,3 +24,4 @@ export declare class BinaryBPlusTreeLeafEntry {
     /** Loads values from leaf's extData block */
     loadValues(): Promise<BinaryBPlusTreeLeafEntryValue[]>;
 }
+//# sourceMappingURL=binary-tree-leaf-entry.d.ts.map

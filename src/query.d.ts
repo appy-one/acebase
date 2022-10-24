@@ -25,3 +25,4 @@ export declare function query(api: LocalApi, path: string, query: Query, options
     stop(): Promise<void>;
 }>;
 export {};
+//# sourceMappingURL=query.d.ts.map
