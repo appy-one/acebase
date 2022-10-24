@@ -1,5 +1,5 @@
 import { AceBaseBase, ID, PathInfo } from 'acebase-core';
-import type { Api, EventSubscriptionCallback } from 'acebase-core/src/api';
+import type { Api, EventSubscriptionCallback } from 'acebase-core/dist/types/api';
 import { VALUE_TYPES } from './node-value-types';
 import { NodeNotFoundError } from './node-errors';
 import { Storage } from './storage';

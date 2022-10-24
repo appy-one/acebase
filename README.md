@@ -984,7 +984,7 @@ Once ```tx.commit()``` is called, all pending updates will be processed and save
 In TypeScript some additional typecasting is needed to access proxy methods shown above. You can use the ```proxyAccess``` function to get help with that. This function typecasts and also checks if your passed value is indeed a proxy.
 ```typescript
 type ChatMessage = { from: string, text: string, sent: Date, received: Date, read: Date };
-type MessageCollection = IObjectCollection<ChatMessage>;
+type MessageCollection = ObjectCollection<ChatMessage>;
 
 // Easy & safe typecasting:
 proxyAccess<MessageCollection>(chat.messages)
@@ -1024,7 +1024,7 @@ With Angular, ```getObservable``` comes in handy for UI binding and updating:
 export class ChatComponent {
     liveChat: Observable<{ 
         title: string, 
-        messages: IObjectCollection<{ from: string, text: string }> 
+        messages: ObjectCollection<{ from: string, text: string }> 
     }>;
 
     constructor(private dataProvider: MyDataProvider) {}

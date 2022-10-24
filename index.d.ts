@@ -1,19 +1,12 @@
-import * as acebasecore from 'acebase-core';
+import { AceBaseBase, PathInfo, LoggingLevel } from 'acebase-core';
 
-export class AceBase extends acebasecore.AceBaseBase {
+export class AceBase extends AceBaseBase {
     /**
      *
-     * @param {string} dbname | Name of the database to open or create
-     * @param {AceBaseLocalSettings} options |
+     * @param dbname Name of the database to open or create
+     * @param options
      */
     constructor(dbname: string, options?: AceBaseLocalSettings);
-
-    /**
-     * Waits for the database to be ready before running your callback. Do this before performing any other actions on your database
-     * @param {()=>void} [callback] (optional) callback function that is called when ready. You can also use the returned promise
-     * @returns {Promise<void>} returns a promise that resolves when ready
-     */
-    ready(callback?: () => void): Promise<void>;
 
     /**
      * Closes the database
@@ -32,7 +25,7 @@ export class AceBase extends acebasecore.AceBaseBase {
      * @param settings.lockTimeout timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
      * @param settings.sponsor You can turn this on if you are a sponsor. See https://github.com/appy-one/acebase/discussions/100 for more info
      */
-    static WithIndexedDB(name: string, settings?: { logLevel?: 'verbose'|'log'|'warn'|'error'; removeVoidProperties?: boolean; maxInlineValueSize?: number; multipleTabs?: boolean; cacheSeconds?: number; lockTimeout?: number, sponsor?: boolean }): AceBase;
+    static WithIndexedDB(name: string, settings?: { logLevel?: LoggingLevel; removeVoidProperties?: boolean; maxInlineValueSize?: number; multipleTabs?: boolean; cacheSeconds?: number; lockTimeout?: number, sponsor?: boolean }): AceBase;
 
     /**
      * Creates an AceBase database instance using LocalStorage or SessionStorage as storage engine. When running in non-browser environments, set
@@ -48,7 +41,7 @@ export class AceBase extends acebasecore.AceBaseBase {
      * @param settings.lockTimeout timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
      * @param settings.sponsor You can turn this on if you are a sponsor. See https://github.com/appy-one/acebase/discussions/100 for more info
      */
-    static WithLocalStorage(dbname: string, settings: { logLevel?: 'verbose'|'log'|'warn'|'error', temp?: boolean, provider?: any, removeVoidProperties?: boolean, maxInlineValueSize?: number, multipleTabs?: boolean, lockTimeout?: number, sponsor?: boolean }): AceBase
+    static WithLocalStorage(dbname: string, settings: { logLevel?: LoggingLevel, temp?: boolean, provider?: any, removeVoidProperties?: boolean, maxInlineValueSize?: number, multipleTabs?: boolean, lockTimeout?: number, sponsor?: boolean }): AceBase
 }
 
 export interface AceBaseLocalSettings {
@@ -56,7 +49,7 @@ export interface AceBaseLocalSettings {
      * What level to use for console logging.
      * @default 'log'
      */
-     logLevel?: 'verbose'|'log'|'warn'|'error';
+    logLevel?: LoggingLevel;
     /** Whether to use colors in the console logs output */
     logColors?: boolean;
     /** Optional storage settings */
@@ -283,7 +276,7 @@ export class CustomStorageHelpers {
      * pathInfo.childPath('child') === 'my/path/to/data/child';
      * pathInfo.childPath(0) === 'my/path/to/data[0]';
      */
-    static readonly PathInfo: typeof acebasecore.PathInfo;
+    static readonly PathInfo: typeof PathInfo;
 }
 
 export class SchemaValidationError extends Error {
@@ -305,9 +298,14 @@ export {
     IStreamLike,
     ILiveDataProxy,
     ILiveDataProxyValue,
-    IObjectCollection,
     ObjectCollection,
     ID,
     proxyAccess,
     PartialArray,
 } from 'acebase-core';
+
+import { ObjectCollection } from 'acebase-core';
+/**
+ * @deprecated Use `ObjectCollection` instead
+ */
+export type IObjectCollection<T> = ObjectCollection<T>;
