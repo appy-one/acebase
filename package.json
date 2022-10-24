@@ -20,7 +20,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "build": "find src -name \"*.d.ts\" -type f -delete && tsc && npm run browserify",
-    "browserify": "browserify src/browser.js -o dist/browser.js --standalone acebase -u src/btree.js -i ./src/data-index.js -u src/geohash.js -u src/node-cache.js -i ./src/promise-fs.js -u src/promise-timeout.js -i ./src/storage-acebase.js -i ./src/storage-mssql.js -i ./src/storage-sqlite.js --ignore buffer --ignore rxjs && terser dist/browser.js -o dist/browser.min.js",
+    "browserify": "browserify src/browser.js -o dist/browser.js --standalone acebase --ignore buffer --ignore rxjs && terser dist/browser.js -o dist/browser.min.js",
     "test": "jasmine"
   },
   "keywords": [
