@@ -7,13 +7,13 @@
     "./src/index.js": "./src/browser.js",
     "./src/ipc/index.js": "./src/ipc/browser.js",
     "./src/promise-fs/index.js": "./src/promise-fs/browser.js",
-    "./src/storage-acebase.js": "./src/not-supported.js",
-    "./src/storage-mssql.js": "./src/not-supported.js",
-    "./src/storage-sqlite.js": "./src/not-supported.js",
+    "./src/storage/binary/index.js": "./src/not-supported.js",
+    "./src/storage/mssql/index.js": "./src/not-supported.js",
+    "./src/storage/sqlite/index.js": "./src/not-supported.js",
     "./src/data-index/index.js": "./src/not-supported.js",
     "./src/btree/index.js": "./src/not-supported.js"
   },
-  "types": "./index.d.ts",
+  "types": "./src/index.d.ts",
   "private": false,
   "repository": "github:appy-one/acebase",
   "scripts": {

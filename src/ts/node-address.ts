@@ -1,25 +1,21 @@
 export class NodeAddress {
-    constructor(
-        public readonly path: string,
-        public readonly pageNr: number,
-        public readonly recordNr: number) {
-    }
+    constructor(public readonly path: string) {}
 
     toString() {
-        return `"/${this.path}" @${this.pageNr},${this.recordNr}`;
+        return `"/${this.path}"`;
     }
 
     /**
      * Compares this address to another address
      */
     equals(address: NodeAddress) {
-        return this.path === address.path && this.pageNr === address.pageNr && this.recordNr === address.recordNr;
+        return this.path === address.path;
     }
 }
 
 export class RemovedNodeAddress extends NodeAddress {
     constructor(path: string) {
-        super(path, null, null);
+        super(path);
     }
 
     toString() {

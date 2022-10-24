@@ -29,18 +29,60 @@ exports.SchemaValidationError = SchemaValidationError;
  */
 class StorageSettings {
     constructor(settings = {}) {
-        this.maxInlineValueSize = typeof settings.maxInlineValueSize === 'number' ? settings.maxInlineValueSize : 50;
-        this.removeVoidProperties = settings.removeVoidProperties === true;
-        this.path = settings.path || '.';
+        /**
+         * in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
+         * @default 50
+         */
+        this.maxInlineValueSize = 50;
+        /**
+         * Instead of throwing errors on undefined values, remove the properties automatically. Default is false
+         * @default false
+         */
+        this.removeVoidProperties = false;
+        /**
+         * Target path to store database files in, default is `'.'`
+         * @default '.'
+         */
+        this.path = '.';
+        /**
+         * timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+         * @default 120
+         */
+        this.lockTimeout = 120;
+        /**
+         * optional type of storage class - used by `AceBaseStorage` to create different specific db files (data, transaction, auth etc)
+         * @see AceBaseStorageSettings see `AceBaseStorageSettings.type` for more info
+         */
+        this.type = 'data';
+        /**
+         * Whether the database should be opened in readonly mode
+         * @default false
+         */
+        this.readOnly = false;
+        if (typeof settings.maxInlineValueSize === 'number') {
+            this.maxInlineValueSize = settings.maxInlineValueSize;
+        }
+        if (typeof settings.removeVoidProperties === 'boolean') {
+            this.removeVoidProperties = settings.removeVoidProperties;
+        }
+        if (typeof settings.path === 'string') {
+            this.path = settings.path;
+        }
         if (this.path.endsWith('/')) {
             this.path = this.path.slice(0, -1);
         }
-        this.logLevel = settings.logLevel || 'log';
-        this.info = settings.info || 'realtime database';
-        this.type = settings.type || 'data';
-        this.ipc = settings.ipc;
-        this.lockTimeout = typeof settings.lockTimeout === 'number' ? settings.lockTimeout : 120;
-        this.transactions = typeof settings.transactions === 'object' ? settings.transactions : { log: false };
+        if (typeof settings.lockTimeout === 'number') {
+            this.lockTimeout = settings.lockTimeout;
+        }
+        if (typeof settings.type === 'string') {
+            this.type = settings.type;
+        }
+        if (typeof settings.readOnly === 'boolean') {
+            this.readOnly = settings.readOnly;
+        }
+        if (typeof settings.ipc === 'object') {
+            this.ipc = settings.ipc;
+        }
     }
 }
 exports.StorageSettings = StorageSettings;
@@ -51,7 +93,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
      * @param name name of the database
      * @param settings instance of AceBaseStorageSettings or SQLiteStorageSettings
      */
-    constructor(name, settings) {
+    constructor(name, settings, env) {
         super();
         this.name = name;
         this.settings = settings;
@@ -355,7 +397,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 });
             },
         };
-        this.debug = new acebase_core_1.DebugLogger(settings.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
+        this.debug = new acebase_core_1.DebugLogger(env.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
         if (settings.ipc) {
@@ -518,10 +560,8 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
     }
     /**
      * Wrapper for _writeNode, handles triggering change events, index updating.
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options]
-     * @returns {Promise<IWriteNodeResult>} Returns a promise that resolves with an object that contains storage specific details, plus the applied mutations if transaction logging is enabled
+     * @returns Returns a promise that resolves with an object that contains storage specific details,
+     * plus the applied mutations if transaction logging is enabled
      */
     async _writeNodeWithTracking(path, value, options = {
         merge: false,
@@ -728,7 +768,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 let results = [];
                 let trailPath = '';
                 while (trailKeys.length > 0) {
-                    /** @type {string|number} trailKeys.shift() as string|number */
                     const subKey = trailKeys.shift();
                     if (typeof subKey === 'string' && (subKey === '*' || subKey.startsWith('$'))) {
                         // Recursion needed
@@ -1135,7 +1174,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             }
             const criteriaKeys = criteria.reduce((keys, cr) => {
                 let key = cr.key;
-                if (key.includes('/')) {
+                if (typeof key === 'string' && key.includes('/')) {
                     // Descendant key criterium, use child key only (eg 'address' of 'address/city')
                     key = key.slice(0, key.indexOf('/'));
                 }
@@ -1149,16 +1188,18 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             const delayedMatchPromises = [];
             try {
                 await this.getChildren(path, { tid, keyFilter: criteriaKeys }).next(childInfo => {
-                    unseenKeys.includes(childInfo.key) && unseenKeys.splice(unseenKeys.indexOf(childInfo.key), 1);
+                    var _a;
+                    const keyOrIndex = (_a = childInfo.key) !== null && _a !== void 0 ? _a : childInfo.index;
+                    unseenKeys.includes(keyOrIndex) && unseenKeys.splice(unseenKeys.indexOf(childInfo.key), 1);
                     const keyCriteria = criteria
-                        .filter(cr => cr.key === childInfo.key)
+                        .filter(cr => cr.key === keyOrIndex)
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
                     const keyResult = keyCriteria.length > 0 ? checkChild(childInfo, keyCriteria) : { isMatch: true, promises: [] };
                     isMatch = keyResult.isMatch;
                     if (isMatch) {
                         delayedMatchPromises.push(...keyResult.promises);
                         const childCriteria = criteria
-                            .filter(cr => cr.key.startsWith(`${childInfo.key}/`))
+                            .filter(cr => typeof cr.key === 'string' && cr.key.startsWith(`${typeof keyOrIndex === 'number' ? `[${keyOrIndex}]` : keyOrIndex}/`))
                             .map(cr => {
                             const key = cr.key.slice(cr.key.indexOf('/') + 1);
                             return { key, op: cr.op, compare: cr.compare };
@@ -1182,16 +1223,16 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                     return false;
                 }
                 // Now, also check keys that weren't found in the node. (a criterium may be "!exists")
-                isMatch = unseenKeys.every(key => {
-                    const childInfo = new node_info_1.NodeInfo({ key, exists: false });
+                isMatch = unseenKeys.every(keyOrIndex => {
+                    const childInfo = new node_info_1.NodeInfo(Object.assign(Object.assign(Object.assign({}, (typeof keyOrIndex === 'number' && { index: keyOrIndex })), (typeof keyOrIndex === 'string' && { key: keyOrIndex })), { exists: false }));
                     const childCriteria = criteria
-                        .filter(cr => cr.key.startsWith(`${key}/`))
+                        .filter(cr => typeof cr.key === 'string' && cr.key.startsWith(`${typeof keyOrIndex === 'number' ? `[${keyOrIndex}]` : keyOrIndex}/`))
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
                     if (childCriteria.length > 0 && !checkChild(childInfo, childCriteria).isMatch) {
                         return false;
                     }
                     const keyCriteria = criteria
-                        .filter(cr => cr.key === key)
+                        .filter(cr => cr.key === keyOrIndex)
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
                     if (keyCriteria.length === 0) {
                         return true; // There were only child criteria, and they matched (otherwise we wouldn't be here)
@@ -1362,7 +1403,15 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             ? writeFn.write.bind(writeFn) // Using the "old" stream argument. Use its write method for backward compatibility
             : writeFn;
         const stringifyValue = (type, val) => {
-            const escape = (str) => str.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+            const escape = (str) => str
+                .replace(/\\/g, '\\\\') // forward slashes
+                .replace(/"/g, '\\"') // quotes
+                .replace(/\r/g, '\\r') // carriage return
+                .replace(/\n/g, '\\n') // line feed
+                .replace(/\t/g, '\\t') // tabs
+                .replace(/[\u0000-\u001f]/g, // other control characters
+            // other control characters
+            ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
             if (type === node_value_types_1.VALUE_TYPES.DATETIME) {
                 val = `"${val.toISOString()}"`;
                 if (options.type_safe) {

@@ -1,9 +1,9 @@
-const { AceBase, ID } = require("..");
+const { AceBase, ID } = require('..');
 const { pfs } = require('../src/promise-fs');
 
 /**
- * 
- * @param {AceBase} db 
+ *
+ * @param {AceBase} db
  */
 const removeDB = async (db) => {
     // Make sure it was ready
@@ -17,7 +17,7 @@ const removeDB = async (db) => {
     const files = await pfs.readdir(dbdir);
     await Promise.all(files.map(file => pfs.rm(dbdir + '/' + file)));
     await pfs.rmdir(dbdir);
-}
+};
 
 describe('constructor', () => {
 

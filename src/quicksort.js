@@ -24,21 +24,21 @@ function fastQuickSort(arr, compareFn = (a, b) => a - b) {
     let entry = [
         0,
         arr.length,
-        2 * Math.floor(Math.log(arr.length) / Math.log(2))
+        2 * Math.floor(Math.log(arr.length) / Math.log(2)),
     ];
     stack.push(entry);
     while (stack.length > 0) {
         entry = stack.pop();
-        var start = entry[0];
-        var end = entry[1];
-        var depth = entry[2];
+        const start = entry[0];
+        const end = entry[1];
+        let depth = entry[2];
         if (depth == 0) {
             arr = shellSortBound(arr, start, end, compareFn);
             continue;
         }
         depth--;
-        var pivot = Math.round((start + end) / 2);
-        var pivotNewIndex = inplaceQuickSortPartition(arr, start, end, pivot, compareFn);
+        const pivot = Math.round((start + end) / 2);
+        const pivotNewIndex = inplaceQuickSortPartition(arr, start, end, pivot, compareFn);
         if (end - pivotNewIndex > 16) {
             entry = [pivotNewIndex, end, depth];
             stack.push(entry);
@@ -69,15 +69,16 @@ function shellSortBound(arr, start, end, compareFn) {
     return arr;
 }
 function swap(arr, a, b) {
-    var t = arr[a];
+    const t = arr[a];
     arr[a] = arr[b];
     arr[b] = t;
 }
 // Insertion sort
 function insertionSort(arr, compareFn) {
     for (let i = 1, l = arr.length; i < l; i++) {
-        let value = arr[i];
-        for (var j = i - 1; j >= 0; j--) {
+        const value = arr[i];
+        let j;
+        for (j = i - 1; j >= 0; j--) {
             if (compareFn(arr[j], value) <= 0) // arr[j] <= value
                 break;
             arr[j + 1] = arr[j];
@@ -88,8 +89,8 @@ function insertionSort(arr, compareFn) {
 }
 // In place quicksort
 function inplaceQuickSortPartition(arr, start, end, pivotIndex, compareFn) {
-    var i = start, j = end;
-    var pivot = arr[pivotIndex];
+    let i = start, j = end;
+    const pivot = arr[pivotIndex];
     while (true) {
         while (compareFn(arr[i], pivot) < 0) { // arr[i] < pivot
             i++;

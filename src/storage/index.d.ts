@@ -1,6 +1,6 @@
-import { DebugLogger, SimpleEventEmitter, DataRetrievalOptions, ISchemaCheckResult } from 'acebase-core';
+import { DebugLogger, SimpleEventEmitter, DataRetrievalOptions, ISchemaCheckResult, LoggingLevel } from 'acebase-core';
 import { NodeInfo } from '../node-info';
-import { IPCPeer } from '../ipc';
+import { IPCPeer, RemoteIPCPeer } from '../ipc';
 import { DataIndex } from '../data-index';
 import { CreateIndexOptions } from './indexes';
 export declare class SchemaValidationError extends Error {
@@ -9,7 +9,7 @@ export declare class SchemaValidationError extends Error {
 }
 export interface IWriteNodeResult {
     mutations: Array<{
-        target: Array<string | number>;
+        target: (string | number)[];
         prev: any;
         val: any;
     }>;
@@ -35,7 +35,7 @@ export interface IPCClientSettings {
     /**
      * Token used in the IPC Server configuration (optional). The server will refuse connections using the wrong token.
      */
-    token: string;
+    token?: string;
     /**
      * Determines the role of this IPC client. Only 1 process can be assigned the 'master' role, all other processes must use the role 'worker'
      */
@@ -50,9 +50,8 @@ export interface TransactionLogSettings {
  * Storage Settings
  */
 export declare class StorageSettings {
-    logLevel: 'error' | 'verbose' | 'log' | 'warn';
     /**
-     *  in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
+     * in bytes, max amount of child data to store within a parent record before moving to a dedicated record. Default is 50
      * @default 50
      */
     maxInlineValueSize: number;
@@ -67,37 +66,44 @@ export declare class StorageSettings {
      */
     path: string;
     /**
-     * optional info to be written to the console output underneith the logo
-     * @default 'realtime database'
+     * timeout setting for read and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
+     * @default 120
      */
-    info?: string;
+    lockTimeout: number;
     /**
-     * optional type of storage class - used by `AceBaseStorage` to create different db files in the future (data, transaction, auth etc)
-     * TODO: move to `AcebaseStorageSettings`
+     * optional type of storage class - used by `AceBaseStorage` to create different specific db files (data, transaction, auth etc)
+     * @see AceBaseStorageSettings see `AceBaseStorageSettings.type` for more info
      */
-    type?: string;
+    type: string;
     /**
-     * External IPC server configuration. You need this if you are running multiple AceBase processes using the same database files in a pm2 or cloud-based cluster so the individual processes can communicate with each other.
+     * Whether the database should be opened in readonly mode
+     * @default false
+     */
+    readOnly: boolean;
+    /**
+     * IPC settings if you are using AceBase in pm2 or cloud-based clusters
      */
     ipc?: IPCClientSettings;
     /**
-     * timeout setting for read /and write locks in seconds. Operations taking longer than this will be aborted. Default is 120 seconds.
-     * @default 120
+     * Settings for optional transaction logging
      */
-    lockTimeout?: number;
     transactions?: TransactionLogSettings;
     constructor(settings?: Partial<StorageSettings>);
 }
+export interface StorageEnv {
+    logLevel: LoggingLevel;
+}
 export declare type SubscriptionCallback = (err: Error, path: string, newValue: any, oldValue: any, context: any) => void;
 export declare type InternalDataRetrievalOptions = DataRetrievalOptions & {
-    tid?: string;
+    tid?: string | number;
 };
 export declare class Storage extends SimpleEventEmitter {
     name: string;
     settings: StorageSettings;
     debug: DebugLogger;
-    private ipc;
-    protected nodeLocker: {
+    stats: any;
+    ipc: IPCPeer | RemoteIPCPeer;
+    nodeLocker: {
         lock(path: string, tid: string, write: boolean, comment?: string): ReturnType<IPCPeer['lock']>;
     };
     private _lastTid;
@@ -109,7 +115,7 @@ export declare class Storage extends SimpleEventEmitter {
      * @param name name of the database
      * @param settings instance of AceBaseStorageSettings or SQLiteStorageSettings
      */
-    constructor(name: string, settings: StorageSettings);
+    constructor(name: string, settings: StorageSettings, env: StorageEnv);
     private _indexes;
     indexes: {
         /**
@@ -245,22 +251,20 @@ export declare class Storage extends SimpleEventEmitter {
     };
     /**
      * Wrapper for _writeNode, handles triggering change events, index updating.
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options]
-     * @returns {Promise<IWriteNodeResult>} Returns a promise that resolves with an object that contains storage specific details, plus the applied mutations if transaction logging is enabled
+     * @returns Returns a promise that resolves with an object that contains storage specific details,
+     * plus the applied mutations if transaction logging is enabled
      */
     _writeNodeWithTracking(path: string, value: any, options?: Partial<{
         merge: boolean;
         transaction: unknown;
-        tid: string;
-        _customWriteFunction: unknown;
+        tid: string | number;
+        _customWriteFunction: () => any;
         waitForIndexUpdates: boolean;
         suppress_events: boolean;
         context: any;
         impact: ReturnType<Storage['getUpdateImpact']>;
         currentValue: any;
-    }>): Promise<any>;
+    }>): Promise<IWriteNodeResult>;
     /**
      * Enumerates all children of a given Node for reflection purposes
      * @param path
@@ -309,7 +313,7 @@ export declare class Storage extends SimpleEventEmitter {
         /**
          * optional transaction id for node locking purposes
          */
-        tid: string;
+        tid: string | number;
         /**
          * transaction as implemented by sqlite/mssql storage
          */
@@ -404,9 +408,9 @@ export declare class Storage extends SimpleEventEmitter {
      * @returns returns a promise that resolves with a boolean indicating if it matched the criteria
      */
     matchNode(path: string, criteria: Array<{
-        key: string;
+        key: string | number;
         op: string;
-        compare: string;
+        compare: any;
     }>, options?: {
         /**
          * optional transaction id for node locking purposes

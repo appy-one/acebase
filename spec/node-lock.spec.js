@@ -1,5 +1,5 @@
 /// <reference types="@types/jasmine" />
-const { createTempDB } = require("./tempdb");
+const { createTempDB } = require('./tempdb');
 
 describe('node locking', () => {
     it('should not cause deadlocks', async () => {
@@ -9,7 +9,7 @@ describe('node locking', () => {
         // When concurrent writes are enabled, a deadlock sitation will arise in the following situation:
         // - multiple write locks are allowed if their paths do not intersect (are not "on the same trail")
         // - value events are bound to a path
-        // - 2 concurrent writes are done on a deeper path than the bound events. 
+        // - 2 concurrent writes are done on a deeper path than the bound events.
         // -> Both writes need to read lock the event path to fetch "before" event data, but aren't allowed to until one of them releases their write lock. Causing a DEADLOCK
         //
         // To enable concurrent writes again, code will have to be refactored so that any higher event path is read locked before acquiring a write lock on the descendant node
@@ -29,7 +29,7 @@ describe('node locking', () => {
 
         // Use a timeout of 5 seconds to make sure above updates could both have been performed.
         let timeoutFired = false;
-        const timeout = new Promise(resolve => setTimeout(() => { timeoutFired = true; resolve(); }, 5000));
+        const timeout = new Promise(resolve => setTimeout(() => { timeoutFired = true; resolve(0); }, 5000));
 
         await Promise.race([timeout, Promise.all([p1, p2])]);
 
@@ -50,50 +50,50 @@ describe('node locking', () => {
 
     it('should not cause deadlocks - part2', async () => {
         // Simulate high load
-  
+
         const { db, removeDB } = await createTempDB({ logLevel: 'verbose' });
         const mem = {};
         const actions = [
-            async () => { 
+            async () => {
                 const product = { name: 'My product', added: new Date() };
-                await db.ref('products/abc').set(product); 
+                await db.ref('products/abc').set(product);
                 if (!mem.products) { mem.products = {}; }
                 mem.products.abc = product;
             },
-            async () => { 
-                const product = { name: 'Another product', added: new Date() }
-                await db.ref('products/def').set(product); 
+            async () => {
+                const product = { name: 'Another product', added: new Date() };
+                await db.ref('products/def').set(product);
                 if (!mem.products) { mem.products = {}; }
                 mem.products.def = product;
             },
-            async () => { 
+            async () => {
                 const description = 'Changed description' + Math.random();
-                await db.ref('products/abc').update({ description }); 
+                await db.ref('products/abc').update({ description });
                 if (!mem.products) { mem.products = {}; }
                 if (!mem.products.abc) { mem.products.abc = {}; }
                 mem.products.abc.description = description;
             },
-            async () => { 
+            async () => {
                 const changed = new Date();
-                await db.ref('products/abc').update({ changed }); 
+                await db.ref('products/abc').update({ changed });
                 if (!mem.products) { mem.products = {}; }
                 if (!mem.products.abc) { mem.products.abc = {}; }
-                mem.products.abc.changed = changed;                
+                mem.products.abc.changed = changed;
             },
-            async () => { 
+            async () => {
                 const product = { name: 'Product nr ' + Math.round(Math.random() * 100000), added: new Date() };
                 const ref = await db.ref('products').push(product);
                 if (!mem.products) { mem.products = {}; }
-                mem.products[ref.key] = product;                
+                mem.products[ref.key] = product;
             },
-            async () => { 
+            async () => {
                 const description = 'Changed description: ' + Math.random();
                 await db.ref('products/def').update({ description });
                 if (!mem.products) { mem.products = {}; }
                 if (!mem.products.def) { mem.products.def = {}; }
-                mem.products.def.description = description;                
+                mem.products.def.description = description;
             },
-            async () => { 
+            async () => {
                 const changed = new Date();
                 await db.ref('products/def').update({ changed });
                 if (!mem.products) { mem.products = {}; }
@@ -102,11 +102,11 @@ describe('node locking', () => {
             },
             async () => {
                 const users = ['ewout','john','pete','jack','kenny','jimi'];
-                const lorem = "At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati cupiditate non provident, similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et dolorum fuga. Et harum quidem rerum facilis est et expedita distinctio. Nam libero tempore, cum soluta nobis est eligendi optio cumque nihil impedit quo minus id quod maxime placeat facere possimus, omnis voluptas assumenda est, omnis dolor repellendus. Temporibus autem quibusdam et aut officiis debitis aut rerum necessitatibus saepe eveniet ut et voluptates repudiandae sint et molestiae non recusandae. Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatibus maiores alias consequatur aut perferendis doloribus asperiores repellat.";
+                const lorem = 'At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati cupiditate non provident, similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et dolorum fuga. Et harum quidem rerum facilis est et expedita distinctio. Nam libero tempore, cum soluta nobis est eligendi optio cumque nihil impedit quo minus id quod maxime placeat facere possimus, omnis voluptas assumenda est, omnis dolor repellendus. Temporibus autem quibusdam et aut officiis debitis aut rerum necessitatibus saepe eveniet ut et voluptates repudiandae sint et molestiae non recusandae. Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatibus maiores alias consequatur aut perferendis doloribus asperiores repellat.';
                 const words = lorem.replace(/\./g, '').split(' ');
                 const randomUser = () => {
                     return users[Math.floor(Math.random() * users.length)];
-                }
+                };
                 const randomText = (nrWords) => {
                     const arr = [];
                     for (let i = 0; i < nrWords; i++) {
@@ -114,24 +114,24 @@ describe('node locking', () => {
                         arr.push(word);
                     }
                     return arr.join(' ');
-                }
+                };
                 const post = {
                     posted: new Date(),
                     author: randomUser(),
                     title: randomText(5),
-                    text: randomText(50)
+                    text: randomText(50),
                 };
                 const ref = await db.ref('posts').push(post);
                 if (!mem.posts) { mem.posts = {}; }
                 mem.posts[ref.key] = post;
             },
-            async () => { 
+            async () => {
                 await db.ref('products').get();
             },
-            // async () => { 
-            //     await db.ref('').get(); 
+            // async () => {
+            //     await db.ref('').get();
             // },
-            async () => { 
+            async () => {
                 const pulse = new Date();
                 await db.root.update({ pulse });
                 mem.pulse = pulse;
@@ -156,7 +156,7 @@ describe('node locking', () => {
             },
             async () => {
                 const dbCount = await db.ref('posts').count();
-                const memCount = Object.keys(mem.posts || {}).length
+                const memCount = Object.keys(mem.posts || {}).length;
                 // if (dbCount !== memCount) {
                 //     // debugger;
                 //     console.error(`Expected a posts count of ${memCount}, but got ${dbCount}`);
@@ -175,25 +175,25 @@ describe('node locking', () => {
                 if (!mem.stats) { mem.stats = { transactions: 0 }; }
                 mem.stats.last_transaction = now;
                 mem.stats.transactions++;
-            }
+            },
         ];
 
         const testEquality = async () => {
             const snap = await db.root.get();
-            expect(snap.val()).toEqual(mem);            
+            expect(snap.val()).toEqual(mem);
         };
 
         const replay = {
             enabled: false,
             actions: [],
-            delays: []
+            delays: [],
         };
         const handleError = err => {
             console.error(err.message);
             console.log(`To replay, use following actions and delays`);
             console.log(replay);
             throw err;
-        }
+        };
         const promises = [];
         for (let i = 0; i < 10000; i++) {
             if (i % 100 === 0) {
@@ -220,4 +220,4 @@ describe('node locking', () => {
 
         await removeDB();
     }, 2147483647);
-})
+});

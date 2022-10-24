@@ -54,7 +54,7 @@ describe('Unique B+Tree', () => {
                 for (let i = 0; i < leaf.entries.length; i++) {
                     count++;
                     const entry = leaf.entries[i];
-                    if (i > 0) { 
+                    if (i > 0) {
                         // key > last
                         expect(entry.key).toBeGreaterThan(lastEntry.key);
                     }
@@ -74,7 +74,7 @@ describe('Unique B+Tree', () => {
                 for (let i = leaf.entries.length - 1; i >= 0 ; i--) {
                     count++;
                     const entry = leaf.entries[i];
-                    if (i < leaf.entries.length - 1) { 
+                    if (i < leaf.entries.length - 1) {
                         // key < last
                         expect(entry.key).toBeLessThan(lastEntry.key);
                     }
@@ -90,7 +90,7 @@ describe('Unique B+Tree', () => {
         const tree = new BPlusTree(10, true);
         const value = tree.find('unknown');
         expect(value).toBeNull();
-    })
+    });
 
     it('must not accept duplicate keys', () => {
         const tree = new BPlusTree(10, true);

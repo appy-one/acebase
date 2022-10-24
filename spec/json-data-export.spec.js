@@ -1,5 +1,5 @@
 /// <reference types="@types/jasmine" />
-const { createTempDB } = require("./tempdb");
+const { createTempDB } = require('./tempdb');
 
 describe('JSON data export', () => {
     let db, removeDB;
@@ -10,11 +10,11 @@ describe('JSON data export', () => {
 
     it('should be typesafe', async () => {
         const obj = {
-            name: 'Ewout', 
+            name: 'Ewout',
             country: 'The Netherlands',
             points: 125,
-            created: new Date()
-        }
+            created: new Date(),
+        };
         await db.ref('object').set(obj);
 
         let json = '';
@@ -22,7 +22,7 @@ describe('JSON data export', () => {
         expect(typeof json).toBe('string');
 
         let serialized;
-        expect(() => { serialized = JSON.parse(json) }).not.toThrow();
+        expect(() => { serialized = JSON.parse(json); }).not.toThrow();
         expect(typeof serialized).toBe('object');
         expect(serialized.name).toEqual(obj.name);
         expect(serialized.country).toEqual(obj.country);
@@ -32,11 +32,11 @@ describe('JSON data export', () => {
 
     it('should allow not to be typesafe', async () => {
         const obj = {
-            name: 'Ewout', 
+            name: 'Ewout',
             country: 'The Netherlands',
             points: 125,
-            created: new Date()
-        }
+            created: new Date(),
+        };
         await db.ref('object2').set(obj);
 
         let json = '';
@@ -44,7 +44,7 @@ describe('JSON data export', () => {
         expect(typeof json).toBe('string');
 
         let serialized;
-        expect(() => { serialized = JSON.parse(json) }).not.toThrow();
+        expect(() => { serialized = JSON.parse(json); }).not.toThrow();
         expect(typeof serialized).toBe('object');
         expect(serialized.name).toEqual(obj.name);
         expect(serialized.country).toEqual(obj.country);
@@ -54,5 +54,5 @@ describe('JSON data export', () => {
 
     afterAll(async () => {
         await removeDB();
-    })
+    });
 });

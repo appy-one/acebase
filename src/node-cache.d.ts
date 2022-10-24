@@ -17,6 +17,7 @@ export declare class NodeCache {
     static get CACHE_DURATION(): number;
     private _cleanupTimeout;
     private _cache;
+    has(key: string): boolean;
     /**
      *  For announced lookups, will bind subsequent .find calls to a promise that resolves once the cache item is set
      */

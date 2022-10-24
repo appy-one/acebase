@@ -8,6 +8,7 @@ export class NodeInfo {
     index?: number;
     key?: string;
     exists?: boolean;
+    /** TODO: Move this to BinaryNodeInfo */
     address?: NodeAddress;
     value?: any;
     childCount?: number;
@@ -49,7 +50,7 @@ export class NodeInfo {
             return `"${this.path}" doesn't exist`;
         }
         if (this.address) {
-            return `"${this.path}" is ${this.valueTypeName} stored at ${this.address.pageNr},${this.address.recordNr}`;
+            return `"${this.path}" is ${this.valueTypeName} stored at ${this.address.toString()}`;
         }
         else {
             return `"${this.path}" is ${this.valueTypeName} with value ${this.value}`;

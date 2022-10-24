@@ -23,7 +23,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
     private _nodeLocker: NodeLocker;
 
-    constructor(protected storage: Storage, protected id: string, protected dbname: string = storage.name) {
+    constructor(protected storage: Storage, protected id: string, public dbname: string = storage.name) {
         super();
         this._nodeLocker = new NodeLocker(storage.debug, storage.settings.lockTimeout);
 

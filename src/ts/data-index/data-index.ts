@@ -2,7 +2,7 @@ import { PathInfo, Utils, ID, ColorStyle, Transport } from 'acebase-core';
 import { ThreadSafe } from '../thread-safe';
 import type { Storage } from '../storage';
 import { pfs } from '../promise-fs';
-import { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryBPlusTreeLeaf, BinaryBPlusTreeLeafEntry, BinaryWriter, BinaryReader, BlacklistingSearchOperator } from '../btree';
+import { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryBPlusTreeLeafEntry, BinaryWriter, BinaryReader, BlacklistingSearchOperator } from '../btree';
 import { DataIndexOptions } from './options';
 import { FileSystemError, IndexableValue, IndexableValueOrArray, IndexMetaData, IndexRecordPointer } from './shared';
 import { getValueType, VALUE_TYPES }  from '../node-value-types';
@@ -167,7 +167,7 @@ export class DataIndex {
     public textLocale: string;
     public textLocaleKey?: string;
     public includeKeys: string[];
-    protected indexMetadataKeys: string[];
+    public indexMetadataKeys: string[];
     private _buildError: Error = null;
     private _updateQueue: Array<{
         path: string;
@@ -787,9 +787,10 @@ export class DataIndex {
         const results = new IndexQueryResults(); //[];
         results.filterKey = this.key;
         let skipped = 0;
-        const processLeaf = async (leaf: BinaryBPlusTreeLeaf): Promise<IndexQueryResults> => {
+        let leaf = await (ascending ? idx.tree.getFirstLeaf() : idx.tree.getLastLeaf());
+        do {
             if (!ascending) { leaf.entries.reverse(); }
-            for (let i = 0; i < leaf.entries.length; i++) {
+            for (let i = 0; i < leaf.entries.length && results.length < take; i++) {
                 const entry = leaf.entries[i];
                 const value = entry.key;
                 if (sort.length > 0 && entry.totalValues > 1 && skipped + entry.totalValues > skip) {
@@ -812,7 +813,7 @@ export class DataIndex {
                     };
                     entry.values.sort((a, b) => applySort(0, a, b));
                 }
-                for (let j = 0; j < entry.totalValues; j++) {
+                for (let j = 0; j < entry.totalValues && results.length < take; j++) {
                     if (skipped < skip) {
                         skipped++;
                         continue;
@@ -825,28 +826,14 @@ export class DataIndex {
                     const metadata = entryValue.metadata;
                     const result = new IndexQueryResult(recordPointer.key, recordPointer.path, value, metadata);
                     results.push(result);
-                    if (results.length === take) {
-                        return results;
-                    }
                 }
             }
 
-            if (ascending && leaf.hasNext) {
-                return leaf.getNext().then(processLeaf);
-            }
-            else if (!ascending && leaf.hasPrevious) {
-                return leaf.getPrevious().then(processLeaf);
-            }
-            else {
-                return results;
-            }
-        };
-        if (ascending) {
-            await idx.tree.getFirstLeaf().then(processLeaf);
+            leaf = results.length === take
+                ? null
+                : await (ascending ? leaf.getNext?.() : leaf.getPrevious?.());
         }
-        else {
-            await idx.tree.getLastLeaf().then(processLeaf);
-        }
+        while (leaf);
 
         idx.release();
 

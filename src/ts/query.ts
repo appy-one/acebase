@@ -1,5 +1,5 @@
 import { AceBaseBase, ID, PathInfo } from 'acebase-core';
-import type { Api, EventSubscriptionCallback } from 'acebase-core/dist/types/api';
+import type { Api, EventSubscriptionCallback, Query, QueryOptions, QueryFilter, QueryOrder } from 'acebase-core';
 import { VALUE_TYPES } from './node-value-types';
 import { NodeNotFoundError } from './node-errors';
 import { Storage } from './storage';
@@ -12,85 +12,6 @@ import { AsyncTaskBatch } from './async-task-batch';
 type LocalApi = Api & {
     db: AceBaseBase;
     storage: Storage;
-}
-
-export interface QueryFilter {
-    key: string;
-    op: string;
-    compare: any;
-}
-
-export interface QueryOrder {
-    key: string;
-    ascending: boolean
-}
-
-export interface Query {
-    filters: QueryFilter[];
-
-    /**
-     * number of results to skip, useful for paging
-     */
-    skip: number;
-
-    /**
-     * max number of results to return
-     */
-    take: number;
-
-    /**
-     * sort order
-     */
-    order: QueryOrder[];
-}
-
-export interface QueryOptions {
-    /**
-     * whether to return matching data, or paths to matching nodes only
-     * @default false
-     */
-    snapshots?: boolean;
-
-    /**
-     * when using snapshots, keys or relative paths to include in result data
-     */
-    include?: string[];
-
-    /**
-     * when using snapshots, keys or relative paths to exclude from result data
-     */
-    exclude?: string[];
-
-    /**
-     * when using snapshots, whether to include child objects in result data
-     * @default true
-     */
-    child_objects?: boolean;
-
-    /**
-     * callback function for events
-     */
-    eventHandler?: (event: { name: string, [key: string]: any }) => boolean|void;
-
-    /**
-     * NEW (BETA) monitor changes
-     */
-    monitor?: {
-        /**
-         * monitor new matches (either because they were added, or changed and now match the query)
-         */
-        add?: boolean;
-
-        /**
-         * monitor changed children that still match this query
-         */
-        change?: boolean;
-
-        /**
-         * monitor children that don't match this query anymore
-         */
-        remove?: boolean;
-    }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -109,7 +30,11 @@ export function query(
     path: string,
     query: Query,
     options: QueryOptions = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: noop },
-): Promise<{ results: object[]|string[], context: any, stop(): Promise<void> }> {
+): Promise<{
+    results: Array<{ path: string, val: any }> | string[];
+    context: any,
+    stop(): Promise<void>
+}> {
     // TODO: Refactor to async
 
     if (typeof options !== 'object') { options = {}; }
@@ -126,7 +51,7 @@ export function query(
         matches.sort((a, b) => {
             const compare = (i: number): number => {
                 const o = querySort[i];
-                const trailKeys = PathInfo.getPathKeys(o.key);
+                const trailKeys = PathInfo.getPathKeys(typeof o.key === 'number' ? `[${o.key}]` : o.key);
                 const left = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, a.val);
                 const right = trailKeys.reduce((val, key) => val !== null && typeof val === 'object' && key in val ? val[key] : null, b.val);
 
@@ -716,12 +641,12 @@ export function query(
                     let keepMonitoring = true;
                     // check if the properties we already have match filters,
                     // and if we have to check additional properties
-                    const checkKeys = [] as string[];
+                    const checkKeys = [] as (string | number)[];
                     queryFilters.forEach(f => !checkKeys.includes(f.key) && checkKeys.push(f.key));
-                    const seenKeys = [] as string[];
+                    const seenKeys = [] as (string | number)[];
                     typeof oldValue === 'object' && Object.keys(oldValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
                     typeof newValue === 'object' && Object.keys(newValue).forEach(key => !seenKeys.includes(key) && seenKeys.push(key));
-                    const missingKeys = [] as string[];
+                    const missingKeys = [] as (string | number)[];
                     let isMatch = seenKeys.every(key => {
                         if (!checkKeys.includes(key)) { return true; }
                         const filters = queryFilters.filter(filter => filter.key === key);

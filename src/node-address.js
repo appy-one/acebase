@@ -2,25 +2,23 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RemovedNodeAddress = exports.NodeAddress = void 0;
 class NodeAddress {
-    constructor(path, pageNr, recordNr) {
+    constructor(path) {
         this.path = path;
-        this.pageNr = pageNr;
-        this.recordNr = recordNr;
     }
     toString() {
-        return `"/${this.path}" @${this.pageNr},${this.recordNr}`;
+        return `"/${this.path}"`;
     }
     /**
      * Compares this address to another address
      */
     equals(address) {
-        return this.path === address.path && this.pageNr === address.pageNr && this.recordNr === address.recordNr;
+        return this.path === address.path;
     }
 }
 exports.NodeAddress = NodeAddress;
 class RemovedNodeAddress extends NodeAddress {
     constructor(path) {
-        super(path, null, null);
+        super(path);
     }
     toString() {
         return `"/${this.path}" (removed)`;

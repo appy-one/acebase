@@ -5,11 +5,12 @@ export declare class NodeInfo {
     index?: number;
     key?: string;
     exists?: boolean;
+    /** TODO: Move this to BinaryNodeInfo */
     address?: NodeAddress;
     value?: any;
     childCount?: number;
     constructor(info: Partial<NodeInfo>);
     get valueType(): number;
-    get valueTypeName(): "object" | "string" | "number" | "array" | "boolean" | "date" | "binary" | "reference" | "bigint";
+    get valueTypeName(): "object" | "string" | "number" | "array" | "boolean" | "date" | "bigint" | "binary" | "reference";
     toString(): string;
 }

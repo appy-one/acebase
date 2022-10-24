@@ -1,49 +1,84 @@
-const fs = require('fs');
-const { pfs } = require('./promise-fs');
-const { ID, PathInfo, PathReference, Utils, ColorStyle, PartialArray } = require('acebase-core');
-const { concatTypedArrays, bytesToNumber, bytesToBigint, numberToBytes, bigintToBytes, encodeString, decodeString, cloneObject } = Utils;
-const { NodeChangeTracker, NodeChange } = require('./node-changes');
-const { NodeAddress } = require('./node-address');
-const { NodeCache } = require('./node-cache');
-const { NodeInfo } = require('./node-info');
-const { NodeLock } = require('./node-lock');
-const { NodeNotFoundError } = require('./node-errors');
-const { Storage, StorageSettings } = require('./storage');
-const { VALUE_TYPES } = require('./node-value-types');
-const { BinaryBPlusTree, BPlusTreeBuilder, BinaryWriter } = require('./btree');
-const { Uint8ArrayBuilder } = require('./binary');
+import * as fs from 'fs';
+import { pfs } from '../../promise-fs';
+import { ID, PathInfo, PathReference, Utils, ColorStyle, PartialArray } from 'acebase-core';
+import { NodeChangeTracker, NodeChange } from '../../node-changes';
+import { BinaryNodeAddress } from './node-address';
+import { NodeCache } from '../../node-cache';
+import { BinaryNodeInfo } from './node-info';
+// import { NodeLock } from '../../node-lock';
+import { NodeNotFoundError } from '../../node-errors';
+import { InternalDataRetrievalOptions, IWriteNodeResult, Storage, StorageEnv, StorageSettings } from '../index';
+import { VALUE_TYPES } from '../../node-value-types';
+import { BinaryBPlusTree, BPlusTreeBuilder, BinaryWriter } from '../../btree';
+import { Uint8ArrayBuilder } from '../../binary';
+import { IAceBaseIPCLock } from '../../ipc/ipc';
+import { BinaryBPlusTreeTransactionOperation } from '../../btree/binary-tree-transaction-operation';
+import { NodeLock } from '../../node-lock';
 
+const { concatTypedArrays, bytesToNumber, bytesToBigint, numberToBytes, bigintToBytes, encodeString, decodeString, cloneObject } = Utils;
 const REMOVED_CHILD_DATA_IMPLEMENTED = false; // not used yet - allows marking of deleted children without having to rewrite the whole node
 
-/**
- * @property {string} path
- * @property {Array<{ key:string|number, prev: any, val: any }>} list
- * @interface
- */
-class IAppliedMutations {}
+export interface IAppliedMutations {
+    path: string;
+    list: Array<{ target: (string|number)[], prev: any, val: any }>;
+}
 
-class AceBaseStorageSettings extends StorageSettings {
+export class AceBaseStorageSettings extends StorageSettings {
     /**
-     *
-     * @param {object} settings
-     * @param {number} [settings.recordSize=128] record size in bytes, defaults to 128 (recommended). Max is 65536
-     * @param {number} [settings.pageSize=1024] page size in records, defaults to 1024 (recommended). Max is 65536
-     * @param {'data'|'transaction'|'auth'} [settings.type='data'] type of database content. Determines the name of the file within the .acebase directory
-     * @param {AceBaseTransactionLogSettings} [settings.transactions] settings to use for transaction logging
-     * @param {boolean} [settings.readOnly] Whether to open the database file in readonly mode
+     * record size in bytes, defaults to 128 (recommended). Max is 65536
+     * @default 128
      */
-    constructor(settings) {
+    recordSize = 128;
+
+    /**
+     * page size in records, defaults to 1024 (recommended). Max is 65536
+     * @default 1024
+     */
+    pageSize = 1024;
+
+    /**
+     * type of database content. Determines the name of the file within the .acebase directory
+     */
+    type: 'data' | 'transaction' | 'auth' = 'data';
+
+    /**
+     * settings to use for transaction logging
+     */
+    transactions: AceBaseTransactionLogSettings;
+
+    /**
+     * Use future FST version (not implemented yet)
+     */
+    fst2 = false;
+
+    constructor(settings: Partial<AceBaseStorageSettings> = {}) {
         super(settings);
-        settings = settings || {};
-        this.recordSize = settings.recordSize || 128;
-        this.pageSize = settings.pageSize || 1024;
-        this.type = settings.type || 'data';
-        this.readOnly = settings.readOnly === true;
+        if (typeof settings.recordSize === 'number') { this.recordSize = settings.recordSize; }
+        if (typeof settings.pageSize === 'number') { this.pageSize = settings.pageSize; }
+        if (typeof settings.type === 'string') { this.type = settings.type; }
         this.transactions = new AceBaseTransactionLogSettings(settings.transactions);
     }
 }
 
 class AceBaseTransactionLogSettings {
+
+    /**
+     * Whether transaction logging is enabled.
+     * @default false
+     */
+    log = false;
+
+    /**
+     * Max age of transactions to keep in logfile. Set to 0 to disable cleaning up and keep all transactions
+     * @default 30
+     */
+    maxAge = 30;
+
+    /**
+     * Whether write operations wait for the transaction to be logged before resolving their promises.
+     */
+    noWait = false;
+
     /**
      * BETA functionality - logs mutations made to a separate database file so they can be retrieved later
      * for database syncing / replication. Implementing this into acebase itself will allow the current
@@ -53,29 +88,38 @@ class AceBaseTransactionLogSettings {
      * becomes possible.
      *
      * Still under development, disabled by default. See transaction-logs.spec for tests
-     *
-     * @param {Partial<AceBaseTransactionLogSettings>} settings
-     * @param {boolean} [settings.log=false]
-     * @param {number} [settings.maxAge=30] Max age of transactions to keep in logfile. Set to 0 to disable cleaning up and keep all transactions
-     * @param {boolean} [settings.noWait=false]
      */
-    constructor(settings) {
-        settings = settings || {};
-        this.log = settings.log === true; //!== false;
-        this.maxAge = typeof settings.maxAge === 'number' ? settings.maxAge : 30; // 30 days
-        this.noWait = settings.noWait === true;
+    constructor(settings: Partial<AceBaseTransactionLogSettings> = {}) {
+        if (typeof settings.log === 'boolean') { this.log = settings.log; }
+        if (typeof settings.maxAge === 'number') { this.maxAge = settings.maxAge; }
+        if (typeof settings.noWait === 'boolean') { this.noWait = settings.noWait; }
     }
 }
 
-class AceBaseStorage extends Storage {
+export class AceBaseStorage extends Storage {
+
+    settings: AceBaseStorageSettings;
+    stats: {
+        writes: number;
+        reads: number;
+        bytesRead: number;
+        bytesWritten: number;
+    };
+
+    type: AceBaseStorageSettings['type'];
+
+    private txStorage?: AceBaseStorage;
+    private _ready = false;
+    private file: number;
+
+    nodeCache: NodeCache = new NodeCache();
+
     /**
      * Stores data in a binary file
-     * @param {string} name
-     * @param {AceBaseStorageSettings} settings
      */
-    constructor(name, settings) {
+    constructor(name: string, settings: AceBaseStorageSettings, env: StorageEnv) {
         console.assert(settings instanceof AceBaseStorageSettings, 'settings must be an instance of AceBaseStorageSettings');
-        super(name, settings);
+        super(name, settings, env);
 
         if (settings.maxInlineValueSize > 64) {
             throw new Error('maxInlineValueSize cannot be larger than 64'); // This is technically not possible because we store inline length with 6 bits: range = 0 to 2^6-1 = 0 - 63 // NOTE: lengths are stored MINUS 1, because an empty value is stored as tiny value, so "a"'s stored inline length is 0, allowing values up to 64 bytes
@@ -89,106 +133,23 @@ class AceBaseStorage extends Storage {
 
         this.name = name;
         this.settings = settings; // uses maxInlineValueSize, recordSize & pageSize settings from file when existing db
-        const stats = {
+        this.stats = {
             writes: 0,
             reads: 0,
             bytesRead: 0,
             bytesWritten: 0,
         };
-        this.stats = stats;
 
         this.type = settings.type;
         if (this.type === 'data' && settings.transactions.log === true) {
             // Get/create storage for mutations logging
-            const txSettings = new AceBaseStorageSettings({ type: 'transaction', logLevel: 'error', path: settings.path, removeVoidProperties: true, transactions: settings.transactions });
-            this.txStorage = new AceBaseStorage(name, txSettings);
+            const txSettings = new AceBaseStorageSettings({ type: 'transaction', path: settings.path, removeVoidProperties: true, transactions: settings.transactions });
+            this.txStorage = new AceBaseStorage(name, txSettings, { logLevel: 'error' });
         }
 
-        this._ready = false;
         this.once('ready', () => {
             this._ready = true;
         });
-
-        this.nodeCache = new NodeCache();
-        /**
-         * Use this method to update cache, instead of through this.nodeCache
-         * @param {boolean} fromIPC Whether this update came from an IPC notification to prevent infinite loop
-         * @param {NodeInfo} nodeInfo
-         * @param {boolean} [overwrite=true] Consider renaming to `hasMoved`, because that is what we seem to be using this flag for: it is set to false when reading a record's children - not because the address is actually changing
-         */
-        this.updateCache = (fromIPC, nodeInfo, hasMoved = true) => {
-            this.nodeCache.update(nodeInfo, hasMoved);
-            if (!fromIPC && hasMoved) {
-                this.ipc.sendNotification({ type: 'cache.update', info: nodeInfo });
-            }
-        };
-        this.invalidateCache = (fromIPC, path, recursive, reason) => {
-            this.nodeCache.invalidate(path, recursive, reason);
-            if (!fromIPC) {
-                this.ipc.sendNotification({ type: 'cache.invalidate', path, recursive, reason });
-            }
-        };
-
-        const filename = `${this.settings.path}/${this.name}.acebase/${this.type}.db`;
-        let fd = null;
-
-        const writeData = async (fileIndex, buffer, offset = 0, length = -1) => {
-            if (settings.readOnly) {
-                const err = new Error(`Cannot write to readonly database ${name}`);
-                err.code = 'EPERM'; // This is what NodeJS would throw below
-                throw err;
-            }
-            if (buffer.constructor === Uint8Array) { //buffer instanceof Uint8Array) {
-                // If the passsed buffer is of type Uint8Array (which is essentially the same as Buffer),
-                // convert it to a Buffer instance or fs.write will FAIL.
-                buffer = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-            }
-            console.assert(buffer instanceof Buffer, 'buffer argument must be a Buffer or Uint8Array');
-            if (length === -1) {
-                length = buffer.byteLength;
-            }
-            const { bytesWritten } = await pfs.write(fd, buffer, offset, length, fileIndex).catch(err => {
-                this.debug.error('Error writing to file', err);
-                throw err;
-            });
-            stats.writes++;
-            stats.bytesWritten += bytesWritten;
-            return bytesWritten;
-        };
-        this.writeData = writeData; // Make available to external classes
-
-        /**
-         *
-         * @param {number} fileIndex Index of the file to read
-         * @param {Buffer|ArrayBuffer|ArrayBufferView} buffer Buffer object, ArrayBuffer or TypedArray (Uint8Array, Int8Array, Uint16Array etc) to read data into
-         * @param {number} offset byte offset in the buffer to read data into, default is 0
-         * @param {number} length total bytes to read (if omitted or -1, it will use buffer.byteLength)
-         * @returns {Promise<number>} returns the total bytes read
-         */
-        const readData = async (fileIndex, buffer, offset = 0, length = -1) => {
-            if (length === -1) {
-                length = buffer.byteLength;
-            }
-            if (buffer instanceof ArrayBuffer) {
-                buffer = Buffer.from(buffer);
-            }
-            else if (!(buffer instanceof Buffer) && buffer.buffer instanceof ArrayBuffer) {
-                // Convert a typed array such as Uint8Array to Buffer with shared memory space
-                buffer = Buffer.from(buffer.buffer);
-                if (buffer.byteOffset > 0) {
-                    throw new Error('When using a TypedArray as buffer, its byteOffset MUST be 0.');
-                }
-            }
-            const { bytesRead } = await pfs.read(fd, buffer, offset, length, fileIndex).catch(err => {
-                this.debug.error('Error reading record', buffer, offset, length, fileIndex);
-                this.debug.error(err);
-                throw err;
-            });
-            stats.reads++;
-            stats.bytesRead += bytesRead;
-            return bytesRead;
-        };
-        this.readData = readData;
 
         // Setup cluster functionality
         this.ipc.on('request', async message => {
@@ -196,7 +157,7 @@ class AceBaseStorage extends Storage {
 
             console.assert(this.ipc.isMaster, 'Workers should not receive requests');
             const request = message.data;
-            const reply = result => {
+            const reply = (result: any) => {
                 // const reply = { type: 'result', id: message.id, ok: true, from: this.ipc.id, to: message.from, data: result };
                 // this.ipc.sendMessage(reply);
                 this.ipc.replyRequest(message, result);
@@ -214,7 +175,7 @@ class AceBaseStorage extends Storage {
                     }
                     // KIT (key index table) requests:
                     case 'kit.add': {
-                        let index = this.KIT.getOrAdd(request.key);
+                        const index = this.KIT.getOrAdd(request.key);
                         return reply({ ok: true, index });
                     }
                     // Indexing requests:
@@ -251,8 +212,8 @@ class AceBaseStorage extends Storage {
                     return this.rootRecord.update(notification.address, false);
                 }
                 case 'cache.update': {
-                    const nodeInfo = new NodeInfo(notification.info);
-                    nodeInfo.address = new NodeAddress(nodeInfo.address.path, nodeInfo.address.pageNr, nodeInfo.address.recordNr);
+                    const nodeInfo = new BinaryNodeInfo(notification.info);
+                    nodeInfo.address = new BinaryNodeAddress(nodeInfo.address.path, nodeInfo.address.pageNr, nodeInfo.address.recordNr);
                     return this.updateCache(true, nodeInfo, true);
                 }
                 case 'cache.invalidate': {
@@ -270,80 +231,76 @@ class AceBaseStorage extends Storage {
             }
         });
 
-        const storage = this;
+        // const storage = this;
 
-        this.KIT = {
-            fileIndex: 64,
-            length: 65536 - 64,
+        // TODO @appy-one move
+        const KIT = {
+            get fileIndex() { return 64; },
+            get length() { return 65536 - 64; },
             bytesUsed: 0,
-            keys: [],
+            keys: [] as string[],
+        };
+        this.KIT = {
+            get fileIndex() { return KIT.fileIndex; },
+            get length() { return KIT.length; },
+            get bytesUsed() { return KIT.bytesUsed; },
+            get keys() { return KIT.keys; },
 
-            /**
-             * Gets a key's index, or attempts to add a new key to the KIT
-             * @param {string} key | key to store in the KIT
-             * @returns {number} | returns the index of the key in the KIT when successful, or -1 if the key could not be added
-             */
-            getOrAdd(key) {
+            getOrAdd: (key: string) => {
                 if (key.length > 15 || key.length === 1) {
                     return -1;
                 }
                 if (/^[0-9]+$/.test(key)) {
                     return -1; //storage.debug.error(`Adding KIT key "${key}"?!!`);
                 }
-                let index = this.keys.indexOf(key);
+                let index = KIT.keys.indexOf(key);
                 if (index < 0) {
-                    if (!storage.ipc.isMaster) {
+                    if (!this.ipc.isMaster) {
                         // Forward request to cluster master. Response will be too late for us, but it will be cached for future calls
-                        storage.ipc.sendRequest({ type: 'kit.add', key })
+                        this.ipc.sendRequest({ type: 'kit.add', key })
                             .then(result => {
-                                this.keys[result.index] = key; // Add to our local array
+                                KIT.keys[result.index] = key; // Add to our local array
                             });
                         return -1;
                     }
-                    index = this.keys.push(key) - 1;
-                    if (storage.ipc.isMaster) {
+                    index = KIT.keys.push(key) - 1;
+                    if (this.ipc.isMaster) {
                         // Notify all workers
-                        storage.ipc.sendNotification({ type: 'kit.new_key', key, index });
+                        this.ipc.sendNotification({ type: 'kit.new_key', key, index });
                     }
                 }
                 else {
                     return index;
                 }
-                try {
-                    this.write().catch(err => {
-                        // Not being able to save the new KIT to file would be a serious issue.
-                        // Because getOrAdd is not async, there is no way we can tell caller there is a problem with the key they are using.
-                        // On the other hand, if writing the KIT data failed (IO error), the calling code will most likely also have
-                        // issues writing the data they needed the new key for.
-                        storage.debug.error(`CRITICAL: Unable to write KIT to database file: ${err.message}`);
-                    });
-                }
-                catch(err) {
-                    this.keys.pop(); // Remove the key
-                    index = -1;
-                }
+                this.KIT.write().catch((err: any) => {
+                    // Not being able to save the new KIT to file would be a serious issue.
+                    // Because getOrAdd is not async, there is no way we can tell caller there is a problem with the key they are using.
+                    // On the other hand, if writing the KIT data failed (IO error), the calling code will most likely also have
+                    // issues writing the data they needed the new key for.
+                    throw new Error(`CRITICAL: Unable to write KIT to database file: ${err.message}`);
+                    // this.keys.pop(); // Remove the key
+                    // index = -1;
+                });
                 return index;
             },
 
-            write() {
-                if (!storage.ipc.isMaster) {
+            write: async () => {
+                if (!this.ipc.isMaster) {
                     throw new Error('DEV ERROR: KIT.write not allowed to run if it is a cluster worker!!');
                 }
                 // Key Index Table starts at index 64, and is 2^16 (65536) bytes long
-                const data = Buffer.alloc(this.length);
+                const data = Buffer.alloc(KIT.length);
                 const view = new DataView(data.buffer);
                 let index = 0;
-                for(let i = 0; i < this.keys.length; i++) {
-                    const key = this.keys[i];
+                for(let i = 0; i < KIT.keys.length; i++) {
+                    const key = KIT.keys[i];
 
                     // Now supports storage of keys with Unicode characters
-
-                    /** @type {Uint8Array} */
                     const binary = encodeString(key);
                     const keyLength = binary.byteLength;
 
-                    if (index + keyLength >= this.length) {
-                        throw new Error(`Too many keys to store in KIT, size limit of ${this.length} has been reached; current amount of keys is ${this.keys.length}`);
+                    if (index + keyLength >= KIT.length) {
+                        throw new Error(`Too many keys to store in KIT, size limit of ${KIT.length} has been reached; current amount of keys is ${KIT.keys.length}`);
                     }
 
                     // Add 1-byte key length
@@ -354,28 +311,22 @@ class AceBaseStorage extends Storage {
                     data.set(binary, index);
                     index += keyLength;
                 }
-                const bytesToWrite = Math.max(this.bytesUsed, index);    // Determine how many bytes should be written to overwrite current KIT
-                this.bytesUsed = index;
+                const bytesToWrite = Math.max(KIT.bytesUsed, index);    // Determine how many bytes should be written to overwrite current KIT
+                KIT.bytesUsed = index;
 
-                return writeData(this.fileIndex, data, 0, bytesToWrite)
-                    // .then(bytesWritten => {
-                    //     storage.debug.log(`KIT saved, ${bytesWritten} bytes written`);
-                    // })
-                    .catch(err => {
-                        storage.debug.error('Error writing KIT: ', err);
-                    });
+                await this.writeData(KIT.fileIndex, data, 0, bytesToWrite);
             },
 
-            async load() {
-                let data = Buffer.alloc(this.length);
-                const { bytesRead } = await pfs.read(fd, data, 0, data.length, this.fileIndex).catch(err => {
-                    storage.debug.error('Error reading KIT from file: ', err);
+            load: async () => {
+                const data = Buffer.alloc(KIT.length);
+                const { bytesRead } = await pfs.read(this.file, data, 0, data.length, KIT.fileIndex).catch(err => {
+                    this.debug.error('Error reading KIT from file: ', err);
                     throw err;
                 });
 
                 // Interpret the read data
-                let view = new DataView(data.buffer, 0, bytesRead);
-                let keys = [];
+                const view = new DataView(data.buffer, 0, bytesRead);
+                const keys = [];
                 let index = 0;
                 let keyLength = 0;
                 while((keyLength = view.getUint8(index)) > 0) {
@@ -386,352 +337,340 @@ class AceBaseStorage extends Storage {
                     keys.push(key);
                     index += keyLength;
                 }
-                this.bytesUsed = index;
-                this.keys = keys;
-                storage.debug.log(`KIT read, ${this.keys.length} keys indexed`.colorize(ColorStyle.bold));
+                KIT.bytesUsed = index;
+                KIT.keys = keys;
+                this.debug.log(`KIT read, ${KIT.keys.length} keys indexed`.colorize(ColorStyle.bold));
                 //storage.debug.log(keys);
                 return keys;
             },
         };
 
         // Setup Free Space Table object and functions
-        if (!this.ipc.isMaster) {
-            // We are a worker in a Node cluster, FST requests must be handled by the master via IPC
-            this.FST = {
-                /**
-                 *
-                 * @param {number} requiredRecords
-                 * @returns {Promise<Array<{ pageNr: number, recordNr: number, length: number }>>}
-                 */
-                async allocate(requiredRecords) {
-                    const result = await storage.ipc.sendRequest({ type: 'fst.allocate', records: requiredRecords });
+        const FST = {
+            get fileIndex() { return 65536; },  // Free Space Table starts at index 2^16 (65536)
+            length: 65536,                      // and is max 2^16 (65536) bytes long
+            bytesUsed: 0,                       // Current byte length of FST data
+            pages: 0,
+            ranges: [] as typeof this.FST.ranges,
+            getMaxScraps: () => {
+                if (!this.ipc.isMaster) { return 10; }
+                return FST.ranges.length > 7500 ? 10 : 3;
+            },
+        };
+        this.FST = {
+            get fileIndex() { return FST.fileIndex; },
+            get length() { return FST.length; },
+            get bytesUsed() { return FST.bytesUsed; },
+            get pages() { return FST.pages; },
+            get ranges() { return FST.ranges; },
+
+            get maxScraps() { return FST.getMaxScraps(); },
+
+            allocate: async (requiredRecords: number): Promise<StorageAddressRange[]> => {
+                if (!this.ipc.isMaster) {
+                    const result = await this.ipc.sendRequest({ type: 'fst.allocate', records: requiredRecords });
                     return result.allocation;
-                },
-                async release(ranges) {
-                    await storage.ipc.sendRequest({ type: 'fst.release', ranges });
-                },
-                async load() {
-                    return []; // Fake loader
-                },
-                get maxScraps() {
-                    return 10;
-                },
-            };
-        }
-        else {
-            this.FST = {
-                fileIndex: 65536,   // Free Space Table starts at index 2^16 (65536)
-                length: 65536,      // and is max 2^16 (65536) bytes long
-                bytesUsed: 0,       // Current byte length of FST data
-                pages: 0,
-                ranges: [],
+                }
+                if (this.isLocked(true)) {
+                    throw new Error('database is locked');
+                }
+                // First, try to find a range that fits all requested records sequentially
+                const recordsPerPage = this.settings.pageSize;
+                const allocation: StorageAddressRange[] = [];
+                let pageAdded = false;
+                const ret = async (comment: string) => {
+                    // console.error(`ALLOCATED ${comment}: ${allocation.map(a => `${a.pageNr},${a.recordNr}+${a.length-1}`).join('; ')}`);
+                    await this.FST.write(pageAdded);
+                    return allocation;
+                };
 
-                get maxScraps() {
-                    return this.ranges.length > 7500 ? 10 : 3;
-                },
+                let totalFree = FST.ranges.reduce((t, r) => t + r.end - r.start, 0);
+                while (totalFree < requiredRecords) {
+                    // There is't enough free space, we'll have to create new page(s)
+                    const newPageNr = FST.pages;
+                    FST.pages++;
+                    const newRange = { page: newPageNr, start: 0, end: recordsPerPage };
+                    FST.ranges.push(newRange);
+                    totalFree += recordsPerPage;
+                    pageAdded = true;
+                }
 
-                /**
-                 *
-                 * @param {number} requiredRecords
-                 * @returns {Promise<Array<{ pageNr: number, recordNr: number, length: number }>>}
-                 */
-                async allocate(requiredRecords) {
-                    if (storage.isLocked(true)) {
-                        throw new Error('database is locked');
-                    }
-                    // First, try to find a range that fits all requested records sequentially
-                    const recordsPerPage = storage.settings.pageSize;
-                    let allocation = [];
-                    let pageAdded = false;
-                    const ret = async (comment) => {
-                        // console.error(`ALLOCATED ${comment}: ${allocation.map(a => `${a.pageNr},${a.recordNr}+${a.length-1}`).join('; ')}`);
-                        await this.write(pageAdded);
-                        return allocation;
-                    };
-
-                    let totalFree = this.ranges.reduce((t, r) => t + r.end - r.start, 0);
-                    while (totalFree < requiredRecords) {
-                        // There is't enough free space, we'll have to create new page(s)
-                        let newPageNr = this.pages;
-                        this.pages++;
-                        const newRange = { page: newPageNr, start: 0, end: recordsPerPage };
-                        this.ranges.push(newRange);
-                        totalFree += recordsPerPage;
-                        pageAdded = true;
+                if (requiredRecords <= recordsPerPage) {
+                    // Find exact range
+                    let r = FST.ranges.find(r => r.end - r.start === requiredRecords);
+                    if (r) {
+                        allocation.push({ pageNr: r.page, recordNr: r.start, length: requiredRecords });
+                        const i = FST.ranges.indexOf(r);
+                        FST.ranges.splice(i, 1);
+                        return ret('exact_range');
                     }
 
-                    if (requiredRecords <= recordsPerPage) {
-                        // Find exact range
-                        let r = this.ranges.find(r => r.end - r.start === requiredRecords);
-                        if (r) {
-                            allocation.push({ pageNr: r.page, recordNr: r.start, length: requiredRecords });
-                            let i = this.ranges.indexOf(r);
-                            this.ranges.splice(i, 1);
-                            return ret('exact_range');
-                        }
-
-                        // Find first fitting range
-                        r = this.ranges.find(r => r.end - r.start > requiredRecords);
-                        if (r) {
-                            allocation.push({ pageNr: r.page, recordNr: r.start, length: requiredRecords });
-                            r.start += requiredRecords;
-                            return ret('first_fitting');
-                        }
+                    // Find first fitting range
+                    r = FST.ranges.find(r => r.end - r.start > requiredRecords);
+                    if (r) {
+                        allocation.push({ pageNr: r.page, recordNr: r.start, length: requiredRecords });
+                        r.start += requiredRecords;
+                        return ret('first_fitting');
                     }
+                }
 
-                    // If we get here, we'll have to deal with the scraps
-                    // Check how many ranges would be needed to store record (sort from large to small)
-                    const sortedRanges = this.ranges.slice().sort((a,b) => {
-                        let l1 = a.end - a.start;
-                        let l2 = b.end - b.start;
-                        if (l1 < l2) { return 1; }
-                        if (l1 > l2) { return -1; }
-                        if (a.page < b.page) { return -1; }
-                        if (a.page > b.page) { return 1; }
-                        return 0;
-                    });
+                // If we get here, we'll have to deal with the scraps
+                // Check how many ranges would be needed to store record (sort from large to small)
+                const sortedRanges = FST.ranges.slice().sort((a,b) => {
+                    const l1 = a.end - a.start;
+                    const l2 = b.end - b.start;
+                    if (l1 < l2) { return 1; }
+                    if (l1 > l2) { return -1; }
+                    if (a.page < b.page) { return -1; }
+                    if (a.page > b.page) { return 1; }
+                    return 0;
+                });
 
-                    const MAX_RANGES = this.maxScraps; //this.ranges.length > 7500 ? 10 : 3; // Allow more ranges if FST is approaching its storage limit
-
-                    const test = {
-                        ranges: [],
-                        totalRecords: 0,
-                        wholePages: 0,
-                        additionalRanges: 0,
-                    };
-                    for (let i = 0; test.totalRecords < requiredRecords && i < sortedRanges.length && test.additionalRanges <= MAX_RANGES; i++) {
-                        let r = sortedRanges[i];
-                        test.ranges.push(r);
-                        let nrOfRecords = r.end - r.start;
-                        test.totalRecords += nrOfRecords;
-                        if (nrOfRecords === recordsPerPage) {
-                            test.wholePages++;
-                        }
-                        else {
-                            test.additionalRanges++;
-                        }
-                    }
-
-                    if (test.additionalRanges > MAX_RANGES) {
-                        // Prevent overfragmentation, don't use more than 3 ranges
-
-                        const pagesToCreate = Math.ceil(requiredRecords / recordsPerPage) - test.wholePages;
-
-                        // Do use the available whole page ranges
-                        for (let i = 0; i < test.wholePages; i++) {
-                            let range = test.ranges[i];
-                            console.assert(range.start === 0 && range.end === recordsPerPage, 'Available ranges were not sorted correctly, this range MUST be a whole page!!');
-                            let rangeIndex = this.ranges.indexOf(range);
-                            this.ranges.splice(rangeIndex, 1);
-                            allocation.push({ pageNr: range.page, recordNr: 0, length: recordsPerPage });
-                            requiredRecords -= recordsPerPage;
-                        }
-
-                        // Now create remaining needed pages
-                        for (let i = 0; i < pagesToCreate; i++) {
-                            let newPageNr = this.pages;
-                            this.pages++;
-                            let useRecords = Math.min(requiredRecords, recordsPerPage);
-                            allocation.push({ pageNr: newPageNr, recordNr: 0, length: useRecords });
-                            if (useRecords < recordsPerPage) {
-                                this.ranges.push({ page: newPageNr, start: useRecords, end: recordsPerPage });
-                            }
-                            requiredRecords -= useRecords;
-                            pageAdded = true;
-                        }
+                const MAX_RANGES = FST.getMaxScraps();
+                const test = {
+                    ranges: [] as typeof FST.ranges,
+                    totalRecords: 0,
+                    wholePages: 0,
+                    additionalRanges: 0,
+                };
+                for (let i = 0; test.totalRecords < requiredRecords && i < sortedRanges.length && test.additionalRanges <= MAX_RANGES; i++) {
+                    const r = sortedRanges[i];
+                    test.ranges.push(r);
+                    const nrOfRecords = r.end - r.start;
+                    test.totalRecords += nrOfRecords;
+                    if (nrOfRecords === recordsPerPage) {
+                        test.wholePages++;
                     }
                     else {
-                        // Use the ranges found
-                        test.ranges.forEach((r, i) => {
-                            let length = r.end - r.start;
-                            if (length > requiredRecords) {
-                                console.assert(i === test.ranges.length - 1, 'DEV ERROR: This MUST be the last range or logic is not right!');
-                                allocation.push({ pageNr: r.page, recordNr: r.start, length: requiredRecords });
-                                r.start += requiredRecords;
-                                requiredRecords = 0;
-                            }
-                            else {
-                                allocation.push({ pageNr: r.page, recordNr: r.start, length });
-                                let rangeIndex = this.ranges.indexOf(r);
-                                this.ranges.splice(rangeIndex, 1);
-                                requiredRecords -= length;
-                            }
-                        });
+                        test.additionalRanges++;
                     }
-                    console.assert(requiredRecords === 0, 'DEV ERROR: requiredRecords MUST be zero now!');
-                    return ret('scraps');
-                },
+                }
 
-                release(ranges) {
-                    if (storage.isLocked(true)) {
-                        throw new Error('database is locked');
+                if (test.additionalRanges > MAX_RANGES) {
+                    // Prevent overfragmentation, don't use more than 3 ranges
+
+                    const pagesToCreate = Math.ceil(requiredRecords / recordsPerPage) - test.wholePages;
+
+                    // Do use the available whole page ranges
+                    for (let i = 0; i < test.wholePages; i++) {
+                        const range = test.ranges[i];
+                        console.assert(range.start === 0 && range.end === recordsPerPage, 'Available ranges were not sorted correctly, this range MUST be a whole page!!');
+                        const rangeIndex = FST.ranges.indexOf(range);
+                        FST.ranges.splice(rangeIndex, 1);
+                        allocation.push({ pageNr: range.page, recordNr: 0, length: recordsPerPage });
+                        requiredRecords -= recordsPerPage;
                     }
-                    // Add freed ranges
+
+                    // Now create remaining needed pages
+                    for (let i = 0; i < pagesToCreate; i++) {
+                        const newPageNr = FST.pages;
+                        FST.pages++;
+                        const useRecords = Math.min(requiredRecords, recordsPerPage);
+                        allocation.push({ pageNr: newPageNr, recordNr: 0, length: useRecords });
+                        if (useRecords < recordsPerPage) {
+                            FST.ranges.push({ page: newPageNr, start: useRecords, end: recordsPerPage });
+                        }
+                        requiredRecords -= useRecords;
+                        pageAdded = true;
+                    }
+                }
+                else {
+                    // Use the ranges found
+                    test.ranges.forEach((r, i) => {
+                        const length = r.end - r.start;
+                        if (length > requiredRecords) {
+                            console.assert(i === test.ranges.length - 1, 'DEV ERROR: This MUST be the last range or logic is not right!');
+                            allocation.push({ pageNr: r.page, recordNr: r.start, length: requiredRecords });
+                            r.start += requiredRecords;
+                            requiredRecords = 0;
+                        }
+                        else {
+                            allocation.push({ pageNr: r.page, recordNr: r.start, length });
+                            const rangeIndex = FST.ranges.indexOf(r);
+                            FST.ranges.splice(rangeIndex, 1);
+                            requiredRecords -= length;
+                        }
+                    });
+                }
+                console.assert(requiredRecords === 0, 'DEV ERROR: requiredRecords MUST be zero now!');
+                return ret('scraps');
+            },
+
+            release: async (ranges: StorageAddressRange[]) => {
+                if (!this.ipc.isMaster) {
+                    await this.ipc.sendRequest({ type: 'fst.release', ranges });
+                    return;
+                }
+                if (this.isLocked(true)) {
+                    throw new Error('database is locked');
+                }
+                // Add freed ranges
+                ranges.forEach(range => {
+                    FST.ranges.push({ page: range.pageNr, start: range.recordNr, end: range.recordNr + range.length });
+                });
+
+                this.FST.sort();
+
+                // Now normalize the ranges
+                for(let i = 0; i < FST.ranges.length; i++) {
+                    const range = FST.ranges[i];
+                    let adjRange;
+                    for (let j = i + 1; j < FST.ranges.length; j++) {
+                        const otherRange = FST.ranges[j];
+                        if (otherRange.page !== range.page) { continue; }
+                        if (otherRange.start === range.end) {
+                            // This range is right before the other range
+                            otherRange.start = range.start;
+                            adjRange = otherRange;
+                            break;
+                        }
+                        if (range.start === otherRange.end) {
+                            // This range starts right after the other range
+                            otherRange.end = range.end;
+                            adjRange = otherRange;
+                            break;
+                        }
+                    }
+                    if (adjRange) {
+                        // range has merged with adjacent one
+                        FST.ranges.splice(i, 1);
+                        i--;
+                    }
+                }
+
+                this.FST.sort(); // Do we have to? Already sorted, right?
+                this.FST.write();
+            },
+
+            sort: () => {
+                FST.ranges.sort((a,b) => {
+                    if (a.page < b.page) return -1;
+                    if (a.page > b.page) return 1;
+                    if (a.start < b.start) return -1;
+                    if (a.start > b.start) return 1;
+                    return 0; // Impossible!
+                });
+            },
+
+            write: async (updatedPageCount = false) => {
+                // Free Space Table starts at index 2^16 (65536), and is 2^16 (65536) bytes long.
+                // Each range needs 8 bytes to be stored, and the FST has 6 header bytes, so that means
+                // a maximum of 8191 FST ranges can be stored. If this amount is exceeded, we'll have to
+                // remove the smallest ranges from the FST. See https://github.com/appy-one/acebase/issues/69
+
+                const MAX_FST_RANGES = 8191;
+                if (FST.ranges.length > MAX_FST_RANGES) {
+                    // Remove smallest ranges
+                    const n = FST.ranges.length - MAX_FST_RANGES;
+                    const ranges = FST.ranges.slice()
+                        .sort((a, b) => a.end - a.start < b.end - b.start ? -1 : 1)
+                        .slice(0, n);
+                    const totalRecords = ranges.reduce((records, range) => records + (range.end - range.start), 0);
+                    this.debug.warn(`FST grew too big to store in the database file, removing ${n} entries for ${totalRecords} records`);
                     ranges.forEach(range => {
-                        this.ranges.push({ page: range.pageNr, start: range.recordNr, end: range.recordNr + range.length });
+                        const i = FST.ranges.indexOf(range);
+                        FST.ranges.splice(i, 1);
                     });
-
-                    this.sort();
-
-                    // Now normalize the ranges
-                    for(let i = 0; i < this.ranges.length; i++) {
-                        const range = this.ranges[i];
-                        let adjRange;
-                        for (let j = i + 1; j < this.ranges.length; j++) {
-                            const otherRange = this.ranges[j];
-                            if (otherRange.page !== range.page) { continue; }
-                            if (otherRange.start === range.end) {
-                                // This range is right before the other range
-                                otherRange.start = range.start;
-                                adjRange = otherRange;
-                                break;
-                            }
-                            if (range.start === otherRange.end) {
-                                // This range starts right after the other range
-                                otherRange.end = range.end;
-                                adjRange = otherRange;
-                                break;
-                            }
-                        }
-                        if (adjRange) {
-                            // range has merged with adjacent one
-                            this.ranges.splice(i, 1);
-                            i--;
-                        }
+                    if (FST.ranges.length > MAX_FST_RANGES) {
+                        throw new Error('DEV ERROR: Still too many entries in the FST!');
                     }
+                }
 
-                    this.sort(); // Do we have to? Already sorted, right?
-                    this.write();
-                },
+                const data = Buffer.alloc(FST.length);
+                const view = new DataView(data.buffer);
+                // Add 4-byte page count
+                view.setUint32(0, FST.pages);
+                // Add 2-byte number of free ranges
+                view.setUint16(4, FST.ranges.length);
+                let index = 6;
+                for(let i = 0; i < FST.ranges.length; i++) {
+                    const range = FST.ranges[i];
+                    // Add 4-byte page nr
+                    view.setUint32(index, range.page);
+                    // Add 2-byte start record nr, 2-byte end record nr
+                    view.setUint16(index + 4, range.start);
+                    view.setUint16(index + 6, range.end);
+                    index += 8;
+                }
+                const bytesToWrite = Math.max(FST.bytesUsed, index);    // Determine how many bytes should be written to overwrite current FST
+                FST.bytesUsed = index;
 
-                sort() {
-                    this.ranges.sort((a,b) => {
-                        if (a.page < b.page) return -1;
-                        if (a.page > b.page) return 1;
-                        if (a.start < b.start) return -1;
-                        if (a.start > b.start) return 1;
-                        return 0; // Impossible!
-                    });
-                },
+                const promise = this.writeData(FST.fileIndex, data, 0, bytesToWrite).catch(err => {
+                    this.debug.error('Error writing FST: ', err);
+                });
+                const writes = [promise];
+                if (updatedPageCount === true) {
+                    // Update the file size
+                    const newFileSize = this.rootRecord.fileIndex + (FST.pages * settings.pageSize * settings.recordSize);
+                    const promise = pfs.ftruncate(this.file, newFileSize);
+                    writes.push(promise);
+                }
+                await Promise.all(writes);
+                //this.debug.log(`FST saved, ${this.bytesUsed} bytes used for ${FST.ranges.length} ranges`);
+            },
 
-                async write(updatedPageCount = false) {
-                    // Free Space Table starts at index 2^16 (65536), and is 2^16 (65536) bytes long.
-                    // Each range needs 8 bytes to be stored, and the FST has 6 header bytes, so that means
-                    // a maximum of 8191 FST ranges can be stored. If this amount is exceeded, we'll have to
-                    // remove the smallest ranges from the FST. See https://github.com/appy-one/acebase/issues/69
+            load: async () => {
+                if (!this.ipc.isMaster) { return []; }
+                const data = Buffer.alloc(FST.length);
+                const { bytesRead } = await pfs.read(this.file, data, 0, data.length, this.FST.fileIndex).catch(err => {
+                    this.debug.error('Error reading FST from file');
+                    this.debug.error(err);
+                    throw err;
+                });
+                // Interpret the read data
+                const view = new DataView(data.buffer, 0, bytesRead);
+                const allocatedPages = view.getUint32(0); //new DataView(data.buffer, 0, 4).getUint32(0);
+                const freeRangeCount = view.getUint16(4); //new DataView(data.buffer, 4, 2).getUint16(0);
+                const ranges = [];
+                let index = 6;
+                for (let i = 0; i < freeRangeCount; i++) {
+                    //let view = new DataView(data.buffer, index, 8);
+                    const range = {
+                        page: view.getUint32(index),
+                        start: view.getUint16(index + 4),
+                        end: view.getUint16(index + 6),
+                    };
+                    ranges.push(range);
+                    index += 8;
+                }
+                FST.pages = allocatedPages;
+                FST.bytesUsed = index;
+                FST.ranges = ranges;
+                this.debug.log(`FST read, ${allocatedPages} pages allocated, ${freeRangeCount} free ranges`.colorize(ColorStyle.bold));
+                return ranges;
+            },
+        };
 
-                    const MAX_FST_RANGES = 8191;
-                    if (this.ranges.length > MAX_FST_RANGES) {
-                        // Remove smallest ranges
-                        const n = this.ranges.length - MAX_FST_RANGES;
-                        const ranges = this.ranges.slice()
-                            .sort((a, b) => a.end - a.start < b.end - b.start ? -1 : 1)
-                            .slice(0, n);
-                        const totalRecords = ranges.reduce((records, range) => records + (range.end - range.start), 0);
-                        storage.debug.warn(`FST grew too big to store in the database file, removing ${n} entries for ${totalRecords} records`);
-                        ranges.forEach(range => {
-                            const i = this.ranges.indexOf(range);
-                            this.ranges.splice(i, 1);
-                        });
-                        if (this.ranges.length > MAX_FST_RANGES) {
-                            throw new Error('DEV ERROR: Still too many entries in the FST!');
-                        }
-                    }
-
-                    const data = Buffer.alloc(this.length);
-                    const view = new DataView(data.buffer);
-                    // Add 4-byte page count
-                    view.setUint32(0, this.pages);
-                    // Add 2-byte number of free ranges
-                    view.setUint16(4, this.ranges.length);
-                    let index = 6;
-                    for(let i = 0; i < this.ranges.length; i++) {
-                        const range = this.ranges[i];
-                        // Add 4-byte page nr
-                        view.setUint32(index, range.page);
-                        // Add 2-byte start record nr, 2-byte end record nr
-                        view.setUint16(index + 4, range.start);
-                        view.setUint16(index + 6, range.end);
-                        index += 8;
-                    }
-                    const bytesToWrite = Math.max(this.bytesUsed, index);    // Determine how many bytes should be written to overwrite current FST
-                    this.bytesUsed = index;
-
-                    const promise = writeData(this.fileIndex, data, 0, bytesToWrite).catch(err => {
-                        storage.debug.error('Error writing FST: ', err);
-                    });
-                    const writes = [promise];
-                    if (updatedPageCount === true) {
-                        // Update the file size
-                        const newFileSize = storage.rootRecord.fileIndex + (this.pages * settings.pageSize * settings.recordSize);
-                        const promise = pfs.ftruncate(fd, newFileSize);
-                        writes.push(promise);
-                    }
-                    await Promise.all(writes);
-                    //storage.debug.log(`FST saved, ${this.bytesUsed} bytes used for ${this.ranges.length} ranges`);
-                },
-
-                async load() {
-                    let data = Buffer.alloc(this.length);
-                    const { bytesRead } = await pfs.read(fd, data, 0, data.length, this.fileIndex).catch(err => {
-                        storage.debug.error('Error reading FST from file');
-                        storage.debug.error(err);
-                        throw err;
-                    });
-                    // Interpret the read data
-                    let view = new DataView(data.buffer, 0, bytesRead);
-                    let allocatedPages = view.getUint32(0); //new DataView(data.buffer, 0, 4).getUint32(0);
-                    let freeRangeCount = view.getUint16(4); //new DataView(data.buffer, 4, 2).getUint16(0);
-                    let ranges = [];
-                    let index = 6;
-                    for (let i = 0; i < freeRangeCount; i++) {
-                        //let view = new DataView(data.buffer, index, 8);
-                        let range = {
-                            page: view.getUint32(index),
-                            start: view.getUint16(index + 4),
-                            end: view.getUint16(index + 6),
-                        };
-                        ranges.push(range);
-                        index += 8;
-                    }
-                    this.pages = allocatedPages;
-                    this.bytesUsed = index;
-                    this.ranges = ranges;
-                    storage.debug.log(`FST read, ${allocatedPages} pages allocated, ${freeRangeCount} free ranges`.colorize(ColorStyle.bold));
-                    return ranges;
-                },
-            };
-        }
-
-        this.rootRecord = {
-            fileIndex: 131072, // This is not necessarily the ROOT record, it's the FIRST record (which _is_ the root record at very start)
+        // TODO @appy-one move
+        const rootRecord = {
+            get fileIndex() { return 131072; },
             pageNr: 0,
             recordNr: 0,
             exists: false,
+        };
+        this.rootRecord = {
+            get fileIndex() { return rootRecord.fileIndex; },
+            get pageNr() { return rootRecord.pageNr; },
+            get recordNr() { return rootRecord.recordNr; },
+            get exists() { return rootRecord.exists; },
             get address() {
-                return new NodeAddress('', this.pageNr, this.recordNr);
+                return new BinaryNodeAddress('', rootRecord.pageNr, rootRecord.recordNr);
             },
-
-            /**
-             * Updates the root node address
-             * @param {NodeAddress} address
-             * @param {boolean} [fromIPC=true] whether this update comes from an IPC notification, prevent infinite loopbacks
-             */
-            async update (address, fromIPC = false) {
+            update: async (address, fromIPC = false) => {
                 // Root address changed
                 console.assert(address.path === '');
-                if (address.pageNr === this.pageNr && address.recordNr === this.recordNr) {
+                if (address.pageNr === rootRecord.pageNr && address.recordNr === rootRecord.recordNr) {
                     // No need to update
                     return;
                 }
-                this.pageNr = address.pageNr;
-                this.recordNr = address.recordNr;
-                this.exists = true;
-                // storage.debug.log(`Root record address updated to ${address.pageNr}, ${address.recordNr}`.colorize(ColorStyle.bold));
+                rootRecord.pageNr = address.pageNr;
+                rootRecord.recordNr = address.recordNr;
+                rootRecord.exists = true;
+                // this.debug.log(`Root record address updated to ${address.pageNr}, ${address.recordNr}`.colorize(ColorStyle.bold));
 
                 if (!fromIPC) {
                     // Notify others
-                    storage.ipc.sendNotification({ type: 'root.update', address });
+                    this.ipc.sendNotification({ type: 'root.update', address });
 
                     // Save to file, or it didn't happen
                     const bytes = new Uint8Array(6);
@@ -739,8 +678,8 @@ class AceBaseStorage extends Storage {
                     view.setUint32(0, address.pageNr);
                     view.setUint16(4, address.recordNr);
 
-                    const bytesWritten = await writeData(HEADER_INDEXES.ROOT_RECORD_ADDRESS, bytes, 0, bytes.length);
-                    storage.debug.log(`Root record address updated to ${address.pageNr}, ${address.recordNr}`.colorize(ColorStyle.bold));
+                    const bytesWritten = await this.writeData(HEADER_INDEXES.ROOT_RECORD_ADDRESS, bytes, 0, bytes.length);
+                    this.debug.log(`Root record address updated to ${address.pageNr}, ${address.recordNr}`.colorize(ColorStyle.bold));
                 }
             },
         };
@@ -756,8 +695,8 @@ class AceBaseStorage extends Storage {
             MAX_INLINE_VALUE_SIZE: baseIndex + 12,
         };
 
-        const openDatabaseFile = async (justCreated) => {
-            const handleError = (err, txt) => {
+        const openDatabaseFile = async (justCreated = false) => {
+            const handleError = (err: any, txt: string) => {
                 this.debug.error(txt);
                 this.debug.error(err);
                 if (this.file) {
@@ -769,9 +708,12 @@ class AceBaseStorage extends Storage {
                 throw err;
             };
 
-            this.file = fd = await pfs.open(filename, settings.readOnly === true ? 'r' : 'r+', 0).catch(err => {
+            try {
+                this.file = await pfs.open(this.fileName, settings.readOnly === true ? 'r' : 'r+', 0);
+            }
+            catch (err) {
                 handleError(err, 'Failed to open database file');
-            });
+            }
 
             // const logfile = fs.openSync(`${this.settings.path}/${this.name}.acebase/log`, 'as');
             // this.logwrite = (action) => {
@@ -779,9 +721,14 @@ class AceBaseStorage extends Storage {
             // };
 
             const data = Buffer.alloc(64);
-            const { bytesRead } = await pfs.read(fd, data, 0, data.length, 0).catch(err => {
+            let bytesRead = 0;
+            try {
+                const result = await pfs.read(this.file, data, 0, data.length, 0);
+                bytesRead = result.bytesRead;
+            }
+            catch (err) {
                 handleError(err, 'Could not read database header');
-            });
+            }
 
             // Cast Buffer to Uint8Array
             const header = new Uint8Array(data);
@@ -809,7 +756,7 @@ class AceBaseStorage extends Storage {
             // Read flags
             const flagsIndex = index;
             const flags = header[flagsIndex]; // flag bits: [r, r, r, r, r, r, FST2, LOCK]
-            let lock = {
+            const lock = {
                 enabled: ((flags & 0x1) > 0),
                 forUs: true,
             };
@@ -817,28 +764,28 @@ class AceBaseStorage extends Storage {
                 return lock.enabled && lock.forUs === forUs;
             };
             this.lock = async (forUs = false) => {
-                await pfs.write(fd, new Uint8Array([flags | 0x1]), 0, 1, flagsIndex);
+                await pfs.write(this.file, new Uint8Array([flags | 0x1]), 0, 1, flagsIndex);
                 lock.enabled = true;
                 lock.forUs = forUs;
                 this.emit('locked', { forUs });
             };
             this.unlock = async () => {
-                await pfs.write(fd, new Uint8Array([flags & 0xfe]), 0, 1, flagsIndex);
+                await pfs.write(this.file, new Uint8Array([flags & 0xfe]), 0, 1, flagsIndex);
                 lock.enabled = false;
                 this.emit('unlocked');
             };
             this.settings.fst2 = (flags & 0x2) > 0;
-            if (this.settings.fs2) {
+            if (this.settings.fst2) {
                 throw new Error('FST2 is not supported by this version yet');
             }
             index++;
 
             // Read root record address
             const view = new DataView(header.buffer, index, 6);
-            this.rootRecord.pageNr = view.getUint32(0);
-            this.rootRecord.recordNr = view.getUint16(4);
+            rootRecord.pageNr = view.getUint32(0);
+            rootRecord.recordNr = view.getUint16(4);
             if (!justCreated) {
-                this.rootRecord.exists = true;
+                rootRecord.exists = true;
             }
             index += 6;
 
@@ -863,7 +810,7 @@ class AceBaseStorage extends Storage {
             await this.FST.load();  // Read Free Space Table
             await this.indexes.load(); // Load indexes
             !justCreated && this.emitOnce('ready');
-            return fd;
+            return this.file;
         };
 
         const createDatabaseFile = async () => {
@@ -872,7 +819,7 @@ class AceBaseStorage extends Storage {
             const headerBytes = 64;
             const flags = 0; // When implementing settings.fst2 ? 0x2 : 0x0;
 
-            let stats = new Uint8Array([
+            const stats = new Uint8Array([
                 version,    // Version nr
                 flags,      // flags: [r,r,r,r,r,r,FST2,LOCK]
                 0,0,0,0,    // Root record pageNr (32 bits)
@@ -885,7 +832,7 @@ class AceBaseStorage extends Storage {
                 settings.maxInlineValueSize & 0xff,
             ]);
             let header = concatTypedArrays(descriptor, stats);
-            let padding = new Uint8Array(headerBytes - header.length);
+            const padding = new Uint8Array(headerBytes - header.byteLength);
             padding.fill(0);
             header = concatTypedArrays(header, padding);
 
@@ -895,7 +842,7 @@ class AceBaseStorage extends Storage {
             // 7 chars + 1 delimiter * 65536 keys = 520KB. That would be total overkill.
             // The table should be at most 64KB so that means approx 8192 keys can
             // be indexed. With shorter keys, this will be more. With longer keys, less.
-            let kit = new Uint8Array(65536 - header.length);
+            const kit = new Uint8Array(65536 - header.byteLength);
             let uint8 = concatTypedArrays(header, kit);
 
             // Create empty 64KB FST ("Free space table")
@@ -905,26 +852,26 @@ class AceBaseStorage extends Storage {
             //    Record end nr: 2 bytes
             // Using a 64KB FST (minus 64B header size) allows 8184 entries: (65536-64) / 8
             // Defragmentation should kick in when FST is becoming full!
-            let fst = new Uint8Array(65536);
+            const fst = new Uint8Array(65536);
             uint8 = concatTypedArrays(uint8, fst);
 
-            const dir = filename.slice(0, filename.lastIndexOf('/'));
+            const dir = this.fileName.slice(0, this.fileName.lastIndexOf('/'));
             if (dir !== '.') {
                 await pfs.mkdir(dir).catch(err => {
                     if (err.code !== 'EEXIST') { throw err; }
                 });
             }
 
-            await pfs.writeFile(filename, Buffer.from(uint8.buffer));
+            await pfs.writeFile(this.fileName, Buffer.from(uint8.buffer));
             await openDatabaseFile(true);
             // Now create the root record
             await this.setNode('', {});
-            this.rootRecord.exists = true;
+            rootRecord.exists = true;
             this.emitOnce('ready');
         };
 
         // Open or create database
-        const exists = fs.existsSync(filename);
+        const exists = fs.existsSync(this.fileName);
         if (exists) {
             // Open
             openDatabaseFile(false);
@@ -936,7 +883,7 @@ class AceBaseStorage extends Storage {
             // Prevent race condition - let master process create database, poll for existance
             const poll = () => {
                 setTimeout(async () => {
-                    const exists = await pfs.exists(filename);
+                    const exists = await pfs.exists(this.fileName);
                     if (exists) { openDatabaseFile(); }
                     else { poll(); }
                 }, 10); // Wait 10ms before trying again
@@ -958,6 +905,143 @@ class AceBaseStorage extends Storage {
     }
 
     get isReady() { return this._ready; }
+    get fileName() { return `${this.settings.path}/${this.name}.acebase/${this.type}.db`; }
+    isLocked: (forUs?: boolean) => boolean;
+    lock: (forUs?: boolean) => Promise<void>;
+    unlock: () => Promise<void>;
+
+    public async writeData(fileIndex: number, buffer: Buffer | ArrayBuffer | ArrayBufferView | Uint8Array, offset = 0, length = -1) {
+        if (this.settings.readOnly) {
+            const err = new Error(`Cannot write to readonly database ${this.fileName}`);
+            (err as any).code = 'EPERM'; // This is what NodeJS would throw below
+            throw err;
+        }
+        if (buffer.constructor === Uint8Array) { //buffer instanceof Uint8Array) {
+            // If the passsed buffer is of type Uint8Array (which is essentially the same as Buffer),
+            // convert it to a Buffer instance or fs.write will FAIL.
+            buffer = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+        }
+        console.assert(buffer instanceof Buffer, 'buffer argument must be a Buffer or Uint8Array');
+        if (length === -1) {
+            length = buffer.byteLength;
+        }
+        const { bytesWritten } = await pfs.write(this.file, buffer as Buffer, offset, length, fileIndex).catch(err => {
+            this.debug.error('Error writing to file', err);
+            throw err;
+        });
+        this.stats.writes++;
+        this.stats.bytesWritten += bytesWritten;
+        return bytesWritten;
+    }
+
+    /**
+     *
+     * @param fileIndex Index of the file to read
+     * @param buffer Buffer object, ArrayBuffer or TypedArray (Uint8Array, Int8Array, Uint16Array etc) to read data into
+     * @param offset byte offset in the buffer to read data into, default is 0
+     * @param length total bytes to read (if omitted or -1, it will use buffer.byteLength)
+     * @returns returns the total bytes read
+     */
+    public async readData(fileIndex: number, buffer: Buffer | ArrayBuffer | ArrayBufferView, offset = 0, length = -1): Promise<number> {
+        if (length === -1) {
+            length = buffer.byteLength;
+        }
+        if (buffer instanceof ArrayBuffer) {
+            buffer = Buffer.from(buffer);
+        }
+        else if (!(buffer instanceof Buffer) && buffer.buffer instanceof ArrayBuffer) {
+            // Convert a typed array such as Uint8Array to Buffer with shared memory space
+            buffer = Buffer.from(buffer.buffer);
+            if ((buffer as Buffer).byteOffset > 0) {
+                throw new Error('When using a TypedArray as buffer, its byteOffset MUST be 0.');
+            }
+        }
+        try {
+            const { bytesRead } = await pfs.read(this.file, buffer as Buffer, offset, length, fileIndex);
+            this.stats.reads++;
+            this.stats.bytesRead += bytesRead;
+            return bytesRead;
+        }
+        catch (err) {
+            this.debug.error('Error reading record', buffer, offset, length, fileIndex);
+            this.debug.error(err);
+            throw err;
+        }
+    }
+
+    /**
+     * The "Key Index Table" contains key names used in the database, so they can be referenced
+     * with an index in the KIT instead of with its name. This saves space, improves performance,
+     * and will allow quick key "property" renaming in the future.
+     */
+    public KIT: {
+        fileIndex: number;
+        length: number;
+        bytesUsed: number;
+        keys: string[];
+
+        /**
+         * Gets a key's index, or attempts to add a new key to the KIT
+         * @param {string} key | key to store in the KIT
+         * @returns {number} | returns the index of the key in the KIT when successful, or -1 if the key could not be added
+         */
+        getOrAdd(key: string): number;
+        write(): Promise<void>;
+        load(): Promise<string[]>;
+    };
+
+    /**
+     * The "Free Space Table" keeps track of areas in the db file that are available to
+     * be allocated for storage.
+     */
+    public FST: {
+        readonly fileIndex: number;
+        readonly length: number;
+        readonly bytesUsed: number;
+        readonly pages: number;
+        readonly ranges: { page: number; start: number; end: number }[];
+        allocate(requiredRecords: number): Promise<StorageAddressRange[]>;
+        release(ranges: StorageAddressRange[]): Promise<void>;
+        sort(): void;
+        write(updatedPageCount?: boolean): Promise<void>;
+        load(): Promise<AceBaseStorage['FST']['ranges']>;
+        readonly maxScraps: number;
+    };
+
+    public rootRecord: {
+        /** This is not necessarily the ROOT record, it's the FIRST record (which _is_ the root record at very start) */
+        readonly fileIndex: number;
+        readonly pageNr: number;
+        readonly recordNr: number;
+        readonly exists: boolean;
+        readonly address: BinaryNodeAddress;
+        /**
+         * Updates the root node address
+         * @param address
+         * @param fromIPC whether this update comes from an IPC notification, prevent infinite loopbacks. Default is `false`
+         */
+        update(address: BinaryNodeAddress, fromIPC?: boolean): Promise<void>;
+    };
+
+    /**
+     * Use this method to update cache, instead of through `this.nodeCache`
+     * @param fromIPC Whether this update came from an IPC notification to prevent infinite loop
+     * @param nodeInfo
+     * @param hasMoved set to false when reading a record's children - not because the address is actually changing
+     */
+    public updateCache(fromIPC: boolean, nodeInfo: BinaryNodeInfo, hasMoved = true) {
+        this.nodeCache.update(nodeInfo); // , hasMoved
+        if (!fromIPC && hasMoved) {
+            this.ipc.sendNotification({ type: 'cache.update', info: nodeInfo });
+        }
+    }
+
+    public invalidateCache(fromIPC: boolean, path: string, recursive: boolean | Record<string, 'delete' | 'invalidate'>, reason?: string) {
+        this.nodeCache.invalidate(path, recursive, reason);
+        if (!fromIPC) {
+            this.ipc.sendNotification({ type: 'cache.invalidate', path, recursive, reason });
+        }
+    }
 
     async close() {
         const p1 = super.close();
@@ -969,12 +1053,7 @@ class AceBaseStorage extends Storage {
         return this.settings.pageSize * this.settings.recordSize;
     }
 
-    /**
-     *
-     * @param {number} pageNr
-     * @param {number} recordNr
-     */
-    getRecordFileIndex(pageNr, recordNr) {
+    getRecordFileIndex(pageNr: number, recordNr: number) {
         const index =
             this.rootRecord.fileIndex
             + (pageNr * this.pageByteSize)
@@ -985,12 +1064,25 @@ class AceBaseStorage extends Storage {
     /**
      * Repairs a broken record by removing the reference to it from the parent node. It does not overwrite the target record to prevent possibly breaking other data.
      * Example: repairNode('books/l74fm4sg000009jr1iyt93a5/reviews') will remove the reference to the 'reviews' record in 'books/l74fm4sg000009jr1iyt93a5'
-     * @param {string} targetPath
-     * @param {object} [options]
-     * @param {boolean} [options.ignoreIntact=false] Included for testing purposes: whether to proceed if the target node does not appear broken.
-     * @param {boolean} [options.markAsRemoved=true] Whether to mark the target as removed (getting its value will yield `"[[removed]]"`). Set to `false` to completely remove it.
      */
-    async repairNode(targetPath, options = { ignoreIntact: false, markAsRemoved: true }) {
+    async repairNode(
+        targetPath: string,
+        options: {
+            /**
+             * Included for testing purposes: whether to proceed if the target node does not appear broken.
+             * @default false
+             */
+            ignoreIntact?: boolean;
+            /**
+             * Whether to mark the target as removed (getting its value will yield `"[[removed]]"`). Set to `false` to completely remove it.
+             * @default true
+             */
+            markAsRemoved?: boolean;
+        } = {
+            ignoreIntact: false,
+            markAsRemoved: true,
+        },
+    ) {
         if (typeof options.ignoreIntact !== 'boolean') {
             options.ignoreIntact = false;
         }
@@ -1000,14 +1092,13 @@ class AceBaseStorage extends Storage {
         const targetPathInfo = PathInfo.get(targetPath);
         const { parentPath: path, key, parent: pathInfo } = targetPathInfo;
         const tid = this.createTid();
-        let lock = await this.nodeLocker.lock(path, tid, true, 'fixRecord');
+        let lock = await this.nodeLocker.lock(path, tid.toString(), true, 'fixRecord');
         try {
             // Make sure cache for parent and all children is removed
             this.invalidateCache(false, path, true);
 
             // Check if the target node is really broken first
-            /** @type {NodeInfo | null} */
-            let targetNodeInfo = null;
+            let targetNodeInfo: BinaryNodeInfo = null;
             try {
                 targetNodeInfo = await this.getNodeInfo(targetPath, { tid });
             }
@@ -1021,8 +1112,7 @@ class AceBaseStorage extends Storage {
                 }
             }
 
-            /** @type {NodeInfo} */
-            let nodeInfo;
+            let nodeInfo: BinaryNodeInfo;
             try {
                 nodeInfo = await this.getNodeInfo(path, { tid });
             }
@@ -1044,8 +1134,7 @@ class AceBaseStorage extends Storage {
             }
             const nodeReader = new NodeReader(this, nodeInfo.address, lock, false);
             const recordInfo = await nodeReader.readHeader();
-            /** @type {NodeInfo} */
-            let childInfo;
+            let childInfo: BinaryNodeInfo;
             try {
                 childInfo = await nodeReader.getChildInfo(key);
             }
@@ -1060,13 +1149,11 @@ class AceBaseStorage extends Storage {
                 // This node has an index for the child keys
                 // Easy update: update this child only
 
-                /** @type {SerializedKeyValue} TS: _serializeValue(..) as SerializedKeyValue */
-                const oldKV = _serializeValue(this, targetPath, key, new InternalNodeReference(childInfo.valueType, childInfo.address), tid);
+                const oldKV = _serializeValue(this, targetPath, key, new InternalNodeReference(childInfo.valueType, childInfo.address), tid) as SerializedKeyValue;
                 const oldVal = _getValueBytes(oldKV);
-                /** @type {SerializedKeyValue} TS: _serializeValue(..) as SerializedKeyValue */
-                const newKV = _serializeValue(this, targetPath, key, removedValueIndicator, tid);
+                const newKV = _serializeValue(this, targetPath, key, removedValueIndicator, tid) as SerializedKeyValue;
                 const newVal = _getValueBytes(newKV);
-                let tree = nodeReader.getChildTree();
+                const tree = nodeReader.getChildTree();
                 const oldEntryValue = new BinaryBPlusTree.EntryValue(oldVal);
                 const newEntryValue = new BinaryBPlusTree.EntryValue(newVal);
                 const op = options.markAsRemoved
@@ -1081,10 +1168,10 @@ class AceBaseStorage extends Storage {
             }
             else {
                 // This is a small record. Rewrite the entire node
-                let mergedValue = isArray ? [] : {};
+                const mergedValue = isArray ? [] as any[] : {} as Record<string, any>;
 
                 await nodeReader.getChildStream().next(child => {
-                    let keyOrIndex = isArray ? child.index : child.key;
+                    const keyOrIndex = isArray ? child.index : child.key;
                     if (keyOrIndex === key) {
                         // This is the target key to update/delete
                         if (options.markAsRemoved) {
@@ -1130,9 +1217,15 @@ class AceBaseStorage extends Storage {
         return this.settings.transactions && this.settings.transactions.log === true;
     }
 
-    logMutation(type, path, value, context, mutations) {
+    logMutation(
+        type: 'set' | 'update',
+        path: string,
+        value: any,
+        context: { acebase_cursor: string },
+        mutations: IAppliedMutations,
+    ): string | Promise<string> {
         // Add to transaction log
-        if (!['set','update'].includes(type)) { throw new TypeError('op must be either "set" or "update"'); }
+        if (!['set','update'].includes(type)) { throw new TypeError('type must be either "set" or "update"'); }
         if (!this.transactionLoggingEnabled) { throw new Error('transaction logging is not enabled on database'); }
         if (!context.acebase_cursor) { throw new Error('context.acebase_cursor must have been set'); }
         if (mutations.list.length === 0) {
@@ -1202,14 +1295,37 @@ class AceBaseStorage extends Storage {
 
     /**
      * Gets all mutations from a given cursor or timestamp on a given path, or on multiple paths that are relevant for given events
-     * @param {object} filter
-     * @param {string} [filter.cursor] cursor is a generated key (ID.generate) that represents a point of time
-     * @param {number} [filter.timestamp] earliest transaction to include, will be converted to a cursor
-     * @param {string} [filter.path] top-most paths to include. Can include wildcards to facilitate wildcard event listeners. Only used if `for` filter is not used, equivalent to `for: { path, events: ['value] }
-     * @param {Array<{ path: string, events:string[] }>} [filter.for] Specifies which paths and events to get all relevant mutations for
-     * @returns {Promise<{ used_cursor: string, new_cursor: string, mutations: Array<{ path: string, value: any, context: any, id: string, timestamp: number, changes: { path: string, list: Array<{ target: Array<string|number>, prev: any, val: any }>} }> }>}
      */
-    async getMutations(filter) {
+    async getMutations(filter: {
+        /**
+         * cursor is a generated key (ID.generate) that represents a point of time
+         */
+        cursor?: string;
+        /**
+         * earliest transaction to include, will be converted to a cursor
+         */
+        timestamp?: number;
+        /**
+         * top-most paths to include. Can include wildcards to facilitate wildcard event listeners. Only used if `for` filter is not used, equivalent to `for: { path, events: ['value] }
+         */
+        path?: string;
+        /**
+         * Specifies which paths and events to get all relevant mutations for
+         */
+        for?: Array<{ path: string, events:string[] }>
+    }): Promise<{
+        used_cursor: string,
+        new_cursor: string,
+        mutations: Array<{
+            path: string,
+            type: 'set' | 'update',
+            value: any,
+            context: any,
+            id: string,
+            timestamp: number,
+            changes: IAppliedMutations,
+        }>
+    }> {
         if (this.type === 'data') {
             if (!this.transactionLoggingEnabled) { throw new Error('Transaction logging is not enabled'); }
             return this.txStorage.getMutations(filter);
@@ -1245,20 +1361,31 @@ class AceBaseStorage extends Storage {
         }).map(item => item.path);
 
         const tid = this.createTid(); //ID.generate();
-        const lock = await this.nodeLocker.lock('history', tid, false, 'getMutations');
+        const lock = await this.nodeLocker.lock('history', tid.toString(), false, 'getMutations');
         try {
-            const checkQueue = [];
-            let mutations = [];
-            let done, donePromise = new Promise(resolve => done = resolve);
+            type MutationItem = { id: string, path: string, type: 'set'|'update', timestamp: number, value: any, context: any, changes: IAppliedMutations };
+            let mutations = [] as MutationItem[];
+            const checkQueue = [] as string[];
+            let done: () => void;
+            const donePromise = new Promise<void>(resolve => done = resolve);
             let allEnumerated = false;
 
-            const hasValue = val => ![undefined,null].includes(val);
-            const hasPropertyValue = (val, prop) => hasValue(val) && typeof val === 'object' && hasValue(val[prop]);
+            const hasValue = (val: any) => ![undefined,null].includes(val);
+            const hasPropertyValue = (val: any, prop: string | number) => hasValue(val) && typeof val === 'object' && hasValue(val[prop]);
 
             // const filterPathInfo = PathInfo.get(filter.path || '');
-            const check = async key => {
+            const check = async (key: string) => {
                 checkQueue.push(key);
-                const { value: mutation } = await this.getNode(`history/${key}`, { tid, include: ['path', 'updated', 'deleted', 'type', 'timestamp'] }); // Not including 'value'
+                const { value: mutation } = <{
+                    value: {
+                        path: string;
+                        keys: (string | number)[];
+                        updated: (string | number)[];
+                        deleted: (string | number)[];
+                        type: 'set' | 'update';
+                        timestamp: number;
+                    }
+                }>await this.getNode(`history/${key}`, { tid, include: ['path', 'updated', 'deleted', 'type', 'timestamp'] }); // Not including 'value'
                 mutation.keys = mutation.updated.concat(mutation.deleted);
                 const mutationPathInfo = PathInfo.get(mutation.path);
 
@@ -1305,9 +1432,16 @@ class AceBaseStorage extends Storage {
 
                 if (load !== 'none') {
                     const valueKey = 'value' + (load === 'target' ? (mutation.path.length === 0 ? '/' : '') + filterPath.slice(mutation.path.length) : '');
-                    const { value: tx } = await this.getNode(`history/${key}`, { tid, include: ['context', 'mutations', valueKey] }); // , ...loadKeys
+                    const { value: tx } = <{
+                        value: {
+                            context: any;
+                            mutations: IAppliedMutations;
+                            value: any;
+                        }
+                    }>await this.getNode(`history/${key}`, { tid, include: ['context', 'mutations', valueKey] });
 
-                    let targetPath = mutation.path, targetValue = tx.value, targetOp = mutation.type;
+                    const targetPath = mutation.path;
+                    let targetValue = tx.value, targetOp = mutation.type;
                     if (typeof targetValue === 'undefined') {
                         targetValue = null;
                     }
@@ -1315,14 +1449,14 @@ class AceBaseStorage extends Storage {
                         // Add removed properties to the target value again
                         mutation.deleted.forEach(key => targetValue[key] = null);
                     }
-                    for (let m of tx.mutations.list) {
+                    for (const m of tx.mutations.list) {
                         if (typeof m.val === 'undefined') { m.val = null; }
                         if (typeof m.prev === 'undefined') { m.prev = null; }
                     }
                     if (load === 'target') {
                         targetOp = 'set';
                         const trailKeys = filterPathInfo.keys.slice(mutationPathInfo.keys.length);
-                        const process = (targetPath, targetValue, trailKeys) => {
+                        const process = (targetPath: string, targetValue: any, trailKeys: (string | number)[]) => {
                             const childKey = trailKeys[0];
                             trailKeys = trailKeys.slice(1);
                             if (childKey === '*' || childKey.toString().startsWith('$')) {
@@ -1369,7 +1503,7 @@ class AceBaseStorage extends Storage {
             };
 
             let count = 0;
-            const oldestValidCursor = this.oldestValidCursor, expiredTransactions = [], inspectFurther = [];
+            const oldestValidCursor = this.oldestValidCursor, expiredTransactions: string[] = [], inspectFurther: string[] = [];
             await this.getChildren('history', { tid })
                 .next(childInfo => {
                     const txCursor = childInfo.key.slice(0, cursor.length);
@@ -1393,7 +1527,7 @@ class AceBaseStorage extends Storage {
                 const expiredUpdate = expiredTransactions.reduce((updates, key) => {
                     updates[key] = null;
                     return updates;
-                }, {});
+                }, {} as Record<string, null>);
                 this.updateNode('history', expiredUpdate); // No need to await this, will be processed once we've released our read lock
             }
 
@@ -1417,10 +1551,10 @@ class AceBaseStorage extends Storage {
             mutations.sort((a, b) => a.timestamp - b.timestamp);
 
             // Toss all mutations the caller is not interested in
-            const hasNewKeys = (val, prev) => Object.keys(val || {}).some(key => !(key in (prev || {})));
-            const hasRemovedKeys = (val, prev) => Object.keys(prev || {}).some(key => !(key in (val || {})));
-            const allEventsFor = (...events) => events.concat(...events.map(e => `notify_${e}`));
-            const hasEvent = (events, check) => allEventsFor(...check).some(e => events.includes(e));
+            const hasNewKeys = (val: any, prev: any) => Object.keys(val || {}).some(key => !(key in (prev || {})));
+            const hasRemovedKeys = (val: any, prev: any) => Object.keys(prev || {}).some(key => !(key in (val || {})));
+            const allEventsFor = (...events: string[]) => events.concat(...events.map(e => `notify_${e}`));
+            const hasEvent = (events: string[], check: string[]) => allEventsFor(...check).some(e => events.includes(e));
             mutations = mutations.filter(item => {
 
                 // Get all changes as 'set' operations so we can compare
@@ -1546,22 +1680,43 @@ class AceBaseStorage extends Storage {
     /**
      * Gets all effective changes from a given cursor or timestamp on a given path, or on multiple paths that are relevant for given events.
      * Multiple mutations will be merged so the returned changes will not have their original updating contexts and order of the original timeline.
-     * @param {object} filter
-     * @param {string} [filter.cursor] cursor is a generated key (ID.generate) that represents a point of time
-     * @param {number} [filter.timestamp] earliest transaction to include, will be converted to a cursor
-     * @param {string} [filter.path] top-most paths to include. Can include wildcards to facilitate wildcard event listeners. Only used if `for` filter is not used, equivalent to `for: { path, events: ['value] }
-     * @param {Array<{ path: string, events:string[] }>} [filter.for] Specifies which paths and events to get all relevant mutations for
-     * @returns {Promise<{ used_cursor: string, new_cursor: string, changes: Array<{ path: string, type: 'set'|'update', previous: any, value: any, context: any }> }>}
      */
-    async getChanges(filter) {
+    async getChanges(filter: {
+        /**
+         * cursor is a generated key (ID.generate) that represents a point of time
+         */
+        cursor?: string;
+        /**
+         * earliest transaction to include, will be converted to a cursor
+         */
+        timestamp?: number;
+        /**
+         * top-most paths to include. Can include wildcards to facilitate wildcard event listeners. Only used if `for` filter is not used,
+         * equivalent to `for: { path, events: ['value] }
+         */
+        path?: string;
+        /**
+         * Specifies which paths and events to get all relevant mutations for
+         */
+        for?: Array<{ path: string; events:string[] }>;
+    }): Promise<{
+        used_cursor: string;
+        new_cursor: string;
+        changes: Array<{
+            path: string;
+            type: 'set' | 'update';
+            previous: any;
+            value: any;
+            context: any;
+        }>;
+    }> {
         const mutationsResult = await this.getMutations(filter);
         const { used_cursor, new_cursor, mutations } = mutationsResult;
 
-        const hasValue = val => ![undefined,null].includes(val);
+        const hasValue = (val: any) => ![undefined,null].includes(val);
 
         // Get effective changes to the target paths
-        let changes = mutations.reduce((all, item) => {
-
+        const arr = mutations.reduce((all, item) => {
             // 1. Add all effective mutations as 'set' operations on their target paths, removing previous 'set' mutations on the same or descendant paths
             const basePathInfo = PathInfo.get(item.changes.path);
             item.changes.list.forEach(m => {
@@ -1582,59 +1737,67 @@ class AceBaseStorage extends Storage {
                 });
             });
             return all;
-        }, [])
-            .reduce((all, item) => {
+        }, [] as Array<{
+            id: string;
+            type: 'set';
+            path: string;
+            pathInfo: PathInfo;
+            timestamp: number;
+            context: any;
+            prev: any;
+            val: any;
+        }>).reduce((all, item) => {
             // 2. Merge successive 'set' mutations on the same parent to single parent 'update's, using last used context
-                if (item.path === '') {
-                // 'set' on the root path. Don't change
-                    all.push(item);
+            if (item.path === '') {
+            // 'set' on the root path. Don't change
+                all.push(item);
+            }
+            else {
+                const pathInfo = item.pathInfo;
+                const parentPath = pathInfo.parentPath;
+                const parentUpdate = all.find(u => u.path === parentPath);
+                if (!parentUpdate) {
+                    // Create new parent update
+                    all.push({
+                        id: item.id,
+                        type: 'update',
+                        path: parentPath,
+                        pathInfo: pathInfo.parent,
+                        val: { [pathInfo.key]: item.val },
+                        prev: { [pathInfo.key]: item.prev },
+                        context: item.context,
+                    });
                 }
                 else {
-                    const pathInfo = item.pathInfo;
-                    const parentPath = pathInfo.parentPath;
-                    const parentUpdate = all.find(u => u.path === parentPath);
-                    if (!parentUpdate) {
-                    // Create new parent update
-                        all.push({
-                            id: item.id,
-                            type: 'update',
-                            path: parentPath,
-                            pathInfo: pathInfo.parent,
-                            val: { [pathInfo.key]: item.val },
-                            prev: { [pathInfo.key]: item.prev },
-                            context: item.context,
-                        });
-                    }
-                    else {
                     // Add this change to parent update
-                        parentUpdate.val[pathInfo.key] = item.val;
-                        if (parentUpdate.prev !== null) { // previous === null on very first root 'set' only
-                            parentUpdate.prev[pathInfo.key] = item.prev;
-                        }
-                        parentUpdate.context = item.context;
+                    parentUpdate.val[pathInfo.key] = item.val;
+                    if (parentUpdate.prev !== null) { // previous === null on very first root 'set' only
+                        parentUpdate.prev[pathInfo.key] = item.prev;
                     }
+                    parentUpdate.context = item.context;
                 }
-                return all;
-            }, []);
+            }
+            return all;
+        }, [] as Array<{
+            id: string;
+            type: 'set'|'update';
+            path: string;
+            pathInfo: PathInfo;
+            val: any;
+            prev: any;
+            context: any;
+        }>);
 
 
         // Transform results to desired output
-        changes.forEach(item => {
-            // Remove tmp pathInfo
-            delete item.pathInfo;
-
-            // Replace original context
-            // delete item.context;
-            item.context = { acebase_cursor: item.context.acebase_cursor };
-
-            // Rename val property
-            item.value = item.val;
-            delete item.val;
-
-            // Rename prev property
-            item.previous = item.prev;
-            delete item.prev;
-        });
+        const changes = arr.map(item => ({
+            id: item.id,
+            type: item.type,
+            path: item.path,
+            context: { acebase_cursor: item.context.acebase_cursor }, // Replace original context
+            value: item.val,
+            previous: item.prev,
+        }));
 
         return { used_cursor, new_cursor, changes };
     }
@@ -1652,32 +1815,44 @@ class AceBaseStorage extends Storage {
 
     /**
      * Enumerates all children of a given Node for reflection purposes
-     * @param {string} path
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string[]|number[]} [options.keyFilter] specify the child keys to get callbacks for, skips .next callbacks for other keys
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {boolean} [options.async] whether to use an async/await flow for each `.next` call
-     * @returns {{ next: (callback: (child: NodeInfo) => boolean) => Promise<boolean>}} returns a generator object that calls .next for each child until the .next callback returns false
+     * @param path
+     * @param options optional options used by implementation for recursive calls
+     * @returns returns a generator object that calls .next for each child until the .next callback returns false
      */
-    getChildren(path, options = { keyFilter: undefined, tid: undefined, async: false }) {
+    getChildren(
+        path: string,
+        options: {
+            /** specify the child keys to get callbacks for, skips .next callbacks for other keys */
+            keyFilter?: string[] | number[];
+            /** optional transaction id for node locking purposes */
+            tid?: string | number;
+            /**
+             * whether to use an async/await flow for each `.next` call
+             * @default false
+             */
+            async?: boolean;
+        } = {
+            async: false,
+        },
+    ) { // : { next: (callback: (child: BinaryNodeInfo) => boolean) => Promise<boolean>}
+        type ChildCallbackFunction = (child: BinaryNodeInfo) => boolean | void;
         if (typeof options.async !== 'boolean') {
             options.async = false;
         }
         const generator = {
             /**
              *
-             * @param {(child: NodeInfo) => boolean} valueCallback callback function to run for each child. Return false to stop iterating
-             * @oldparam {(child: { key?: string, index?: number, valueType: number, value?: any }) => boolean} valueCallback callback function to run for each child. Return false to stop iterating
-             * @returns {Promise<boolean>} returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
+             * @param valueCallback callback function to run for each child. Return false to stop iterating
+             * @returns returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
              */
-            async next(valueCallback, useAsync = options.async) {
+            async next(valueCallback: ChildCallbackFunction, useAsync = options.async): Promise<boolean> {
                 return start(valueCallback, useAsync);
             },
         };
-        const start = async (callback, isAsync = false) => {
+        const start = async (callback: ChildCallbackFunction, isAsync = false) => {
             const tid = this.createTid(); //ID.generate();
             let canceled = false;
-            const lock = await this.nodeLocker.lock(path, tid, false, `storage.getChildren "/${path}"`);
+            const lock = await this.nodeLocker.lock(path, tid.toString(), false, `storage.getChildren "/${path}"`);
             try {
                 const nodeInfo = await this.getNodeInfo(path, { tid });
                 if (!nodeInfo.exists) {
@@ -1687,13 +1862,13 @@ class AceBaseStorage extends Storage {
                     // Node does not have its own record, so it has no children
                     return;
                 }
-                let reader = new NodeReader(this, nodeInfo.address, lock, true);
+                const reader = new NodeReader(this, nodeInfo.address, lock, true);
                 const nextCallback = isAsync
-                    ? async childInfo => {
+                    ? async (childInfo: BinaryNodeInfo) => {
                         canceled = (await callback(childInfo)) === false;
                         return !canceled;
                     }
-                    : childInfo => {
+                    : (childInfo: BinaryNodeInfo) => {
                         canceled = callback(childInfo) === false;
                         return !canceled;
                     };
@@ -1716,17 +1891,15 @@ class AceBaseStorage extends Storage {
 
     /**
      * Gets a node's value and (if supported) revision
-     * @param {string} path
-     * @param {object} [options] optional options that can limit the amount of (sub)data being loaded, and any other implementation specific options for recusrsive calls
-     * @param {string[]} [options.include] child paths to include
-     * @param {string[]} [options.exclude] child paths to exclude
-     * @param {boolean} [options.child_objects] whether to include child objects and arrays
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @returns {Promise<{ revision: string, value: any, cursor?: string }>}
+     * @param path
+     * @param options optional options that can limit the amount of (sub)data being loaded, and any other implementation specific options for recusrsive calls
      */
-    async getNode(path, options = { include: undefined, exclude: undefined, child_objects: true, tid: undefined }) {
+    async getNode(
+        path: string,
+        options: InternalDataRetrievalOptions = { child_objects: true },
+    ): Promise<{ revision?: string, value: any, cursor?: string }> {
         const tid = options.tid || this.createTid();
-        const lock = await this.nodeLocker.lock(path, tid, false, `storage.getNode "/${path}"`);
+        const lock = await this.nodeLocker.lock(path, tid.toString(), false, `storage.getNode "/${path}"`);
         try {
             const cursor = this.transactionLoggingEnabled ? ID.generate() : undefined;
             const nodeInfo = await this.getNodeInfo(path, { tid });
@@ -1736,7 +1909,11 @@ class AceBaseStorage extends Storage {
             }
             else if (nodeInfo.address) {
                 const reader = new NodeReader(this, nodeInfo.address, lock, true);
-                value = await reader.getValue({ include: options.include, exclude: options.exclude, child_objects: options.child_objects });
+                value = await reader.getValue({
+                    include: options.include as string[],
+                    exclude: options.exclude as string[],
+                    child_objects: options.child_objects,
+                });
             }
             return {
                 revision: null, // TODO: implement (or maybe remove from other storage backends because we're not using it anywhere)
@@ -1764,25 +1941,43 @@ class AceBaseStorage extends Storage {
 
     /**
      * Retrieves info about a node (existence, wherabouts etc)
-     * @param {string} path
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {boolean} [options.no_cache=false]
-     * @param {boolean} [options.include_child_count=false] whether to include child count if node is an object or array
-     * @param {boolean} [options.allow_expand=true] whether to allow expansion of path references (follow "symbolic links")
-     * @returns {Promise<NodeInfo>}
+     * @param path
+     * @param options optional options used by implementation for recursive calls
      */
-    async getNodeInfo(path, options = { tid: undefined, no_cache: false, include_child_count: false, allow_expand: true }) {
-        options = options || {};
+    async getNodeInfo(
+        path: string,
+        options: {
+            /**
+             * optional transaction id for node locking purposes
+             */
+            tid?: string | number;
+            no_cache?: boolean;
+            /**
+             * whether to include child count if node is an object or array
+             * @default false
+             */
+            include_child_count?: boolean;
+            /**
+             * whether to allow expansion of path references (follow "symbolic links")
+             * @default false
+             * */
+            allow_expand?: boolean;
+        } = {
+            no_cache: false,
+            include_child_count: false,
+            allow_expand: false,
+        },
+    ): Promise<BinaryNodeInfo> {
         options.no_cache = options.no_cache === true;
+        options.include_child_count = options.include_child_count === true;
         options.allow_expand = false; // Don't use yet! // options.allow_expand !== false;
         const tid = options.tid || this.createTid();
 
-        const getChildCount = async (nodeInfo) => {
+        const getChildCount = async (nodeInfo: BinaryNodeInfo) => {
             let childCount = 0;
             if ([VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(nodeInfo.valueType) && nodeInfo.address) {
                 // Get number of children
-                const childLock = await this.nodeLocker.lock(path, tid, false, `storage.getNodeInfo "/${path}"`);
+                const childLock = await this.nodeLocker.lock(path, tid.toString(), false, `storage.getNodeInfo "/${path}"`);
                 try {
                     const childReader = new NodeReader(this, nodeInfo.address, childLock, true);
                     childCount = await childReader.getChildCount();
@@ -1796,12 +1991,12 @@ class AceBaseStorage extends Storage {
 
         if (path === '') {
             // Root record requires a little different strategy
-            const rootLock = await this.nodeLocker.lock('', tid, false, 'storage.getNodeInfo "/"');
+            const rootLock = await this.nodeLocker.lock('', tid.toString(), false, 'storage.getNodeInfo "/"');
             try {
                 if (!this.rootRecord.exists) {
-                    return new NodeInfo({ path, exists: false });
+                    return new BinaryNodeInfo({ path, exists: false });
                 }
-                const info = new NodeInfo({ path, address: this.rootRecord.address, exists: true, type: VALUE_TYPES.OBJECT });
+                const info = new BinaryNodeInfo({ path, address: this.rootRecord.address, exists: true, type: VALUE_TYPES.OBJECT });
                 if (options.include_child_count) {
                     info.childCount = await getChildCount(info);
                 }
@@ -1815,10 +2010,10 @@ class AceBaseStorage extends Storage {
         const allowCachedInfo = options.no_cache !== true && options.include_child_count !== true;
         if (allowCachedInfo) {
             // Check if the info has been cached
-            let cachedInfo = this.nodeCache.find(path, true);
+            const cachedInfo = this.nodeCache.find(path, true);
             if (cachedInfo) {
                 // cached, or announced
-                return cachedInfo;
+                return cachedInfo as BinaryNodeInfo;
             }
         }
 
@@ -1827,23 +2022,23 @@ class AceBaseStorage extends Storage {
         const parentPath = pathInfo.parentPath;
 
         // Achieve a read lock on the parent node and read it
-        let lock = await this.nodeLocker.lock(parentPath, tid, false, `storage.getNodeInfo "/${parentPath}"`);
+        const lock = await this.nodeLocker.lock(parentPath, tid.toString(), false, `storage.getNodeInfo "/${parentPath}"`);
         try {
             // We have a lock, check if the lookup has been cached by another "thread" in the meantime.
-            let childInfo = this.nodeCache.find(path, true);
+            let childInfo = this.nodeCache.find(path, true) as BinaryNodeInfo;
             if (childInfo instanceof Promise) {
                 // It was previously announced, wait for it
                 childInfo = await childInfo;
             }
             if (childInfo && !options.include_child_count) {
                 // Return cached info
-                return childInfo;
+                return childInfo as BinaryNodeInfo;
             }
             if (!childInfo) {
                 // announce the lookup now
                 this.nodeCache.announce(path);
 
-                let parentInfo = await this.getNodeInfo(parentPath, { tid, no_cache: options.no_cache });
+                const parentInfo = await this.getNodeInfo(parentPath, { tid, no_cache: options.no_cache });
                 if (parentInfo.exists && parentInfo.valueType === VALUE_TYPES.REFERENCE && options.allow_expand) {
                     // NEW (but not used yet): This is a path reference. Expand to get new parentInfo.
                     let pathReference;
@@ -1863,7 +2058,7 @@ class AceBaseStorage extends Storage {
                 else if (!parentInfo.exists || ![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentInfo.valueType) || !parentInfo.address) {
                     // Parent does not exist, is not an object or array, or has no children (object not stored in own address)
                     // so child doesn't exist
-                    childInfo = new NodeInfo({ path, exists: false });
+                    childInfo = new BinaryNodeInfo({ path, exists: false });
                 }
                 else {
                     const reader = new NodeReader(this, parentInfo.address, lock, true);
@@ -1889,15 +2084,27 @@ class AceBaseStorage extends Storage {
 
     /**
      * Delegates to legacy update method that handles everything
-     * @param {string} path
-     * @param {any} value
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
-     * @param {any} [options.context=null]
-     * @returns {Promise<string|void>} Returns a new cursor if transaction logging is enabled
+     * @param options optional options used by implementation for recursive calls
+     * @returns Returns a new cursor if transaction logging is enabled
      */
-    async setNode(path, value, options = { tid: undefined, suppress_events: false, context: null }) {
+    async setNode(
+        path: string,
+        value: any,
+        options: {
+            /** optional transaction id for node locking purposes */
+            tid?: string | number;
+            /**
+             * whether to suppress the execution of event subscriptions
+             * @default false
+             * */
+            suppress_events?: boolean;
+            /** @default null */
+            context?: any;
+        } = {
+            suppress_events: false,
+            context: null,
+        },
+    ): Promise<string|void> {
         options.context = options.context || {};
         if (this.txStorage) {
             options.context.acebase_cursor = ID.generate();
@@ -1905,7 +2112,7 @@ class AceBaseStorage extends Storage {
         const context = cloneObject(options.context); // copy context to prevent changes while code proceeds async
         const mutations = await this._updateNode(path, value, { merge: false, tid: options.tid, suppress_events: options.suppress_events, context });
         if (this.txStorage && mutations) {
-            const p = this.logMutation('set', path, value, context, mutations);
+            const p = this.logMutation('set', path, value, context as { acebase_cursor: string }, mutations);
             if (p instanceof Promise) { await p; }
         }
         return options.context.acebase_cursor;
@@ -1913,15 +2120,29 @@ class AceBaseStorage extends Storage {
 
     /**
      * Delegates to legacy update method that handles everything
-     * @param {string} path
-     * @param {any} updates
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
-     * @param {any} [options.context=null]
-     * @returns {Promise<string|void>} Returns a new cursor if transaction logging is enabled
+     * @param options optional options used by implementation for recursive calls
+     * @returns Returns a new cursor if transaction logging is enabled
      */
-    async updateNode(path, updates, options = { tid: undefined, suppress_events: false, context: null }) {
+    async updateNode(
+        path: string,
+        updates: any,
+        options: {
+            /** optional transaction id for node locking purposes */
+            tid?: string | number;
+            /**
+             * whether to suppress the execution of event subscriptions
+             * @default false
+             */
+            suppress_events?: boolean;
+            /**
+             * @default null
+             */
+            context?: any;
+        } = {
+            suppress_events: false,
+            context: null,
+        },
+    ): Promise<string|void> {
         options.context = options.context || {};
         if (this.txStorage) {
             options.context.acebase_cursor = ID.generate();
@@ -1929,7 +2150,7 @@ class AceBaseStorage extends Storage {
         const context = cloneObject(options.context); // copy context to prevent changes while code proceeds async
         const mutations = await this._updateNode(path, updates, { merge: true, tid: options.tid, suppress_events: options.suppress_events, context });
         if (this.txStorage && mutations) {
-            const p = this.logMutation('update', path, updates, context, mutations);
+            const p = this.logMutation('update', path, updates, context as { acebase_cursor: string }, mutations);
             if (p instanceof Promise) { await p; }
         }
         return options.context.acebase_cursor;
@@ -1940,16 +2161,35 @@ class AceBaseStorage extends Storage {
      * freeing old node and subnodes allocation, updating/creation of parent nodes, and removing
      * old cache entries. Triggers event notifications and index updates after the update succeeds.
      *
-     * @param {string} path
-     * @param {object} updates object with key/value pairs
-     * @param {object} [options] optional options used by implementation for recursive calls
-     * @param {string} [options.tid] optional transaction id for node locking purposes
-     * @param {boolean} [options.suppress_events=false] whether to suppress the execution of event subscriptions
-     * @param {any} [options.context=null]
-     * @param {boolean} [options.merge=true]
-     * @returns {Promise<IAppliedMutations>} If transaction logging is enabled, returns a promise that resolves with the applied mutations
+     * @param path
+     * @param value object with key/value pairs
+     * @param options optional options used by implementation for recursive calls
+     * @returns If transaction logging is enabled, returns a promise that resolves with the applied mutations
      */
-    async _updateNode(path, value, options = { merge: true, tid: undefined, _internal: false, suppress_events: false, context: null }) {
+    async _updateNode(
+        path: string,
+        value: any,
+        options: {
+            /** @default true */
+            merge?: boolean;
+            /** optional transaction id for node locking purposes */
+            tid?: string | number;
+            /**
+             * whether to suppress the execution of event subscriptions
+             * @default false
+             */
+            suppress_events?: boolean;
+            /** @default null */
+            context?: any;
+            /** @default false */
+            _internal?: boolean;
+        } = {
+            merge: true,
+            _internal: false,
+            suppress_events: false,
+            context: null,
+        },
+    ): Promise<IAppliedMutations> {
         // this.debug.log(`Update request for node "/${path}"`);
 
         const tid = options.tid || this.createTid(); // ID.generate();
@@ -1957,12 +2197,20 @@ class AceBaseStorage extends Storage {
 
         if (value === null) {
             // Deletion of node is requested. Update parent
-            return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: null }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
+            return this._updateNode(
+                pathInfo.parentPath,
+                { [pathInfo.key]: null },
+                { merge: true, tid, suppress_events: options.suppress_events, context: options.context },
+            );
         }
 
         if (path !== '' && this.valueFitsInline(value)) {
             // Simple value, update parent instead
-            return this._updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, tid, suppress_events: options.suppress_events, context: options.context });
+            return this._updateNode(
+                pathInfo.parentPath,
+                { [pathInfo.key]: value },
+                { merge: true, tid, suppress_events: options.suppress_events, context: options.context },
+            );
         }
 
         // const impact = super.getUpdateImpact(path, options.suppress_events);
@@ -1970,9 +2218,8 @@ class AceBaseStorage extends Storage {
         //     ? await this.nodeLocker.lock(impact.topEventPath, tid, true, '_updateNode:topLock')
         //     : null;
 
-        let lock = await this.nodeLocker.lock(path, tid, true, '_updateNode');
+        let lock = await this.nodeLocker.lock(path, tid.toString(), true, '_updateNode');
         try {
-
             const nodeInfo = await this.getNodeInfo(path, { tid });
             if (!nodeInfo.exists && path !== '') {
                 // Node doesn't exist, update parent instead
@@ -1994,12 +2241,12 @@ class AceBaseStorage extends Storage {
                 }
             };
 
-            let result;
+            let result: Partial<IWriteNodeResult> & Awaited<ReturnType<typeof write>>;
             if (options._internal) {
                 result = await write();
             }
             else {
-                result = await this._writeNodeWithTracking(path, value, {
+                result = <any> await this._writeNodeWithTracking(path, value, {
                     tid,
                     merge,
                     suppress_events: options.suppress_events,
@@ -2016,12 +2263,16 @@ class AceBaseStorage extends Storage {
             if (recordMoved && pathInfo.parentPath !== null) {
                 lock = await lock.moveToParent();
                 // console.error(`Got parent ${parentLock.forWriting ? 'WRITE' : 'read'} lock on "${pathInfo.parentPath}", tid ${lock.tid}`)
-                await this._updateNode(pathInfo.parentPath, { [pathInfo.key]: new InternalNodeReference(recordInfo.valueType, recordInfo.address) }, { merge: true, tid, _internal: true, context: options.context });
+                await this._updateNode(
+                    pathInfo.parentPath,
+                    { [pathInfo.key]: new InternalNodeReference(recordInfo.valueType, recordInfo.address) },
+                    { merge: true, tid, _internal: true, context: options.context },
+                );
                 parentUpdated = true;
             }
 
             if (parentUpdated && pathInfo.parentPath !== '') {
-                console.assert(this.nodeCache._cache.has(pathInfo.parentPath), 'Not cached?!!');
+                console.assert(this.nodeCache.has(pathInfo.parentPath), 'Not cached?!!');
             }
 
             if (deallocate && deallocate.totalAddresses > 0) {
@@ -2072,45 +2323,19 @@ const FLAG_KEY_TREE = 0x40;
 const FLAG_VALUE_TYPE = 0xf;
 
 class StorageAddressRange {
-    /**
-     *
-     * @param {number} pageNr
-     * @param {number} recordNr
-     * @param {number} length
-     */
-    constructor(pageNr, recordNr, length) {
-        this.pageNr = pageNr;
-        this.recordNr = recordNr;
-        this.length = length;
-    }
+    constructor(public pageNr: number, public recordNr: number, public length: number) { }
 }
 
 class StorageAddress {
-    /**
-     *
-     * @param {number} pageNr
-     * @param {number} recordNr
-     */
-    constructor(pageNr, recordNr) {
-        this.pageNr = pageNr;
-        this.recordNr = recordNr;
-    }
+    constructor(public pageNr: number, public recordNr: number) { }
 }
 
 class NodeAllocation {
-    /**
-     *
-     * @param {StorageAddressRange[]} allocatedRanges
-     */
-    constructor(allocatedRanges) {
-        this.ranges = allocatedRanges;
-    }
 
-    /**
-     * @returns {StorageAddress[]}
-     */
-    get addresses() {
-        let addresses = [];
+    constructor(public ranges: StorageAddressRange[]) { }
+
+    get addresses(): StorageAddress[] {
+        const addresses = [] as StorageAddress[];
         this.ranges.forEach(range => {
             for (let i = 0; i < range.length; i++) {
                 const address = new StorageAddress(range.pageNr, range.recordNr + i);
@@ -2124,11 +2349,8 @@ class NodeAllocation {
         return this.ranges.map(range => range.length).reduce((total, nr) => total + nr, 0);
     }
 
-    /**
-     * @returns {NodeChunkTable}
-     */
-    toChunkTable() {
-        let ranges = this.ranges.map(range => new NodeChunkTableRange(0, range.pageNr, range.recordNr, range.length));
+    toChunkTable(): NodeChunkTable {
+        const ranges = this.ranges.map(range => new NodeChunkTableRange(0, range.pageNr, range.recordNr, range.length));
 
         if (ranges.length === 1 && ranges[0].length === 1) {
             ranges[0].type = 0;  // No CT (Chunk Table)
@@ -2147,17 +2369,12 @@ class NodeAllocation {
         return new NodeChunkTable(ranges);
     }
 
-    /**
-     *
-     * @param {StorageAddress[]} records
-     * @returns {NodeAllocation}
-     */
-    static fromAdresses(records) {
+    static fromAdresses(records: StorageAddress[]): NodeAllocation {
         if (records.length === 0) {
             throw new Error('Cannot create allocation for 0 addresses');
         }
         let range = new StorageAddressRange(records[0].pageNr, records[0].recordNr, 1);
-        let ranges = [range];
+        const ranges = [range];
         for(let i = 1; i < records.length; i++) {
             if (records[i].pageNr !== range.pageNr || records[i].recordNr !== range.recordNr + range.length) {
                 range = new StorageAddressRange(records[i].pageNr, records[i].recordNr, 1);
@@ -2174,8 +2391,7 @@ class NodeAllocation {
         // this.normalize();
         return this.ranges.map(range => {
             return `${range.pageNr},${range.recordNr}+${range.length-1}`;
-        })
-            .join('; ');
+        }).join('; ');
     }
 
     normalize() {
@@ -2212,55 +2428,28 @@ class NodeAllocation {
 }
 
 class NodeChunkTable {
-    /**
-     *
-     * @param {NodeChunkTableRange[]} ranges
-     */
-    constructor(ranges) {
-        this.ranges = ranges;
-    }
+    constructor(public ranges: NodeChunkTableRange[]) { }
 }
 
 class NodeChunkTableRange {
-    /**
-     *
-     * @param {number} type
-     * @param {number} pageNr
-     * @param {number} recordNr
-     * @param {number} length
-     */
-    constructor(type, pageNr, recordNr, length) {
-        this.type = type;
-        this.pageNr = pageNr;
-        this.recordNr = recordNr;
-        this.length = length;
-    }
+    constructor(public type: number, public pageNr: number, public recordNr: number, public length: number) { }
 }
 
 class RecordInfo {
-    /**
-     * @param {string} path
-     * @param {boolean} hasKeyIndex
-     * @param {number} valueType
-     * @param {NodeAllocation} allocation
-     * @param {number} headerLength
-     * @param {number} lastRecordLength
-     * @param {number} bytesPerRecord
-     * @param {Uint8Array} [startData]
-     */
-    constructor(path, hasKeyIndex, valueType, allocation, headerLength, lastRecordLength, bytesPerRecord, startData) {
-        this.path = path;
-        this.hasKeyIndex = hasKeyIndex;
-        this.valueType = valueType;
-        this.allocation = allocation;
-        this.headerLength = headerLength;
-        this.lastRecordLength = lastRecordLength;
-        this.bytesPerRecord = bytesPerRecord;
-        this.startData = startData;
-        this.lastChunkSize = -1;
-        this.fileIndex = -1;
-        this.timestamp = -1;
-    }
+    lastChunkSize = -1;
+    fileIndex = -1;
+    timestamp = -1;
+
+    constructor(
+        public path: string,
+        public hasKeyIndex: boolean,
+        public valueType: number,
+        public allocation: NodeAllocation,
+        public headerLength: number,
+        public lastRecordLength: number,
+        public bytesPerRecord: number,
+        public startData?: Uint8Array,
+    ) { }
 
     get totalByteLength() {
         if (this.allocation.ranges.length === 1 && this.allocation.ranges[0].length === 1) {
@@ -2268,13 +2457,13 @@ class RecordInfo {
             return this.lastRecordLength;
         }
 
-        let byteLength = (((this.allocation.totalAddresses-1) * this.bytesPerRecord) + this.lastRecordLength) - this.headerLength;
+        const byteLength = (((this.allocation.totalAddresses-1) * this.bytesPerRecord) + this.lastRecordLength) - this.headerLength;
         return byteLength;
     }
 
     get address() {
         const firstRange = this.allocation.ranges[0];
-        return new NodeAddress(this.path, firstRange.pageNr, firstRange.recordNr);
+        return new BinaryNodeAddress(this.path, firstRange.pageNr, firstRange.recordNr);
     }
 }
 
@@ -2282,35 +2471,23 @@ class AdditionalDataRequest extends Error {
     constructor() { super('More data needs to be loaded from the source'); }
 }
 class CorruptRecordError extends Error {
-    /**
-     *
-     * @param {NodeAddress} record
-     * @param {string|number} key
-     * @param {string} message
-     */
-    constructor(record, key, message) {
+    constructor(public record: BinaryNodeAddress, public key: string | number, message: string) {
         super(message);
-        this.record = record;
-        this.key = key;
     }
 }
 class NodeReader {
-    /**
-     *
-     * @param {AceBaseStorage} storage
-     * @param {NodeAddress} address
-     * @param {NodeLock} lock
-     * @param {boolean} [updateCache=false]
-     */
-    constructor(storage, address, lock, updateCache = false, stack = {}) { //stack = []
-        if (!(address instanceof NodeAddress)) {
-            throw new TypeError('address argument must be a NodeAddress');
+    recordInfo: RecordInfo = null;
+
+    constructor(
+        public storage: AceBaseStorage,
+        public address: BinaryNodeAddress,
+        public lock: IAceBaseIPCLock,
+        public updateCache = false,
+        public stack = {} as Record<string, BinaryNodeAddress>,
+    ) {
+        if (!(address instanceof BinaryNodeAddress)) {
+            throw new TypeError('address argument must be a BinaryNodeAddress');
         }
-        this.storage = storage;
-        this.address = address;
-        this.lock = lock;
-        this.lockTimestamp = lock.granted;
-        this.updateCache = updateCache;
 
         const key = `${address.pageNr},${address.recordNr}`;
         if (key in stack) {
@@ -2345,9 +2522,6 @@ class NodeReader {
         stack[key] = address;
         this.stack = stack;
 
-        /** @type {RecordInfo} */
-        this.recordInfo = null;
-
         this._assertLock();
 
         // console.error(`NodeReader created on ${address}, tid ${lock.tid} (${lock.forWriting ? 'WRITE' : 'read'})`);
@@ -2379,18 +2553,15 @@ class NodeReader {
         // }
     }
 
-    /**
-     * @param {boolean} includeChildNodes
-     * @returns {Promise<NodeAllocation>}
-     */
-    async getAllocation(includeChildNodes = false) {
+    async getAllocation(includeChildNodes: false): Promise<Array<{ path: string, allocation: NodeAllocation }>>;
+    async getAllocation(includeChildNodes: true): Promise<NodeAllocation>;
+    async getAllocation(includeChildNodes = false): Promise<NodeAllocation | Array<{ path: string, allocation: NodeAllocation }>> {
         this._assertLock();
 
         if (!includeChildNodes && this.recordInfo !== null) {
             return this.recordInfo.allocation;
         }
-        /** @type {NodeAllocation} */
-        let allocation = null;
+        let allocation: NodeAllocation = null;
 
         await this.readHeader();
         allocation = this.recordInfo.allocation;
@@ -2398,13 +2569,13 @@ class NodeReader {
             return [{ path: this.address.path, allocation }];
         }
 
-        const childPromises = [];
+        const childPromises = [] as Promise<any>[];
         await this.getChildStream()
             .next(child => {
-                let address = child.address;
+                const address = child.address;
                 if (address) {
                 // Get child Allocation
-                    let promise = this.storage.nodeLocker.lock(child.path, this.lock.tid, false, `NodeReader:getAllocation:child "/${child.path}"`)
+                    const promise = this.storage.nodeLocker.lock(child.path, this.lock.tid, false, `NodeReader:getAllocation:child "/${child.path}"`)
                         .then(async childLock => {
                             const reader = new NodeReader(this.storage, address, childLock, this.updateCache);
                             const childAllocation = await reader.getAllocation(true);
@@ -2424,9 +2595,8 @@ class NodeReader {
 
     /**
      * Reads all data for this node. Only do this when a stream won't do (eg if you need all data because the record contains a string)
-     * @returns {Promise<Uint8Array>}
      */
-    async getAllData() {
+    async getAllData(): Promise<Uint8Array> {
         this._assertLock();
         if (this.recordInfo === null) {
             await this.readHeader();
@@ -2444,10 +2614,20 @@ class NodeReader {
 
     /**
      * Gets the value stored in this record by parsing the binary data in this and any sub records
-     * @param {{ include?: PathInfo[], exclude?: PathInfo[], child_objects?: boolean, no_cache?: boolean }} options when omitted retrieves all nested data. If include is set to an array of keys it will only return those children. If exclude is set to an array of keys, those values will not be included
-     * @returns {Promise<any>} - returns the stored object, array or string
+     * @param options when omitted retrieves all nested data. If include is set to an array of keys it will only return those children. If exclude is set to an array of keys, those values will not be included
+     * @returns returns the stored object, array or string
      */
-    async getValue(options = { include: undefined, exclude: undefined, child_objects: true, no_cache: false }) {
+    async getValue(
+        options: {
+            include?: string[] | PathInfo[],
+            exclude?: string[] | PathInfo[],
+            child_objects?: boolean,
+            no_cache?: boolean
+        } = {
+            child_objects: true,
+            no_cache: false,
+        },
+    ): Promise<any> {
         if (typeof options.include !== 'undefined' && !(options.include instanceof Array)) {
             throw new TypeError('options.include must be an array of key names');
         }
@@ -2488,15 +2668,13 @@ class NodeReader {
 
                 /**
                  * Convert include & exclude filters to PathInfo instances for easier handling
-                 * @param {string[]} arr
-                 * @returns {PathInfo[]}
                  */
-                const convertFilterArray = (arr) => {
-                    const isNumber = key => /^[0-9]+$/.test(key);
+                const convertFilterArray = (arr: string[]) => {
+                    const isNumber = (key: string) => /^[0-9]+$/.test(key);
                     return arr.map(path => PathInfo.get(isArray && isNumber(path) ? `[${path}]` : path));
                 };
-                const includeFilter = options.include ? options.include.some(item => item instanceof PathInfo) ? options.include : convertFilterArray(options.include) : [];
-                const excludeFilter = options.exclude ? options.exclude.some(item => item instanceof PathInfo) ? options.exclude : convertFilterArray(options.exclude) : [];
+                const includeFilter: PathInfo[] = options.include ? options.include.some(item => item instanceof PathInfo) ? options.include as PathInfo[] : convertFilterArray(options.include as string[]) : [];
+                const excludeFilter: PathInfo[] = options.exclude ? options.exclude.some(item => item instanceof PathInfo) ? options.exclude as PathInfo[] : convertFilterArray(options.exclude as string[]) : [];
 
                 // if (isArray && isFiltered && options.include && options.include.length > 0) {
                 //     for (let i = 0; i < options.include.length; i++) {
@@ -2521,35 +2699,35 @@ class NodeReader {
                 //     }
                 // }
 
-                const promises = [];
-                const isWildcardKey = key => typeof key === 'string' && (key === '*' || key[0] === '$');
+                const promises = [] as Promise<any>[];
+                const isWildcardKey = (key: string | number) => typeof key === 'string' && (key === '*' || key[0] === '$');
                 const hasWildcardInclude = includeFilter.length > 0 && includeFilter.some(pathInfo => pathInfo.keys.length === 1 && isWildcardKey(pathInfo.keys[0]));
                 const hasChildIncludes = includeFilter.length > 0 && includeFilter.some(pathInfo => pathInfo.keys.length === 1 && !isWildcardKey(pathInfo.keys[0]));
                 const isFiltered = (includeFilter.length > 0 && !hasWildcardInclude && includeFilter.some(pathInfo => pathInfo.keys.length === 1)) || (excludeFilter.length > 0 && excludeFilter.some(pathInfo => pathInfo.keys.length === 1) ) || options.child_objects === false;
-                const obj = isArray ? isFiltered ? new PartialArray() : [] : {};
-                const streamOptions = { };
+                const obj : PartialArray | any[] | Record<string, any> = isArray ? isFiltered ? new PartialArray() : [] as any[] : {};
+                const streamOptions = {} as { keyFilter?: string[] | number[] };
                 if (includeFilter.length > 0 && !hasWildcardInclude && hasChildIncludes) {
                     const keyFilter = includeFilter
                         .filter(pathInfo => !isWildcardKey(pathInfo.keys[0])) // pathInfo.keys.length === 1 &&
                         .map(pathInfo => pathInfo.keys[0])
-                        .reduce((keys, key) => (keys.includes(key) || keys.push(key)) && keys, []);
+                        .reduce((keys, key) => (keys.includes(key as string) || keys.push(key as string)) && keys, [] as string[]);
                     if (keyFilter.length > 0) {
                         streamOptions.keyFilter = keyFilter;
                     }
                 }
 
-                /**
-                 * @param {NodeInfo} child
-                 */
-                const loadChildValue = async (child) => {
+                const loadChildValue = async (child: BinaryNodeInfo) => {
                     let childLock;
                     try {
                         childLock = await this.storage.nodeLocker.lock(child.address.path, this.lock.tid, false, `NodeReader.getValue:child "/${child.address.path}"`);
 
                         // Are there any relevant nested includes / excludes?
                         // Fixed: nested bracket (index) include/exclude handling like '[3]/name'
-                        let childOptions = {};
-                        const getChildFilter = filter => {
+                        const childOptions = {} as {
+                            include?: PathInfo[];
+                            exclude?: PathInfo[];
+                        };
+                        const getChildFilter = (filter: PathInfo[]) => {
                             return filter
                                 .filter((pathInfo) => {
                                     const key = pathInfo.keys[0];
@@ -2583,7 +2761,7 @@ class NodeReader {
                         // this.storage.debug.log(`Reading child node "/${child.address.path}" from ${child.address.pageNr},${child.address.recordNr}`.colorize(ColorStyle.magenta));
                         const reader = new NodeReader(this.storage, child.address, childLock, this.updateCache, this.stack);
                         const val = await reader.getValue(childOptions);
-                        obj[isArray ? child.index : child.key] = val;
+                        (obj as any)[isArray ? child.index : child.key] = val;
                     }
                     catch (reason) {
                         this.storage.debug.error('NodeReader.getValue:child error: ', reason);
@@ -2599,15 +2777,15 @@ class NodeReader {
                         .next(child => {
                             const keyOrIndex = isArray ? child.index : child.key;
                             if (options.child_objects === false && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(child.type)) {
-                            // Options specify not to include any child objects
+                                // Options specify not to include any child objects
                                 return;
                             }
                             if (includeFilter.some(pathInfo => pathInfo.keys.length === 1 && !isWildcardKey(pathInfo.keys[0])) && !includeFilter.some(pathInfo => pathInfo.keys.length === 1 && keyOrIndex === pathInfo.keys[0])) { // !options.include.find(k => typeof k === 'string' && k[0] === '*') && !streamOptions.keyFilter.includes(keyOrIndex)
-                            // This particular child is not in the include list
+                                // This particular child is not in the include list
                                 return;
                             }
                             if (excludeFilter.some(pathInfo => pathInfo.keys.length === 1 && pathInfo.keys[0] === keyOrIndex)) {
-                            // This particular child is on the exclude list
+                                // This particular child is on the exclude list
                                 return;
                             }
                             if (child.address) {
@@ -2615,7 +2793,7 @@ class NodeReader {
                                 promises.push(childValuePromise);
                             }
                             else if (typeof child.value !== 'undefined') {
-                                obj[keyOrIndex] = child.value;
+                                (obj as any)[keyOrIndex] = child.value;
                             }
                             else {
                                 if (isArray) {
@@ -2644,19 +2822,20 @@ class NodeReader {
     getDataStream() {
         this._assertLock();
 
+        type DataCallbackFunction = (result: {data: Uint8Array, valueType: number, chunks: StorageAddressRange[], chunkIndex: number, totalBytes: number, hasKeyTree: boolean, fileIndex: number, headerLength: number }) => void | boolean | Promise<void | boolean>;
         const bytesPerRecord = this.storage.settings.recordSize;
         const maxRecordsPerChunk = this.storage.settings.pageSize; // Reading whole pages at a time is faster, approx 130KB with default settings (1024 records of 128 bytes each) // 200: about 25KB of data when using 128 byte records
         const generator = {
             /**
-             * @param {(result: {data: Uint8Array, valueType: number, chunks: { pageNr: number, recordNr: number, length: number }[], chunkIndex: number, totalBytes: number, hasKeyTree: boolean }) => boolean} callback callback function that is called with each chunk read. Reading will stop immediately when false is returned
-             * @returns {Promise<{ valueType: number, chunks: { pageNr: number, recordNr: number, length: number }[]}>} returns a promise that resolves when all data is read
+             * @param callback callback function that is called with each chunk read. Reading will stop immediately when false is returned
+             * @returns returns a promise that resolves when all data is read
              */
-            async next(callback) {
+            async next(callback: DataCallbackFunction) {
                 return read(callback);
             },
         };
 
-        const read = async (callback) => {
+        const read = async (callback: DataCallbackFunction) => {
             const fileIndex = this.storage.getRecordFileIndex(this.address.pageNr, this.address.recordNr);
 
             if (this.recordInfo === null) {
@@ -2666,7 +2845,7 @@ class NodeReader {
 
             // Divide all allocation ranges into chunks of maxRecordsPerChunk
             const ranges = recordInfo.allocation.ranges;
-            const chunks = []; // nicer approach would be: const chunks = ranges.reduce((chunks, range) => { ... }, []);
+            const chunks = [] as { pageNr: number; recordNr: number; length: number }[]; // nicer approach would be: const chunks = ranges.reduce((chunks, range) => { ... }, []);
             let totalBytes = 0;
             ranges.forEach((range, i) => {
                 let chunk = {
@@ -2682,7 +2861,7 @@ class NodeReader {
                 totalBytes += chunkLength;
                 if (i === 0 && chunk.length > 1) {
                     // Split, first chunk contains start data only
-                    let remaining = chunk.length - 1;
+                    const remaining = chunk.length - 1;
                     chunk.length = 1;
                     chunks.push(chunk);
                     chunk = {
@@ -2693,7 +2872,7 @@ class NodeReader {
                 }
                 while (chunk.length > maxRecordsPerChunk) {
                     // Split so the chunk has maxRecordsPerChunk
-                    let remaining = chunk.length - maxRecordsPerChunk;
+                    const remaining = chunk.length - maxRecordsPerChunk;
                     chunk.length = maxRecordsPerChunk;
                     chunks.push(chunk);
                     chunk = {
@@ -2770,22 +2949,19 @@ class NodeReader {
     }
 
     /**
-     * Starts reading this record, returns a generator that fires .next for each child key until the callback function returns false. The generator (.next) returns a promise that resolves when all child keys have been processed, or was cancelled because false was returned in the generator callback
-     * @param {{ keyFilter?: string[] }} options optional options: keyFilter specific keys to get, offers performance and memory improvements when searching specific keys
-     * @returns {{next: (cb: (child: NodeInfo, index: number) => boolean) => Promise<void>}  - returns a generator that is called for each child. return false from your .next callback to stop iterating
+     * Starts reading this record, returns a generator that fires `.next` for each child key until the callback function returns false. The generator (.next) returns a promise that resolves when all child keys have been processed, or was cancelled because false was returned in the generator callback
+     * @param options optional options: keyFilter specific keys to get, offers performance and memory improvements when searching specific keys
+     * @returns returns a generator that is called for each child. return false from your `.next` callback to stop iterating
      */
-    getChildStream(options = { keyFilter: undefined }) {
+    getChildStream(options: { keyFilter?: string[] | number[] } = {}) {
         this._assertLock();
 
-        /** @type {(childInfo: NodeInfo, index: number)} */ let callback;
+        type ChildCallbackFunction = (childInfo: BinaryNodeInfo, index: number) => boolean | void | Promise<boolean | void>
+        let callback: ChildCallbackFunction;
         let isAsync = false;
         let childCount = 0;
         const generator = {
-            /**
-             *
-             * @param {(childInfo: NodeInfo, index: number)} cb
-             */
-            async next(cb, useAsync = false) {
+            async next(cb: ChildCallbackFunction, useAsync = false) {
                 callback = cb;
                 isAsync = useAsync;
                 return start();
@@ -2809,7 +2985,7 @@ class NodeReader {
             else {
                 return this.getDataStream()
                     .next(({ data, chunks, chunkIndex }) => {
-                        let isLastChunk = chunkIndex === chunks.length-1;
+                        const isLastChunk = chunkIndex === chunks.length-1;
                         return createStreamFromLinearData(data, isLastChunk); //, fileIndex
                     });
             }
@@ -2846,7 +3022,9 @@ class NodeReader {
                 const results = await tree.findAll(options.keyFilter, { existingOnly: true });
                 let i = 0;
                 for (const { key, value } of results) {
-                    const childInfo = isArray ? new NodeInfo({ path: `${this.address.path}[${key}]`, index: key }) : new NodeInfo({ path: `${this.address.path}/${key}`, key });
+                    const childInfo = isArray
+                        ? new BinaryNodeInfo({ path: `${this.address.path}[${key}]`, index: key as number })
+                        : new BinaryNodeInfo({ path: `${this.address.path}/${key}`, key: key as string });
                     const res = getValueFromBinary(childInfo, value.recordPointer, 0);
                     if (!res.skip) {
                         let result = callback(childInfo, i++);
@@ -2861,7 +3039,9 @@ class NodeReader {
                 let leaf = await tree.getFirstLeaf();
                 while (leaf) {
                     const children = leaf.entries.reduce((nodes, entry) => {
-                        const child = isArray ? new NodeInfo({ path: `${this.address.path}[${entry.key}]`, index: entry.key }) : new NodeInfo({ path: `${this.address.path}/${entry.key}`, key: entry.key });
+                        const child = isArray
+                            ? new BinaryNodeInfo({ path: `${this.address.path}[${entry.key}]`, index: entry.key as number })
+                            : new BinaryNodeInfo({ path: `${this.address.path}/${entry.key}`, key: entry.key as string });
                         const res = getValueFromBinary(child, entry.value.recordPointer, 0);
                         if (!res.skip) { nodes.push(child); }
                         return nodes;
@@ -2879,15 +3059,9 @@ class NodeReader {
         };
 
         // To get values from binary data:
-        /**
-         *
-         * @param {NodeInfo} child
-         * @param {number[]} binary
-         * @param {number} index
-         */
-        const getValueFromBinary = (child, binary, index) => {
+        const getValueFromBinary = (child: BinaryNodeInfo, binary: number[] | Uint8Array, index: number) => {
             // const startIndex = index;
-            const assert = (bytes) => {
+            const assert = (bytes: number) => {
                 if (index + bytes > binary.length) {
                     throw new AdditionalDataRequest();
                 }
@@ -2937,7 +3111,7 @@ class NodeReader {
                 else if (child.type === VALUE_TYPES.STRING) {
                     child.value = decodeString(bytes); // textDecoder.decode(Uint8Array.from(bytes));
                 }
-                else if (child.type === VALUE_TYPES.DATETIME) { let time = bytesToNumber(bytes); child.value = new Date(time); }
+                else if (child.type === VALUE_TYPES.DATETIME) { const time = bytesToNumber(bytes); child.value = new Date(time); }
                 //else if (type === VALUE_TYPES.ID) { value = new ID(bytes); }
                 else if (child.type === VALUE_TYPES.ARRAY) { throw new Error('Inline array deserialization not implemented'); }
                 else if (child.type === VALUE_TYPES.OBJECT) { throw new Error('Inline object deserialization not implemented'); }
@@ -2954,14 +3128,14 @@ class NodeReader {
             else if (isRecordValue) {
                 // Record address
                 assert(6);
-                if (typeof binary.buffer === 'undefined') {
+                if (typeof (binary as any).buffer === 'undefined') {
                     binary = new Uint8Array(binary);
                 }
-                const view = new DataView(binary.buffer, binary.byteOffset + index, 6);
+                const view = new DataView((binary as Uint8Array).buffer, (binary as Uint8Array).byteOffset + index, 6);
                 const pageNr = view.getUint32(0);
                 const recordNr = view.getUint16(4);
                 const childPath = isArray ? `${this.address.path}[${child.index}]` : this.address.path === '' ? child.key : `${this.address.path}/${child.key}`;
-                child.address = new NodeAddress(childPath, pageNr, recordNr);
+                child.address = new BinaryNodeAddress(childPath, pageNr, recordNr);
 
                 // Cache anything that comes along
                 // TODO: Consider moving this to end of function so it caches small values as well
@@ -2984,18 +3158,18 @@ class NodeReader {
         };
 
         // Gets children from a chunk of data, linear key/value pairs:
-        let incompleteData = null;
-        const getChildrenFromChunk = (valueType, binary) => {  //, chunkStartIndex) => {
+        let incompleteData: Uint8Array = null;
+        const getChildrenFromChunk = (valueType: number, binary: Uint8Array) => {  //, chunkStartIndex) => {
             if (incompleteData !== null) {
                 //chunkStartIndex -= incompleteData.length;
                 binary = concatTypedArrays(incompleteData, binary);
                 incompleteData = null;
             }
-            let children = [];
+            const children = [];
             if (valueType === VALUE_TYPES.OBJECT || valueType === VALUE_TYPES.ARRAY) {
                 isArray = valueType === VALUE_TYPES.ARRAY;
                 let index = 0;
-                const assert = (bytes) => {
+                const assert = (bytes: number) => {
                     if (index + bytes > binary.length) { // binary.byteOffset + ... >
                         throw new AdditionalDataRequest();
                     }
@@ -3003,8 +3177,8 @@ class NodeReader {
 
                 // Index child keys or array indexes
                 while(index < binary.length) {
-                    let startIndex = index;
-                    const child = new NodeInfo({});
+                    const startIndex = index;
+                    const child = new BinaryNodeInfo({});
 
                     try {
                         if (isArray) {
@@ -3035,16 +3209,16 @@ class NodeReader {
                             }
                         }
 
-                        let res = getValueFromBinary(child, binary, index);
+                        const res = getValueFromBinary(child, binary, index);
                         index = res.index;
                         childCount++;
                         if (res.skip) {
                             continue;
                         }
-                        else if (!isArray && options.keyFilter && !options.keyFilter.includes(child.key)) {
+                        else if (!isArray && options.keyFilter && !(options.keyFilter as string[]).includes(child.key)) {
                             continue;
                         }
-                        else if (isArray && options.keyFilter && !options.keyFilter.includes(child.index)) {
+                        else if (isArray && options.keyFilter && !(options.keyFilter as number[]).includes(child.index)) {
                             continue;
                         }
 
@@ -3065,8 +3239,8 @@ class NodeReader {
             return children;
         };
 
-        const createStreamFromLinearData = async (chunkData, isLastChunk) => { // , chunkStartIndex
-            let children = getChildrenFromChunk(this.recordInfo.valueType, chunkData); //, chunkStartIndex);
+        const createStreamFromLinearData = async (chunkData: Uint8Array, isLastChunk: boolean) => { // , chunkStartIndex
+            const children = getChildrenFromChunk(this.recordInfo.valueType, chunkData); //, chunkStartIndex);
             let canceled = false;
             for (let i = 0; !canceled && i < children.length; i++) {
                 const child = children[i];
@@ -3099,23 +3273,28 @@ class NodeReader {
 
     /**
      * Retrieves information about a specific child by key name or index
-     * @param {string|number} key key name or index number
-     * @returns {Promise<NodeInfo>} returns a Promise that resolves with NodeInfo of the child
+     * @param key key name or index number
+     * @returns returns a Promise that resolves with BinaryNodeInfo of the child
      */
-    async getChildInfo(key) {
+    async getChildInfo(key: string | number): Promise<BinaryNodeInfo> {
         let childInfo = null;
-        await this.getChildStream({ keyFilter: [key] })
+        await this.getChildStream({ keyFilter: [key] as string[] | number[] })
             .next(info => {
                 childInfo = info;
             });
         if (childInfo) {
             return childInfo;
         }
-        let childPath = PathInfo.getChildPath(this.address.path, key);
-        return new NodeInfo({ path: childPath, key, exists: false });
+        const childPath = PathInfo.getChildPath(this.address.path, key);
+        return new BinaryNodeInfo({
+            path: childPath,
+            ...(typeof key === 'string' && { key: key as string }),
+            ...(typeof key === 'number' && { index: key as number }), // Added 2022/10/10, also support array indexes
+            exists: false,
+        });
     }
 
-    async _treeDataWriter(binary, index) {
+    async _treeDataWriter(binary: number[] | Buffer, index: number) {
         if (binary instanceof Array) {
             binary = Buffer.from(binary);
         }
@@ -3145,7 +3324,7 @@ class NodeReader {
             if (bOffset + bLength > length) {
                 bLength = length - bOffset;
             }
-            let p = this.storage.writeData(fIndex, binary, bOffset, bLength);
+            const p = this.storage.writeData(fIndex, binary, bOffset, bLength);
             writes.push(p);
             bOffset += bLength;
         }
@@ -3153,7 +3332,7 @@ class NodeReader {
     }
 
     // Translates requested data index and length to actual record data location and reads it
-    async _treeDataReader(index, length) {
+    async _treeDataReader(index: number, length: number) {
         // console.log(`...read request for index ${index}, length ${length}...`);
         const recordSize = this.storage.settings.recordSize;
         const headerLength = this.recordInfo.headerLength;
@@ -3182,7 +3361,7 @@ class NodeReader {
                 fIndex += startRecord.offset;
                 bLength -= startRecord.offset;
             }
-            let p = this.storage.readData(fIndex, binary, bOffset, bLength);
+            const p = this.storage.readData(fIndex, binary, bOffset, bLength);
             reads.push(p);
             bOffset += bLength;
         }
@@ -3207,7 +3386,7 @@ class NodeReader {
         // Read Chunk Table
         let view = new DataView(data.buffer);
         let offset = 1;
-        let firstRange = new StorageAddressRange(this.address.pageNr, this.address.recordNr, 1);
+        const firstRange = new StorageAddressRange(this.address.pageNr, this.address.recordNr, 1);
         /** @type {StorageAddressRange[]} */
         const ranges = [firstRange];
         const allocation = new NodeAllocation(ranges);
@@ -3218,9 +3397,9 @@ class NodeReader {
             if (offset + 9 + 2 >= data.length) {
                 // Read more data (next record)
                 readingRecordIndex++;
-                let address = allocation.addresses[readingRecordIndex];
-                let fileIndex = this.storage.getRecordFileIndex(address.pageNr, address.recordNr);
-                let moreData = new Uint8Array(bytesPerRecord);
+                const address = allocation.addresses[readingRecordIndex];
+                const fileIndex = this.storage.getRecordFileIndex(address.pageNr, address.recordNr);
+                const moreData = new Uint8Array(bytesPerRecord);
                 await this.storage.readData(fileIndex, moreData.buffer);
                 data = concatTypedArrays(data, moreData);
                 view = new DataView(data.buffer);
@@ -3296,20 +3475,15 @@ class NodeReader {
 }
 
 /**
- *
- * @param {AceBaseStorage} storage
- * @param {NodeInfo} nodeInfo
- * @param {object} newValue
- * @param {NodeLock} lock
- * @returns {Promise<{ recordMoved: boolean, recordInfo: RecordInfo, deallocate: NodeAllocation }>}
+ * Merges an existing node with given updates
  */
-async function _mergeNode(storage, nodeInfo, updates, lock) {
+async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, updates: Record<string | number, any>, lock: IAceBaseIPCLock) {
     if (typeof updates !== 'object') {
         throw new TypeError('updates parameter must be an object');
     }
 
     let nodeReader = new NodeReader(storage, nodeInfo.address, lock, false);
-    const affectedKeys = Object.keys(updates);
+    const affectedKeys: Array<string | number> = Object.keys(updates);
     const changes = new NodeChangeTracker(nodeInfo.path);
 
     const discardAllocation = new NodeAllocation([]);
@@ -3321,23 +3495,23 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
     nodeInfo.type = recordInfo.valueType; // Set in nodeInfo too, because it might be unknown
 
     let recordMoved = false;
-    const done = (newRecordInfo) => {
+    const done = (newRecordInfo: RecordInfo) => {
         if (newRecordInfo !== nodeReader.recordInfo) {
             // release the old record allocation
             discardAllocation.ranges.push(...nodeReader.recordInfo.allocation.ranges);
             recordMoved = true;
         }
         // Necessary?
-        storage.updateCache(false, new NodeInfo({ path: nodeInfo.path, type: nodeInfo.type, address: newRecordInfo.address, exists: true }), recordMoved);
+        storage.updateCache(false, new BinaryNodeInfo({ path: nodeInfo.path, type: nodeInfo.type, address: newRecordInfo.address, exists: true }), recordMoved);
         return { recordMoved, recordInfo: newRecordInfo, deallocate: discardAllocation };
     };
 
-    const childValuePromises = [];
+    const childValuePromises = [] as Promise<unknown>[];
 
     if (isArray) {
         // keys to update must be integers
         for (let i = 0; i < affectedKeys.length; i++) {
-            if (isNaN(affectedKeys[i])) {
+            if (isNaN(affectedKeys[i] as number)) {
                 throw new Error(`Cannot merge existing array of path "${nodeInfo.path}" with an object (properties ${Object.keys(updates).slice(0, 5).map(p => `"${p}"`).join(',')}...)`);
             }
             affectedKeys[i] = +affectedKeys[i]; // Now an index
@@ -3346,7 +3520,7 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
 
     const newKeys = affectedKeys.slice();
 
-    await nodeReader.getChildStream({ keyFilter: affectedKeys })
+    await nodeReader.getChildStream({ keyFilter: affectedKeys as string[] | number[] })
         .next(child => {
 
             const keyOrIndex = isArray ? child.index : child.key;
@@ -3402,8 +3576,8 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
 
     if (isArray) {
         // Check if resulting array is dense: every item must have a value, no gaps allowed
-        const getSequenceInfo = (changes) => {
-            const indice = changes.map(ch => ch.keyOrIndex).sort(); // sorted from low index to high index
+        const getSequenceInfo = (changes: NodeChange[]) => {
+            const indice = changes.map(ch => ch.keyOrIndex as number).sort(); // sorted from low index to high index
             const gaps = indice.map((_, i, arr) => i === 0 ? 0 : arr[i-1] - arr[i]);
             return { indice, hasGaps: gaps.some(g => g > 1) };
         };
@@ -3454,7 +3628,7 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
             .reduce((obj, ch) => {
                 obj[ch.keyOrIndex] = ch.changeType === NodeChange.CHANGE_TYPE.DELETE ? 'delete' : 'invalidate';
                 return obj;
-            }, {});
+            }, {} as Record<string | number, 'delete' | 'invalidate'>);
         storage.invalidateCache(false, nodeInfo.path, inv, 'mergeNode');
     }
 
@@ -3471,23 +3645,24 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
         const pathInfo = PathInfo.get(nodeInfo.path);
         const childPromises = [];
         for (const change of changes.all) {
-        // changes.all.forEach(change => {
+            // changes.all.forEach(change => {
             const childPath = pathInfo.childPath(change.keyOrIndex); //PathInfo.getChildPath(nodeInfo.path, change.keyOrIndex);
             if (change.oldValue !== null) {
-                let kvp = _serializeValue(storage, childPath, change.keyOrIndex, change.oldValue, null);
-                console.assert(kvp instanceof SerializedKeyValue, 'return value must be of type SerializedKeyValue, it cannot be a Promise!');
-                let bytes = _getValueBytes(kvp);
+                const kvp = _serializeValue(storage, childPath, change.keyOrIndex, change.oldValue, null);
+                if(!(kvp instanceof SerializedKeyValue)) {
+                    throw new Error('return value must be of type SerializedKeyValue, it cannot be a Promise!');
+                }
+                const bytes = _getValueBytes(kvp);
                 change.oldValue = bytes;
             }
             if (change.newValue !== null) {
-                let s = _serializeValue(storage, childPath, change.keyOrIndex, change.newValue, lock.tid);
-                let convert = (kvp) => {
-                    let bytes = _getValueBytes(kvp);
+                const s = _serializeValue(storage, childPath, change.keyOrIndex, change.newValue, lock.tid);
+                const convert = (kvp: SerializedKeyValue) => {
+                    const bytes = _getValueBytes(kvp);
                     change.newValue = bytes;
                 };
                 if (s instanceof Promise) {
-                    s = s.then(convert);
-                    childPromises.push(s);
+                    childPromises.push(s.then(convert));
                 }
                 else {
                     convert(s);
@@ -3499,33 +3674,33 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
             // }
         } //);
 
-        let operations = [];
+        const operations = [] as BinaryBPlusTreeTransactionOperation[];
         let tree = nodeReader.getChildTree();
         await Promise.all(childPromises);
 
         changes.deletes.forEach(change => {
-            const op = BinaryBPlusTree.TransactionOperation.remove(change.keyOrIndex, change.oldValue);
+            const op = BinaryBPlusTree.TransactionOperation.remove(change.keyOrIndex, change.oldValue as Uint8Array);
             operations.push(op);
         });
         changes.updates.forEach(change => {
-            const oldEntryValue = new BinaryBPlusTree.EntryValue(change.oldValue);
-            const newEntryValue = new BinaryBPlusTree.EntryValue(change.newValue);
+            const oldEntryValue = new BinaryBPlusTree.EntryValue(change.oldValue as Uint8Array);
+            const newEntryValue = new BinaryBPlusTree.EntryValue(change.newValue as Uint8Array);
             const op = BinaryBPlusTree.TransactionOperation.update(change.keyOrIndex, newEntryValue, oldEntryValue);
             operations.push(op);
         });
         changes.inserts.forEach(change => {
-            const op = BinaryBPlusTree.TransactionOperation.add(change.keyOrIndex, change.newValue);
+            const op = BinaryBPlusTree.TransactionOperation.add(change.keyOrIndex, change.newValue as Uint8Array);
             operations.push(op);
         });
 
         // Changed behaviour:
         // previously, if 1 operation failed, the tree was rebuilt. If any operation thereafter failed, it stopped processing
         // now, processOperations() will be called after each rebuild, so all operations will be processed
-        const opCountsLog = [], fixHistory = [];
-        const processOperations = async (retry = 0) => {
+        const opCountsLog: number[] = [], fixHistory = [] as any[];
+        const processOperations = async (retry = 0): Promise<RecordInfo> => {
             if (retry > 2 && operations.length === opCountsLog[opCountsLog.length-1]) {
                 // Number of pending operations did not decrease after 2 possible tree fixes
-                throw new Error(`DEV: Applied tree fixes did not change ${operations.length} pending operation(s) failing to execute. Debug this!`, fixHistory);
+                throw new Error(`DEV: Applied tree fixes did not change ${operations.length} pending operation(s) failing to execute. Debug this, check fixHistory!`);
             }
             opCountsLog.push(operations.length);
             try {
@@ -3545,8 +3720,9 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
                     fixHistory.push({ err, fix: 'grow', from: tree.info.byteLength, to: bytesRequired, growBytes });
 
                     // Copy from original allocation to new allocation
-                    let sourceIndex = 0, originalLength = tree.info.byteLength;
-                    const reader = async (length) => {
+                    let sourceIndex = 0;
+                    const originalLength = tree.info.byteLength;
+                    const reader = async (length: number) => {
                         let data;
                         if (sourceIndex > originalLength) {
                             // 0s only
@@ -3590,7 +3766,7 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
 
                     // Now write the record with data read from the temp file
                     let readOffset = 0;
-                    const reader = async length => {
+                    const reader = async (length: number) => {
                         const buffer = new Uint8Array(length);
                         const { bytesRead } = await pfs.read(fd, buffer, 0, buffer.length, readOffset);
                         readOffset += bytesRead;
@@ -3604,7 +3780,7 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
                     pfs.close(fd)
                         .then(() => pfs.rm(tempFilepath))
                         .catch(err => {
-                        // Error removing the file?
+                            // Error removing the file?
                             storage.debug.error(`Can't remove temp rebuild file ${tempFilepath}: `, err);
                         });
                 }
@@ -3636,13 +3812,13 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
         // in the record itself, but let's just rewrite it for now.
         // Record (de)allocation is managed by _writeNode
 
-        let mergedValue = isArray ? [] : {};
+        const mergedValue: Record<string | number, any> = isArray ? [] : {};
 
         await nodeReader.getChildStream()
             .next(child => {
-                let keyOrIndex = isArray ? child.index : child.key;
+                const keyOrIndex = isArray ? child.index : child.key;
                 if (child.address) { //(child.storedAddress || child.address) {
-                //mergedValue[keyOrIndex] = new InternalNodeReference(child.type, child.storedAddress || child.address);
+                    //mergedValue[keyOrIndex] = new InternalNodeReference(child.type, child.storedAddress || child.address);
                     mergedValue[keyOrIndex] = new InternalNodeReference(child.type, child.address);
                 }
                 else {
@@ -3678,18 +3854,12 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
 
 
 /**
- *
- * @param {AceBaseStorage} storage
- * @param {NodeInfo} nodeInfo
- * @param {object} newValue
- * @param {NodeLock} lock
- * @returns {Promise<{ recordMoved: boolean, recordInfo: RecordInfo, deallocate: NodeAllocation }>}
+ * Creates or overwrites a node
  */
-async function _createNode(storage, nodeInfo, newValue, lock, invalidateCache = true) {
+async function _createNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, newValue: any, lock: IAceBaseIPCLock, invalidateCache = true) {
     storage.debug.log(`Node "/${nodeInfo.path}" is being ${nodeInfo.exists ? 'overwritten' : 'created'}`.colorize(ColorStyle.cyan));
 
-    /** @type {NodeAllocation} */
-    let currentAllocation = null;
+    let currentAllocation: NodeAllocation = null;
     if (nodeInfo.exists && nodeInfo.address) {
         // Current value occupies 1 or more records we can probably reuse.
         // For now, we'll allocate new records though, then free the old allocation
@@ -3704,16 +3874,8 @@ async function _createNode(storage, nodeInfo, newValue, lock, invalidateCache = 
     return { recordMoved: true, recordInfo, deallocate: currentAllocation };
 }
 
-/**
- *
- * @param {AceBaseStorage} storage
- * @param {string} path
- * @param {any} value
- * @param {string} parentTid
- * @returns {Promise<RecordInfo>}
- */
-async function _lockAndWriteNode(storage, path, value, parentTid) {
-    const lock = await storage.nodeLocker.lock(path, parentTid, true, `_lockAndWrite "${path}"`);
+async function _lockAndWriteNode(storage: AceBaseStorage, path: string, value: any, parentTid: string | number): Promise<RecordInfo> {
+    const lock = await storage.nodeLocker.lock(path, parentTid.toString(), true, `_lockAndWrite "${path}"`);
     try {
         const recordInfo = await _writeNode(storage, path, value, lock);
         return recordInfo;
@@ -3723,22 +3885,14 @@ async function _lockAndWriteNode(storage, path, value, parentTid) {
     }
 }
 
-/**
- *
- * @param {AceBaseStorage} storage
- * @param {string} path
- * @param {any} value
- * @param {NodeLock} lock
- * @returns {Promise<RecordInfo>}
- */
-async function _writeNode(storage, path, value, lock, currentRecordInfo = undefined) {
+async function _writeNode(storage: AceBaseStorage, path: string, value: any, lock: IAceBaseIPCLock, currentRecordInfo?: RecordInfo): Promise<RecordInfo> {
     if (lock.path !== path || !lock.forWriting) {
         throw new Error(`Cannot write to node "/${path}" because lock is on the wrong path or not for writing`);
     }
 
-    const write = (valueType, buffer, keyTree = false) => {
+    const write = (valueType: number, buffer: number[] | Uint8Array, keyTree = false) => {
         let readOffset = 0;
-        const reader = (length) => {
+        const reader = (length: number) => {
             const slice = buffer.slice(readOffset, readOffset + length);
             readOffset += length;
             return slice;
@@ -3763,10 +3917,9 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
     }
 
     // Store array or object
-    let childPromises = [];
-    /** @type {SerializedKeyValue[]} */
-    let serialized = [];
-    let isArray = value instanceof Array;
+    const childPromises = [] as Promise<any>[];
+    const serialized = [] as SerializedKeyValue[];
+    const isArray = value instanceof Array;
 
     if (isArray) {
         // Store array
@@ -3774,18 +3927,17 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
         if (!isExhaustive) {
             throw new Error('Cannot store arrays with missing entries');
         }
-        value.forEach((val, index) => {
+        (value as any[]).forEach((val, index) => {
             if (typeof val === 'function') {
                 throw new Error(`Array at index ${index} has invalid value. Cannot store functions`);
             }
             const childPath = `${path}[${index}]`;
-            let s = _serializeValue(storage, childPath, index, val, lock.tid);
-            const add = (s) => {
+            const s = _serializeValue(storage, childPath, index, val, lock.tid);
+            const add = (s: SerializedKeyValue) => {
                 serialized[index] = s; // Fixed: Array order getting messed up (with serialized.push after promises resolving)
             };
             if (s instanceof Promise) {
-                s = s.then(add);
-                childPromises.push(s);
+                childPromises.push(s.then(add));
             }
             else {
                 add(s);
@@ -3802,7 +3954,7 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
             if (key.length > 128) { throw new Error(`Key "${key}" is too long to store for object at path "${path}". Max key length is 128`); }
 
             const childPath = PathInfo.getChildPath(path, key); // `${path}/${key}`;
-            let val = value[key];
+            const val = value[key];
             if (typeof val === 'function' || val === null) {
                 return; // Skip functions and null values
             }
@@ -3816,13 +3968,12 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
                 }
             }
             else {
-                let s = _serializeValue(storage, childPath, key, val, lock.tid);
-                const add = (s) => {
+                const s = _serializeValue(storage, childPath, key, val, lock.tid);
+                const add = (s: SerializedKeyValue) => {
                     serialized.push(s);
                 };
                 if (s instanceof Promise) {
-                    s = s.then(add);
-                    childPromises.push(s);
+                    childPromises.push(s.then(add));
                 }
                 else {
                     add(s);
@@ -3834,9 +3985,7 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
     await Promise.all(childPromises);
 
     // Append all serialized data into 1 binary array
-
-    /** @type {{ keyTree: boolean, data: Uint8Array }} */
-    let result;
+    let result: { keyTree: boolean, data: Uint8Array };
     const minKeysPerNode = 25;
     const minKeysForTreeCreation = 100;
     if (true && serialized.length > minKeysForTreeCreation) {
@@ -3848,7 +3997,7 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
 
         const treeBuilder = new BPlusTreeBuilder(true, fillFactor);
         serialized.forEach(kvp => {
-            let binaryValue = _getValueBytes(kvp);
+            const binaryValue = _getValueBytes(kvp);
             treeBuilder.add(isArray ? kvp.index : kvp.key, binaryValue);
         });
 
@@ -3862,13 +4011,13 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
         const builder = new Uint8ArrayBuilder();
         serialized.forEach(kvp => {
             if (!isArray) {
-                let keyIndex = storage.KIT.getOrAdd(kvp.key); // Gets KIT index for this key
+                const keyIndex = storage.KIT.getOrAdd(kvp.key); // Gets KIT index for this key
 
                 // key_info:
                 if (keyIndex >= 0) {
                     // Cached key name
                     builder.writeByte(
-                        128                         // key_indexed = 1
+                        128                          // key_indexed = 1
                         | ((keyIndex >> 8) & 127),   // key_nr (first 7 bits)
                     );
                     builder.writeByte(
@@ -3893,39 +4042,38 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo = undefi
     return write(isArray ? VALUE_TYPES.ARRAY : VALUE_TYPES.OBJECT, result.data, result.keyTree);
 }
 
+// TODO @appy-one consider converting to interface
 class SerializedKeyValue {
-    /**
-     *
-     * @param {{ key?: string, index?: number, type: number, bool?: boolean, ref?: number|Array|Object, binary?:Uint8Array, record?: NodeAddress, bytes?: Array<number> }} info
-     */
-    constructor(info) {
+    key?: string;
+    index?: number;
+    type: number;
+    bool?: boolean;
+    ref?: any; // number | Array | Object;
+    binary?: Uint8Array;
+    record?: BinaryNodeAddress;
+    bytes?: number[] | ArrayBuffer;
+
+    constructor(info: SerializedKeyValue) {
         this.key = info.key;
         this.index = info.index;
         this.type = info.type;
         this.bool = info.bool;
         this.ref = info.ref;
         this.binary = info.binary;
-        this.record = info.record; // RENAME
+        this.record = info.record; // TODO @appy-one RENAME to address
         this.bytes = info.bytes;
     }
 }
 
-/**
- *
- * @param {SerializedKeyValue} kvp
- * @returns {Uint8Array}
- */
-function _getValueBytes(kvp) {
+function _getValueBytes(kvp: SerializedKeyValue): Uint8Array {
     return _writeBinaryValue(kvp).data;
 }
 
 /**
- *
- * @param {SerializedKeyValue} kvp
- * @param {Uint8ArrayBuilder} [builder] optional builder to append data to
- * @returns {Uint8ArrayBuilder} returns the used builder
+ * @param builder optional builder to append data to
+ * @returns returns the used builder
  */
-function _writeBinaryValue(kvp, builder = new Uint8ArrayBuilder(null, 64)) {
+function _writeBinaryValue(kvp: SerializedKeyValue, builder = new Uint8ArrayBuilder(null, 64)): Uint8ArrayBuilder {
     const startIndex = builder.length;
     // value_type:
     builder.push(kvp.type << 4);    // tttt0000
@@ -3956,7 +4104,7 @@ function _writeBinaryValue(kvp, builder = new Uint8ArrayBuilder(null, 64)) {
     else {
         // Inline value
         let data = kvp.bytes || kvp.binary;
-        let length = 'byteLength' in data ? data.byteLength : data.length;
+        const length = 'byteLength' in data ? data.byteLength : data.length;
 
         builder.push(
             128             // 10000000 --> inline value
@@ -3965,25 +4113,22 @@ function _writeBinaryValue(kvp, builder = new Uint8ArrayBuilder(null, 64)) {
         if (data instanceof ArrayBuffer) {
             data = new Uint8Array(data);
         }
-        builder.append(data);
+        builder.append(data as Uint8Array);
 
         // End
     }
     return builder;
 }
 
-/**
- *
- * @param {AceBaseStorage} storage
- * @param {string} path
- * @param {string|number} keyOrIndex
- * @param {any} val
- * @param {string} parentTid
- * @returns {SerializedKeyValue|Promise<SerializedKeyValue>}
- */
-function _serializeValue (storage, path, keyOrIndex, val, parentTid) {
+function _serializeValue (
+    storage: AceBaseStorage,
+    path: string,
+    keyOrIndex: string | number,
+    val: any,
+    parentTid: string | number,
+): SerializedKeyValue|Promise<SerializedKeyValue> {
     const missingTidMessage = 'Need to create a new record, but the parentTid is not given';
-    const create = (details) => {
+    const create = (details: SerializedKeyValue) => {
         if (typeof keyOrIndex === 'number') {
             details.index = keyOrIndex;
         }
@@ -4095,18 +4240,15 @@ function _serializeValue (storage, path, keyOrIndex, val, parentTid) {
 }
 
 
-/**
- *
- * @param {AceBaseStorage} storage
- * @param {string} path
- * @param {number} type
- * @param {number} length
- * @param {boolean} hasKeyTree
- * @param {(length: number) => Uint8Array|number[]|Promise<Uint8Array|number[]>} reader
- * @param {RecordInfo} [currentRecordInfo]
- * @returns {Promise<RecordInfo>}
- */
-async function _write(storage, path, type, length, hasKeyTree, reader, currentRecordInfo) {
+async function _write(
+    storage: AceBaseStorage,
+    path: string,
+    type: number,
+    length: number,
+    hasKeyTree: boolean,
+    reader: (length: number) => Uint8Array | number[] | Promise<Uint8Array | number[]>,
+    currentRecordInfo: RecordInfo,
+): Promise<RecordInfo> {
     // Record layout:
     // record           := record_header, record_data
     // record_header    := record_info, value_type, chunk_table, last_record_len
@@ -4176,7 +4318,7 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
     const bytesPerRecord = storage.settings.recordSize;
     let headerByteLength = 0, totalBytes = 0, requiredRecords = 0, lastChunkSize = 0;
 
-    const calculateStorageNeeds = (nrOfChunks) => {
+    const calculateStorageNeeds = (nrOfChunks: number) => {
         // Calculate amount of bytes and records needed
         headerByteLength = 4; // Minimum length: 1 byte record_info and value_type, 1 byte CT (ct_entry_type 0), 2 bytes last_chunk_length
         totalBytes = (length + headerByteLength);
@@ -4228,8 +4370,8 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
     }
 
     // Build the binary header data
-    let header = new Uint8Array(headerByteLength);
-    let headerView = new DataView(header.buffer, 0, header.length);
+    const header = new Uint8Array(headerByteLength);
+    const headerView = new DataView(header.buffer, 0, header.length);
     header[0] = type; // value_type
     if (hasKeyTree) {
         header[0] |= FLAG_KEY_TREE;
@@ -4263,7 +4405,7 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
     offset += 2;
 
     let bytesRead = 0;
-    const readChunk = async (length) => {
+    const readChunk = async (length: number) => {
         let headerBytes;
         if (bytesRead < header.byteLength) {
             headerBytes = header.slice(bytesRead, bytesRead + length);
@@ -4298,11 +4440,11 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
             bytesWritten += 'byteLength' in data ? data.byteLength : data.length;
             await storage.writeData(fileIndex, data);
             return bytesWritten;
-        }, /** @type {Promise<number>} null as Promise<number> */ null);
+        }, null as Promise<number>);
 
         const chunks = chunkTable.ranges.length;
-        const address = new NodeAddress(path, allocation.ranges[0].pageNr, allocation.ranges[0].recordNr);
-        const nodeInfo = new NodeInfo({ path, type, exists: true, address });
+        const address = new BinaryNodeAddress(path, allocation.ranges[0].pageNr, allocation.ranges[0].recordNr);
+        const nodeInfo = new BinaryNodeInfo({ path, type, exists: true, address });
 
         storage.updateCache(false, nodeInfo, true); // hasMoved?
         storage.debug.log(`Node "/${address.path}" saved at address ${address.pageNr},${address.recordNr} - ${allocation.totalAddresses} addresses, ${bytesWritten} bytes written in ${chunks} chunk(s)`.colorize(ColorStyle.green));
@@ -4336,12 +4478,8 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
 }
 
 class InternalNodeReference {
-    /**
-     * @param {number} type valueType
-     * @param {NodeAddress} address
-     */
-    constructor(type, address) {
-        this.type = type;
+    private _address: BinaryNodeAddress;
+    constructor(public type: number, address: BinaryNodeAddress) {
         this._address = address;
     }
     get address() {
@@ -4357,9 +4495,3 @@ class InternalNodeReference {
         return this._address.recordNr;
     }
 }
-
-
-module.exports = {
-    AceBaseStorage,
-    AceBaseStorageSettings,
-};

@@ -1,6 +1,6 @@
 import { PathReference } from 'acebase-core';
 
-export const VALUE_TYPES = {
+export const VALUE_TYPES = Object.freeze({
     // Native types:
     OBJECT: 1,
     ARRAY: 2,
@@ -14,7 +14,7 @@ export const VALUE_TYPES = {
     REFERENCE: 9,        // Absolute or relative path to other node
     // Future:
     // DOCUMENT: 10,     // JSON/XML documents that are contained entirely within the stored node
-};
+});
 
 export function getValueTypeName(valueType: number) {
     switch (valueType) {

@@ -16,7 +16,7 @@ export declare class IndexQueryResults extends Array<IndexQueryResult> {
     hints: IndexQueryHint[];
     stats: IndexQueryStats;
     filterKey: string;
-    filterMetadata(key: string, op: string, compare: IndexableValueOrArray): IndexQueryResults;
+    filterMetadata(key: string | number, op: string, compare: IndexableValueOrArray): IndexQueryResults;
     constructor(length: number);
     constructor(...results: IndexQueryResult[]);
 }

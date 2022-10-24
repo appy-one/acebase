@@ -1,6 +1,6 @@
 /// <reference types="@types/jasmine" />
-const { AceBase } = require("..");
-const { createTempDB } = require("./tempdb");
+const { AceBase } = require('..');
+const { createTempDB } = require('./tempdb');
 
 describe('Event', () => {
     /** @type {AceBase} */
@@ -10,9 +10,9 @@ describe('Event', () => {
         db = tmp.db;
         removeDB = tmp.removeDB;
     });
-    
+
     it('child_added', async () => {
-        const items = { 
+        const items = {
             item1: { text: 'Item 1' },
             item2: { text: 'Item 2' },
             item3: { text: 'Item 3' },
@@ -127,37 +127,37 @@ describe('Event', () => {
 
     it('"value" does not affect "mutated" event paths', async() => {
         // Created for https://github.com/appy-one/acebase/issues/105
-        // A "value" event on a higher path than a "mutated" event caused 
+        // A "value" event on a higher path than a "mutated" event caused
         // the path used for the "mutated" event to become invalid.
 
         const wait = () => new Promise((resolve) => setTimeout(resolve, 0));
 
         let path = '';
         db.ref('recipes').on('mutated', (mutated) => {
-          path = mutated.ref.path;
-          const prev = mutated.previous();
-          const val = mutated.val();
-          console.log(`Got mutation on path "${path}":`, { prev, val });
+            path = mutated.ref.path;
+            const prev = mutated.previous();
+            const val = mutated.val();
+            console.log(`Got mutation on path "${path}":`, { prev, val });
         });
-        
+
         const ref = await db.ref('recipes').push({ name: 'cake' });
         await wait();
-        
+
         expect(path).toBe('recipes');
-        
+
         await ref.update({ name: 'Cake' });
         await wait();
-        
+
         expect(path).toBe(`recipes/${ref.key}/name`);
-        
+
         // Test previously only passed when commented out:
-        db.ref('recipes').on('value', () => {});
-        
+        db.ref('recipes').on('value', () => { console.log('value event'); });
+
         await ref.update({ name: 'Bread' });
         await wait();
-        
-        expect(path).toBe(`recipes/${ref.key}/name`);        
-    })
+
+        expect(path).toBe(`recipes/${ref.key}/name`);
+    });
 
     afterAll(async () => {
         await removeDB();

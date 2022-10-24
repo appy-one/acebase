@@ -1,6 +1,6 @@
 // Test the new NodeTransaction class being developed
 /// <reference types="@types/jasmine" />
-const { TransactionManager, NodeLockIntention, NodeLockInfo } = require('../src/node-transaction')
+const { TransactionManager, NodeLockIntention } = require('../src/node-transaction');
 
 describe('NodeTransaction (beta)', () => {
 
@@ -34,7 +34,7 @@ describe('NodeTransaction (beta)', () => {
         // |    |    |    |    |- prop3
         // |    |- john
         // |    |    |- address
-       
+
         // Test read/read: should never conflict
         const readValue = (path, filter) => ({ path, intention: NodeLockIntention.ReadValue(filter) });
         const readRootValue = readValue('');
@@ -150,4 +150,4 @@ describe('NodeTransaction (beta)', () => {
         expect(manager.testConflict(setValue('users/ewout/address'), readEwout4)).toEqual([true, true]);
         expect(manager.testConflict(setValue('users/ewout/posts'), readEwout4)).toEqual([true, true]);
     });
-})
+});

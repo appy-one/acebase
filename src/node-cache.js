@@ -51,6 +51,9 @@ class NodeCache {
         // }
     }
     static get CACHE_DURATION() { return CACHE_TIMEOUT; }
+    has(key) {
+        return this._cache.has(key);
+    }
     _assertCleanupTimeout() {
         if (this._cleanupTimeout === null) {
             this._cleanupTimeout = setTimeout(() => {

@@ -11,9 +11,9 @@ db.ready(async () => {
         for (let i = 0; i < 2000; i++) {
             updates[ID.generate()] = { letter: String.fromCharCode(97 + Math.floor(Math.random() * 26)) };
         }
-        
+
         // create non-indexed collection
-        await db.ref("collection").update(updates);
+        await db.ref('collection').update(updates);
     }
     else {
         const snap = await db.ref('collection').get();
@@ -23,7 +23,7 @@ db.ready(async () => {
     // create indexed collection
     const indexes = await db.indexes.get();
     await Promise.all(indexes.map(index => db.indexes.delete(index.fileName)));
-    await db.ref("sort_indexed").remove();
-    await db.indexes.create("sort_indexed", "letter");
-    await db.ref("sort_indexed").update(updates);
+    await db.ref('sort_indexed').remove();
+    await db.indexes.create('sort_indexed', 'letter');
+    await db.ref('sort_indexed').update(updates);
 });

@@ -16,7 +16,7 @@ declare type InternalLockInfo = {
 export declare abstract class AceBaseIPCPeer extends SimpleEventEmitter {
     protected storage: Storage;
     protected id: string;
-    protected dbname: string;
+    dbname: string;
     protected masterPeerId: string;
     protected ipcType: string;
     get isMaster(): boolean;

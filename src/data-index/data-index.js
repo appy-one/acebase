@@ -653,7 +653,7 @@ class DataIndex {
         return result.valueCount;
     }
     async take(skip, take, options = {}) {
-        var _a;
+        var _a, _b, _c;
         const ascending = options.ascending !== false;
         const sort = ((_a = options.metadataSort) === null || _a === void 0 ? void 0 : _a.length) > 0 ? options.metadataSort : [];
         sort.forEach(s => {
@@ -671,11 +671,12 @@ class DataIndex {
         const results = new query_results_1.IndexQueryResults(); //[];
         results.filterKey = this.key;
         let skipped = 0;
-        const processLeaf = async (leaf) => {
+        let leaf = await (ascending ? idx.tree.getFirstLeaf() : idx.tree.getLastLeaf());
+        do {
             if (!ascending) {
                 leaf.entries.reverse();
             }
-            for (let i = 0; i < leaf.entries.length; i++) {
+            for (let i = 0; i < leaf.entries.length && results.length < take; i++) {
                 const entry = leaf.entries[i];
                 const value = entry.key;
                 if (sort.length > 0 && entry.totalValues > 1 && skipped + entry.totalValues > skip) {
@@ -698,7 +699,7 @@ class DataIndex {
                     };
                     entry.values.sort((a, b) => applySort(0, a, b));
                 }
-                for (let j = 0; j < entry.totalValues; j++) {
+                for (let j = 0; j < entry.totalValues && results.length < take; j++) {
                     if (skipped < skip) {
                         skipped++;
                         continue;
@@ -711,27 +712,12 @@ class DataIndex {
                     const metadata = entryValue.metadata;
                     const result = new query_results_1.IndexQueryResult(recordPointer.key, recordPointer.path, value, metadata);
                     results.push(result);
-                    if (results.length === take) {
-                        return results;
-                    }
                 }
             }
-            if (ascending && leaf.hasNext) {
-                return leaf.getNext().then(processLeaf);
-            }
-            else if (!ascending && leaf.hasPrevious) {
-                return leaf.getPrevious().then(processLeaf);
-            }
-            else {
-                return results;
-            }
-        };
-        if (ascending) {
-            await idx.tree.getFirstLeaf().then(processLeaf);
-        }
-        else {
-            await idx.tree.getLastLeaf().then(processLeaf);
-        }
+            leaf = results.length === take
+                ? null
+                : await (ascending ? (_b = leaf.getNext) === null || _b === void 0 ? void 0 : _b.call(leaf) : (_c = leaf.getPrevious) === null || _c === void 0 ? void 0 : _c.call(leaf));
+        } while (leaf);
         idx.release();
         stats.stop(results.length);
         results.stats = stats;

@@ -37,7 +37,7 @@ export class IndexQueryResults extends Array<IndexQueryResult> {
     //     return super.filter(callback);
     // }
 
-    filterMetadata(key: string, op: string, compare: IndexableValueOrArray) {
+    filterMetadata(key: string | number, op: string, compare: IndexableValueOrArray) {
         if (typeof compare === 'undefined') {
             compare = null; // compare with null so <, <=, > etc will get the right results
         }

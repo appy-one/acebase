@@ -4,7 +4,7 @@ const { pfs } = require('../src/promise-fs');
 module.exports = {
     /**
      *
-     * @param {{ transactionLogging?: boolean; logLevel?: string; config?: (options: any) => void }} enable
+     * @param {{ transactionLogging?: boolean; logLevel?: 'verbose'|'log'|'warn'|'error'; config?: (options: any) => void }} enable
      * @returns
      */
     async createTempDB(enable = {}) {

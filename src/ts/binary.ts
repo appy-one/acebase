@@ -105,7 +105,7 @@ export class Uint8ArrayBuilder {
     //     newData.set(this._data, 0);
     //     this._data = newData;
     // }
-    append(bytes:number[]|Uint8Array|Uint8ArrayBuilder) {
+    append(bytes: number[] | Uint8Array | Uint8ArrayBuilder) {
         if (bytes instanceof Uint8ArrayBuilder) {
             bytes = bytes.data;
         }
