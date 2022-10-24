@@ -7,3 +7,4 @@ export declare class BPlusTreeLeafEntry {
     values: BPlusTreeLeafEntryValue[];
     constructor(leaf: BPlusTreeLeaf, key: NodeEntryKeyType, value?: BPlusTreeLeafEntryValue);
 }
+//# sourceMappingURL=tree-leaf-entry.d.ts.map

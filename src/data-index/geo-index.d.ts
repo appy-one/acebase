@@ -37,3 +37,4 @@ export declare class GeoIndex extends DataIndex {
         radius: number;
     }): Promise<IndexQueryResults>;
 }
+//# sourceMappingURL=geo-index.d.ts.map

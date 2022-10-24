@@ -221,3 +221,4 @@ export declare class CustomStorage extends Storage {
         context?: any;
     }): Promise<void>;
 }
+//# sourceMappingURL=index.d.ts.map

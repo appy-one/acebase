@@ -9,3 +9,4 @@ export declare class BinaryNodeAddress extends NodeAddress {
      */
     equals(address: BinaryNodeAddress): boolean;
 }
+//# sourceMappingURL=node-address.d.ts.map

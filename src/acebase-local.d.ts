@@ -63,3 +63,4 @@ export declare class AceBase extends AceBaseBase {
      */
     static WithIndexedDB(dbname: string, init?: Partial<IndexedDBStorageSettings>): AceBase;
 }
+//# sourceMappingURL=acebase-local.d.ts.map

@@ -45,3 +45,4 @@ export declare class CustomStorageHelpers {
      */
     static get PathInfo(): typeof PathInfo;
 }
+//# sourceMappingURL=helpers.d.ts.map

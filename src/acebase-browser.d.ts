@@ -16,3 +16,4 @@ export declare class BrowserAceBase extends AceBase {
      */
     static WithIndexedDB(dbname: string, init?: Partial<IndexedDBStorageSettings>): AceBase;
 }
+//# sourceMappingURL=acebase-browser.d.ts.map

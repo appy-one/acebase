@@ -10,3 +10,4 @@ export declare class BinaryBPlusTreeNode extends BinaryBPlusTreeNodeInfo {
     constructor(nodeInfo: Partial<BinaryBPlusTreeNodeInfo>);
     getGtChild(): Promise<BinaryBPlusTreeNodeInfo>;
 }
+//# sourceMappingURL=binary-tree-node.d.ts.map

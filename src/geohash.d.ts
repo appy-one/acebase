@@ -58,3 +58,4 @@ export declare const neighbours: (geohash: string) => {
     w: string;
     nw: string;
 };
+//# sourceMappingURL=geohash.d.ts.map

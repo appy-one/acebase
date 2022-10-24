@@ -14,3 +14,4 @@ export declare class IndexQueryStats {
     stop(result?: any): void;
     get duration(): number;
 }
+//# sourceMappingURL=query-stats.d.ts.map

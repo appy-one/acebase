@@ -61,3 +61,4 @@ export declare abstract class ThreadSafe2 {
     static lock(target: any, shared?: boolean): Promise<ThreadSafeLock2>;
 }
 export {};
+//# sourceMappingURL=thread-safe.d.ts.map

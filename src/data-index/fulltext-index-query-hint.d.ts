@@ -8,3 +8,4 @@ export declare class FullTextIndexQueryHint extends IndexQueryHint {
     constructor(type: 'missing' | 'generic' | 'ignored', value: unknown);
     get description(): string;
 }
+//# sourceMappingURL=fulltext-index-query-hint.d.ts.map

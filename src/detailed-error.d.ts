@@ -13,3 +13,4 @@ export declare class DetailedError extends Error {
     hasErrorCode(code: string): boolean;
     static hasErrorCode(err: Error, code: string): boolean;
 }
+//# sourceMappingURL=detailed-error.d.ts.map

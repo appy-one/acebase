@@ -8,3 +8,4 @@ export interface IndexesContext {
     ipc: AceBaseIPCPeer;
     indexes: DataIndex[];
 }
+//# sourceMappingURL=context.d.ts.map

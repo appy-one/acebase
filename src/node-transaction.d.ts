@@ -140,3 +140,4 @@ export declare class Transaction {
     lock(path: string, intention: NodeLockIntention): Promise<NodeLock>;
 }
 export {};
+//# sourceMappingURL=node-transaction.d.ts.map

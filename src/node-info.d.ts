@@ -14,3 +14,4 @@ export declare class NodeInfo {
     get valueTypeName(): "object" | "string" | "number" | "array" | "boolean" | "date" | "bigint" | "binary" | "reference";
     toString(): string;
 }
+//# sourceMappingURL=node-info.d.ts.map

@@ -10,3 +10,4 @@ export declare class IPCPeer extends AceBaseIPCPeer {
     constructor(storage: Storage);
     sendMessage(message: IMessage): void;
 }
+//# sourceMappingURL=browser.d.ts.map

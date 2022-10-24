@@ -103,3 +103,4 @@ export declare class DataIndex {
         release(): void;
     }>;
 }
+//# sourceMappingURL=data-index.d.ts.map

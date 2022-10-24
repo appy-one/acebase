@@ -6,3 +6,4 @@ export declare class ArrayIndexQueryHint extends IndexQueryHint {
     constructor(type: 'missing', value: unknown);
     get description(): string;
 }
+//# sourceMappingURL=array-index-query-hint.d.ts.map

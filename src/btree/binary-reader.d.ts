@@ -44,3 +44,4 @@ export declare class BinaryReader {
     static readUint32(buffer: Buffer, index: number): number;
     static readInt32(buffer: Buffer, index: number): number;
 }
+//# sourceMappingURL=binary-reader.d.ts.map

@@ -190,3 +190,4 @@ export declare class FullTextIndex extends DataIndex {
     contains(op: 'fulltext:contains' | 'fulltext:!contains', val: string, options?: FullTextContainsQueryOptions): Promise<IndexQueryResults>;
 }
 export {};
+//# sourceMappingURL=fulltext-index.d.ts.map

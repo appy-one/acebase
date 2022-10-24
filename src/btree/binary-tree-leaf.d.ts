@@ -33,3 +33,4 @@ export declare class BinaryBPlusTreeLeaf extends BinaryBPlusTreeNodeInfo {
     findEntryIndex(key: NodeEntryKeyType): number;
     findEntry(key: NodeEntryKeyType): BinaryBPlusTreeLeafEntry;
 }
+//# sourceMappingURL=binary-tree-leaf.d.ts.map

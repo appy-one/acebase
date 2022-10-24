@@ -95,3 +95,4 @@ export declare class RemoteIPCPeer extends AceBaseIPCPeer {
     sendMessage(message: IMessage): void;
     fetch(method: 'GET' | 'POST', path: string, postData?: string): Promise<string>;
 }
+//# sourceMappingURL=remote.d.ts.map

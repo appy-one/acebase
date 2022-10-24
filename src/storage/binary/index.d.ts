@@ -376,3 +376,4 @@ declare class StorageAddressRange {
     constructor(pageNr: number, recordNr: number, length: number);
 }
 export {};
+//# sourceMappingURL=index.d.ts.map

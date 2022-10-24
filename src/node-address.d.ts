@@ -15,3 +15,4 @@ export declare class RemovedNodeAddress extends NodeAddress {
      */
     equals(address: NodeAddress): boolean;
 }
+//# sourceMappingURL=node-address.d.ts.map

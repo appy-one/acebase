@@ -30,3 +30,4 @@ export declare class Uint8ArrayBuilder {
     slice(begin: number, end?: number): Uint8Array;
     splice(index: number, remove?: number): Uint8Array;
 }
+//# sourceMappingURL=binary.d.ts.map

@@ -14,3 +14,4 @@
  * @returns
  */
 export default function fastQuickSort<T = any>(arr: T[], compareFn?: (a: T, b: T) => number): T[];
+//# sourceMappingURL=quicksort.d.ts.map

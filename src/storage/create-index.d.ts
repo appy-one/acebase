@@ -42,3 +42,4 @@ export interface CreateIndexOptions {
 * @param key for now - one key to index. Once our B+tree implementation supports nested trees, we can allow multiple fields
 */
 export declare function createIndex(context: IndexesContext, path: string, key: string, options: CreateIndexOptions): Promise<DataIndex>;
+//# sourceMappingURL=create-index.d.ts.map

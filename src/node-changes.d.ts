@@ -36,3 +36,4 @@ export declare class NodeChangeTracker {
     static create(path: string, oldValue: Record<string, unknown>, newValue: Record<string, unknown>): NodeChangeTracker;
 }
 export {};
+//# sourceMappingURL=node-changes.d.ts.map

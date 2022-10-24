@@ -25,3 +25,4 @@ export declare class BinaryWriter {
     static writeInt32<T extends BufferLike>(signedNumber: number, bytes: T, index: number): T;
 }
 export {};
+//# sourceMappingURL=binary-writer.d.ts.map

@@ -22,3 +22,4 @@ export declare class IndexedDBStorageSettings extends StorageSettings {
     sponsor: boolean;
     constructor(settings: Partial<IndexedDBStorageSettings>);
 }
+//# sourceMappingURL=settings.d.ts.map

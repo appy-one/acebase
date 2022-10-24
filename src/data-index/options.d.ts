@@ -22,3 +22,4 @@ export interface DataIndexOptions {
      */
     include?: string[];
 }
+//# sourceMappingURL=options.d.ts.map

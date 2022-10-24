@@ -14,3 +14,4 @@ export declare class BinaryBPlusTreeTransactionOperation {
     currentValue?: BinaryBPlusTreeLeafEntryValue;
     constructor(operation: BinaryBPlusTreeTransactionOperation);
 }
+//# sourceMappingURL=binary-tree-transaction-operation.d.ts.map
