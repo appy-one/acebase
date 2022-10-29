@@ -89,9 +89,9 @@ export class AceBase extends AceBaseBase {
         ): Promise<void>;
     };
 
-    close() {
+    async close() {
         // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.
-        return this.api.storage.close();
+        await this.api.storage.close();
     }
 
     get settings() {
