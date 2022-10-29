@@ -65,7 +65,7 @@ export class AceBase extends AceBaseBase {
                     await (this.api.storage as AceBaseStorage).repairNode(path, options);
                 }
                 else if (!(this.api.storage as any).repairNode) {
-                    throw new Error(`fixNode is not supported with chosen storage engine`);
+                    throw new Error(`repairNode is not supported with chosen storage engine`);
                 }
             },
         };
