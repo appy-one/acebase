@@ -44,14 +44,14 @@ class AceBase extends acebase_core_1.AceBaseBase {
                     await this.api.storage.repairNode(path, options);
                 }
                 else if (!this.api.storage.repairNode) {
-                    throw new Error(`fixNode is not supported with chosen storage engine`);
+                    throw new Error(`repairNode is not supported with chosen storage engine`);
                 }
             },
         };
     }
-    close() {
+    async close() {
         // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.
-        return this.api.storage.close();
+        await this.api.storage.close();
     }
     get settings() {
         const ipc = this.api.storage.ipc, debug = this.debug;

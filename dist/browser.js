@@ -5358,10 +5358,8 @@ exports.defer = defer;
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BrowserAceBase = void 0;
-const acebase_core_1 = require("acebase-core");
 const acebase_local_1 = require("./acebase-local");
-const custom_1 = require("./storage/custom");
-const settings_1 = require("./storage/custom/indexed-db/settings");
+const indexed_db_1 = require("./storage/custom/indexed-db");
 const deprecatedConstructorError = `Using AceBase constructor in the browser to use localStorage is deprecated!
 Switch to:
 IndexedDB implementation (FASTER, MORE RELIABLE):
@@ -5398,295 +5396,12 @@ class BrowserAceBase extends acebase_local_1.AceBase {
      * @param settings optional settings
      */
     static WithIndexedDB(dbname, init = {}) {
-        const settings = new settings_1.IndexedDBStorageSettings(init);
-        // We'll create an IndexedDB with name "dbname.acebase"
-        const IndexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB; // browser prefixes not really needed, see https://caniuse.com/#feat=indexeddb
-        const request = IndexedDB.open(`${dbname}.acebase`, 1);
-        request.onupgradeneeded = (e) => {
-            // create datastore
-            const db = request.result;
-            // Create "nodes" object store for metadata
-            db.createObjectStore('nodes', { keyPath: 'path' });
-            // Create "content" object store with all data
-            db.createObjectStore('content');
-        };
-        let db;
-        const readyPromise = new Promise((resolve, reject) => {
-            request.onsuccess = e => {
-                db = request.result;
-                resolve();
-            };
-            request.onerror = e => {
-                reject(e);
-            };
-        });
-        const cache = new acebase_core_1.SimpleCache(typeof settings.cacheSeconds === 'number' ? settings.cacheSeconds : 60); // 60 second node cache by default
-        // cache.enabled = false;
-        const storageSettings = new custom_1.CustomStorageSettings({
-            name: 'IndexedDB',
-            locking: true,
-            removeVoidProperties: settings.removeVoidProperties,
-            maxInlineValueSize: settings.maxInlineValueSize,
-            lockTimeout: settings.lockTimeout,
-            ready() {
-                return readyPromise;
-            },
-            async getTransaction(target) {
-                await readyPromise;
-                const context = {
-                    debug: false,
-                    db,
-                    cache,
-                    ipc,
-                };
-                return new IndexedDBStorageTransaction(context, target);
-            },
-        });
-        const acebase = new BrowserAceBase(dbname, {
-            logLevel: settings.logLevel,
-            storage: storageSettings,
-            sponsor: settings.sponsor,
-        });
-        const ipc = acebase.api.storage.ipc;
-        acebase.settings.ipcEvents = settings.multipleTabs === true;
-        ipc.on('notification', async (notification) => {
-            const message = notification.data;
-            if (typeof message !== 'object') {
-                return;
-            }
-            if (message.action === 'cache.invalidate') {
-                // console.warn(`Invalidating cache for paths`, message.paths);
-                for (const path of message.paths) {
-                    cache.remove(path);
-                }
-            }
-        });
-        return acebase;
+        return (0, indexed_db_1.createIndexedDBInstance)(dbname, init);
     }
 }
 exports.BrowserAceBase = BrowserAceBase;
-function _requestToPromise(request) {
-    return new Promise((resolve, reject) => {
-        request.onsuccess = event => {
-            return resolve(request.result || null);
-        };
-        request.onerror = reject;
-    });
-}
-class IndexedDBStorageTransaction extends custom_1.CustomStorageTransaction {
-    /**
-     * Creates a transaction object for IndexedDB usage. Because IndexedDB automatically commits
-     * transactions when they have not been touched for a number of microtasks (eg promises
-     * resolving whithout querying data), we will enqueue set and remove operations until commit
-     * or rollback. We'll create separate IndexedDB transactions for get operations, caching their
-     * values to speed up successive requests for the same data.
-     */
-    constructor(context, target) {
-        super(target);
-        this.context = context;
-        this.production = true; // Improves performance, only set when all works well
-        this._pending = [];
-    }
-    _createTransaction(write = false) {
-        const tx = this.context.db.transaction(['nodes', 'content'], write ? 'readwrite' : 'readonly');
-        return tx;
-    }
-    _splitMetadata(node) {
-        const value = node.value;
-        const copy = Object.assign({}, node);
-        delete copy.value;
-        const metadata = copy;
-        return { metadata, value };
-    }
-    async commit() {
-        // console.log(`*** commit ${this._pending.length} operations ****`);
-        if (this._pending.length === 0) {
-            return;
-        }
-        const batch = this._pending.splice(0);
-        this.context.ipc.sendNotification({ action: 'cache.invalidate', paths: batch.map(op => op.path) });
-        const tx = this._createTransaction(true);
-        try {
-            await new Promise((resolve, reject) => {
-                let stop = false, processed = 0;
-                const handleError = (err) => {
-                    stop = true;
-                    reject(err);
-                };
-                const handleSuccess = () => {
-                    if (++processed === batch.length) {
-                        resolve();
-                    }
-                };
-                batch.forEach((op, i) => {
-                    if (stop) {
-                        return;
-                    }
-                    let r1, r2;
-                    const path = op.path;
-                    if (op.action === 'set') {
-                        const { metadata, value } = this._splitMetadata(op.node);
-                        const nodeInfo = { path, metadata };
-                        r1 = tx.objectStore('nodes').put(nodeInfo); // Insert into "nodes" object store
-                        r2 = tx.objectStore('content').put(value, path); // Add value to "content" object store
-                        this.context.cache.set(path, op.node);
-                    }
-                    else if (op.action === 'remove') {
-                        r1 = tx.objectStore('content').delete(path); // Remove from "content" object store
-                        r2 = tx.objectStore('nodes').delete(path); // Remove from "nodes" data store
-                        this.context.cache.set(path, null);
-                    }
-                    else {
-                        handleError(new Error(`Unknown pending operation "${op.action}" on path "${path}" `));
-                    }
-                    let succeeded = 0;
-                    r1.onsuccess = r2.onsuccess = () => {
-                        if (++succeeded === 2) {
-                            handleSuccess();
-                        }
-                    };
-                    r1.onerror = r2.onerror = handleError;
-                });
-            });
-            tx.commit && tx.commit();
-        }
-        catch (err) {
-            console.error(err);
-            tx.abort && tx.abort();
-            throw err;
-        }
-    }
-    async rollback(err) {
-        // Nothing has committed yet, so we'll leave it like that
-        this._pending = [];
-    }
-    async get(path) {
-        // console.log(`*** get "${path}" ****`);
-        if (this.context.cache.has(path)) {
-            const cache = this.context.cache.get(path);
-            // console.log(`Using cached node for path "${path}": `, cache);
-            return cache;
-        }
-        const tx = this._createTransaction(false);
-        const r1 = _requestToPromise(tx.objectStore('nodes').get(path)); // Get metadata from "nodes" object store
-        const r2 = _requestToPromise(tx.objectStore('content').get(path)); // Get content from "content" object store
-        try {
-            const results = await Promise.all([r1, r2]);
-            tx.commit && tx.commit();
-            const info = results[0];
-            if (!info) {
-                // Node doesn't exist
-                this.context.cache.set(path, null);
-                return null;
-            }
-            const node = info.metadata;
-            node.value = results[1];
-            this.context.cache.set(path, node);
-            return node;
-        }
-        catch (err) {
-            console.error(`IndexedDB get error`, err);
-            tx.abort && tx.abort();
-            throw err;
-        }
-    }
-    set(path, node) {
-        // Queue the operation until commit
-        this._pending.push({ action: 'set', path, node });
-    }
-    remove(path) {
-        // Queue the operation until commit
-        this._pending.push({ action: 'remove', path });
-    }
-    async removeMultiple(paths) {
-        // Queues multiple items at once, dramatically improves performance for large datasets
-        paths.forEach(path => {
-            this._pending.push({ action: 'remove', path });
-        });
-    }
-    childrenOf(path, include, checkCallback, addCallback) {
-        // console.log(`*** childrenOf "${path}" ****`);
-        return this._getChildrenOf(path, Object.assign(Object.assign({}, include), { descendants: false }), checkCallback, addCallback);
-    }
-    descendantsOf(path, include, checkCallback, addCallback) {
-        // console.log(`*** descendantsOf "${path}" ****`);
-        return this._getChildrenOf(path, Object.assign(Object.assign({}, include), { descendants: true }), checkCallback, addCallback);
-    }
-    _getChildrenOf(path, include, checkCallback, addCallback) {
-        // Use cursor to loop from path on
-        return new Promise((resolve, reject) => {
-            const pathInfo = custom_1.CustomStorageHelpers.PathInfo.get(path);
-            const tx = this._createTransaction(false);
-            const store = tx.objectStore('nodes');
-            const query = IDBKeyRange.lowerBound(path, true);
-            const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
-            cursor.onerror = e => {
-                var _a;
-                (_a = tx.abort) === null || _a === void 0 ? void 0 : _a.call(tx);
-                reject(e);
-            };
-            cursor.onsuccess = async (e) => {
-                var _a, _b, _c;
-                const otherPath = (_b = (_a = cursor.result) === null || _a === void 0 ? void 0 : _a.key) !== null && _b !== void 0 ? _b : null;
-                let keepGoing = true;
-                if (otherPath === null) {
-                    // No more results
-                    keepGoing = false;
-                }
-                else if (!pathInfo.isAncestorOf(otherPath)) {
-                    // Paths are sorted, no more children or ancestors to be expected!
-                    keepGoing = false;
-                }
-                else if (include.descendants || pathInfo.isParentOf(otherPath)) {
-                    let node;
-                    if (include.metadata) {
-                        const valueCursor = cursor;
-                        const data = valueCursor.result.value;
-                        node = data.metadata;
-                    }
-                    const shouldAdd = checkCallback(otherPath, node);
-                    if (shouldAdd) {
-                        if (include.value) {
-                            // Load value!
-                            if (this.context.cache.has(otherPath)) {
-                                const cache = this.context.cache.get(otherPath);
-                                node.value = cache.value;
-                            }
-                            else {
-                                const req = tx.objectStore('content').get(otherPath);
-                                node.value = await new Promise((resolve, reject) => {
-                                    req.onerror = e => {
-                                        resolve(null); // Value missing?
-                                    };
-                                    req.onsuccess = e => {
-                                        resolve(req.result);
-                                    };
-                                });
-                                this.context.cache.set(otherPath, node.value === null ? null : node);
-                            }
-                        }
-                        keepGoing = addCallback(otherPath, node);
-                    }
-                }
-                if (keepGoing) {
-                    try {
-                        cursor.result.continue();
-                    }
-                    catch (err) {
-                        // We reached the end of the cursor?
-                        keepGoing = false;
-                    }
-                }
-                if (!keepGoing) {
-                    (_c = tx.commit) === null || _c === void 0 ? void 0 : _c.call(tx);
-                    resolve();
-                }
-            };
-        });
-    }
-}
 
-},{"./acebase-local":29,"./storage/custom":45,"./storage/custom/indexed-db/settings":46,"acebase-core":12}],29:[function(require,module,exports){
+},{"./acebase-local":29,"./storage/custom/indexed-db":46}],29:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBase = exports.AceBaseLocalSettings = exports.IndexedDBStorageSettings = exports.LocalStorageSettings = void 0;
@@ -5733,14 +5448,14 @@ class AceBase extends acebase_core_1.AceBaseBase {
                     await this.api.storage.repairNode(path, options);
                 }
                 else if (!this.api.storage.repairNode) {
-                    throw new Error(`fixNode is not supported with chosen storage engine`);
+                    throw new Error(`repairNode is not supported with chosen storage engine`);
                 }
             },
         };
     }
-    close() {
+    async close() {
         // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.
-        return this.api.storage.close();
+        await this.api.storage.close();
     }
     get settings() {
         const ipc = this.api.storage.ipc, debug = this.debug;
@@ -5772,7 +5487,7 @@ class AceBase extends acebase_core_1.AceBaseBase {
 }
 exports.AceBase = AceBase;
 
-},{"./api-local":30,"./storage/binary":40,"./storage/custom/indexed-db/settings":46,"./storage/custom/local-storage":47,"acebase-core":12}],30:[function(require,module,exports){
+},{"./api-local":30,"./storage/binary":40,"./storage/custom/indexed-db/settings":47,"./storage/custom/local-storage":49,"acebase-core":12}],30:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalApi = void 0;
@@ -6228,7 +5943,7 @@ var storage_1 = require("./storage");
 Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return storage_1.StorageSettings; } });
 Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return storage_1.SchemaValidationError; } });
 
-},{"./acebase-browser":28,"./acebase-local":29,"./storage":50,"./storage/binary":40,"./storage/custom":45,"./storage/mssql":40,"./storage/sqlite":40,"acebase-core":12}],33:[function(require,module,exports){
+},{"./acebase-browser":28,"./acebase-local":29,"./storage":52,"./storage/binary":40,"./storage/custom":45,"./storage/mssql":40,"./storage/sqlite":40,"acebase-core":12}],33:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IPCPeer = void 0;
@@ -9436,7 +9151,85 @@ class CustomStorage extends index_1.Storage {
 }
 exports.CustomStorage = CustomStorage;
 
-},{"../../node-address":35,"../../node-errors":36,"../../node-info":37,"../../node-lock":38,"../../node-value-types":39,"../index":50,"./helpers":44,"acebase-core":12}],46:[function(require,module,exports){
+},{"../../node-address":35,"../../node-errors":36,"../../node-info":37,"../../node-lock":38,"../../node-value-types":39,"../index":52,"./helpers":44,"acebase-core":12}],46:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createIndexedDBInstance = void 0;
+const acebase_core_1 = require("acebase-core");
+const __1 = require("..");
+const __2 = require("../../..");
+const settings_1 = require("./settings");
+const transaction_1 = require("./transaction");
+function createIndexedDBInstance(dbname, init = {}) {
+    const settings = new settings_1.IndexedDBStorageSettings(init);
+    // We'll create an IndexedDB with name "dbname.acebase"
+    const IndexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB; // browser prefixes not really needed, see https://caniuse.com/#feat=indexeddb
+    const request = IndexedDB.open(`${dbname}.acebase`, 1);
+    request.onupgradeneeded = (e) => {
+        // create datastore
+        const db = request.result;
+        // Create "nodes" object store for metadata
+        db.createObjectStore('nodes', { keyPath: 'path' });
+        // Create "content" object store with all data
+        db.createObjectStore('content');
+    };
+    let idb;
+    const readyPromise = new Promise((resolve, reject) => {
+        request.onsuccess = e => {
+            idb = request.result;
+            resolve();
+        };
+        request.onerror = e => {
+            reject(e);
+        };
+    });
+    const cache = new acebase_core_1.SimpleCache(typeof settings.cacheSeconds === 'number' ? settings.cacheSeconds : 60); // 60 second node cache by default
+    // cache.enabled = false;
+    const storageSettings = new __1.CustomStorageSettings({
+        name: 'IndexedDB',
+        locking: true,
+        removeVoidProperties: settings.removeVoidProperties,
+        maxInlineValueSize: settings.maxInlineValueSize,
+        lockTimeout: settings.lockTimeout,
+        ready() {
+            return readyPromise;
+        },
+        async getTransaction(target) {
+            await readyPromise;
+            const context = {
+                debug: false,
+                db: idb,
+                cache,
+                ipc,
+            };
+            return new transaction_1.IndexedDBStorageTransaction(context, target);
+        },
+    });
+    const db = new __2.AceBase(dbname, {
+        logLevel: settings.logLevel,
+        storage: storageSettings,
+        sponsor: settings.sponsor,
+        // isolated: settings.isolated,
+    });
+    const ipc = db.api.storage.ipc;
+    db.settings.ipcEvents = settings.multipleTabs === true;
+    ipc.on('notification', async (notification) => {
+        const message = notification.data;
+        if (typeof message !== 'object') {
+            return;
+        }
+        if (message.action === 'cache.invalidate') {
+            // console.warn(`Invalidating cache for paths`, message.paths);
+            for (const path of message.paths) {
+                cache.remove(path);
+            }
+        }
+    });
+    return db;
+}
+exports.createIndexedDBInstance = createIndexedDBInstance;
+
+},{"..":45,"../../..":32,"./settings":47,"./transaction":48,"acebase-core":12}],47:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageSettings = void 0;
@@ -9480,7 +9273,234 @@ class IndexedDBStorageSettings extends __1.StorageSettings {
 }
 exports.IndexedDBStorageSettings = IndexedDBStorageSettings;
 
-},{"../..":50}],47:[function(require,module,exports){
+},{"../..":52}],48:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.IndexedDBStorageTransaction = void 0;
+const __1 = require("..");
+function _requestToPromise(request) {
+    return new Promise((resolve, reject) => {
+        request.onsuccess = event => {
+            return resolve(request.result || null);
+        };
+        request.onerror = reject;
+    });
+}
+class IndexedDBStorageTransaction extends __1.CustomStorageTransaction {
+    /**
+     * Creates a transaction object for IndexedDB usage. Because IndexedDB automatically commits
+     * transactions when they have not been touched for a number of microtasks (eg promises
+     * resolving whithout querying data), we will enqueue set and remove operations until commit
+     * or rollback. We'll create separate IndexedDB transactions for get operations, caching their
+     * values to speed up successive requests for the same data.
+     */
+    constructor(context, target) {
+        super(target);
+        this.context = context;
+        this.production = true; // Improves performance, only set when all works well
+        this._pending = [];
+    }
+    _createTransaction(write = false) {
+        const tx = this.context.db.transaction(['nodes', 'content'], write ? 'readwrite' : 'readonly');
+        return tx;
+    }
+    _splitMetadata(node) {
+        const value = node.value;
+        const copy = Object.assign({}, node);
+        delete copy.value;
+        const metadata = copy;
+        return { metadata, value };
+    }
+    async commit() {
+        // console.log(`*** commit ${this._pending.length} operations ****`);
+        if (this._pending.length === 0) {
+            return;
+        }
+        const batch = this._pending.splice(0);
+        this.context.ipc.sendNotification({ action: 'cache.invalidate', paths: batch.map(op => op.path) });
+        const tx = this._createTransaction(true);
+        try {
+            await new Promise((resolve, reject) => {
+                let stop = false, processed = 0;
+                const handleError = (err) => {
+                    stop = true;
+                    reject(err);
+                };
+                const handleSuccess = () => {
+                    if (++processed === batch.length) {
+                        resolve();
+                    }
+                };
+                batch.forEach((op, i) => {
+                    if (stop) {
+                        return;
+                    }
+                    let r1, r2;
+                    const path = op.path;
+                    if (op.action === 'set') {
+                        const { metadata, value } = this._splitMetadata(op.node);
+                        const nodeInfo = { path, metadata };
+                        r1 = tx.objectStore('nodes').put(nodeInfo); // Insert into "nodes" object store
+                        r2 = tx.objectStore('content').put(value, path); // Add value to "content" object store
+                        this.context.cache.set(path, op.node);
+                    }
+                    else if (op.action === 'remove') {
+                        r1 = tx.objectStore('content').delete(path); // Remove from "content" object store
+                        r2 = tx.objectStore('nodes').delete(path); // Remove from "nodes" data store
+                        this.context.cache.set(path, null);
+                    }
+                    else {
+                        handleError(new Error(`Unknown pending operation "${op.action}" on path "${path}" `));
+                    }
+                    let succeeded = 0;
+                    r1.onsuccess = r2.onsuccess = () => {
+                        if (++succeeded === 2) {
+                            handleSuccess();
+                        }
+                    };
+                    r1.onerror = r2.onerror = handleError;
+                });
+            });
+            tx.commit && tx.commit();
+        }
+        catch (err) {
+            console.error(err);
+            tx.abort && tx.abort();
+            throw err;
+        }
+    }
+    async rollback(err) {
+        // Nothing has committed yet, so we'll leave it like that
+        this._pending = [];
+    }
+    async get(path) {
+        // console.log(`*** get "${path}" ****`);
+        if (this.context.cache.has(path)) {
+            const cache = this.context.cache.get(path);
+            // console.log(`Using cached node for path "${path}": `, cache);
+            return cache;
+        }
+        const tx = this._createTransaction(false);
+        const r1 = _requestToPromise(tx.objectStore('nodes').get(path)); // Get metadata from "nodes" object store
+        const r2 = _requestToPromise(tx.objectStore('content').get(path)); // Get content from "content" object store
+        try {
+            const results = await Promise.all([r1, r2]);
+            tx.commit && tx.commit();
+            const info = results[0];
+            if (!info) {
+                // Node doesn't exist
+                this.context.cache.set(path, null);
+                return null;
+            }
+            const node = info.metadata;
+            node.value = results[1];
+            this.context.cache.set(path, node);
+            return node;
+        }
+        catch (err) {
+            console.error(`IndexedDB get error`, err);
+            tx.abort && tx.abort();
+            throw err;
+        }
+    }
+    set(path, node) {
+        // Queue the operation until commit
+        this._pending.push({ action: 'set', path, node });
+    }
+    remove(path) {
+        // Queue the operation until commit
+        this._pending.push({ action: 'remove', path });
+    }
+    async removeMultiple(paths) {
+        // Queues multiple items at once, dramatically improves performance for large datasets
+        paths.forEach(path => {
+            this._pending.push({ action: 'remove', path });
+        });
+    }
+    childrenOf(path, include, checkCallback, addCallback) {
+        // console.log(`*** childrenOf "${path}" ****`);
+        return this._getChildrenOf(path, Object.assign(Object.assign({}, include), { descendants: false }), checkCallback, addCallback);
+    }
+    descendantsOf(path, include, checkCallback, addCallback) {
+        // console.log(`*** descendantsOf "${path}" ****`);
+        return this._getChildrenOf(path, Object.assign(Object.assign({}, include), { descendants: true }), checkCallback, addCallback);
+    }
+    _getChildrenOf(path, include, checkCallback, addCallback) {
+        // Use cursor to loop from path on
+        return new Promise((resolve, reject) => {
+            const pathInfo = __1.CustomStorageHelpers.PathInfo.get(path);
+            const tx = this._createTransaction(false);
+            const store = tx.objectStore('nodes');
+            const query = IDBKeyRange.lowerBound(path, true);
+            const cursor = include.metadata ? store.openCursor(query) : store.openKeyCursor(query);
+            cursor.onerror = e => {
+                var _a;
+                (_a = tx.abort) === null || _a === void 0 ? void 0 : _a.call(tx);
+                reject(e);
+            };
+            cursor.onsuccess = async (e) => {
+                var _a, _b, _c;
+                const otherPath = (_b = (_a = cursor.result) === null || _a === void 0 ? void 0 : _a.key) !== null && _b !== void 0 ? _b : null;
+                let keepGoing = true;
+                if (otherPath === null) {
+                    // No more results
+                    keepGoing = false;
+                }
+                else if (!pathInfo.isAncestorOf(otherPath)) {
+                    // Paths are sorted, no more children or ancestors to be expected!
+                    keepGoing = false;
+                }
+                else if (include.descendants || pathInfo.isParentOf(otherPath)) {
+                    let node;
+                    if (include.metadata) {
+                        const valueCursor = cursor;
+                        const data = valueCursor.result.value;
+                        node = data.metadata;
+                    }
+                    const shouldAdd = checkCallback(otherPath, node);
+                    if (shouldAdd) {
+                        if (include.value) {
+                            // Load value!
+                            if (this.context.cache.has(otherPath)) {
+                                const cache = this.context.cache.get(otherPath);
+                                node.value = cache.value;
+                            }
+                            else {
+                                const req = tx.objectStore('content').get(otherPath);
+                                node.value = await new Promise((resolve, reject) => {
+                                    req.onerror = e => {
+                                        resolve(null); // Value missing?
+                                    };
+                                    req.onsuccess = e => {
+                                        resolve(req.result);
+                                    };
+                                });
+                                this.context.cache.set(otherPath, node.value === null ? null : node);
+                            }
+                        }
+                        keepGoing = addCallback(otherPath, node);
+                    }
+                }
+                if (keepGoing) {
+                    try {
+                        cursor.result.continue();
+                    }
+                    catch (err) {
+                        // We reached the end of the cursor?
+                        keepGoing = false;
+                    }
+                }
+                if (!keepGoing) {
+                    (_c = tx.commit) === null || _c === void 0 ? void 0 : _c.call(tx);
+                    resolve();
+                }
+            };
+        });
+    }
+}
+exports.IndexedDBStorageTransaction = IndexedDBStorageTransaction;
+
+},{"..":45}],49:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createLocalStorageInstance = exports.LocalStorageTransaction = exports.LocalStorageSettings = void 0;
@@ -9521,7 +9541,7 @@ function createLocalStorageInstance(dbname, init = {}) {
 }
 exports.createLocalStorageInstance = createLocalStorageInstance;
 
-},{"..":45,"../../..":32,"./settings":48,"./transaction":49}],48:[function(require,module,exports){
+},{"..":45,"../../..":32,"./settings":50,"./transaction":51}],50:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageSettings = void 0;
@@ -9563,7 +9583,7 @@ class LocalStorageSettings extends __1.StorageSettings {
 }
 exports.LocalStorageSettings = LocalStorageSettings;
 
-},{"../..":50}],49:[function(require,module,exports){
+},{"../..":52}],51:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageTransaction = void 0;
@@ -9657,7 +9677,7 @@ class LocalStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.LocalStorageTransaction = LocalStorageTransaction;
 
-},{"..":45}],50:[function(require,module,exports){
+},{"..":45}],52:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Storage = exports.StorageSettings = exports.SchemaValidationError = void 0;
@@ -11728,7 +11748,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
 }
 exports.Storage = Storage;
 
-},{"../data-index":40,"../ipc":33,"../node-errors":36,"../node-info":37,"../node-value-types":39,"../promise-fs":41,"./indexes":51,"acebase-core":12}],51:[function(require,module,exports){
+},{"../data-index":40,"../ipc":33,"../node-errors":36,"../node-info":37,"../node-value-types":39,"../promise-fs":41,"./indexes":53,"acebase-core":12}],53:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
