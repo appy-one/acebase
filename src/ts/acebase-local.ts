@@ -65,7 +65,7 @@ export class AceBase extends AceBaseBase {
                     await (this.api.storage as AceBaseStorage).repairNode(path, options);
                 }
                 else if (!(this.api.storage as any).repairNode) {
-                    throw new Error(`fixNode is not supported with chosen storage engine`);
+                    throw new Error(`repairNode is not supported with chosen storage engine`);
                 }
             },
         };
@@ -89,9 +89,9 @@ export class AceBase extends AceBaseBase {
         ): Promise<void>;
     };
 
-    close() {
+    async close() {
         // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.
-        return this.api.storage.close();
+        await this.api.storage.close();
     }
 
     get settings() {
