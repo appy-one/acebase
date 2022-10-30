@@ -2994,7 +2994,7 @@ class NodeReader {
         // Gets children from a indexed binary tree of key/value data
         const createStreamFromBinaryTree = async () => {
             const tree = new BinaryBPlusTree(this._treeDataReader.bind(this));
-            tree.id = this.address.path;
+            tree.id = `path:${this.address.path}`; // Prefix to fix #168
 
             let canceled = false;
             if (options.keyFilter) {
