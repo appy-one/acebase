@@ -2,25 +2,25 @@
   "name": "acebase",
   "version": "1.25.2",
   "description": "AceBase realtime database. Open source firebase alternative for nodejs and browser, with additional features: indexes, geo, fulltext, queries, custom storage, offline usage, synchronization, live data proxies and more",
-  "main": "./src/index.js",
+  "main": "./dist/cjs/index.js",
   "browser": {
-    "./src/index.js": "./src/browser.js",
-    "./src/ipc/index.js": "./src/ipc/browser.js",
-    "./src/promise-fs/index.js": "./src/promise-fs/browser.js",
-    "./src/storage/binary/index.js": "./src/not-supported.js",
-    "./src/storage/mssql/index.js": "./src/not-supported.js",
-    "./src/storage/sqlite/index.js": "./src/not-supported.js",
-    "./src/data-index/index.js": "./src/not-supported.js",
-    "./src/btree/index.js": "./src/not-supported.js"
+    "./dist/cjs/index.js": "./dist/cjs/browser.js",
+    "./dist/cjs/ipc/index.js": "./dist/cjs/ipc/browser.js",
+    "./dist/cjs/promise-fs/index.js": "./dist/cjs/promise-fs/browser.js",
+    "./dist/cjs/storage/binary/index.js": "./dist/cjs/not-supported.js",
+    "./dist/cjs/storage/mssql/index.js": "./dist/cjs/not-supported.js",
+    "./dist/cjs/storage/sqlite/index.js": "./dist/cjs/not-supported.js",
+    "./dist/cjs/data-index/index.js": "./dist/cjs/not-supported.js",
+    "./dist/cjs/btree/index.js": "./dist/cjs/not-supported.js"
   },
-  "types": "./src/index.d.ts",
+  "types": "./dist/types/index.d.ts",
   "private": false,
   "repository": "github:appy-one/acebase",
   "scripts": {
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "build": "find src -name \"*.d.ts\" -type f -delete && tsc && npm run browserify",
-    "browserify": "browserify src/browser.js -o dist/browser.js --standalone acebase --ignore buffer --ignore rxjs && terser dist/browser.js -o dist/browser.min.js",
+    "build": "rm -r ./dist/cjs && rm -r ./dist/types && tsc && npm run browserify",
+    "browserify": "browserify ./dist/cjs/browser.js -o ./dist/browser.js --standalone acebase --ignore buffer --ignore rxjs && terser ./dist/browser.js -o ./dist/browser.min.js",
     "test": "jasmine"
   },
   "keywords": [

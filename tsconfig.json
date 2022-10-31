@@ -3,13 +3,16 @@
         "target": "ES2017",
         "lib": ["ES2017", "DOM"],
         "module": "CommonJS",
+        "noImplicitAny": true,
         "listEmittedFiles": true,
-        "outDir": "src",
+        "pretty": true,
+        "outDir": "./dist/cjs",
         "sourceMap": true,
         "declaration": true,
         "declarationMap": true,
-        "noImplicitAny": true
+        "declarationDir": "./dist/types"
     },
+    "include": ["src/**/*"],
     "exclude": [
         "node_modules"
     ]
