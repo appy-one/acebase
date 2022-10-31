@@ -1,5 +1,5 @@
 /// <reference types="@types/jasmine" />
-const { BPlusTree } = require('../src/btree');
+const { BPlusTree } = require('../dist/cjs/btree');
 const { ID } = require('acebase-core');
 // require('jasmine');
 

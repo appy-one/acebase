@@ -1,5 +1,5 @@
 /// <reference types="@types/jasmine" />
-const { Uint8ArrayBuilder } = require('../src/binary');
+const { Uint8ArrayBuilder } = require('../dist/cjs/binary');
 
 describe('Uint8ArrayBuilder', () => {
     it('write grows the buffer', () => {
