@@ -3,16 +3,8 @@ import { BPlusTreeLeaf } from './tree-leaf';
 import { BPlusTree } from './tree';
 import { NodeEntryKeyType } from './entry-key-type';
 import { BinaryWriter } from './binary-writer';
-declare type BinaryPointer = {
-    name: string;
-    leaf: BPlusTreeLeaf;
-    index: number;
-};
-declare type BinaryReference = {
-    name: string;
-    target: BPlusTreeNode | BPlusTreeLeaf;
-    index: number;
-};
+import { BinaryPointer } from './binary-pointer';
+import { BinaryReference } from './binary-reference';
 export declare class BPlusTreeNode {
     tree: BPlusTree;
     parent: BPlusTreeNode;
@@ -28,5 +20,4 @@ export declare class BPlusTreeNode {
     }>;
     static resolveBinaryReferences(writer: BinaryWriter, references: BinaryReference[], pointers: BinaryPointer[]): Promise<void>;
 }
-export {};
 //# sourceMappingURL=tree-node.d.ts.map

@@ -1,4 +1,4 @@
-import { DebugLogger, SimpleEventEmitter, DataRetrievalOptions, ISchemaCheckResult, LoggingLevel } from 'acebase-core';
+import { Utils, DebugLogger, SimpleEventEmitter, DataRetrievalOptions, ISchemaCheckResult, LoggingLevel } from 'acebase-core';
 import { NodeInfo } from '../node-info';
 import { IPCPeer, RemoteIPCPeer } from '../ipc';
 import { DataIndex } from '../data-index';
@@ -436,7 +436,7 @@ export declare class Storage extends SimpleEventEmitter {
      * @param read read function that streams a new chunk of data
      * @returns returns a promise that resolves once all data is imported
      */
-    importNode(path: string, read: (bytes: number) => string | ArrayBufferView | Promise<string | ArrayBufferView>, options?: Partial<{
+    importNode(path: string, read: (bytes: number) => string | Utils.TypedArrayLike | Promise<string | Utils.TypedArrayLike>, options?: Partial<{
         format: 'json';
         /**
         * How to store the imported data: 'set' and 'update' will use the same logic as when calling 'set' or 'update' on the target,

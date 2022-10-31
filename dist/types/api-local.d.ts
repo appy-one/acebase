@@ -1,4 +1,4 @@
-import { AceBaseBase, IStreamLike, Api, EventSubscriptionCallback, ReflectionType, StreamReadFunction, StreamWriteFunction, TransactionLogFilter, LoggingLevel, Query, QueryOptions } from 'acebase-core';
+import { AceBaseBase, IStreamLike, Api, EventSubscriptionCallback, IReflectionNodeInfo, IReflectionChildrenInfo, StreamReadFunction, StreamWriteFunction, TransactionLogFilter, LoggingLevel, Query, QueryOptions } from 'acebase-core';
 import { Storage } from './storage';
 import { CreateIndexOptions } from './storage/indexes';
 import { AceBaseLocalSettings } from '.';
@@ -114,32 +114,8 @@ export declare class LocalApi extends Api {
      * Deletes an existing index from the database
      */
     deleteIndex(filePath: string): Promise<void>;
-    reflect(path: string, type: ReflectionType, args: any): Promise<{
-        more: boolean;
-        list: {
-            key: string | number;
-            type: string;
-            value: any;
-            address?: any;
-        }[];
-    } | {
-        key: string | number;
-        exists: boolean;
-        type: string;
-        value: any;
-        address: any;
-        children: {
-            more: boolean;
-            list: {
-                key: string | number;
-                type: string;
-                value: any;
-                address?: any;
-            }[];
-        } | {
-            count: number;
-        };
-    }>;
+    reflect(path: string, type: 'children', args: any): Promise<IReflectionChildrenInfo>;
+    reflect(path: string, type: 'info', args: any): Promise<IReflectionNodeInfo>;
     export(path: string, stream: StreamWriteFunction | IStreamLike, options?: {
         format: string;
         type_safe: boolean;

@@ -1,0 +1,14 @@
+{
+    "type": "module",
+    "types": "../types/index.d.ts",
+    "browser": {
+        "./index.js": "./browser.js",
+        "./ipc/index.js": "./ipc/browser.js",
+        "./promise-fs/index.js": "./promise-fs/browser.js",
+        "./storage/binary/index.js": "./not-supported.js",
+        "./storage/mssql/index.js": "./not-supported.js",
+        "./storage/sqlite/index.js": "./not-supported.js",
+        "./data-index/index.js": "./not-supported.js",
+        "./btree/index.js": "./not-supported.js"
+    }
+}

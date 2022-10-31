@@ -164,7 +164,7 @@ class LocalApi extends acebase_core_1.Api {
             if (['null', 'undefined'].includes(from)) {
                 from = null;
             }
-            const children = [];
+            const children = []; // Array<{ key: string | number; type: string; value: any; address?: any }>;
             let n = 0, stop = false, more = false; //stop = skip + limit,
             await this.storage.getChildren(path)
                 .next(childInfo => {
@@ -195,7 +195,8 @@ class LocalApi extends acebase_core_1.Api {
         };
         switch (type) {
             case 'children': {
-                return getChildren(path, args.limit, args.skip, args.from);
+                const result = await getChildren(path, args.limit, args.skip, args.from);
+                return result;
             }
             case 'info': {
                 const info = {

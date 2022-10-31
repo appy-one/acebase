@@ -173,6 +173,7 @@ class BPlusTreeNode {
         // * Written by BPlusTreeNode.toBinary
         // ** Written by BPlusTreeLeaf.toBinary
         // *** including free bytes (BUT excluding size of ext_data blocks for leafs)
+        var _a;
         const bytes = [];
         const startIndex = writer.length; //bytes.length;
         // byte_length:
@@ -235,7 +236,7 @@ class BPlusTreeNode {
                 });
             }
             // Add node pointers added by the child
-            'pointers' in child && child.pointers.forEach(pointer => {
+            (_a = child.pointers) === null || _a === void 0 ? void 0 : _a.forEach(pointer => {
                 // pointer.index += index; // DISABLED: indexes must already be ok now we're using 1 bytes array
                 pointers.push(pointer);
             });

@@ -1,3 +1,4 @@
+import { BinaryReference } from './binary-reference';
 import { BinaryWriter } from './binary-writer';
 import { NodeEntryKeyType } from './entry-key-type';
 import { LeafEntryMetaData } from './leaf-entry-metadata';
@@ -24,11 +25,7 @@ export declare class BPlusTreeLeaf {
     add(key: NodeEntryKeyType, recordPointer: number[] | Uint8Array | string, metadata?: LeafEntryMetaData): BPlusTreeLeafEntry;
     toString(): string;
     toBinary(keepFreeSpace: boolean, writer: BinaryWriter): Promise<{
-        references: {
-            name: string;
-            target: BPlusTreeLeaf;
-            index: number;
-        }[];
+        references: BinaryReference[];
     }>;
 }
 //# sourceMappingURL=tree-leaf.d.ts.map
