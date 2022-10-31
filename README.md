@@ -4,7 +4,7 @@
 
 # AceBase realtime database
 
-A fast, low memory, transactional, index & query enabled NoSQL database engine and server for node.js and browser with realtime data change notifications. Supports storing of JSON objects, arrays, numbers, strings, booleans, dates and binary (ArrayBuffer) data.
+A fast, low memory, transactional, index & query enabled NoSQL database engine and server for node.js and browser with realtime data change notifications. Supports storing of JSON objects, arrays, numbers, strings, booleans, dates, bigints and binary (ArrayBuffer) data.
 
 Inspired by (and largely compatible with) the Firebase realtime database, with additional functionality and less data sharding/duplication. Capable of storing up to 2^48 (281 trillion) object nodes in a binary database file that can theoretically grow to a max filesize of 8 petabytes.
 
@@ -79,11 +79,13 @@ AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, yo
     * [Info](#transaction-logging)
 * Multi-process support
     * [Info](#multi-process-support)
+* [CommonJS and ESM packages](#commonjs-and-esm-packages)
 * [Upgrade notices](#upgrade-notices)
 * [Known issues](#known-issues)
 * [Authors](#authors)
 * [Contributing](#contributing)
 * [Sponsoring](#sponsoring)
+
 ## Getting Started
 
 AceBase is split up into multiple packages:
@@ -2200,6 +2202,16 @@ More documentation will follow soon, see `transaction-logs.spec.js` unit tests f
 AceBase supports running in multiple processes by using interprocess communication (IPC). If your app runs in a standard Node.js cluster, AceBase is able to communicate with each process through Node.js's built-in `cluster` functionality. If your app runs in the browser, AceBase will use `BroadcastChannel` (or shim for Safari) to communicate with other browser tabs. 
 
 If you are using pm2 to run your app in a cluster, or run your app in a cloud-based cluster (eg Kubernetes, Docker Swarm), AceBase instances will need some other way to communicate with eachother. This is now possible using an AceBase IPC Server, which allows fast communication using websockets. See [AceBase IPC Server](https://github.com/appy-one/acebase-ipc-server) for more info!
+
+## CommonJS and ESM packages
+The TypeScript sources are compiled to both CommonJS and ESM module systems. The sources loaded depend on whether you `import` or `require` acebase:
+| Statement                                  | Module system | Target |
+|--------------------------------------------|---------------|--------|
+| import { AceBase } from 'acebase'          | ESM           | ES2020 |
+| import { AceBase } from 'acebase/commonjs' | CommonJS      | ES2017 |
+| const { AceBase } = require('acebase')     | CommonJS      | ES2017 |
+
+See https://github.com/appy-one/acebase/discussions/98 for more info.
 
 ## Upgrade notices
 

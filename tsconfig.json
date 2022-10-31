@@ -1,16 +1,17 @@
 {
     "compilerOptions": {
-        "target": "ES2017",
-        "lib": ["ES2017", "DOM"],
-        "module": "CommonJS",
-        "noImplicitAny": true,
+        "lib": ["esnext","dom"],
         "listEmittedFiles": true,
-        "pretty": true,
-        "outDir": "./dist/cjs",
+        "noImplicitAny": true,
         "sourceMap": true,
+        "module": "es2020",
+        "outDir": "./dist/esm",
+        "moduleResolution": "node",
+        "target": "es2020",
+        "pretty": true,
         "declaration": true,
         "declarationMap": true,
-        "declarationDir": "./dist/types"
+        "declarationDir": "./dist/types",
     },
     "include": ["src/**/*"],
     "exclude": [
