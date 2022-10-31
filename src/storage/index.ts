@@ -1740,7 +1740,7 @@ export class Storage extends SimpleEventEmitter {
      */
     async importNode(
         path: string,
-        read: (bytes: number) => string|ArrayBufferView|Promise<string|ArrayBufferView>,
+        read: (bytes: number) => string | Utils.TypedArrayLike | Promise<string | Utils.TypedArrayLike>,
         options: Partial<{
             format: 'json';
             /**

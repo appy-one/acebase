@@ -1,4 +1,7 @@
-import { AceBaseBase, IStreamLike, Api, EventSubscriptionCallback, ReflectionType, StreamReadFunction, StreamWriteFunction, TransactionLogFilter, LoggingLevel, Query, QueryOptions } from 'acebase-core';
+import { AceBaseBase, IStreamLike, Api, EventSubscriptionCallback,
+    ReflectionType, IReflectionNodeInfo, IReflectionChildrenInfo,
+    StreamReadFunction, StreamWriteFunction, TransactionLogFilter,
+    LoggingLevel, Query, QueryOptions } from 'acebase-core';
 import { AceBaseStorage, AceBaseStorageSettings } from './storage/binary';
 import { SQLiteStorage, SQLiteStorageSettings } from './storage/sqlite';
 import { MSSQLStorage, MSSQLStorageSettings } from './storage/mssql';
@@ -224,13 +227,15 @@ export class LocalApi extends Api {
         return this.storage.indexes.delete(filePath);
     }
 
-    async reflect(path: string, type: ReflectionType, args: any) {
+    reflect(path: string, type: 'children', args: any): Promise<IReflectionChildrenInfo>;
+    reflect(path: string, type: 'info', args: any): Promise<IReflectionNodeInfo>;
+    async reflect(path: string, type: ReflectionType, args: any): Promise<IReflectionNodeInfo | IReflectionChildrenInfo> {
         args = args || {};
         const getChildren = async (path: string, limit = 50, skip = 0, from: string = null) => {
             if (typeof limit === 'string') { limit = parseInt(limit); }
             if (typeof skip === 'string') { skip = parseInt(skip); }
             if (['null','undefined'].includes(from)) { from = null; }
-            const children = [] as Array<{ key: string | number; type: string; value: any; address?: any }>;
+            const children = [] as IReflectionChildrenInfo['list']; // Array<{ key: string | number; type: string; value: any; address?: any }>;
             let n = 0, stop = false, more = false; //stop = skip + limit,
             await this.storage.getChildren(path)
                 .next(childInfo => {
@@ -263,14 +268,15 @@ export class LocalApi extends Api {
             return {
                 more,
                 list: children,
-            };
+            } as IReflectionChildrenInfo;
         };
         switch(type) {
             case 'children': {
-                return getChildren(path, args.limit, args.skip, args.from);
+                const result: IReflectionChildrenInfo = await getChildren(path, args.limit, args.skip, args.from);
+                return result;
             }
             case 'info': {
-                const info = {
+                const info: IReflectionNodeInfo = {
                     key: '' as string | number,
                     exists: false,
                     type: 'unknown',
@@ -280,7 +286,7 @@ export class LocalApi extends Api {
                         count: 0,
                         more: false,
                         list: [],
-                    } as Awaited<ReturnType<typeof getChildren>> | { count: number },
+                    },
                 };
                 const nodeInfo = await this.storage.getNodeInfo(path, { include_child_count: args.child_count === true });
                 info.key = typeof nodeInfo.key !== 'undefined' ? nodeInfo.key : nodeInfo.index;

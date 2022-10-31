@@ -1,5 +1,6 @@
 import { writeByteLength } from '../binary';
 import { DetailedError } from '../detailed-error';
+import { BinaryReference } from './binary-reference';
 import { FLAGS } from './binary-tree-builder';
 import { BinaryWriter } from './binary-writer';
 import { MAX_LEAF_ENTRY_VALUES, MAX_SMALL_LEAF_VALUE_LENGTH, WRITE_SMALL_LEAFS } from './config';
@@ -148,7 +149,7 @@ export class BPlusTreeLeaf {
         // free_byte_length:
         bytes.push(0, 0, 0, 0);
 
-        const references = [];
+        const references = [] as BinaryReference[];
 
         // prev_leaf_ptr:
         this.prevLeaf && references.push({ name: `<${this.entries[0].key}`, target: this.prevLeaf, index: startIndex + bytes.length });

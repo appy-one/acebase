@@ -6,18 +6,8 @@ import { _isEqual, _isMore } from './typesafe-compare';
 import { DetailedError } from '../detailed-error';
 import { BinaryWriter } from './binary-writer';
 import { writeByteLength, writeSignedOffset } from '../binary';
-
-type BinaryPointer = {
-    name: string;
-    leaf: BPlusTreeLeaf,
-    index: number
-}
-
-type BinaryReference = {
-    name: string;
-    target: BPlusTreeNode | BPlusTreeLeaf;
-    index: number;
-}
+import { BinaryPointer } from './binary-pointer';
+import { BinaryReference } from './binary-reference';
 
 export class BPlusTreeNode {
     entries: BPlusTreeNodeEntry[] = [];
@@ -261,7 +251,7 @@ export class BPlusTreeNode {
             const child_ptr = writeSignedOffset([], 0, offset, true);
 
             await writer.write(child_ptr, ref.index);  // Update pointer
-            const child = await childNode.toBinary(keepFreeSpace, writer); // Write child
+            const child = await childNode.toBinary(keepFreeSpace, writer) as { pointers?: BinaryPointer[]; references: BinaryReference[] }; // Write child
 
             if (childNode instanceof BPlusTreeLeaf) {
                 // Remember location we stored this leaf, we need it later
@@ -272,7 +262,7 @@ export class BPlusTreeNode {
                 });
             }
             // Add node pointers added by the child
-            'pointers' in child && child.pointers.forEach(pointer => {
+            child.pointers?.forEach(pointer => {
                 // pointer.index += index; // DISABLED: indexes must already be ok now we're using 1 bytes array
                 pointers.push(pointer);
             });
