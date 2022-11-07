@@ -1,4 +1,4 @@
-const quickSort = require('../src/quicksort').default;
+const quickSort = require('../dist/cjs/quicksort').default;
 const { performance } = require('perf_hooks');
 
 describe('quicksort', () => {

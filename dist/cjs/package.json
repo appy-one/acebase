@@ -1,0 +1,14 @@
+{
+    "type": "commonjs",
+    "types": "../types/index.d.ts",
+    "browser": {
+        "./index.js": "./browser.js",
+        "./ipc/index.js": "./ipc/browser.js",
+        "./promise-fs/index.js": "./promise-fs/browser.js",
+        "./storage/binary/index.js": "./storage/binary/browser.js",
+        "./storage/mssql/index.js": "./storage/mssql/browser.js",
+        "./storage/sqlite/index.js": "./storage/sqlite/browser.js",
+        "./data-index/index.js": "./data-index/browser.js",
+        "./btree/index.js": "./btree/browser.js"
+    }
+}

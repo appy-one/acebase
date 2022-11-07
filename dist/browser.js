@@ -673,7 +673,7 @@ class LiveDataProxy {
         };
         const localMutationsEmitter = new simple_event_emitter_1.SimpleEventEmitter();
         const addOnChangeHandler = (target, callback) => {
-            const isObject = val => val !== null && typeof val === 'object';
+            const isObject = (val) => val !== null && typeof val === 'object';
             const mutationsHandler = async (details) => {
                 var _a;
                 const { snap, origin } = details;
@@ -757,7 +757,7 @@ class LiveDataProxy {
                 return addOnChangeHandler(target, args.callback);
             }
             else if (flag === 'subscribe' || flag === 'observe') {
-                const subscribe = subscriber => {
+                const subscribe = (subscriber) => {
                     const currentValue = getTargetValue(cache, target);
                     subscriber.next(currentValue);
                     const subscription = addOnChangeHandler(target, (value /*, previous, isRemote, context */) => {
@@ -1198,7 +1198,7 @@ function createProxy(context) {
                         context.flag('write', context.target);
                         return action();
                     };
-                    const cleanArrayValues = values => values.map(value => {
+                    const cleanArrayValues = (values) => values.map((value) => {
                         value = unproxyValue(value);
                         removeVoidProperties(value);
                         return value;
@@ -1485,7 +1485,7 @@ class OrderedCollectionProxy {
      */
     getArrayObservable() {
         const Observable = (0, optional_observable_1.getObservable)();
-        return new Observable(subscriber => {
+        return new Observable((subscriber => {
             const subscription = this.getObservable().subscribe(( /*value*/) => {
                 const newArray = this.getArray();
                 subscriber.next(newArray);
@@ -1493,7 +1493,7 @@ class OrderedCollectionProxy {
             return function unsubscribe() {
                 subscription.unsubscribe();
             };
-        });
+        }));
     }
     /**
      * Gets an ordered array representation of the items in your object collection. The items in the array
@@ -1511,7 +1511,8 @@ class OrderedCollectionProxy {
         // };
         return arr;
     }
-    add(item, index, from) {
+    add(newItem, index, from) {
+        const item = newItem;
         const arr = this.getArray();
         let minOrder = Number.POSITIVE_INFINITY, maxOrder = Number.NEGATIVE_INFINITY;
         for (let i = 0; i < arr.length; i++) {
@@ -2262,7 +2263,7 @@ class DataReference {
             throw new Error(`Cannot observe wildcard path "/${this.path}"`);
         }
         const Observable = (0, optional_observable_1.getObservable)();
-        return new Observable(observer => {
+        return new Observable((observer => {
             let cache, resolved = false;
             let promise = this.get(options).then(snap => {
                 resolved = true;
@@ -2307,7 +2308,7 @@ class DataReference {
             return () => {
                 this.off('mutated', updateCache);
             };
-        });
+        }));
     }
     async forEach(callbackOrOptions, callback) {
         let options;
@@ -3088,7 +3089,7 @@ class ObservableShim {
 }
 exports.ObservableShim = ObservableShim;
 
-},{"rxjs":27}],15:[function(require,module,exports){
+},{"rxjs":57}],15:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PartialArray = void 0;
@@ -3730,7 +3731,7 @@ class SchemaDefinition {
             //     }
             // };
             // Resulting ts: "{name:string,born:Date,instrument:'guitar'|'piano',address?:{street:string}}"
-            const toTS = obj => {
+            const toTS = (obj) => {
                 return '{' + Object.keys(obj)
                     .map(key => {
                     let val = obj[key];
@@ -3972,7 +3973,7 @@ function Colorize(str, style) {
         return str;
     }
     const openCodes = [], closeCodes = [];
-    const addStyle = style => {
+    const addStyle = (style) => {
         if (style === ColorStyle.reset) {
             openCodes.push(ResetCode.all);
         }
@@ -4162,19 +4163,19 @@ class EventStream {
     constructor(eventPublisherCallback) {
         const subscribers = [];
         let noMoreSubscribersCallback;
-        let activationState;
-        const _stoppedState = 'stopped (no more subscribers)';
+        let activationState; // TODO: refactor to string only: STATE_INIT, STATE_STOPPED, STATE_ACTIVATED, STATE_CANCELED
+        const STATE_STOPPED = 'stopped (no more subscribers)';
         this.subscribe = (callback, activationCallback) => {
             if (typeof callback !== 'function') {
                 throw new TypeError('callback must be a function');
             }
-            else if (activationState === _stoppedState) {
+            else if (activationState === STATE_STOPPED) {
                 throw new Error('stream can\'t be used anymore because all subscribers were stopped');
             }
             const sub = {
                 callback,
                 activationCallback: function (activated, cancelReason) {
-                    activationCallback && activationCallback(activated, cancelReason);
+                    activationCallback === null || activationCallback === void 0 ? void 0 : activationCallback(activated, cancelReason);
                     this.subscription._setActivationState(activated, cancelReason);
                 },
                 subscription: new EventSubscription(function stop() {
@@ -4185,11 +4186,11 @@ class EventStream {
             subscribers.push(sub);
             if (typeof activationState !== 'undefined') {
                 if (activationState === true) {
-                    activationCallback && activationCallback(true);
+                    activationCallback === null || activationCallback === void 0 ? void 0 : activationCallback(true);
                     sub.subscription._setActivationState(true);
                 }
                 else if (typeof activationState === 'string') {
-                    activationCallback && activationCallback(false, activationState);
+                    activationCallback === null || activationCallback === void 0 ? void 0 : activationCallback(false, activationState);
                     sub.subscription._setActivationState(false, activationState);
                 }
             }
@@ -4198,8 +4199,8 @@ class EventStream {
         const checkActiveSubscribers = () => {
             let ret;
             if (subscribers.length === 0) {
-                ret = noMoreSubscribersCallback && noMoreSubscribersCallback();
-                activationState = _stoppedState;
+                ret = noMoreSubscribersCallback === null || noMoreSubscribersCallback === void 0 ? void 0 : noMoreSubscribersCallback();
+                activationState = STATE_STOPPED;
             }
             return Promise.resolve(ret);
         };
@@ -4220,8 +4221,8 @@ class EventStream {
         };
         /**
          * For publishing side: adds a value that will trigger callbacks to all subscribers
-         * @param {any} val
-         * @returns {boolean} returns whether there are subscribers left
+         * @param val
+         * @returns returns whether there are subscribers left
          */
         const publish = (val) => {
             subscribers.forEach(sub => {
@@ -4244,7 +4245,8 @@ class EventStream {
             activationState = true;
             noMoreSubscribersCallback = allSubscriptionsStoppedCallback;
             subscribers.forEach(sub => {
-                sub.activationCallback && sub.activationCallback(true);
+                var _a;
+                (_a = sub.activationCallback) === null || _a === void 0 ? void 0 : _a.call(sub, true);
             });
         };
         /**
@@ -4253,7 +4255,8 @@ class EventStream {
         const cancel = (reason) => {
             activationState = reason;
             subscribers.forEach(sub => {
-                sub.activationCallback && sub.activationCallback(false, reason || new Error('unknown reason'));
+                var _a;
+                (_a = sub.activationCallback) === null || _a === void 0 ? void 0 : _a.call(sub, false, reason || new Error('unknown reason'));
             });
             subscribers.splice(0); // Clear all
         };
@@ -4562,9 +4565,10 @@ const deserialize2 = (data) => {
         }
         else if (dataType === 'array') {
             // partial ("sparse") array, deserialize children into a copy
+            const arr = data;
             const copy = {};
-            for (const index in data) {
-                copy[index] = (0, exports.deserialize2)(data[index]);
+            for (const index in arr) {
+                copy[index] = (0, exports.deserialize2)(arr[index]);
             }
             delete copy['.type'];
             return new partial_array_1.PartialArray(copy);
@@ -4619,7 +4623,7 @@ function get(mappings, path) {
             return false; // Can't be a match
         }
         return mkeys.every((mkey, index) => {
-            if (mkey === '*' || mkey[0] === '$') {
+            if (mkey === '*' || (typeof mkey === 'string' && mkey[0] === '$')) {
                 return true; // wildcard
             }
             return mkey === keys[index];
@@ -4664,14 +4668,14 @@ function mapDeep(mappings, entryPath) {
         let isMatch = true;
         if (keys.length === 0 && startPath !== null) {
             // Only match first node's children if mapping pattern is "*" or "$variable"
-            isMatch = mkeys.length === 1 && (mkeys[0] === '*' || mkeys[0][0] === '$');
+            isMatch = mkeys.length === 1 && (mkeys[0] === '*' || (typeof mkeys[0] === 'string' && mkeys[0][0] === '$'));
         }
         else {
             mkeys.every((mkey, index) => {
                 if (index >= keys.length) {
                     return false; // stop .every loop
                 }
-                else if (mkey === '*' || mkey[0] === '$' || mkey === keys[index]) {
+                else if ((mkey === '*' || (typeof mkey === 'string' && mkey[0] === '$')) || mkey === keys[index]) {
                     return true; // continue .every loop
                 }
                 else {
@@ -4725,7 +4729,7 @@ function process(db, mappings, path, obj, action) {
             }
             const key = keys[0];
             let children = [];
-            if (key === '*' || key[0] === '$') {
+            if (key === '*' || (typeof key === 'string' && key[0] === '$')) {
                 // Include all children
                 if (parent instanceof Array) {
                     children = parent.map((val, index) => ({ key: index, val }));
@@ -4900,19 +4904,19 @@ class TypeMappings {
         };
     }
     /**
-     * (for internal use)
+     * @internal (for internal use)
      * Serializes any child in given object that has a type mapping
-     * @param {string} path | path to the object's location
-     * @param {object} obj | object to serialize
+     * @param path | path to the object's location
+     * @param obj object to serialize
      */
     serialize(path, obj) {
         return process(this.db, this[_mappings], path, obj, 'serialize');
     }
     /**
-     * (for internal use)
+     * @internal (for internal use)
      * Deserialzes any child in given object that has a type mapping
-     * @param {string} path | path to the object's location
-     * @param {object} obj | object to deserialize
+     * @param path path to the object's location
+     * @param obj object to deserialize
      */
     deserialize(path, obj) {
         return process(this.db, this[_mappings], path, obj, 'deserialize');
@@ -5147,7 +5151,7 @@ function cloneObject(original, stack) {
     if (((_a = original === null || original === void 0 ? void 0 : original.constructor) === null || _a === void 0 ? void 0 : _a.name) === 'DataSnapshot') {
         throw new TypeError(`Object to clone is a DataSnapshot (path "${original.ref.path}")`);
     }
-    const checkAndFixTypedArray = obj => {
+    const checkAndFixTypedArray = (obj) => {
         if (obj !== null && typeof obj === 'object'
             && typeof obj.constructor === 'function' && typeof obj.constructor.name === 'string'
             && ['Buffer', 'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array', 'BigUint64Array', 'BigInt64Array'].includes(obj.constructor.name)) {
@@ -5193,7 +5197,7 @@ function cloneObject(original, stack) {
     return clone;
 }
 exports.cloneObject = cloneObject;
-const isTypedArray = val => typeof val === 'object' && ['ArrayBuffer', 'Buffer', 'Uint8Array', 'Uint16Array', 'Uint32Array', 'Int8Array', 'Int16Array', 'Int32Array'].includes(val.constructor.name);
+const isTypedArray = (val) => typeof val === 'object' && ['ArrayBuffer', 'Buffer', 'Uint8Array', 'Uint16Array', 'Uint32Array', 'Int8Array', 'Int16Array', 'Int32Array'].includes(val.constructor.name);
 // CONSIDER: updating isTypedArray to: const isTypedArray = val => typeof val === 'object' && 'buffer' in val && 'byteOffset' in val && 'byteLength' in val;
 function valuesAreEqual(val1, val2) {
     if (val1 === val2) {
@@ -5279,7 +5283,7 @@ function compareValues(oldVal, newVal, sortedResults = false) {
     else if (typeof oldVal === 'object') {
         // Do key-by-key comparison of objects
         const isArray = oldVal instanceof Array;
-        const getKeys = obj => {
+        const getKeys = (obj) => {
             let keys = Object.keys(obj).filter(key => !voids.includes(obj[key]));
             if (isArray) {
                 keys = keys.map((v) => parseInt(v));
@@ -5352,9 +5356,7 @@ function defer(fn) {
 exports.defer = defer;
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"./partial-array":15,"./path-reference":17,"./process":18,"buffer":27}],27:[function(require,module,exports){
-
-},{}],28:[function(require,module,exports){
+},{"./partial-array":15,"./path-reference":17,"./process":18,"buffer":57}],27:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BrowserAceBase = void 0;
@@ -5401,7 +5403,7 @@ class BrowserAceBase extends acebase_local_1.AceBase {
 }
 exports.BrowserAceBase = BrowserAceBase;
 
-},{"./acebase-local":29,"./storage/custom/indexed-db":46}],29:[function(require,module,exports){
+},{"./acebase-local":28,"./storage/custom/indexed-db":47}],28:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBase = exports.AceBaseLocalSettings = exports.IndexedDBStorageSettings = exports.LocalStorageSettings = void 0;
@@ -5487,7 +5489,7 @@ class AceBase extends acebase_core_1.AceBaseBase {
 }
 exports.AceBase = AceBase;
 
-},{"./api-local":30,"./storage/binary":40,"./storage/custom/indexed-db/settings":47,"./storage/custom/local-storage":49,"acebase-core":12}],30:[function(require,module,exports){
+},{"./api-local":29,"./storage/binary":43,"./storage/custom/indexed-db/settings":48,"./storage/custom/local-storage":50,"acebase-core":12}],29:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalApi = void 0;
@@ -5654,7 +5656,7 @@ class LocalApi extends acebase_core_1.Api {
             if (['null', 'undefined'].includes(from)) {
                 from = null;
             }
-            const children = [];
+            const children = []; // Array<{ key: string | number; type: string; value: any; address?: any }>;
             let n = 0, stop = false, more = false; //stop = skip + limit,
             await this.storage.getChildren(path)
                 .next(childInfo => {
@@ -5685,7 +5687,8 @@ class LocalApi extends acebase_core_1.Api {
         };
         switch (type) {
             case 'children': {
-                return getChildren(path, args.limit, args.skip, args.from);
+                const result = await getChildren(path, args.limit, args.skip, args.from);
+                return result;
             }
             case 'info': {
                 const info = {
@@ -5783,7 +5786,7 @@ class LocalApi extends acebase_core_1.Api {
 }
 exports.LocalApi = LocalApi;
 
-},{"./node-value-types":39,"./query":42,"./storage/binary":40,"./storage/custom":45,"./storage/mssql":40,"./storage/sqlite":40,"acebase-core":12}],31:[function(require,module,exports){
+},{"./node-value-types":39,"./query":42,"./storage/binary":43,"./storage/custom":46,"./storage/mssql":55,"./storage/sqlite":56,"acebase-core":12}],30:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AsyncTaskBatch = void 0;
@@ -5863,7 +5866,7 @@ class AsyncTaskBatch {
 }
 exports.AsyncTaskBatch = AsyncTaskBatch;
 
-},{}],32:[function(require,module,exports){
+},{}],31:[function(require,module,exports){
 "use strict";
 /**
    ________________________________________________________________________________
@@ -5943,12 +5946,43 @@ var storage_1 = require("./storage");
 Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return storage_1.StorageSettings; } });
 Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return storage_1.SchemaValidationError; } });
 
-},{"./acebase-browser":28,"./acebase-local":29,"./storage":52,"./storage/binary":40,"./storage/custom":45,"./storage/mssql":40,"./storage/sqlite":40,"acebase-core":12}],33:[function(require,module,exports){
+},{"./acebase-browser":27,"./acebase-local":28,"./storage":53,"./storage/binary":43,"./storage/custom":46,"./storage/mssql":55,"./storage/sqlite":56,"acebase-core":12}],32:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.IPCPeer = void 0;
+exports.ArrayIndex = exports.GeoIndex = exports.FullTextIndex = exports.DataIndex = void 0;
+const not_supported_1 = require("../not-supported");
+/**
+ * Not supported in browser context
+ */
+class DataIndex extends not_supported_1.NotSupported {
+}
+exports.DataIndex = DataIndex;
+/**
+ * Not supported in browser context
+ */
+class FullTextIndex extends not_supported_1.NotSupported {
+}
+exports.FullTextIndex = FullTextIndex;
+/**
+ * Not supported in browser context
+ */
+class GeoIndex extends not_supported_1.NotSupported {
+}
+exports.GeoIndex = GeoIndex;
+/**
+ * Not supported in browser context
+ */
+class ArrayIndex extends not_supported_1.NotSupported {
+}
+exports.ArrayIndex = ArrayIndex;
+
+},{"../not-supported":40}],33:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.RemoteIPCPeer = exports.IPCPeer = void 0;
 const acebase_core_1 = require("acebase-core");
 const ipc_1 = require("./ipc");
+const not_supported_1 = require("../not-supported");
 /**
  * Browser tabs IPC. Database changes and events will be synchronized automatically.
  * Locking of resources will be done by the election of a single locking master:
@@ -6078,8 +6112,14 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
     }
 }
 exports.IPCPeer = IPCPeer;
+/**
+ * Not supported in browser context
+ */
+class RemoteIPCPeer extends not_supported_1.NotSupported {
+}
+exports.RemoteIPCPeer = RemoteIPCPeer;
 
-},{"./ipc":34,"acebase-core":12}],34:[function(require,module,exports){
+},{"../not-supported":40,"./ipc":34,"acebase-core":12}],34:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
@@ -7050,7 +7090,14 @@ function getValueType(value) {
 exports.getValueType = getValueType;
 
 },{"acebase-core":12}],40:[function(require,module,exports){
-// Not supported in current environment
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.NotSupported = void 0;
+class NotSupported {
+    constructor(context = 'browser') { throw new Error(`This feature is not supported in ${context} context`); }
+}
+exports.NotSupported = NotSupported;
+
 },{}],41:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -7791,7 +7838,25 @@ function query(api, path, query, options = { snapshots: false, include: undefine
 }
 exports.query = query;
 
-},{"./async-task-batch":31,"./data-index":40,"./node-errors":36,"./node-value-types":39,"acebase-core":12}],43:[function(require,module,exports){
+},{"./async-task-batch":30,"./data-index":32,"./node-errors":36,"./node-value-types":39,"acebase-core":12}],43:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AceBaseStorage = exports.AceBaseStorageSettings = void 0;
+const not_supported_1 = require("../../not-supported");
+/**
+ * Not supported in browser context
+ */
+class AceBaseStorageSettings extends not_supported_1.NotSupported {
+}
+exports.AceBaseStorageSettings = AceBaseStorageSettings;
+/**
+ * Not supported in browser context
+ */
+class AceBaseStorage extends not_supported_1.NotSupported {
+}
+exports.AceBaseStorage = AceBaseStorage;
+
+},{"../../not-supported":40}],44:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
@@ -7868,7 +7933,7 @@ async function createIndex(context, path, key, options) {
 }
 exports.createIndex = createIndex;
 
-},{"../data-index":40,"../promise-fs":41,"acebase-core":12}],44:[function(require,module,exports){
+},{"../data-index":32,"../promise-fs":41,"acebase-core":12}],45:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorageHelpers = void 0;
@@ -7937,7 +8002,7 @@ class CustomStorageHelpers {
 }
 exports.CustomStorageHelpers = CustomStorageHelpers;
 
-},{"acebase-core":12}],45:[function(require,module,exports){
+},{"acebase-core":12}],46:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorage = exports.CustomStorageNodeInfo = exports.CustomStorageNodeAddress = exports.CustomStorageSettings = exports.CustomStorageTransaction = exports.ICustomStorageNode = exports.ICustomStorageNodeMetaData = exports.CustomStorageHelpers = void 0;
@@ -9151,7 +9216,7 @@ class CustomStorage extends index_1.Storage {
 }
 exports.CustomStorage = CustomStorage;
 
-},{"../../node-address":35,"../../node-errors":36,"../../node-info":37,"../../node-lock":38,"../../node-value-types":39,"../index":52,"./helpers":44,"acebase-core":12}],46:[function(require,module,exports){
+},{"../../node-address":35,"../../node-errors":36,"../../node-info":37,"../../node-lock":38,"../../node-value-types":39,"../index":53,"./helpers":45,"acebase-core":12}],47:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndexedDBInstance = void 0;
@@ -9229,7 +9294,7 @@ function createIndexedDBInstance(dbname, init = {}) {
 }
 exports.createIndexedDBInstance = createIndexedDBInstance;
 
-},{"..":45,"../../..":32,"./settings":47,"./transaction":48,"acebase-core":12}],47:[function(require,module,exports){
+},{"..":46,"../../..":31,"./settings":48,"./transaction":49,"acebase-core":12}],48:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageSettings = void 0;
@@ -9273,7 +9338,7 @@ class IndexedDBStorageSettings extends __1.StorageSettings {
 }
 exports.IndexedDBStorageSettings = IndexedDBStorageSettings;
 
-},{"../..":52}],48:[function(require,module,exports){
+},{"../..":53}],49:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageTransaction = void 0;
@@ -9500,7 +9565,7 @@ class IndexedDBStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.IndexedDBStorageTransaction = IndexedDBStorageTransaction;
 
-},{"..":45}],49:[function(require,module,exports){
+},{"..":46}],50:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createLocalStorageInstance = exports.LocalStorageTransaction = exports.LocalStorageSettings = void 0;
@@ -9541,7 +9606,7 @@ function createLocalStorageInstance(dbname, init = {}) {
 }
 exports.createLocalStorageInstance = createLocalStorageInstance;
 
-},{"..":45,"../../..":32,"./settings":50,"./transaction":51}],50:[function(require,module,exports){
+},{"..":46,"../../..":31,"./settings":51,"./transaction":52}],51:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageSettings = void 0;
@@ -9583,7 +9648,7 @@ class LocalStorageSettings extends __1.StorageSettings {
 }
 exports.LocalStorageSettings = LocalStorageSettings;
 
-},{"../..":52}],51:[function(require,module,exports){
+},{"../..":53}],52:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageTransaction = void 0;
@@ -9677,7 +9742,7 @@ class LocalStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.LocalStorageTransaction = LocalStorageTransaction;
 
-},{"..":45}],52:[function(require,module,exports){
+},{"..":46}],53:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Storage = exports.StorageSettings = exports.SchemaValidationError = void 0;
@@ -11748,12 +11813,50 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
 }
 exports.Storage = Storage;
 
-},{"../data-index":40,"../ipc":33,"../node-errors":36,"../node-info":37,"../node-value-types":39,"../promise-fs":41,"./indexes":53,"acebase-core":12}],53:[function(require,module,exports){
+},{"../data-index":32,"../ipc":33,"../node-errors":36,"../node-info":37,"../node-value-types":39,"../promise-fs":41,"./indexes":54,"acebase-core":12}],54:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
 var create_index_1 = require("./create-index");
 Object.defineProperty(exports, "createIndex", { enumerable: true, get: function () { return create_index_1.createIndex; } });
 
-},{"./create-index":43}]},{},[32])(32)
+},{"./create-index":44}],55:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MSSQLStorage = exports.MSSQLStorageSettings = void 0;
+const not_supported_1 = require("../../not-supported");
+/**
+ * Not supported in browser context
+ */
+class MSSQLStorageSettings extends not_supported_1.NotSupported {
+}
+exports.MSSQLStorageSettings = MSSQLStorageSettings;
+/**
+ * Not supported in browser context
+ */
+class MSSQLStorage extends not_supported_1.NotSupported {
+}
+exports.MSSQLStorage = MSSQLStorage;
+
+},{"../../not-supported":40}],56:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SQLiteStorage = exports.SQLiteStorageSettings = void 0;
+const not_supported_1 = require("../../not-supported");
+/**
+ * Not supported in browser context
+ */
+class SQLiteStorageSettings extends not_supported_1.NotSupported {
+}
+exports.SQLiteStorageSettings = SQLiteStorageSettings;
+/**
+ * Not supported in browser context
+ */
+class SQLiteStorage extends not_supported_1.NotSupported {
+}
+exports.SQLiteStorage = SQLiteStorage;
+
+},{"../../not-supported":40}],57:[function(require,module,exports){
+
+},{}]},{},[31])(31)
 });

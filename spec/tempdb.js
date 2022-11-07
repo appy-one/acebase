@@ -1,5 +1,5 @@
 const { AceBase, ID } = require('..');
-const { pfs } = require('../src/promise-fs');
+const { pfs } = require('../dist/cjs/promise-fs');
 
 module.exports = {
     /**

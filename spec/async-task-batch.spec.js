@@ -1,4 +1,4 @@
-const { AsyncTaskBatch } = require('../src/async-task-batch');
+const { AsyncTaskBatch } = require('../dist/cjs/async-task-batch');
 
 describe('Async task batches', () => {
     it('works', async () => {
