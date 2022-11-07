@@ -2208,7 +2208,6 @@ The TypeScript sources are compiled to both CommonJS and ESM module systems. The
 | Statement                                  | Module system | Target |
 |--------------------------------------------|---------------|--------|
 | import { AceBase } from 'acebase'          | ESM           | ES2020 |
-| import { AceBase } from 'acebase/commonjs' | CommonJS      | ES2017 |
 | const { AceBase } = require('acebase')     | CommonJS      | ES2017 |
 
 See https://github.com/appy-one/acebase/discussions/98 for more info.
