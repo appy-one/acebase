@@ -11,15 +11,8 @@
   "exports": {
     ".": {
       "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.js"
-    },
-    "./esm": {
-      "import": "./dist/esm/index.js",
-      "require": "./dist/esm/index.js"
-    },
-    "./commonjs": {
-      "import": "./dist/cjs/index.js",
-      "require": "./dist/cjs/index.js"
+      "require": "./dist/cjs/index.js",
+      "types": "./dist/types/index.d.ts"
     }
   },
   "browser": {
@@ -29,16 +22,16 @@
     "./dist/esm/ipc/index.js": "./dist/esm/ipc/browser.js",
     "./dist/cjs/promise-fs/index.js": "./dist/cjs/promise-fs/browser.js",
     "./dist/esm/promise-fs/index.js": "./dist/esm/promise-fs/browser.js",
-    "./dist/cjs/storage/binary/index.js": "./dist/cjs/not-supported.js",
-    "./dist/esm/storage/binary/index.js": "./dist/esm/not-supported.js",
-    "./dist/cjs/storage/mssql/index.js": "./dist/cjs/not-supported.js",
-    "./dist/esm/storage/mssql/index.js": "./dist/esm/not-supported.js",
-    "./dist/cjs/storage/sqlite/index.js": "./dist/cjs/not-supported.js",
-    "./dist/esm/storage/sqlite/index.js": "./dist/esm/not-supported.js",
-    "./dist/cjs/data-index/index.js": "./dist/cjs/not-supported.js",
-    "./dist/esm/data-index/index.js": "./dist/esm/not-supported.js",
-    "./dist/cjs/btree/index.js": "./dist/cjs/not-supported.js",
-    "./dist/esm/btree/index.js": "./dist/esm/not-supported.js"
+    "./dist/cjs/storage/binary/index.js": "./dist/cjs/storage/binary/browser.js",
+    "./dist/esm/storage/binary/index.js": "./dist/esm/storage/binary/browser.js",
+    "./dist/cjs/storage/mssql/index.js": "./dist/cjs/storage/mssql/browser.js",
+    "./dist/esm/storage/mssql/index.js": "./dist/esm/storage/mssql/browser.js",
+    "./dist/cjs/storage/sqlite/index.js": "./dist/cjs/storage/sqlite/browser.js",
+    "./dist/esm/storage/sqlite/index.js": "./dist/esm/storage/sqlite/browser.js",
+    "./dist/cjs/data-index/index.js": "./dist/cjs/data-index/browser.js",
+    "./dist/esm/data-index/index.js": "./dist/esm/data-index/browser.js",
+    "./dist/cjs/btree/index.js": "./dist/cjs/btree/browser.js",
+    "./dist/esm/btree/index.js": "./dist/esm/btree/browser.js"
   },
   "types": "./dist/types/index.d.ts",
   "private": false,
