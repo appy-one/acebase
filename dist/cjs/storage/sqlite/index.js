@@ -1089,10 +1089,4 @@ class SQLiteStorage extends __1.Storage {
     }
 }
 exports.SQLiteStorage = SQLiteStorage;
-module.exports = {
-    SQLiteNodeAddress,
-    SQLiteNodeInfo,
-    SQLiteStorage,
-    SQLiteStorageSettings,
-};
 //# sourceMappingURL=index.js.map

@@ -1206,10 +1206,3 @@ export class SQLiteStorage extends Storage {
     }
 
 }
-
-module.exports = {
-    SQLiteNodeAddress,
-    SQLiteNodeInfo,
-    SQLiteStorage,
-    SQLiteStorageSettings,
-};
