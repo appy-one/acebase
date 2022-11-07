@@ -1,8 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.IPCPeer = void 0;
+exports.RemoteIPCPeer = exports.IPCPeer = void 0;
 const acebase_core_1 = require("acebase-core");
 const ipc_1 = require("./ipc");
+const not_supported_1 = require("../not-supported");
 /**
  * Browser tabs IPC. Database changes and events will be synchronized automatically.
  * Locking of resources will be done by the election of a single locking master:
@@ -132,4 +133,10 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
     }
 }
 exports.IPCPeer = IPCPeer;
+/**
+ * Not supported in browser context
+ */
+class RemoteIPCPeer extends not_supported_1.NotSupported {
+}
+exports.RemoteIPCPeer = RemoteIPCPeer;
 //# sourceMappingURL=browser.js.map

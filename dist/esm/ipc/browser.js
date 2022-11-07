@@ -1,5 +1,6 @@
 import { ID, Transport } from 'acebase-core';
 import { AceBaseIPCPeer } from './ipc.js';
+import { NotSupported } from '../not-supported.js';
 /**
  * Browser tabs IPC. Database changes and events will be synchronized automatically.
  * Locking of resources will be done by the election of a single locking master:
@@ -127,5 +128,10 @@ export class IPCPeer extends AceBaseIPCPeer {
         this.storage.debug.verbose(`[BroadcastChannel] sending: `, message);
         this.channel.postMessage(message);
     }
+}
+/**
+ * Not supported in browser context
+ */
+export class RemoteIPCPeer extends NotSupported {
 }
 //# sourceMappingURL=browser.js.map

@@ -194,7 +194,6 @@ exports.AceBaseBase = AceBaseBase;
 
 },{"./data-reference":8,"./debug":10,"./optional-observable":14,"./simple-colors":21,"./simple-event-emitter":22,"./type-mappings":25}],2:[function(require,module,exports){
 "use strict";
-/* eslint-disable @typescript-eslint/no-unused-vars */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Api = void 0;
 class NotImplementedError extends Error {
@@ -3090,7 +3089,7 @@ class ObservableShim {
 }
 exports.ObservableShim = ObservableShim;
 
-},{"rxjs":53}],15:[function(require,module,exports){
+},{"rxjs":57}],15:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PartialArray = void 0;
@@ -4164,13 +4163,13 @@ class EventStream {
     constructor(eventPublisherCallback) {
         const subscribers = [];
         let noMoreSubscribersCallback;
-        let activationState;
-        const _stoppedState = 'stopped (no more subscribers)';
+        let activationState; // TODO: refactor to string only: STATE_INIT, STATE_STOPPED, STATE_ACTIVATED, STATE_CANCELED
+        const STATE_STOPPED = 'stopped (no more subscribers)';
         this.subscribe = (callback, activationCallback) => {
             if (typeof callback !== 'function') {
                 throw new TypeError('callback must be a function');
             }
-            else if (activationState === _stoppedState) {
+            else if (activationState === STATE_STOPPED) {
                 throw new Error('stream can\'t be used anymore because all subscribers were stopped');
             }
             const sub = {
@@ -4201,7 +4200,7 @@ class EventStream {
             let ret;
             if (subscribers.length === 0) {
                 ret = noMoreSubscribersCallback === null || noMoreSubscribersCallback === void 0 ? void 0 : noMoreSubscribersCallback();
-                activationState = _stoppedState;
+                activationState = STATE_STOPPED;
             }
             return Promise.resolve(ret);
         };
@@ -5357,7 +5356,7 @@ function defer(fn) {
 exports.defer = defer;
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"./partial-array":15,"./path-reference":17,"./process":18,"buffer":53}],27:[function(require,module,exports){
+},{"./partial-array":15,"./path-reference":17,"./process":18,"buffer":57}],27:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BrowserAceBase = void 0;
@@ -5404,7 +5403,7 @@ class BrowserAceBase extends acebase_local_1.AceBase {
 }
 exports.BrowserAceBase = BrowserAceBase;
 
-},{"./acebase-local":28,"./storage/custom/indexed-db":45}],28:[function(require,module,exports){
+},{"./acebase-local":28,"./storage/custom/indexed-db":47}],28:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBase = exports.AceBaseLocalSettings = exports.IndexedDBStorageSettings = exports.LocalStorageSettings = void 0;
@@ -5490,7 +5489,7 @@ class AceBase extends acebase_core_1.AceBaseBase {
 }
 exports.AceBase = AceBase;
 
-},{"./api-local":29,"./storage/binary":39,"./storage/custom/indexed-db/settings":46,"./storage/custom/local-storage":48,"acebase-core":12}],29:[function(require,module,exports){
+},{"./api-local":29,"./storage/binary":43,"./storage/custom/indexed-db/settings":48,"./storage/custom/local-storage":50,"acebase-core":12}],29:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalApi = void 0;
@@ -5787,7 +5786,7 @@ class LocalApi extends acebase_core_1.Api {
 }
 exports.LocalApi = LocalApi;
 
-},{"./node-value-types":38,"./query":41,"./storage/binary":39,"./storage/custom":44,"./storage/mssql":39,"./storage/sqlite":39,"acebase-core":12}],30:[function(require,module,exports){
+},{"./node-value-types":39,"./query":42,"./storage/binary":43,"./storage/custom":46,"./storage/mssql":55,"./storage/sqlite":56,"acebase-core":12}],30:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AsyncTaskBatch = void 0;
@@ -5947,12 +5946,43 @@ var storage_1 = require("./storage");
 Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return storage_1.StorageSettings; } });
 Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return storage_1.SchemaValidationError; } });
 
-},{"./acebase-browser":27,"./acebase-local":28,"./storage":51,"./storage/binary":39,"./storage/custom":44,"./storage/mssql":39,"./storage/sqlite":39,"acebase-core":12}],32:[function(require,module,exports){
+},{"./acebase-browser":27,"./acebase-local":28,"./storage":53,"./storage/binary":43,"./storage/custom":46,"./storage/mssql":55,"./storage/sqlite":56,"acebase-core":12}],32:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.IPCPeer = void 0;
+exports.ArrayIndex = exports.GeoIndex = exports.FullTextIndex = exports.DataIndex = void 0;
+const not_supported_1 = require("../not-supported");
+/**
+ * Not supported in browser context
+ */
+class DataIndex extends not_supported_1.NotSupported {
+}
+exports.DataIndex = DataIndex;
+/**
+ * Not supported in browser context
+ */
+class FullTextIndex extends not_supported_1.NotSupported {
+}
+exports.FullTextIndex = FullTextIndex;
+/**
+ * Not supported in browser context
+ */
+class GeoIndex extends not_supported_1.NotSupported {
+}
+exports.GeoIndex = GeoIndex;
+/**
+ * Not supported in browser context
+ */
+class ArrayIndex extends not_supported_1.NotSupported {
+}
+exports.ArrayIndex = ArrayIndex;
+
+},{"../not-supported":40}],33:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.RemoteIPCPeer = exports.IPCPeer = void 0;
 const acebase_core_1 = require("acebase-core");
 const ipc_1 = require("./ipc");
+const not_supported_1 = require("../not-supported");
 /**
  * Browser tabs IPC. Database changes and events will be synchronized automatically.
  * Locking of resources will be done by the election of a single locking master:
@@ -6082,8 +6112,14 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
     }
 }
 exports.IPCPeer = IPCPeer;
+/**
+ * Not supported in browser context
+ */
+class RemoteIPCPeer extends not_supported_1.NotSupported {
+}
+exports.RemoteIPCPeer = RemoteIPCPeer;
 
-},{"./ipc":33,"acebase-core":12}],33:[function(require,module,exports){
+},{"../not-supported":40,"./ipc":34,"acebase-core":12}],34:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
@@ -6582,7 +6618,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock":37,"acebase-core":12}],34:[function(require,module,exports){
+},{"../node-lock":38,"acebase-core":12}],35:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RemovedNodeAddress = exports.NodeAddress = void 0;
@@ -6617,7 +6653,7 @@ class RemovedNodeAddress extends NodeAddress {
 }
 exports.RemovedNodeAddress = RemovedNodeAddress;
 
-},{}],35:[function(require,module,exports){
+},{}],36:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeRevisionError = exports.NodeNotFoundError = void 0;
@@ -6628,7 +6664,7 @@ class NodeRevisionError extends Error {
 }
 exports.NodeRevisionError = NodeRevisionError;
 
-},{}],36:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeInfo = void 0;
@@ -6677,7 +6713,7 @@ class NodeInfo {
 }
 exports.NodeInfo = NodeInfo;
 
-},{"./node-value-types":38,"acebase-core":12}],37:[function(require,module,exports){
+},{"./node-value-types":39,"acebase-core":12}],38:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeLock = exports.NodeLocker = exports.LOCK_STATE = void 0;
@@ -6961,7 +6997,7 @@ class NodeLock {
 }
 exports.NodeLock = NodeLock;
 
-},{"acebase-core":12}],38:[function(require,module,exports){
+},{"acebase-core":12}],39:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getValueType = exports.getNodeValueType = exports.getValueTypeName = exports.VALUE_TYPES = void 0;
@@ -7053,10 +7089,16 @@ function getValueType(value) {
 }
 exports.getValueType = getValueType;
 
-},{"acebase-core":12}],39:[function(require,module,exports){
-// Not supported in current environment
+},{"acebase-core":12}],40:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.NotSupported = void 0;
+class NotSupported {
+    constructor(context = 'browser') { throw new Error(`This feature is not supported in ${context} context`); }
+}
+exports.NotSupported = NotSupported;
 
-},{}],40:[function(require,module,exports){
+},{}],41:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pfs = void 0;
@@ -7066,7 +7108,7 @@ class pfs {
 }
 exports.pfs = pfs;
 
-},{}],41:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.query = void 0;
@@ -7796,7 +7838,25 @@ function query(api, path, query, options = { snapshots: false, include: undefine
 }
 exports.query = query;
 
-},{"./async-task-batch":30,"./data-index":39,"./node-errors":35,"./node-value-types":38,"acebase-core":12}],42:[function(require,module,exports){
+},{"./async-task-batch":30,"./data-index":32,"./node-errors":36,"./node-value-types":39,"acebase-core":12}],43:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AceBaseStorage = exports.AceBaseStorageSettings = void 0;
+const not_supported_1 = require("../../not-supported");
+/**
+ * Not supported in browser context
+ */
+class AceBaseStorageSettings extends not_supported_1.NotSupported {
+}
+exports.AceBaseStorageSettings = AceBaseStorageSettings;
+/**
+ * Not supported in browser context
+ */
+class AceBaseStorage extends not_supported_1.NotSupported {
+}
+exports.AceBaseStorage = AceBaseStorage;
+
+},{"../../not-supported":40}],44:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
@@ -7873,7 +7933,7 @@ async function createIndex(context, path, key, options) {
 }
 exports.createIndex = createIndex;
 
-},{"../data-index":39,"../promise-fs":40,"acebase-core":12}],43:[function(require,module,exports){
+},{"../data-index":32,"../promise-fs":41,"acebase-core":12}],45:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorageHelpers = void 0;
@@ -7942,7 +8002,7 @@ class CustomStorageHelpers {
 }
 exports.CustomStorageHelpers = CustomStorageHelpers;
 
-},{"acebase-core":12}],44:[function(require,module,exports){
+},{"acebase-core":12}],46:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorage = exports.CustomStorageNodeInfo = exports.CustomStorageNodeAddress = exports.CustomStorageSettings = exports.CustomStorageTransaction = exports.ICustomStorageNode = exports.ICustomStorageNodeMetaData = exports.CustomStorageHelpers = void 0;
@@ -9156,7 +9216,7 @@ class CustomStorage extends index_1.Storage {
 }
 exports.CustomStorage = CustomStorage;
 
-},{"../../node-address":34,"../../node-errors":35,"../../node-info":36,"../../node-lock":37,"../../node-value-types":38,"../index":51,"./helpers":43,"acebase-core":12}],45:[function(require,module,exports){
+},{"../../node-address":35,"../../node-errors":36,"../../node-info":37,"../../node-lock":38,"../../node-value-types":39,"../index":53,"./helpers":45,"acebase-core":12}],47:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndexedDBInstance = void 0;
@@ -9234,7 +9294,7 @@ function createIndexedDBInstance(dbname, init = {}) {
 }
 exports.createIndexedDBInstance = createIndexedDBInstance;
 
-},{"..":44,"../../..":31,"./settings":46,"./transaction":47,"acebase-core":12}],46:[function(require,module,exports){
+},{"..":46,"../../..":31,"./settings":48,"./transaction":49,"acebase-core":12}],48:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageSettings = void 0;
@@ -9278,7 +9338,7 @@ class IndexedDBStorageSettings extends __1.StorageSettings {
 }
 exports.IndexedDBStorageSettings = IndexedDBStorageSettings;
 
-},{"../..":51}],47:[function(require,module,exports){
+},{"../..":53}],49:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageTransaction = void 0;
@@ -9505,7 +9565,7 @@ class IndexedDBStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.IndexedDBStorageTransaction = IndexedDBStorageTransaction;
 
-},{"..":44}],48:[function(require,module,exports){
+},{"..":46}],50:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createLocalStorageInstance = exports.LocalStorageTransaction = exports.LocalStorageSettings = void 0;
@@ -9546,7 +9606,7 @@ function createLocalStorageInstance(dbname, init = {}) {
 }
 exports.createLocalStorageInstance = createLocalStorageInstance;
 
-},{"..":44,"../../..":31,"./settings":49,"./transaction":50}],49:[function(require,module,exports){
+},{"..":46,"../../..":31,"./settings":51,"./transaction":52}],51:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageSettings = void 0;
@@ -9588,7 +9648,7 @@ class LocalStorageSettings extends __1.StorageSettings {
 }
 exports.LocalStorageSettings = LocalStorageSettings;
 
-},{"../..":51}],50:[function(require,module,exports){
+},{"../..":53}],52:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageTransaction = void 0;
@@ -9682,7 +9742,7 @@ class LocalStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.LocalStorageTransaction = LocalStorageTransaction;
 
-},{"..":44}],51:[function(require,module,exports){
+},{"..":46}],53:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Storage = exports.StorageSettings = exports.SchemaValidationError = void 0;
@@ -11753,14 +11813,50 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
 }
 exports.Storage = Storage;
 
-},{"../data-index":39,"../ipc":32,"../node-errors":35,"../node-info":36,"../node-value-types":38,"../promise-fs":40,"./indexes":52,"acebase-core":12}],52:[function(require,module,exports){
+},{"../data-index":32,"../ipc":33,"../node-errors":36,"../node-info":37,"../node-value-types":39,"../promise-fs":41,"./indexes":54,"acebase-core":12}],54:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
 var create_index_1 = require("./create-index");
 Object.defineProperty(exports, "createIndex", { enumerable: true, get: function () { return create_index_1.createIndex; } });
 
-},{"./create-index":42}],53:[function(require,module,exports){
+},{"./create-index":44}],55:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MSSQLStorage = exports.MSSQLStorageSettings = void 0;
+const not_supported_1 = require("../../not-supported");
+/**
+ * Not supported in browser context
+ */
+class MSSQLStorageSettings extends not_supported_1.NotSupported {
+}
+exports.MSSQLStorageSettings = MSSQLStorageSettings;
+/**
+ * Not supported in browser context
+ */
+class MSSQLStorage extends not_supported_1.NotSupported {
+}
+exports.MSSQLStorage = MSSQLStorage;
+
+},{"../../not-supported":40}],56:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SQLiteStorage = exports.SQLiteStorageSettings = void 0;
+const not_supported_1 = require("../../not-supported");
+/**
+ * Not supported in browser context
+ */
+class SQLiteStorageSettings extends not_supported_1.NotSupported {
+}
+exports.SQLiteStorageSettings = SQLiteStorageSettings;
+/**
+ * Not supported in browser context
+ */
+class SQLiteStorage extends not_supported_1.NotSupported {
+}
+exports.SQLiteStorage = SQLiteStorage;
+
+},{"../../not-supported":40}],57:[function(require,module,exports){
 
 },{}]},{},[31])(31)
 });
