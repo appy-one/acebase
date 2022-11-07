@@ -1,6 +1,7 @@
 import { ID, Transport } from 'acebase-core';
 import { AceBaseIPCPeer, IAceBaseIPCLock, IHelloMessage, IMessage } from './ipc';
 import { Storage } from '../storage';
+import { NotSupported } from '../not-supported';
 
 type MessageEventCallback = (event: MessageEvent) => any;
 
@@ -156,3 +157,8 @@ export class IPCPeer extends AceBaseIPCPeer {
     }
 
 }
+
+/**
+ * Not supported in browser context
+ */
+export class RemoteIPCPeer extends NotSupported {}
