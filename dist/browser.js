@@ -1,5364 +1,6 @@
 (function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.acebase = f()}})(function(){var define,module,exports;return (function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AceBaseBase = exports.AceBaseBaseSettings = void 0;
-/**
-   ________________________________________________________________________________
-
-      ___          ______
-     / _ \         | ___ \
-    / /_\ \ ___ ___| |_/ / __ _ ___  ___
-    |  _  |/ __/ _ \ ___ \/ _` / __|/ _ \
-    | | | | (_|  __/ |_/ / (_| \__ \  __/
-    \_| |_/\___\___\____/ \__,_|___/\___|
-                        realtime database
-
-   Copyright 2018-2022 by Ewout Stortenbeker (me@appy.one)
-   Published under MIT license
-
-   See docs at https://github.com/appy-one/acebase
-   ________________________________________________________________________________
-
-*/
-const simple_event_emitter_1 = require("./simple-event-emitter");
-const data_reference_1 = require("./data-reference");
-const type_mappings_1 = require("./type-mappings");
-const optional_observable_1 = require("./optional-observable");
-const debug_1 = require("./debug");
-const simple_colors_1 = require("./simple-colors");
-class AceBaseBaseSettings {
-    constructor(options) {
-        /**
-         * What level to use for console logging.
-         * @default 'log'
-         */
-        this.logLevel = 'log';
-        /**
-         * Whether to use colors in the console logs output
-         * @default true
-         */
-        this.logColors = true;
-        /**
-         * @internal (for internal use)
-         */
-        this.info = 'realtime database';
-        /**
-         * You can turn this on if you are a sponsor. See https://github.com/appy-one/acebase/discussions/100 for more info
-         */
-        this.sponsor = false;
-        if (typeof options !== 'object') {
-            options = {};
-        }
-        if (typeof options.logLevel === 'string') {
-            this.logLevel = options.logLevel;
-        }
-        if (typeof options.logColors === 'boolean') {
-            this.logColors = options.logColors;
-        }
-        if (typeof options.info === 'string') {
-            this.info = options.info;
-        }
-        if (typeof options.sponsor === 'boolean') {
-            this.sponsor = options.sponsor;
-        }
-    }
-}
-exports.AceBaseBaseSettings = AceBaseBaseSettings;
-class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
-    /**
-     * @param dbname Name of the database to open or create
-     */
-    constructor(dbname, options = {}) {
-        super();
-        this._ready = false;
-        options = new AceBaseBaseSettings(options);
-        this.name = dbname;
-        // Setup console logging
-        this.debug = new debug_1.DebugLogger(options.logLevel, `[${dbname}]`);
-        // Enable/disable logging with colors
-        (0, simple_colors_1.SetColorsEnabled)(options.logColors);
-        // ASCI art: http://patorjk.com/software/taag/#p=display&f=Doom&t=AceBase
-        const logoStyle = [simple_colors_1.ColorStyle.magenta, simple_colors_1.ColorStyle.bold];
-        const logo = '     ___          ______                ' + '\n' +
-            '    / _ \\         | ___ \\               ' + '\n' +
-            '   / /_\\ \\ ___ ___| |_/ / __ _ ___  ___ ' + '\n' +
-            '   |  _  |/ __/ _ \\ ___ \\/ _` / __|/ _ \\' + '\n' +
-            '   | | | | (_|  __/ |_/ / (_| \\__ \\  __/' + '\n' +
-            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|';
-        const info = (options.info ? ''.padStart(40 - options.info.length, ' ') + options.info + '\n' : '');
-        if (!options.sponsor) {
-            // if you are a sponsor, you can switch off the "AceBase banner ad"
-            this.debug.write(logo.colorize(logoStyle));
-            info && this.debug.write(info.colorize(simple_colors_1.ColorStyle.magenta));
-        }
-        // Setup type mapping functionality
-        this.types = new type_mappings_1.TypeMappings(this);
-        this.once('ready', () => {
-            // console.log(`database "${dbname}" (${this.constructor.name}) is ready to use`);
-            this._ready = true;
-        });
-    }
-    /**
-     * Waits for the database to be ready before running your callback.
-     * @param callback (optional) callback function that is called when the database is ready to be used. You can also use the returned promise.
-     * @returns returns a promise that resolves when ready
-     */
-    async ready(callback) {
-        if (!this._ready) {
-            // Wait for ready event
-            await new Promise(resolve => this.on('ready', resolve));
-        }
-        callback === null || callback === void 0 ? void 0 : callback();
-    }
-    get isReady() {
-        return this._ready;
-    }
-    /**
-     * Allow specific observable implementation to be used
-     * @param ObservableImpl Implementation to use
-     */
-    setObservable(ObservableImpl) {
-        (0, optional_observable_1.setObservable)(ObservableImpl);
-    }
-    /**
-     * Creates a reference to a node
-     * @param path
-     * @returns reference to the requested node
-     */
-    ref(path) {
-        return new data_reference_1.DataReference(this, path);
-    }
-    /**
-     * Get a reference to the root database node
-     * @returns reference to root node
-     */
-    get root() {
-        return this.ref('');
-    }
-    /**
-     * Creates a query on the requested node
-     * @param path
-     * @returns query for the requested node
-     */
-    query(path) {
-        const ref = new data_reference_1.DataReference(this, path);
-        return new data_reference_1.DataReferenceQuery(ref);
-    }
-    get indexes() {
-        return {
-            /**
-             * Gets all indexes
-             */
-            get: () => {
-                return this.api.getIndexes();
-            },
-            /**
-             * Creates an index on "key" for all child nodes at "path". If the index already exists, nothing happens.
-             * Example: creating an index on all "name" keys of child objects of path "system/users",
-             * will index "system/users/user1/name", "system/users/user2/name" etc.
-             * You can also use wildcard paths to enable indexing and quering of fragmented data.
-             * Example: path "users/*\/posts", key "title": will index all "title" keys in all posts of all users.
-             * @param path path to the container node
-             * @param key name of the key to index every container child node
-             * @param options any additional options
-             */
-            create: (path, key, options) => {
-                return this.api.createIndex(path, key, options);
-            },
-            /**
-             * Deletes an existing index from the database
-             */
-            delete: async (filePath) => {
-                return this.api.deleteIndex(filePath);
-            },
-        };
-    }
-    get schema() {
-        return {
-            get: (path) => {
-                return this.api.getSchema(path);
-            },
-            set: (path, schema) => {
-                return this.api.setSchema(path, schema);
-            },
-            all: () => {
-                return this.api.getSchemas();
-            },
-            check: (path, value, isUpdate) => {
-                return this.api.validateSchema(path, value, isUpdate);
-            },
-        };
-    }
-}
-exports.AceBaseBase = AceBaseBase;
-
-},{"./data-reference":8,"./debug":10,"./optional-observable":14,"./simple-colors":21,"./simple-event-emitter":22,"./type-mappings":25}],2:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.Api = void 0;
-class NotImplementedError extends Error {
-    constructor(name) { super(`${name} is not implemented`); }
-}
-/**
- * Refactor to type/interface once acebase and acebase-client have been ported to TS
- */
-class Api {
-    // eslint-disable-next-line @typescript-eslint/no-empty-function
-    constructor() { }
-    /**
-     * Provides statistics
-     * @param options
-     */
-    stats(options) { throw new NotImplementedError('stats'); }
-    /**
-     * @param path
-     * @param event event to subscribe to ("value", "child_added" etc)
-     * @param callback callback function
-     */
-    subscribe(path, event, callback, settings) { throw new NotImplementedError('subscribe'); }
-    unsubscribe(path, event, callback) { throw new NotImplementedError('unsubscribe'); }
-    update(path, updates, options) { throw new NotImplementedError('update'); }
-    set(path, value, options) { throw new NotImplementedError('set'); }
-    get(path, options) { throw new NotImplementedError('get'); }
-    transaction(path, callback, options) { throw new NotImplementedError('transaction'); }
-    exists(path) { throw new NotImplementedError('exists'); }
-    query(path, query, options) { throw new NotImplementedError('query'); }
-    reflect(path, type, args) { throw new NotImplementedError('reflect'); }
-    export(path, write, options) { throw new NotImplementedError('export'); }
-    import(path, read, options) { throw new NotImplementedError('import'); }
-    /** Creates an index on key for all child nodes at path */
-    createIndex(path, key, options) { throw new NotImplementedError('createIndex'); }
-    getIndexes() { throw new NotImplementedError('getIndexes'); }
-    deleteIndex(filePath) { throw new NotImplementedError('deleteIndex'); }
-    setSchema(path, schema) { throw new NotImplementedError('setSchema'); }
-    getSchema(path) { throw new NotImplementedError('getSchema'); }
-    getSchemas() { throw new NotImplementedError('getSchemas'); }
-    validateSchema(path, value, isUpdate) { throw new NotImplementedError('validateSchema'); }
-    getMutations(filter) { throw new NotImplementedError('getMutations'); }
-    getChanges(filter) { throw new NotImplementedError('getChanges'); }
-}
-exports.Api = Api;
-
-},{}],3:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ascii85 = void 0;
-function c(input, length, result) {
-    const b = [0, 0, 0, 0, 0];
-    for (let i = 0; i < length; i += 4) {
-        let n = ((input[i] * 256 + input[i + 1]) * 256 + input[i + 2]) * 256 + input[i + 3];
-        if (!n) {
-            result.push('z');
-        }
-        else {
-            for (let j = 0; j < 5; b[j++] = n % 85 + 33, n = Math.floor(n / 85))
-                ;
-            result.push(String.fromCharCode(b[4], b[3], b[2], b[1], b[0]));
-        }
-    }
-}
-function encode(arr) {
-    // summary: encodes input data in ascii85 string
-    // input: ArrayLike
-    const input = arr, result = [], remainder = input.length % 4, length = input.length - remainder;
-    c(input, length, result);
-    if (remainder) {
-        const t = new Uint8Array(4);
-        t.set(input.slice(length), 0);
-        c(t, 4, result);
-        let x = result.pop();
-        if (x == 'z') {
-            x = '!!!!!';
-        }
-        result.push(x.substr(0, remainder + 1));
-    }
-    let ret = result.join(''); // String
-    ret = '<~' + ret + '~>';
-    return ret;
-}
-exports.ascii85 = {
-    encode: function (arr) {
-        if (arr instanceof ArrayBuffer) {
-            arr = new Uint8Array(arr, 0, arr.byteLength);
-        }
-        return encode(arr);
-    },
-    decode: function (input) {
-        // summary: decodes the input string back to an ArrayBuffer
-        // input: String: the input string to decode
-        if (!input.startsWith('<~') || !input.endsWith('~>')) {
-            throw new Error('Invalid input string');
-        }
-        input = input.substr(2, input.length - 4);
-        const n = input.length, r = [], b = [0, 0, 0, 0, 0];
-        let t, x, y, d;
-        for (let i = 0; i < n; ++i) {
-            if (input.charAt(i) == 'z') {
-                r.push(0, 0, 0, 0);
-                continue;
-            }
-            for (let j = 0; j < 5; ++j) {
-                b[j] = input.charCodeAt(i + j) - 33;
-            }
-            d = n - i;
-            if (d < 5) {
-                for (let j = d; j < 4; b[++j] = 0)
-                    ;
-                b[d] = 85;
-            }
-            t = (((b[0] * 85 + b[1]) * 85 + b[2]) * 85 + b[3]) * 85 + b[4];
-            x = t & 255;
-            t >>>= 8;
-            y = t & 255;
-            t >>>= 8;
-            r.push(t >>> 8, t & 255, y, x);
-            for (let j = d; j < 5; ++j, r.pop())
-                ;
-            i += 4;
-        }
-        const data = new Uint8Array(r);
-        return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-    },
-};
-
-},{}],4:[function(require,module,exports){
-"use strict";
-var _a, _b;
-Object.defineProperty(exports, "__esModule", { value: true });
-const pad_1 = require("../pad");
-const env = typeof window === 'object' ? window : self, globalCount = Object.keys(env).length, mimeTypesLength = (_b = (_a = navigator.mimeTypes) === null || _a === void 0 ? void 0 : _a.length) !== null && _b !== void 0 ? _b : 0, clientId = (0, pad_1.default)((mimeTypesLength
-    + navigator.userAgent.length).toString(36)
-    + globalCount.toString(36), 4);
-function fingerprint() {
-    return clientId;
-}
-exports.default = fingerprint;
-
-},{"../pad":6}],5:[function(require,module,exports){
-"use strict";
-/**
- * cuid.js
- * Collision-resistant UID generator for browsers and node.
- * Sequential for fast db lookups and recency sorting.
- * Safe for element IDs and server-side lookups.
- *
- * Extracted from CLCTR
- *
- * Copyright (c) Eric Elliott 2012
- * MIT License
- *
- * time biasing added by Ewout Stortenbeker for AceBase
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-const fingerprint_1 = require("./fingerprint");
-const pad_1 = require("./pad");
-let c = 0;
-const blockSize = 4, base = 36, discreteValues = Math.pow(base, blockSize);
-function randomBlock() {
-    return (0, pad_1.default)((Math.random() * discreteValues << 0).toString(base), blockSize);
-}
-function safeCounter() {
-    c = c < discreteValues ? c : 0;
-    c++; // this is not subliminal
-    return c - 1;
-}
-function cuid(timebias = 0) {
-    // Starting with a lowercase letter makes
-    // it HTML element ID friendly.
-    const letter = 'c', // hard-coded allows for sequential access
-    // timestamp
-    // warning: this exposes the exact date and time
-    // that the uid was created.
-    // NOTES Ewout:
-    // - added timebias
-    // - at '2059/05/25 19:38:27.456', timestamp will become 1 character larger!
-    timestamp = (new Date().getTime() + timebias).toString(base), 
-    // Prevent same-machine collisions.
-    counter = (0, pad_1.default)(safeCounter().toString(base), blockSize), 
-    // A few chars to generate distinct ids for different
-    // clients (so different computers are far less
-    // likely to generate the same id)
-    print = (0, fingerprint_1.default)(), 
-    // Grab some more chars from Math.random()
-    random = randomBlock() + randomBlock();
-    return letter + timestamp + counter + print + random;
-}
-exports.default = cuid;
-// Not using slugs, removed code
-
-},{"./fingerprint":4,"./pad":6}],6:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-function pad(num, size) {
-    const s = '000000000' + num;
-    return s.substr(s.length - size);
-}
-exports.default = pad;
-
-},{}],7:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.OrderedCollectionProxy = exports.proxyAccess = exports.LiveDataProxy = void 0;
-const utils_1 = require("./utils");
-const data_reference_1 = require("./data-reference");
-const data_snapshot_1 = require("./data-snapshot");
-const path_reference_1 = require("./path-reference");
-const id_1 = require("./id");
-const optional_observable_1 = require("./optional-observable");
-const process_1 = require("./process");
-const path_info_1 = require("./path-info");
-const simple_event_emitter_1 = require("./simple-event-emitter");
-class RelativeNodeTarget extends Array {
-    static areEqual(t1, t2) {
-        return t1.length === t2.length && t1.every((key, i) => t2[i] === key);
-    }
-    static isAncestor(ancestor, other) {
-        return ancestor.length < other.length && ancestor.every((key, i) => other[i] === key);
-    }
-    static isDescendant(descendant, other) {
-        return descendant.length > other.length && other.every((key, i) => descendant[i] === key);
-    }
-}
-const isProxy = Symbol('isProxy');
-class LiveDataProxy {
-    /**
-     * Creates a live data proxy for the given reference. The data of the reference's path will be loaded, and kept in-sync
-     * with live data by listening for 'mutations' events. Any changes made to the value by the client will be synced back
-     * to the database.
-     * @param ref DataReference to create proxy for.
-     * @param options proxy initialization options
-     * be written to the database.
-     */
-    static async create(ref, options) {
-        var _a;
-        ref = new data_reference_1.DataReference(ref.db, ref.path); // Use copy to prevent context pollution on original reference
-        let cache, loaded = false;
-        let latestCursor = options === null || options === void 0 ? void 0 : options.cursor;
-        let proxy;
-        const proxyId = id_1.ID.generate(); //ref.push().key;
-        // let onMutationCallback: ProxyObserveMutationsCallback;
-        // let onErrorCallback: ProxyObserveErrorCallback = err => {
-        //     console.error(err.message, err.details);
-        // };
-        const clientSubscriptions = [];
-        const clientEventEmitter = new simple_event_emitter_1.SimpleEventEmitter();
-        clientEventEmitter.on('cursor', (cursor) => latestCursor = cursor);
-        clientEventEmitter.on('error', (err) => {
-            console.error(err.message, err.details);
-        });
-        const applyChange = (keys, newValue) => {
-            // Make changes to cache
-            if (keys.length === 0) {
-                cache = newValue;
-                return true;
-            }
-            const allowCreation = false; //cache === null; // If the proxy'd target did not exist upon load, we must allow it to be created now.
-            if (allowCreation) {
-                cache = typeof keys[0] === 'number' ? [] : {};
-            }
-            let target = cache;
-            const trailKeys = keys.slice();
-            while (trailKeys.length > 1) {
-                const key = trailKeys.shift();
-                if (!(key in target)) {
-                    if (allowCreation) {
-                        target[key] = typeof key === 'number' ? [] : {};
-                    }
-                    else {
-                        // Have we missed an event, or are local pending mutations creating this conflict?
-                        return false; // Do not proceed
-                    }
-                }
-                target = target[key];
-            }
-            const prop = trailKeys.shift();
-            if (newValue === null) {
-                // Remove it
-                target instanceof Array ? target.splice(prop, 1) : delete target[prop];
-            }
-            else {
-                // Set or update it
-                target[prop] = newValue;
-            }
-            return true;
-        };
-        // Subscribe to mutations events on the target path
-        const syncFallback = async () => {
-            if (!loaded) {
-                return;
-            }
-            await reload();
-        };
-        const subscription = ref.on('mutations', { syncFallback }).subscribe(async (snap) => {
-            var _a;
-            if (!loaded) {
-                return;
-            }
-            const context = snap.context();
-            const isRemote = ((_a = context.acebase_proxy) === null || _a === void 0 ? void 0 : _a.id) !== proxyId;
-            if (!isRemote) {
-                return; // Update was done through this proxy, no need to update cache or trigger local value subscriptions
-            }
-            const mutations = snap.val(false);
-            const proceed = mutations.every(mutation => {
-                if (!applyChange(mutation.target, mutation.val)) {
-                    return false;
-                }
-                // if (onMutationCallback) {
-                const changeRef = mutation.target.reduce((ref, key) => ref.child(key), ref);
-                const changeSnap = new data_snapshot_1.DataSnapshot(changeRef, mutation.val, false, mutation.prev, snap.context());
-                // onMutationCallback(changeSnap, isRemote); // onMutationCallback uses try/catch for client callback
-                clientEventEmitter.emit('mutation', { snapshot: changeSnap, isRemote });
-                // }
-                return true;
-            });
-            if (proceed) {
-                clientEventEmitter.emit('cursor', context.acebase_cursor); // // NOTE: cursor is only present in mutations done remotely. For our own updates, server cursors are returned by ref.set and ref.update
-                localMutationsEmitter.emit('mutations', { origin: 'remote', snap });
-            }
-            else {
-                console.warn(`Cached value of live data proxy on "${ref.path}" appears outdated, will be reloaded`);
-                await reload();
-            }
-        });
-        // Setup updating functionality: enqueue all updates, process them at next tick in the order they were issued
-        let processPromise = Promise.resolve();
-        const mutationQueue = [];
-        const transactions = [];
-        const pushLocalMutations = async () => {
-            // Sync all local mutations that are not in a transaction
-            const mutations = [];
-            for (let i = 0, m = mutationQueue[0]; i < mutationQueue.length; i++, m = mutationQueue[i]) {
-                if (!transactions.find(t => RelativeNodeTarget.areEqual(t.target, m.target) || RelativeNodeTarget.isAncestor(t.target, m.target))) {
-                    mutationQueue.splice(i, 1);
-                    i--;
-                    mutations.push(m);
-                }
-            }
-            if (mutations.length === 0) {
-                return;
-            }
-            // Add current (new) values to mutations
-            mutations.forEach(mutation => {
-                mutation.value = (0, utils_1.cloneObject)(getTargetValue(cache, mutation.target));
-            });
-            // Run local onMutation & onChange callbacks in the next tick
-            process_1.default.nextTick(() => {
-                // Run onMutation callback for each changed node
-                const context = { acebase_proxy: { id: proxyId, source: 'update' } };
-                // if (onMutationCallback) {
-                mutations.forEach(mutation => {
-                    const mutationRef = mutation.target.reduce((ref, key) => ref.child(key), ref);
-                    const mutationSnap = new data_snapshot_1.DataSnapshot(mutationRef, mutation.value, false, mutation.previous, context);
-                    // onMutationCallback(mutationSnap, false);
-                    clientEventEmitter.emit('mutation', { snapshot: mutationSnap, isRemote: false });
-                });
-                // }
-                // Notify local subscribers
-                const snap = new data_snapshot_1.MutationsDataSnapshot(ref, mutations.map(m => ({ target: m.target, val: m.value, prev: m.previous })), context);
-                localMutationsEmitter.emit('mutations', { origin: 'local', snap });
-            });
-            // Update database async
-            // const batchId = ID.generate();
-            processPromise = mutations
-                .reduce((mutations, m, i, arr) => {
-                // Only keep top path mutations to prevent unneccessary child path updates
-                if (!arr.some(other => RelativeNodeTarget.isAncestor(other.target, m.target))) {
-                    mutations.push(m);
-                }
-                return mutations;
-            }, [])
-                .reduce((updates, m) => {
-                // Prepare db updates
-                const target = m.target;
-                if (target.length === 0) {
-                    // Overwrite this proxy's root value
-                    updates.push({ ref, target, value: cache, type: 'set', previous: m.previous });
-                }
-                else {
-                    const parentTarget = target.slice(0, -1);
-                    const key = target.slice(-1)[0];
-                    const parentRef = parentTarget.reduce((ref, key) => ref.child(key), ref);
-                    const parentUpdate = updates.find(update => update.ref.path === parentRef.path);
-                    const cacheValue = getTargetValue(cache, target); // m.value?
-                    const prevValue = m.previous;
-                    if (parentUpdate) {
-                        parentUpdate.value[key] = cacheValue;
-                        parentUpdate.previous[key] = prevValue;
-                    }
-                    else {
-                        updates.push({ ref: parentRef, target: parentTarget, value: { [key]: cacheValue }, type: 'update', previous: { [key]: prevValue } });
-                    }
-                }
-                return updates;
-            }, [])
-                .reduce(async (promise, update /*, i, updates */) => {
-                // Execute db update
-                // i === 0 && console.log(`Proxy: processing ${updates.length} db updates to paths:`, updates.map(update => update.ref.path));
-                const context = {
-                    acebase_proxy: {
-                        id: proxyId,
-                        source: update.type,
-                        // update_id: ID.generate(),
-                        // batch_id: batchId,
-                        // batch_updates: updates.length
-                    },
-                };
-                await promise;
-                await update.ref
-                    .context(context)[update.type](update.value) // .set or .update
-                    .catch(err => {
-                    clientEventEmitter.emit('error', { source: 'update', message: `Error processing update of "/${ref.path}"`, details: err });
-                    // console.warn(`Proxy could not update DB, should rollback (${update.type}) the proxy value of "${update.ref.path}" to: `, update.previous);
-                    const context = { acebase_proxy: { id: proxyId, source: 'update-rollback' } };
-                    const mutations = [];
-                    if (update.type === 'set') {
-                        setTargetValue(cache, update.target, update.previous);
-                        const mutationSnap = new data_snapshot_1.DataSnapshot(update.ref, update.previous, false, update.value, context);
-                        clientEventEmitter.emit('mutation', { snapshot: mutationSnap, isRemote: false });
-                        mutations.push({ target: update.target, val: update.previous, prev: update.value });
-                    }
-                    else {
-                        // update
-                        Object.keys(update.previous).forEach(key => {
-                            setTargetValue(cache, update.target.concat(key), update.previous[key]);
-                            const mutationSnap = new data_snapshot_1.DataSnapshot(update.ref.child(key), update.previous[key], false, update.value[key], context);
-                            clientEventEmitter.emit('mutation', { snapshot: mutationSnap, isRemote: false });
-                            mutations.push({ target: update.target.concat(key), val: update.previous[key], prev: update.value[key] });
-                        });
-                    }
-                    // Run onMutation callback for each node being rolled back
-                    mutations.forEach(m => {
-                        const mutationRef = m.target.reduce((ref, key) => ref.child(key), ref);
-                        const mutationSnap = new data_snapshot_1.DataSnapshot(mutationRef, m.val, false, m.prev, context);
-                        clientEventEmitter.emit('mutation', { snapshot: mutationSnap, isRemote: false });
-                    });
-                    // Notify local subscribers:
-                    const snap = new data_snapshot_1.MutationsDataSnapshot(update.ref, mutations, context);
-                    localMutationsEmitter.emit('mutations', { origin: 'local', snap });
-                });
-                if (update.ref.cursor) {
-                    // Should also be available in context.acebase_cursor now
-                    clientEventEmitter.emit('cursor', update.ref.cursor);
-                }
-            }, processPromise);
-            await processPromise;
-        };
-        let syncInProgress = false;
-        const syncPromises = [];
-        const syncCompleted = () => {
-            let resolve;
-            const promise = new Promise(rs => resolve = rs);
-            syncPromises.push({ resolve });
-            return promise;
-        };
-        let processQueueTimeout = null;
-        const scheduleSync = () => {
-            if (!processQueueTimeout) {
-                processQueueTimeout = setTimeout(async () => {
-                    syncInProgress = true;
-                    processQueueTimeout = null;
-                    await pushLocalMutations();
-                    syncInProgress = false;
-                    syncPromises.splice(0).forEach(p => p.resolve());
-                }, 0);
-            }
-        };
-        const flagOverwritten = (target) => {
-            if (!mutationQueue.find(m => RelativeNodeTarget.areEqual(m.target, target))) {
-                mutationQueue.push({ target, previous: (0, utils_1.cloneObject)(getTargetValue(cache, target)) });
-            }
-            // schedule database updates
-            scheduleSync();
-        };
-        const localMutationsEmitter = new simple_event_emitter_1.SimpleEventEmitter();
-        const addOnChangeHandler = (target, callback) => {
-            const isObject = (val) => val !== null && typeof val === 'object';
-            const mutationsHandler = async (details) => {
-                var _a;
-                const { snap, origin } = details;
-                const context = snap.context();
-                const causedByOurProxy = ((_a = context.acebase_proxy) === null || _a === void 0 ? void 0 : _a.id) === proxyId;
-                if (details.origin === 'remote' && causedByOurProxy) {
-                    // Any local changes already triggered subscription callbacks
-                    console.error('DEV ISSUE: mutationsHandler was called from remote event originating from our own proxy');
-                    return;
-                }
-                const mutations = snap.val(false).filter(mutation => {
-                    // Keep mutations impacting the subscribed target: mutations on target, or descendant or ancestor of target
-                    return mutation.target.slice(0, target.length).every((key, i) => target[i] === key);
-                });
-                if (mutations.length === 0) {
-                    return;
-                }
-                let newValue, previousValue;
-                // If there is a mutation on the target itself, or parent/ancestor path, there can only be one. We can take a shortcut
-                const singleMutation = mutations.find(m => m.target.length <= target.length);
-                if (singleMutation) {
-                    const trailKeys = target.slice(singleMutation.target.length);
-                    newValue = trailKeys.reduce((val, key) => !isObject(val) || !(key in val) ? null : val[key], singleMutation.val);
-                    previousValue = trailKeys.reduce((val, key) => !isObject(val) || !(key in val) ? null : val[key], singleMutation.prev);
-                }
-                else {
-                    // All mutations are on children/descendants of our target
-                    // Construct new & previous values by combining cache and snapshot
-                    const currentValue = getTargetValue(cache, target);
-                    newValue = (0, utils_1.cloneObject)(currentValue);
-                    previousValue = (0, utils_1.cloneObject)(newValue);
-                    mutations.forEach(mutation => {
-                        // mutation.target is relative to proxy root
-                        const trailKeys = mutation.target.slice(target.length);
-                        for (let i = 0, val = newValue, prev = previousValue; i < trailKeys.length; i++) { // arr = PathInfo.getPathKeys(mutationPath).slice(PathInfo.getPathKeys(targetRef.path).length)
-                            const last = i + 1 === trailKeys.length, key = trailKeys[i];
-                            if (last) {
-                                val[key] = mutation.val;
-                                if (val[key] === null) {
-                                    delete val[key];
-                                }
-                                prev[key] = mutation.prev;
-                                if (prev[key] === null) {
-                                    delete prev[key];
-                                }
-                            }
-                            else {
-                                val = val[key] = key in val ? val[key] : {};
-                                prev = prev[key] = key in prev ? prev[key] : {};
-                            }
-                        }
-                    });
-                }
-                process_1.default.nextTick(() => {
-                    // Run callback with read-only (frozen) values in next tick
-                    let keepSubscription = true;
-                    try {
-                        keepSubscription = false !== callback(Object.freeze(newValue), Object.freeze(previousValue), !causedByOurProxy, context);
-                    }
-                    catch (err) {
-                        clientEventEmitter.emit('error', { source: origin === 'remote' ? 'remote_update' : 'local_update', message: 'Error running subscription callback', details: err });
-                    }
-                    if (keepSubscription === false) {
-                        stop();
-                    }
-                });
-            };
-            localMutationsEmitter.on('mutations', mutationsHandler);
-            const stop = () => {
-                localMutationsEmitter.off('mutations').off('mutations', mutationsHandler);
-                clientSubscriptions.splice(clientSubscriptions.findIndex(cs => cs.stop === stop), 1);
-            };
-            clientSubscriptions.push({ target, stop });
-            return { stop };
-        };
-        const handleFlag = (flag, target, args) => {
-            if (flag === 'write') {
-                return flagOverwritten(target);
-            }
-            else if (flag === 'onChange') {
-                return addOnChangeHandler(target, args.callback);
-            }
-            else if (flag === 'subscribe' || flag === 'observe') {
-                const subscribe = (subscriber) => {
-                    const currentValue = getTargetValue(cache, target);
-                    subscriber.next(currentValue);
-                    const subscription = addOnChangeHandler(target, (value /*, previous, isRemote, context */) => {
-                        subscriber.next(value);
-                    });
-                    return function unsubscribe() {
-                        subscription.stop();
-                    };
-                };
-                if (flag === 'subscribe') {
-                    return subscribe;
-                }
-                // Try to load Observable
-                const Observable = (0, optional_observable_1.getObservable)();
-                return new Observable(subscribe);
-            }
-            else if (flag === 'transaction') {
-                const hasConflictingTransaction = transactions.some(t => RelativeNodeTarget.areEqual(target, t.target) || RelativeNodeTarget.isAncestor(target, t.target) || RelativeNodeTarget.isDescendant(target, t.target));
-                if (hasConflictingTransaction) {
-                    // TODO: Wait for this transaction to finish, then try again
-                    return Promise.reject(new Error('Cannot start transaction because it conflicts with another transaction'));
-                }
-                return new Promise(async (resolve) => {
-                    // If there are pending mutations on target (or deeper), wait until they have been synchronized
-                    const hasPendingMutations = mutationQueue.some(m => RelativeNodeTarget.areEqual(target, m.target) || RelativeNodeTarget.isAncestor(target, m.target));
-                    if (hasPendingMutations) {
-                        if (!syncInProgress) {
-                            scheduleSync();
-                        }
-                        await syncCompleted();
-                    }
-                    const tx = { target, status: 'started', transaction: null };
-                    transactions.push(tx);
-                    tx.transaction = {
-                        get status() { return tx.status; },
-                        get completed() { return tx.status !== 'started'; },
-                        get mutations() {
-                            return mutationQueue.filter(m => RelativeNodeTarget.areEqual(tx.target, m.target) || RelativeNodeTarget.isAncestor(tx.target, m.target));
-                        },
-                        get hasMutations() {
-                            return this.mutations.length > 0;
-                        },
-                        async commit() {
-                            if (this.completed) {
-                                throw new Error(`Transaction has completed already (status '${tx.status}')`);
-                            }
-                            tx.status = 'finished';
-                            transactions.splice(transactions.indexOf(tx), 1);
-                            if (syncInProgress) {
-                                // Currently syncing without our mutations
-                                await syncCompleted();
-                            }
-                            scheduleSync();
-                            await syncCompleted();
-                        },
-                        rollback() {
-                            // Remove mutations from queue
-                            if (this.completed) {
-                                throw new Error(`Transaction has completed already (status '${tx.status}')`);
-                            }
-                            tx.status = 'canceled';
-                            const mutations = [];
-                            for (let i = 0; i < mutationQueue.length; i++) {
-                                const m = mutationQueue[i];
-                                if (RelativeNodeTarget.areEqual(tx.target, m.target) || RelativeNodeTarget.isAncestor(tx.target, m.target)) {
-                                    mutationQueue.splice(i, 1);
-                                    i--;
-                                    mutations.push(m);
-                                }
-                            }
-                            // Replay mutations in reverse order
-                            mutations.reverse()
-                                .forEach(m => {
-                                if (m.target.length === 0) {
-                                    cache = m.previous;
-                                }
-                                else {
-                                    setTargetValue(cache, m.target, m.previous);
-                                }
-                            });
-                            // Remove transaction
-                            transactions.splice(transactions.indexOf(tx), 1);
-                        },
-                    };
-                    resolve(tx.transaction);
-                });
-            }
-        };
-        const snap = await ref.get({ cache_mode: 'allow', cache_cursor: options === null || options === void 0 ? void 0 : options.cursor });
-        // const gotOfflineStartValue = snap.context().acebase_origin === 'cache';
-        // if (gotOfflineStartValue) {
-        //     console.warn(`Started data proxy with cached value of "${ref.path}", check if its value is reloaded on next connection!`);
-        // }
-        if (snap.context().acebase_origin !== 'cache') {
-            clientEventEmitter.emit('cursor', (_a = ref.cursor) !== null && _a !== void 0 ? _a : null); // latestCursor = snap.context().acebase_cursor ?? null;
-        }
-        loaded = true;
-        cache = snap.val();
-        if (cache === null && typeof (options === null || options === void 0 ? void 0 : options.defaultValue) !== 'undefined') {
-            cache = options.defaultValue;
-            const context = {
-                acebase_proxy: {
-                    id: proxyId,
-                    source: 'default',
-                    // update_id: ID.generate()
-                },
-            };
-            await ref.context(context).set(cache);
-        }
-        proxy = createProxy({ root: { ref, get cache() { return cache; } }, target: [], id: proxyId, flag: handleFlag });
-        const assertProxyAvailable = () => {
-            if (proxy === null) {
-                throw new Error('Proxy was destroyed');
-            }
-        };
-        const reload = async () => {
-            // Manually reloads current value when cache is out of sync, which should only
-            // be able to happen if an AceBaseClient is used without cache database,
-            // and the connection to the server was lost for a while. In all other cases,
-            // there should be no need to call this method.
-            assertProxyAvailable();
-            mutationQueue.splice(0); // Remove pending mutations. Will be empty in production, but might not be while debugging, leading to weird behaviour.
-            const snap = await ref.get({ allow_cache: false });
-            const oldVal = cache, newVal = snap.val();
-            cache = newVal;
-            // Compare old and new values
-            const mutations = (0, utils_1.getMutations)(oldVal, newVal);
-            if (mutations.length === 0) {
-                return; // Nothing changed
-            }
-            // Run onMutation callback for each changed node
-            const context = snap.context(); // context might contain acebase_cursor if server support that
-            context.acebase_proxy = { id: proxyId, source: 'reload' };
-            // if (onMutationCallback) {
-            mutations.forEach(m => {
-                const targetRef = getTargetRef(ref, m.target);
-                const newSnap = new data_snapshot_1.DataSnapshot(targetRef, m.val, m.val === null, m.prev, context);
-                clientEventEmitter.emit('mutation', { snapshot: newSnap, isRemote: true });
-            });
-            // }
-            // Notify local subscribers
-            const mutationsSnap = new data_snapshot_1.MutationsDataSnapshot(ref, mutations, context);
-            localMutationsEmitter.emit('mutations', { origin: 'local', snap: mutationsSnap });
-        };
-        return {
-            async destroy() {
-                await processPromise;
-                const promises = [
-                    subscription.stop(),
-                    ...clientSubscriptions.map(cs => cs.stop()),
-                ];
-                await Promise.all(promises);
-                ['cursor', 'mutation', 'error'].forEach(event => clientEventEmitter.off(event));
-                cache = null; // Remove cache
-                proxy = null;
-            },
-            stop() {
-                this.destroy();
-            },
-            get value() {
-                assertProxyAvailable();
-                return proxy;
-            },
-            get hasValue() {
-                assertProxyAvailable();
-                return cache !== null;
-            },
-            set value(val) {
-                // Overwrite the value of the proxied path itself!
-                assertProxyAvailable();
-                if (val !== null && typeof val === 'object' && val[isProxy]) {
-                    // Assigning one proxied value to another
-                    val = val.valueOf();
-                }
-                flagOverwritten([]);
-                cache = val;
-            },
-            get ref() {
-                return ref;
-            },
-            get cursor() {
-                return latestCursor;
-            },
-            reload,
-            onMutation(callback) {
-                // Fires callback each time anything changes
-                assertProxyAvailable();
-                clientEventEmitter.off('mutation'); // Mimic legacy behaviour that overwrites handler
-                clientEventEmitter.on('mutation', ({ snapshot, isRemote }) => {
-                    try {
-                        callback(snapshot, isRemote);
-                    }
-                    catch (err) {
-                        clientEventEmitter.emit('error', { source: 'mutation_callback', message: 'Error in dataproxy onMutation callback', details: err });
-                    }
-                });
-            },
-            onError(callback) {
-                // Fires callback each time anything goes wrong
-                assertProxyAvailable();
-                clientEventEmitter.off('error'); // Mimic legacy behaviour that overwrites handler
-                clientEventEmitter.on('error', (err) => {
-                    try {
-                        callback(err);
-                    }
-                    catch (err) {
-                        console.error(`Error in dataproxy onError callback: ${err.message}`);
-                    }
-                });
-            },
-            on(event, callback) {
-                clientEventEmitter.on(event, callback);
-            },
-            off(event, callback) {
-                clientEventEmitter.off(event, callback);
-            },
-        };
-    }
-}
-exports.LiveDataProxy = LiveDataProxy;
-function getTargetValue(obj, target) {
-    let val = obj;
-    for (const key of target) {
-        val = typeof val === 'object' && val !== null && key in val ? val[key] : null;
-    }
-    return val;
-}
-function setTargetValue(obj, target, value) {
-    if (target.length === 0) {
-        throw new Error('Cannot update root target, caller must do that itself!');
-    }
-    const targetObject = target.slice(0, -1).reduce((obj, key) => obj[key], obj);
-    const prop = target.slice(-1)[0];
-    if (value === null || typeof value === 'undefined') {
-        // Remove it
-        targetObject instanceof Array ? targetObject.splice(prop, 1) : delete targetObject[prop];
-    }
-    else {
-        // Set or update it
-        targetObject[prop] = value;
-    }
-}
-function getTargetRef(ref, target) {
-    // Create new DataReference to prevent context reuse
-    const path = path_info_1.PathInfo.get(ref.path).childPath(target);
-    return new data_reference_1.DataReference(ref.db, path);
-}
-function createProxy(context) {
-    const targetRef = getTargetRef(context.root.ref, context.target);
-    const childProxies = [];
-    const handler = {
-        get(target, prop, receiver) {
-            target = getTargetValue(context.root.cache, context.target);
-            if (typeof prop === 'symbol') {
-                if (prop.toString() === Symbol.iterator.toString()) {
-                    // Use .values for @@iterator symbol
-                    prop = 'values';
-                }
-                else if (prop.toString() === isProxy.toString()) {
-                    return true;
-                }
-                else {
-                    return Reflect.get(target, prop, receiver);
-                }
-            }
-            if (prop === 'valueOf') {
-                return function valueOf() { return target; };
-            }
-            if (target === null || typeof target !== 'object') {
-                throw new Error(`Cannot read property "${prop}" of ${target}. Value of path "/${targetRef.path}" is not an object (anymore)`);
-            }
-            if (target instanceof Array && typeof prop === 'string' && /^[0-9]+$/.test(prop)) {
-                // Proxy type definitions say prop can be a number, but this is never the case.
-                prop = parseInt(prop);
-            }
-            const value = target[prop];
-            if (value === null) {
-                // Removed property. Should never happen, but if it does:
-                delete target[prop];
-                return; // undefined
-            }
-            // Check if we have a child proxy for this property already.
-            // If so, and the properties' typeof value did not change, return that
-            const childProxy = childProxies.find(proxy => proxy.prop === prop);
-            if (childProxy) {
-                if (childProxy.typeof === typeof value) {
-                    return childProxy.value;
-                }
-                childProxies.splice(childProxies.indexOf(childProxy), 1);
-            }
-            const proxifyChildValue = (prop) => {
-                const value = target[prop]; //
-                const childProxy = childProxies.find(child => child.prop === prop);
-                if (childProxy) {
-                    if (childProxy.typeof === typeof value) {
-                        return childProxy.value;
-                    }
-                    childProxies.splice(childProxies.indexOf(childProxy), 1);
-                }
-                if (typeof value !== 'object') {
-                    // Can't proxify non-object values
-                    return value;
-                }
-                const newChildProxy = createProxy({ root: context.root, target: context.target.concat(prop), id: context.id, flag: context.flag });
-                childProxies.push({ typeof: typeof value, prop, value: newChildProxy });
-                return newChildProxy;
-            };
-            const unproxyValue = (value) => {
-                return value !== null && typeof value === 'object' && value[isProxy]
-                    ? value.getTarget()
-                    : value;
-            };
-            // If the property contains a simple value, return it.
-            if (['string', 'number', 'boolean'].includes(typeof value)
-                || value instanceof Date
-                || value instanceof path_reference_1.PathReference
-                || value instanceof ArrayBuffer
-                || (typeof value === 'object' && 'buffer' in value) // Typed Arrays
-            ) {
-                return value;
-            }
-            const isArray = target instanceof Array;
-            if (prop === 'toString') {
-                return function toString() {
-                    return `[LiveDataProxy for "${targetRef.path}"]`;
-                };
-            }
-            if (typeof value === 'undefined') {
-                if (prop === 'push') {
-                    // Push item to an object collection
-                    return function push(item) {
-                        const childRef = targetRef.push();
-                        context.flag('write', context.target.concat(childRef.key)); //, { previous: null }
-                        target[childRef.key] = item;
-                        return childRef.key;
-                    };
-                }
-                if (prop === 'getTarget') {
-                    // Get unproxied readonly (but still live) version of data.
-                    return function (warn = true) {
-                        warn && console.warn('Use getTarget with caution - any changes will not be synchronized!');
-                        return target;
-                    };
-                }
-                if (prop === 'getRef') {
-                    // Gets the DataReference to this data target
-                    return function getRef() {
-                        const ref = getTargetRef(context.root.ref, context.target);
-                        return ref;
-                    };
-                }
-                if (prop === 'forEach') {
-                    return function forEach(callback) {
-                        const keys = Object.keys(target);
-                        // Fix: callback with unproxied value
-                        let stop = false;
-                        for (let i = 0; !stop && i < keys.length; i++) {
-                            const key = keys[i];
-                            const value = proxifyChildValue(key); //, target[key]
-                            stop = callback(value, key, i) === false;
-                        }
-                    };
-                }
-                if (['values', 'entries', 'keys'].includes(prop)) {
-                    return function* generator() {
-                        const keys = Object.keys(target);
-                        for (const key of keys) {
-                            if (prop === 'keys') {
-                                yield key;
-                            }
-                            else {
-                                const value = proxifyChildValue(key); //, target[key]
-                                if (prop === 'entries') {
-                                    yield [key, value];
-                                }
-                                else {
-                                    yield value;
-                                }
-                            }
-                        }
-                    };
-                }
-                if (prop === 'toArray') {
-                    return function toArray(sortFn) {
-                        const arr = Object.keys(target).map(key => proxifyChildValue(key)); //, target[key]
-                        if (sortFn) {
-                            arr.sort(sortFn);
-                        }
-                        return arr;
-                    };
-                }
-                if (prop === 'onChanged') {
-                    // Starts monitoring the value
-                    return function onChanged(callback) {
-                        return context.flag('onChange', context.target, { callback });
-                    };
-                }
-                if (prop === 'subscribe') {
-                    // Gets subscriber function to use with Observables, or custom handling
-                    return function subscribe() {
-                        return context.flag('subscribe', context.target);
-                    };
-                }
-                if (prop === 'getObservable') {
-                    // Creates an observable for monitoring the value
-                    return function getObservable() {
-                        return context.flag('observe', context.target);
-                    };
-                }
-                if (prop === 'getOrderedCollection') {
-                    return function getOrderedCollection(orderProperty, orderIncrement) {
-                        return new OrderedCollectionProxy(this, orderProperty, orderIncrement);
-                    };
-                }
-                if (prop === 'startTransaction') {
-                    return function startTransaction() {
-                        return context.flag('transaction', context.target);
-                    };
-                }
-                if (prop === 'remove' && !isArray) {
-                    // Removes target from object collection
-                    return function remove() {
-                        if (context.target.length === 0) {
-                            throw new Error('Can\'t remove proxy root value');
-                        }
-                        const parent = getTargetValue(context.root.cache, context.target.slice(0, -1));
-                        const key = context.target.slice(-1)[0];
-                        context.flag('write', context.target);
-                        delete parent[key];
-                    };
-                }
-                return; // undefined
-            }
-            else if (typeof value === 'function') {
-                if (isArray) {
-                    // Handle array methods
-                    const writeArray = (action) => {
-                        context.flag('write', context.target);
-                        return action();
-                    };
-                    const cleanArrayValues = (values) => values.map((value) => {
-                        value = unproxyValue(value);
-                        removeVoidProperties(value);
-                        return value;
-                    });
-                    // Methods that directly change the array:
-                    if (prop === 'push') {
-                        return function push(...items) {
-                            items = cleanArrayValues(items);
-                            return writeArray(() => target.push(...items)); // push the items to the cache array
-                        };
-                    }
-                    if (prop === 'pop') {
-                        return function pop() {
-                            return writeArray(() => target.pop());
-                        };
-                    }
-                    if (prop === 'splice') {
-                        return function splice(start, deleteCount, ...items) {
-                            items = cleanArrayValues(items);
-                            return writeArray(() => target.splice(start, deleteCount, ...items));
-                        };
-                    }
-                    if (prop === 'shift') {
-                        return function shift() {
-                            return writeArray(() => target.shift());
-                        };
-                    }
-                    if (prop === 'unshift') {
-                        return function unshift(...items) {
-                            items = cleanArrayValues(items);
-                            return writeArray(() => target.unshift(...items));
-                        };
-                    }
-                    if (prop === 'sort') {
-                        return function sort(compareFn) {
-                            return writeArray(() => target.sort(compareFn));
-                        };
-                    }
-                    if (prop === 'reverse') {
-                        return function reverse() {
-                            return writeArray(() => target.reverse());
-                        };
-                    }
-                    // Methods that do not change the array themselves, but
-                    // have callbacks that might, or return child values:
-                    if (['indexOf', 'lastIndexOf'].includes(prop)) {
-                        return function indexOf(item, start) {
-                            if (item !== null && typeof item === 'object' && item[isProxy]) {
-                                // Use unproxied value, or array.indexOf will return -1 (fixes issue #1)
-                                item = item.getTarget(false);
-                            }
-                            return target[prop](item, start);
-                        };
-                    }
-                    if (['forEach', 'every', 'some', 'filter', 'map'].includes(prop)) {
-                        return function iterate(callback) {
-                            return target[prop]((value, i) => {
-                                return callback(proxifyChildValue(i), i, proxy); //, value
-                            });
-                        };
-                    }
-                    if (['reduce', 'reduceRight'].includes(prop)) {
-                        return function reduce(callback, initialValue) {
-                            return target[prop]((prev, value, i) => {
-                                return callback(prev, proxifyChildValue(i), i, proxy); //, value
-                            }, initialValue);
-                        };
-                    }
-                    if (['find', 'findIndex'].includes(prop)) {
-                        return function find(callback) {
-                            let value = target[prop]((value, i) => {
-                                return callback(proxifyChildValue(i), i, proxy); // , value
-                            });
-                            if (prop === 'find' && value) {
-                                const index = target.indexOf(value);
-                                value = proxifyChildValue(index); //, value
-                            }
-                            return value;
-                        };
-                    }
-                    if (['values', 'entries', 'keys'].includes(prop)) {
-                        return function* generator() {
-                            for (let i = 0; i < target.length; i++) {
-                                if (prop === 'keys') {
-                                    yield i;
-                                }
-                                else {
-                                    const value = proxifyChildValue(i); //, target[i]
-                                    if (prop === 'entries') {
-                                        yield [i, value];
-                                    }
-                                    else {
-                                        yield value;
-                                    }
-                                }
-                            }
-                        };
-                    }
-                }
-                // Other function (or not an array), should not alter its value
-                // return function fn(...args) {
-                //     return target[prop](...args);
-                // }
-                return value;
-            }
-            // Proxify any other value
-            return proxifyChildValue(prop); //, value
-        },
-        set(target, prop, value, receiver) {
-            // Eg: chats.chat1.title = 'New chat title';
-            // target === chats.chat1, prop === 'title'
-            target = getTargetValue(context.root.cache, context.target);
-            if (typeof prop === 'symbol') {
-                return Reflect.set(target, prop, value, receiver);
-            }
-            if (target === null || typeof target !== 'object') {
-                throw new Error(`Cannot set property "${prop}" of ${target}. Value of path "/${targetRef.path}" is not an object`);
-            }
-            if (target instanceof Array && typeof prop === 'string') {
-                if (!/^[0-9]+$/.test(prop)) {
-                    throw new Error(`Cannot set property "${prop}" on array value of path "/${targetRef.path}"`);
-                }
-                prop = parseInt(prop);
-            }
-            if (value !== null) {
-                if (typeof value === 'object') {
-                    if (value[isProxy]) {
-                        // Assigning one proxied value to another
-                        value = value.valueOf();
-                    }
-                    // else if (Object.isFrozen(value)) {
-                    //     // Create a copy to unfreeze it
-                    //     value = cloneObject(value);
-                    // }
-                    value = (0, utils_1.cloneObject)(value); // Fix #10, always clone objects so changes made through the proxy won't change the original object (and vice versa)
-                }
-                if ((0, utils_1.valuesAreEqual)(value, target[prop])) { //if (compareValues(value, target[prop]) === 'identical') { // (typeof value !== 'object' && target[prop] === value) {
-                    // not changing the actual value, ignore
-                    return true;
-                }
-            }
-            if (context.target.some(key => typeof key === 'number')) {
-                // Updating an object property inside an array. Flag the first array in target to be written.
-                // Eg: when chat.members === [{ name: 'Ewout', id: 'someid' }]
-                // --> chat.members[0].name = 'Ewout' --> Rewrite members array instead of chat/members[0]/name
-                context.flag('write', context.target.slice(0, context.target.findIndex(key => typeof key === 'number')));
-            }
-            else if (target instanceof Array) {
-                // Flag the entire array to be overwritten
-                context.flag('write', context.target);
-            }
-            else {
-                // Flag child property
-                context.flag('write', context.target.concat(prop));
-            }
-            // Set cached value:
-            if (value === null) {
-                delete target[prop];
-            }
-            else {
-                removeVoidProperties(value);
-                target[prop] = value;
-            }
-            return true;
-        },
-        deleteProperty(target, prop) {
-            target = getTargetValue(context.root.cache, context.target);
-            if (target === null) {
-                throw new Error(`Cannot delete property ${prop.toString()} of null`);
-            }
-            if (typeof prop === 'symbol') {
-                return Reflect.deleteProperty(target, prop);
-            }
-            if (!(prop in target)) {
-                return true; // Nothing to delete
-            }
-            context.flag('write', context.target.concat(prop));
-            delete target[prop];
-            return true;
-        },
-        ownKeys(target) {
-            target = getTargetValue(context.root.cache, context.target);
-            return Reflect.ownKeys(target);
-        },
-        has(target, prop) {
-            target = getTargetValue(context.root.cache, context.target);
-            return Reflect.has(target, prop);
-        },
-        getOwnPropertyDescriptor(target, prop) {
-            target = getTargetValue(context.root.cache, context.target);
-            const descriptor = Reflect.getOwnPropertyDescriptor(target, prop);
-            if (descriptor) {
-                descriptor.configurable = true; // prevent "TypeError: 'getOwnPropertyDescriptor' on proxy: trap reported non-configurability for property '...' which is either non-existant or configurable in the proxy target"
-            }
-            return descriptor;
-        },
-        getPrototypeOf(target) {
-            target = getTargetValue(context.root.cache, context.target);
-            return Reflect.getPrototypeOf(target);
-        },
-    };
-    const proxy = new Proxy({}, handler);
-    return proxy;
-}
-function removeVoidProperties(obj) {
-    if (typeof obj !== 'object') {
-        return;
-    }
-    Object.keys(obj).forEach(key => {
-        const val = obj[key];
-        if (val === null || typeof val === 'undefined') {
-            delete obj[key];
-        }
-        else if (typeof val === 'object') {
-            removeVoidProperties(val);
-        }
-    });
-}
-/**
- * Convenience function to access ILiveDataProxyValue methods on a proxied value
- * @param proxiedValue The proxied value to get access to
- * @returns Returns the same object typecasted to an ILiveDataProxyValue
- * @example
- * // IChatMessages is an ObjectCollection<IChatMessage>
- * let observable: Observable<IChatMessages>;
- *
- * // Allows you to do this:
- * observable = proxyAccess<IChatMessages>(chat.messages).getObservable();
- *
- * // Instead of:
- * observable = (chat.messages.msg1 as any as ILiveDataProxyValue<IChatMessages>).getObservable();
- *
- * // Both do the exact same, but the first is less obscure
- */
-function proxyAccess(proxiedValue) {
-    if (typeof proxiedValue !== 'object' || !proxiedValue[isProxy]) {
-        throw new Error('Given value is not proxied. Make sure you are referencing the value through the live data proxy.');
-    }
-    return proxiedValue;
-}
-exports.proxyAccess = proxyAccess;
-/**
- * Provides functionality to work with ordered collections through a live data proxy. Eliminates
- * the need for arrays to handle ordered data by adding a 'sort' properties to child objects in a
- * collection, and provides functionality to sort and reorder items with a minimal amount of database
- * updates.
- */
-class OrderedCollectionProxy {
-    constructor(collection, orderProperty = 'order', orderIncrement = 10) {
-        this.collection = collection;
-        this.orderProperty = orderProperty;
-        this.orderIncrement = orderIncrement;
-        if (typeof collection !== 'object' || !collection[isProxy]) {
-            throw new Error('Collection is not proxied');
-        }
-        if (collection.valueOf() instanceof Array) {
-            throw new Error('Collection is an array, not an object collection');
-        }
-        if (!Object.keys(collection).every(key => typeof collection[key] === 'object')) {
-            throw new Error('Collection has non-object children');
-        }
-        // Check if the collection has order properties. If not, assign them now
-        const ok = Object.keys(collection).every(key => typeof collection[key][orderProperty] === 'number');
-        if (!ok) {
-            // Assign order properties now. Database will be updated automatically
-            const keys = Object.keys(collection);
-            for (let i = 0; i < keys.length; i++) {
-                const item = collection[keys[i]];
-                item[orderProperty] = i * orderIncrement; // 0, 10, 20, 30 etc
-            }
-        }
-    }
-    /**
-     * Gets an observable for the target object collection. Same as calling `collection.getObservable()`
-     * @returns
-     */
-    getObservable() {
-        return proxyAccess(this.collection).getObservable();
-    }
-    /**
-     * Gets an observable that emits a new ordered array representation of the object collection each time
-     * the unlaying data is changed. Same as calling `getArray()` in a `getObservable().subscribe` callback
-     * @returns
-     */
-    getArrayObservable() {
-        const Observable = (0, optional_observable_1.getObservable)();
-        return new Observable((subscriber => {
-            const subscription = this.getObservable().subscribe(( /*value*/) => {
-                const newArray = this.getArray();
-                subscriber.next(newArray);
-            });
-            return function unsubscribe() {
-                subscription.unsubscribe();
-            };
-        }));
-    }
-    /**
-     * Gets an ordered array representation of the items in your object collection. The items in the array
-     * are proxied values, changes will be in sync with the database. Note that the array itself
-     * is not mutable: adding or removing items to it will NOT update the collection in the
-     * the database and vice versa. Use `add`, `delete`, `sort` and `move` methods to make changes
-     * that impact the collection's sorting order
-     * @returns order array
-     */
-    getArray() {
-        const arr = proxyAccess(this.collection).toArray((a, b) => a[this.orderProperty] - b[this.orderProperty]);
-        // arr.push = (...items: T[]) => {
-        //     items.forEach(item => this.add(item));
-        //     return arr.length;
-        // };
-        return arr;
-    }
-    add(newItem, index, from) {
-        const item = newItem;
-        const arr = this.getArray();
-        let minOrder = Number.POSITIVE_INFINITY, maxOrder = Number.NEGATIVE_INFINITY;
-        for (let i = 0; i < arr.length; i++) {
-            const order = arr[i][this.orderProperty];
-            minOrder = Math.min(order, minOrder);
-            maxOrder = Math.max(order, maxOrder);
-        }
-        let fromKey;
-        if (typeof from === 'number') {
-            // Moving existing item
-            fromKey = Object.keys(this.collection).find(key => this.collection[key] === item);
-            if (!fromKey) {
-                throw new Error('item not found in collection');
-            }
-            if (from === index) {
-                return { key: fromKey, index };
-            }
-            if (Math.abs(from - index) === 1) {
-                // Position being swapped, swap their order property values
-                const otherItem = arr[index];
-                const otherOrder = otherItem[this.orderProperty];
-                otherItem[this.orderProperty] = item[this.orderProperty];
-                item[this.orderProperty] = otherOrder;
-                return { key: fromKey, index };
-            }
-            else {
-                // Remove from array, code below will add again
-                arr.splice(from, 1);
-            }
-        }
-        if (typeof index !== 'number' || index >= arr.length) {
-            // append at the end
-            index = arr.length;
-            item[this.orderProperty] = arr.length == 0 ? 0 : maxOrder + this.orderIncrement;
-        }
-        else if (index === 0) {
-            // insert before all others
-            item[this.orderProperty] = arr.length == 0 ? 0 : minOrder - this.orderIncrement;
-        }
-        else {
-            // insert between 2 others
-            const orders = arr.map(item => item[this.orderProperty]);
-            const gap = orders[index] - orders[index - 1];
-            if (gap > 1) {
-                item[this.orderProperty] = orders[index] - Math.floor(gap / 2);
-            }
-            else {
-                // TODO: Can this gap be enlarged by moving one of both orders?
-                // For now, change all other orders
-                arr.splice(index, 0, item);
-                for (let i = 0; i < arr.length; i++) {
-                    arr[i][this.orderProperty] = i * this.orderIncrement;
-                }
-            }
-        }
-        const key = typeof fromKey === 'string'
-            ? fromKey // Moved item, don't add it
-            : proxyAccess(this.collection).push(item);
-        return { key, index };
-    }
-    /**
-     * Deletes an item from the object collection using the their index in the sorted array representation
-     * @param index
-     * @returns the key of the collection's child that was deleted
-     */
-    delete(index) {
-        const arr = this.getArray();
-        const item = arr[index];
-        if (!item) {
-            throw new Error(`Item at index ${index} not found`);
-        }
-        const key = Object.keys(this.collection).find(key => this.collection[key] === item);
-        if (!key) {
-            throw new Error('Cannot find target object to delete');
-        }
-        this.collection[key] = null; // Deletes it from db
-        return { key, index };
-    }
-    /**
-     * Moves an item in the object collection by reordering it
-     * @param fromIndex Current index in the array (the ordered representation of the object collection)
-     * @param toIndex Target index in the array
-     * @returns
-     */
-    move(fromIndex, toIndex) {
-        const arr = this.getArray();
-        return this.add(arr[fromIndex], toIndex, fromIndex);
-    }
-    /**
-     * Reorders the object collection using given sort function. Allows quick reordering of the collection which is persisted in the database
-     * @param sortFn
-     */
-    sort(sortFn) {
-        const arr = this.getArray();
-        arr.sort(sortFn);
-        for (let i = 0; i < arr.length; i++) {
-            arr[i][this.orderProperty] = i * this.orderIncrement;
-        }
-    }
-}
-exports.OrderedCollectionProxy = OrderedCollectionProxy;
-
-},{"./data-reference":8,"./data-snapshot":9,"./id":11,"./optional-observable":14,"./path-info":16,"./path-reference":17,"./process":18,"./simple-event-emitter":22,"./utils":26}],8:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.DataReferencesArray = exports.DataSnapshotsArray = exports.DataReferenceQuery = exports.DataReference = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = void 0;
-const data_snapshot_1 = require("./data-snapshot");
-const subscription_1 = require("./subscription");
-const id_1 = require("./id");
-const path_info_1 = require("./path-info");
-const data_proxy_1 = require("./data-proxy");
-const optional_observable_1 = require("./optional-observable");
-class DataRetrievalOptions {
-    /**
-     * Options for data retrieval, allows selective loading of object properties
-     */
-    constructor(options) {
-        if (!options) {
-            options = {};
-        }
-        if (typeof options.include !== 'undefined' && !(options.include instanceof Array)) {
-            throw new TypeError('options.include must be an array');
-        }
-        if (typeof options.exclude !== 'undefined' && !(options.exclude instanceof Array)) {
-            throw new TypeError('options.exclude must be an array');
-        }
-        if (typeof options.child_objects !== 'undefined' && typeof options.child_objects !== 'boolean') {
-            throw new TypeError('options.child_objects must be a boolean');
-        }
-        if (typeof options.cache_mode === 'string' && !['allow', 'bypass', 'force'].includes(options.cache_mode)) {
-            throw new TypeError('invalid value for options.cache_mode');
-        }
-        this.include = options.include || undefined;
-        this.exclude = options.exclude || undefined;
-        this.child_objects = typeof options.child_objects === 'boolean' ? options.child_objects : undefined;
-        this.cache_mode = typeof options.cache_mode === 'string'
-            ? options.cache_mode
-            : typeof options.allow_cache === 'boolean'
-                ? options.allow_cache ? 'allow' : 'bypass'
-                : 'allow';
-        this.cache_cursor = typeof options.cache_cursor === 'string' ? options.cache_cursor : undefined;
-    }
-}
-exports.DataRetrievalOptions = DataRetrievalOptions;
-class QueryDataRetrievalOptions extends DataRetrievalOptions {
-    /**
-     * @param options Options for data retrieval, allows selective loading of object properties
-     */
-    constructor(options) {
-        super(options);
-        if (!['undefined', 'boolean'].includes(typeof options.snapshots)) {
-            throw new TypeError('options.snapshots must be a boolean');
-        }
-        this.snapshots = typeof options.snapshots === 'boolean' ? options.snapshots : true;
-    }
-}
-exports.QueryDataRetrievalOptions = QueryDataRetrievalOptions;
-const _private = Symbol('private');
-class DataReference {
-    /**
-     * Creates a reference to a node
-     */
-    constructor(db, path, vars) {
-        this.db = db;
-        if (!path) {
-            path = '';
-        }
-        path = path.replace(/^\/|\/$/g, ''); // Trim slashes
-        const pathInfo = path_info_1.PathInfo.get(path);
-        const key = pathInfo.key;
-        const callbacks = [];
-        this[_private] = {
-            get path() { return path; },
-            get key() { return key; },
-            get callbacks() { return callbacks; },
-            vars: vars || {},
-            context: {},
-            pushed: false,
-            cursor: null,
-        };
-    }
-    context(context, merge = false) {
-        const currentContext = this[_private].context;
-        if (typeof context === 'object') {
-            const newContext = context ? merge ? currentContext || {} : context : {};
-            if (context) {
-                // Merge new with current context
-                Object.keys(context).forEach(key => {
-                    newContext[key] = context[key];
-                });
-            }
-            this[_private].context = newContext;
-            return this;
-        }
-        else if (typeof context === 'undefined') {
-            console.warn('Use snap.context() instead of snap.ref.context() to get updating context in event callbacks');
-            return currentContext;
-        }
-        else {
-            throw new Error('Invalid context argument');
-        }
-    }
-    /**
-     * Contains the last received cursor for this referenced path (if the connected database has transaction logging enabled).
-     * If you want to be notified if this value changes, add a handler with `ref.onCursor(callback)`
-     */
-    get cursor() {
-        return this[_private].cursor;
-    }
-    set cursor(value) {
-        var _a;
-        this[_private].cursor = value;
-        (_a = this.onCursor) === null || _a === void 0 ? void 0 : _a.call(this, value);
-    }
-    /**
-    * The path this instance was created with
-    */
-    get path() { return this[_private].path; }
-    /**
-     * The key or index of this node
-     */
-    get key() {
-        const key = this[_private].key;
-        return typeof key === 'number' ? `[${key}]` : key;
-    }
-    /**
-     * If the "key" is a number, it is an index!
-     */
-    get index() {
-        const key = this[_private].key;
-        if (typeof key !== 'number') {
-            throw new Error(`"${key}" is not a number`);
-        }
-        return key;
-    }
-    /**
-     * Returns a new reference to this node's parent
-     */
-    get parent() {
-        const currentPath = path_info_1.PathInfo.fillVariables2(this.path, this.vars);
-        const info = path_info_1.PathInfo.get(currentPath);
-        if (info.parentPath === null) {
-            return null;
-        }
-        return new DataReference(this.db, info.parentPath).context(this[_private].context);
-    }
-    /**
-     * Contains values of the variables/wildcards used in a subscription path if this reference was
-     * created by an event ("value", "child_added" etc), or in a type mapping path when serializing / instantiating typed objects
-     */
-    get vars() {
-        return this[_private].vars;
-    }
-    /**
-     * Returns a new reference to a child node
-     * @param childPath Child key, index or path
-     * @returns reference to the child
-     */
-    child(childPath) {
-        childPath = typeof childPath === 'number' ? childPath : childPath.replace(/^\/|\/$/g, '');
-        const currentPath = path_info_1.PathInfo.fillVariables2(this.path, this.vars);
-        const targetPath = path_info_1.PathInfo.getChildPath(currentPath, childPath);
-        return new DataReference(this.db, targetPath).context(this[_private].context); //  `${this.path}/${childPath}`
-    }
-    /**
-     * Sets or overwrites the stored value
-     * @param value value to store in database
-     * @param onComplete optional completion callback to use instead of returning promise
-     * @returns promise that resolves with this reference when completed
-     */
-    async set(value, onComplete) {
-        try {
-            if (this.isWildcardPath) {
-                throw new Error(`Cannot set the value of wildcard path "/${this.path}"`);
-            }
-            if (this.parent === null) {
-                throw new Error('Cannot set the root object. Use update, or set individual child properties');
-            }
-            if (typeof value === 'undefined') {
-                throw new TypeError(`Cannot store undefined value in "/${this.path}"`);
-            }
-            if (!this.db.isReady) {
-                await this.db.ready();
-            }
-            value = this.db.types.serialize(this.path, value);
-            const { cursor } = await this.db.api.set(this.path, value, { context: this[_private].context });
-            this.cursor = cursor;
-            if (typeof onComplete === 'function') {
-                try {
-                    onComplete(null, this);
-                }
-                catch (err) {
-                    console.error('Error in onComplete callback:', err);
-                }
-            }
-        }
-        catch (err) {
-            if (typeof onComplete === 'function') {
-                try {
-                    onComplete(err, this);
-                }
-                catch (err) {
-                    console.error('Error in onComplete callback:', err);
-                }
-            }
-            else {
-                // throw again
-                throw err;
-            }
-        }
-        return this;
-    }
-    /**
-     * Updates properties of the referenced node
-     * @param updates object containing the properties to update
-     * @param onComplete optional completion callback to use instead of returning promise
-     * @return returns promise that resolves with this reference once completed
-     */
-    async update(updates, onComplete) {
-        try {
-            if (this.isWildcardPath) {
-                throw new Error(`Cannot update the value of wildcard path "/${this.path}"`);
-            }
-            if (!this.db.isReady) {
-                await this.db.ready();
-            }
-            if (typeof updates !== 'object' || updates instanceof Array || updates instanceof ArrayBuffer || updates instanceof Date) {
-                await this.set(updates);
-            }
-            else if (Object.keys(updates).length === 0) {
-                console.warn(`update called on path "/${this.path}", but there is nothing to update`);
-            }
-            else {
-                updates = this.db.types.serialize(this.path, updates);
-                const { cursor } = await this.db.api.update(this.path, updates, { context: this[_private].context });
-                this.cursor = cursor;
-            }
-            if (typeof onComplete === 'function') {
-                try {
-                    onComplete(null, this);
-                }
-                catch (err) {
-                    console.error('Error in onComplete callback:', err);
-                }
-            }
-        }
-        catch (err) {
-            if (typeof onComplete === 'function') {
-                try {
-                    onComplete(err, this);
-                }
-                catch (err) {
-                    console.error('Error in onComplete callback:', err);
-                }
-            }
-            else {
-                // throw again
-                throw err;
-            }
-        }
-        return this;
-    }
-    /**
-     * Sets the value a node using a transaction: it runs your callback function with the current value, uses its return value as the new value to store.
-     * The transaction is canceled if your callback returns undefined, or throws an error. If your callback returns null, the target node will be removed.
-     * @param callback - callback function that performs the transaction on the node's current value. It must return the new value to store (or promise with new value), undefined to cancel the transaction, or null to remove the node.
-     * @returns returns a promise that resolves with the DataReference once the transaction has been processed
-     */
-    async transaction(callback) {
-        if (this.isWildcardPath) {
-            throw new Error(`Cannot start a transaction on wildcard path "/${this.path}"`);
-        }
-        if (!this.db.isReady) {
-            await this.db.ready();
-        }
-        let throwError;
-        const cb = (currentValue) => {
-            currentValue = this.db.types.deserialize(this.path, currentValue);
-            const snap = new data_snapshot_1.DataSnapshot(this, currentValue);
-            let newValue;
-            try {
-                newValue = callback(snap);
-            }
-            catch (err) {
-                // callback code threw an error
-                throwError = err; // Remember error
-                return; // cancel transaction by returning undefined
-            }
-            if (newValue instanceof Promise) {
-                return newValue
-                    .then((val) => {
-                    return this.db.types.serialize(this.path, val);
-                })
-                    .catch(err => {
-                    throwError = err; // Remember error
-                    return; // cancel transaction by returning undefined
-                });
-            }
-            else {
-                return this.db.types.serialize(this.path, newValue);
-            }
-        };
-        const { cursor } = await this.db.api.transaction(this.path, cb, { context: this[_private].context });
-        this.cursor = cursor;
-        if (throwError) {
-            // Rethrow error from callback code
-            throw throwError;
-        }
-        return this;
-    }
-    on(event, callback, cancelCallback) {
-        if (this.path === '' && ['value', 'child_changed'].includes(event)) {
-            // Removed 'notify_value' and 'notify_child_changed' events from the list, they do not require additional data loading anymore.
-            console.warn('WARNING: Listening for value and child_changed events on the root node is a bad practice. These events require loading of all data (value event), or potentially lots of data (child_changed event) each time they are fired');
-        }
-        let eventPublisher = null;
-        const eventStream = new subscription_1.EventStream(publisher => { eventPublisher = publisher; });
-        // Map OUR callback to original callback, so .off can remove the right callback(s)
-        const cb = {
-            event,
-            stream: eventStream,
-            userCallback: typeof callback === 'function' && callback,
-            ourCallback: (err, path, newValue, oldValue, eventContext) => {
-                if (err) {
-                    // TODO: Investigate if this ever happens?
-                    this.db.debug.error(`Error getting data for event ${event} on path "${path}"`, err);
-                    return;
-                }
-                const ref = this.db.ref(path);
-                ref[_private].vars = path_info_1.PathInfo.extractVariables(this.path, path);
-                let callbackObject;
-                if (event.startsWith('notify_')) {
-                    // No data event, callback with reference
-                    callbackObject = ref.context(eventContext || {});
-                }
-                else {
-                    const values = {
-                        previous: this.db.types.deserialize(path, oldValue),
-                        current: this.db.types.deserialize(path, newValue),
-                    };
-                    if (event === 'child_removed') {
-                        callbackObject = new data_snapshot_1.DataSnapshot(ref, values.previous, true, values.previous, eventContext);
-                    }
-                    else if (event === 'mutations') {
-                        callbackObject = new data_snapshot_1.MutationsDataSnapshot(ref, values.current, eventContext);
-                    }
-                    else {
-                        const isRemoved = event === 'mutated' && values.current === null;
-                        callbackObject = new data_snapshot_1.DataSnapshot(ref, values.current, isRemoved, values.previous, eventContext);
-                    }
-                }
-                eventPublisher.publish(callbackObject);
-                if (eventContext === null || eventContext === void 0 ? void 0 : eventContext.acebase_cursor) {
-                    this.cursor = eventContext.acebase_cursor;
-                }
-            },
-        };
-        this[_private].callbacks.push(cb);
-        const subscribe = () => {
-            // (NEW) Add callback to event stream
-            // ref.on('value', callback) is now exactly the same as ref.on('value').subscribe(callback)
-            if (typeof callback === 'function') {
-                eventStream.subscribe(callback, (activated, cancelReason) => {
-                    if (!activated) {
-                        cancelCallback && cancelCallback(cancelReason);
-                    }
-                });
-            }
-            const advancedOptions = typeof callback === 'object'
-                ? callback
-                : { newOnly: !callback }; // newOnly: if callback is not 'truthy', could change this to (typeof callback !== 'function' && callback !== true) but that would break client code that uses a truthy argument.
-            if (typeof advancedOptions.newOnly !== 'boolean') {
-                advancedOptions.newOnly = false;
-            }
-            if (this.isWildcardPath) {
-                advancedOptions.newOnly = true;
-            }
-            const cancelSubscription = (err) => {
-                // Access denied?
-                // Cancel subscription
-                const callbacks = this[_private].callbacks;
-                callbacks.splice(callbacks.indexOf(cb), 1);
-                this.db.api.unsubscribe(this.path, event, cb.ourCallback);
-                // Call cancelCallbacks
-                this.db.debug.error(`Subscription "${event}" on path "/${this.path}" canceled because of an error: ${err.message}`);
-                eventPublisher.cancel(err.message);
-            };
-            const authorized = this.db.api.subscribe(this.path, event, cb.ourCallback, { newOnly: advancedOptions.newOnly, cancelCallback: cancelSubscription, syncFallback: advancedOptions.syncFallback });
-            const allSubscriptionsStoppedCallback = () => {
-                const callbacks = this[_private].callbacks;
-                callbacks.splice(callbacks.indexOf(cb), 1);
-                return this.db.api.unsubscribe(this.path, event, cb.ourCallback);
-            };
-            if (authorized instanceof Promise) {
-                // Web API now returns a promise that resolves if the request is allowed
-                // and rejects when access is denied by the set security rules
-                authorized.then(() => {
-                    // Access granted
-                    eventPublisher.start(allSubscriptionsStoppedCallback);
-                }).catch(cancelSubscription);
-            }
-            else {
-                // Local API, always authorized
-                eventPublisher.start(allSubscriptionsStoppedCallback);
-            }
-            if (!advancedOptions.newOnly) {
-                // If callback param is supplied (either a callback function or true or something else truthy),
-                // it will fire events for current values right now.
-                // Otherwise, it expects the .subscribe methode to be used, which will then
-                // only be called for future events
-                if (event === 'value') {
-                    this.get(snap => {
-                        eventPublisher.publish(snap);
-                    });
-                }
-                else if (event === 'child_added') {
-                    this.get(snap => {
-                        const val = snap.val();
-                        if (val === null || typeof val !== 'object') {
-                            return;
-                        }
-                        Object.keys(val).forEach(key => {
-                            const childSnap = new data_snapshot_1.DataSnapshot(this.child(key), val[key]);
-                            eventPublisher.publish(childSnap);
-                        });
-                    });
-                }
-                else if (event === 'notify_child_added') {
-                    // Use the reflect API to get current children.
-                    // NOTE: This does not work with AceBaseServer <= v0.9.7, only when signed in as admin
-                    const step = 100, limit = step;
-                    let skip = 0;
-                    const more = async () => {
-                        const children = await this.db.api.reflect(this.path, 'children', { limit, skip });
-                        children.list.forEach(child => {
-                            const childRef = this.child(child.key);
-                            eventPublisher.publish(childRef);
-                            // typeof callback === 'function' && callback(childRef);
-                        });
-                        if (children.more) {
-                            skip += step;
-                            more();
-                        }
-                    };
-                    more();
-                }
-            }
-        };
-        if (this.db.isReady) {
-            subscribe();
-        }
-        else {
-            this.db.ready(subscribe);
-        }
-        return eventStream;
-    }
-    off(event, callback) {
-        const subscriptions = this[_private].callbacks;
-        const stopSubs = subscriptions.filter(sub => (!event || sub.event === event) && (!callback || sub.userCallback === callback));
-        if (stopSubs.length === 0) {
-            this.db.debug.warn(`Can't find event subscriptions to stop (path: "${this.path}", event: ${event || '(any)'}, callback: ${callback})`);
-        }
-        stopSubs.forEach(sub => {
-            sub.stream.stop();
-        });
-        return this;
-    }
-    get(optionsOrCallback, callback) {
-        if (!this.db.isReady) {
-            const promise = this.db.ready().then(() => this.get(optionsOrCallback, callback));
-            return typeof optionsOrCallback !== 'function' && typeof callback !== 'function' ? promise : undefined; // only return promise if no callback is used
-        }
-        callback =
-            typeof optionsOrCallback === 'function'
-                ? optionsOrCallback
-                : typeof callback === 'function'
-                    ? callback
-                    : undefined;
-        if (this.isWildcardPath) {
-            const error = new Error(`Cannot get value of wildcard path "/${this.path}". Use .query() instead`);
-            if (typeof callback === 'function') {
-                throw error;
-            }
-            return Promise.reject(error);
-        }
-        const options = new DataRetrievalOptions(typeof optionsOrCallback === 'object' ? optionsOrCallback : { cache_mode: 'allow' });
-        const promise = this.db.api.get(this.path, options).then(result => {
-            var _a;
-            const isNewApiResult = ('context' in result && 'value' in result);
-            if (!isNewApiResult) {
-                // acebase-core version package was updated but acebase or acebase-client package was not? Warn, but don't throw an error.
-                console.warn('AceBase api.get method returned an old response value. Update your acebase or acebase-client package');
-                result = { value: result, context: {} };
-            }
-            const value = this.db.types.deserialize(this.path, result.value);
-            const snapshot = new data_snapshot_1.DataSnapshot(this, value, undefined, undefined, result.context);
-            if ((_a = result.context) === null || _a === void 0 ? void 0 : _a.acebase_cursor) {
-                this.cursor = result.context.acebase_cursor;
-            }
-            return snapshot;
-        });
-        if (callback) {
-            promise.then(callback).catch(err => {
-                console.error('Uncaught error:', err);
-            });
-            return;
-        }
-        else {
-            return promise;
-        }
-    }
-    /**
-     * Waits for an event to occur
-     * @param event Name of the event, eg "value", "child_added", "child_changed", "child_removed"
-     * @param options data retrieval options, to include or exclude specific child keys
-     * @returns returns promise that resolves with a snapshot of the data
-     */
-    once(event, options) {
-        if (event === 'value' && !this.isWildcardPath) {
-            // Shortcut, do not start listening for future events
-            return this.get(options);
-        }
-        return new Promise((resolve) => {
-            const callback = (snap) => {
-                this.off(event, callback); // unsubscribe directly
-                resolve(snap);
-            };
-            this.on(event, callback);
-        });
-    }
-    /**
-     * @param value optional value to store into the database right away
-     * @param onComplete optional callback function to run once value has been stored
-     * @returns returns promise that resolves with the reference after the passed value has been stored
-     */
-    push(value, onComplete) {
-        if (this.isWildcardPath) {
-            const error = new Error(`Cannot push to wildcard path "/${this.path}"`);
-            if (typeof value === 'undefined' || typeof onComplete === 'function') {
-                throw error;
-            }
-            return Promise.reject(error);
-        }
-        const id = id_1.ID.generate();
-        const ref = this.child(id);
-        ref[_private].pushed = true;
-        if (typeof value !== 'undefined') {
-            return ref.set(value, onComplete).then(() => ref);
-        }
-        else {
-            return ref;
-        }
-    }
-    /**
-     * Removes this node and all children
-     */
-    async remove() {
-        if (this.isWildcardPath) {
-            throw new Error(`Cannot remove wildcard path "/${this.path}". Use query().remove instead`);
-        }
-        if (this.parent === null) {
-            throw new Error('Cannot remove the root node');
-        }
-        return this.set(null);
-    }
-    /**
-     * Quickly checks if this reference has a value in the database, without returning its data
-     * @returns returns a promise that resolves with a boolean value
-     */
-    async exists() {
-        if (this.isWildcardPath) {
-            throw new Error(`Cannot check wildcard path "/${this.path}" existence`);
-        }
-        if (!this.db.isReady) {
-            await this.db.ready();
-        }
-        return this.db.api.exists(this.path);
-    }
-    get isWildcardPath() {
-        return this.path.indexOf('*') >= 0 || this.path.indexOf('$') >= 0;
-    }
-    /**
-     * Creates a query object for current node
-     */
-    query() {
-        return new DataReferenceQuery(this);
-    }
-    /**
-     * Gets the number of children this node has, uses reflection
-     */
-    async count() {
-        const info = await this.reflect('info', { child_count: true });
-        return info.children.count;
-    }
-    async reflect(type, args) {
-        if (this.isWildcardPath) {
-            throw new Error(`Cannot reflect on wildcard path "/${this.path}"`);
-        }
-        if (!this.db.isReady) {
-            await this.db.ready();
-        }
-        return this.db.api.reflect(this.path, type, args);
-    }
-    async export(write, options = { format: 'json', type_safe: true }) {
-        if (this.isWildcardPath) {
-            throw new Error(`Cannot export wildcard path "/${this.path}"`);
-        }
-        if (!this.db.isReady) {
-            await this.db.ready();
-        }
-        const writeFn = typeof write === 'function' ? write : write.write.bind(write);
-        return this.db.api.export(this.path, writeFn, options);
-    }
-    /**
-     * Imports the value of this node and all children
-     * @param read Function that reads data from your stream
-     * @param options Only supported format currently is json
-     * @returns returns a promise that resolves once all data is imported
-     */
-    async import(read, options = { format: 'json', suppress_events: false }) {
-        if (this.isWildcardPath) {
-            throw new Error(`Cannot import to wildcard path "/${this.path}"`);
-        }
-        if (!this.db.isReady) {
-            await this.db.ready();
-        }
-        return this.db.api.import(this.path, read, options);
-    }
-    proxy(options) {
-        const isOptionsArg = typeof options === 'object' && (typeof options.cursor !== 'undefined' || typeof options.defaultValue !== 'undefined');
-        if (typeof options !== 'undefined' && !isOptionsArg) {
-            this.db.debug.warn('Warning: live data proxy is being initialized with a deprecated method signature. Use ref.proxy(options) instead of ref.proxy(defaultValue)');
-            options = { defaultValue: options };
-        }
-        return data_proxy_1.LiveDataProxy.create(this, options);
-    }
-    /**
-      * @param options optional initial data retrieval options.
-      * Not recommended to use yet - given includes/excludes are not applied to received mutations,
-      * or sync actions when using an AceBaseClient with cache db.
-      */
-    observe(options) {
-        // options should not be used yet - we can't prevent/filter mutation events on excluded paths atm
-        if (options) {
-            throw new Error('observe does not support data retrieval options yet');
-        }
-        if (this.isWildcardPath) {
-            throw new Error(`Cannot observe wildcard path "/${this.path}"`);
-        }
-        const Observable = (0, optional_observable_1.getObservable)();
-        return new Observable((observer => {
-            let cache, resolved = false;
-            let promise = this.get(options).then(snap => {
-                resolved = true;
-                cache = snap.val();
-                observer.next(cache);
-            });
-            const updateCache = (snap) => {
-                if (!resolved) {
-                    promise = promise.then(() => updateCache(snap));
-                    return;
-                }
-                const mutatedPath = snap.ref.path;
-                if (mutatedPath === this.path) {
-                    cache = snap.val();
-                    return observer.next(cache);
-                }
-                const trailKeys = path_info_1.PathInfo.getPathKeys(mutatedPath).slice(path_info_1.PathInfo.getPathKeys(this.path).length);
-                let target = cache;
-                while (trailKeys.length > 1) {
-                    const key = trailKeys.shift();
-                    if (!(key in target)) {
-                        // Happens if initial loaded data did not include / excluded this data,
-                        // or we missed out on an event
-                        target[key] = typeof trailKeys[0] === 'number' ? [] : {};
-                    }
-                    target = target[key];
-                }
-                const prop = trailKeys.shift();
-                const newValue = snap.val();
-                if (newValue === null) {
-                    // Remove it
-                    target instanceof Array && typeof prop === 'number' ? target.splice(prop, 1) : delete target[prop];
-                }
-                else {
-                    // Set or update it
-                    target[prop] = newValue;
-                }
-                observer.next(cache);
-            };
-            this.on('mutated', updateCache); // TODO: Refactor to 'mutations' event instead
-            // Return unsubscribe function
-            return () => {
-                this.off('mutated', updateCache);
-            };
-        }));
-    }
-    async forEach(callbackOrOptions, callback) {
-        let options;
-        if (typeof callbackOrOptions === 'function') {
-            callback = callbackOrOptions;
-        }
-        else {
-            options = callbackOrOptions;
-        }
-        if (typeof callback !== 'function') {
-            throw new TypeError('No callback function given');
-        }
-        // Get all children through reflection. This could be tweaked further using paging
-        const info = await this.reflect('children', { limit: 0, skip: 0 }); // Gets ALL child keys
-        const summary = {
-            canceled: false,
-            total: info.list.length,
-            processed: 0,
-        };
-        // Iterate through all children until callback returns false
-        for (let i = 0; i < info.list.length; i++) {
-            const key = info.list[i].key;
-            // Get child data
-            const snapshot = await this.child(key).get(options);
-            summary.processed++;
-            if (!snapshot.exists()) {
-                // Was removed in the meantime, skip
-                continue;
-            }
-            // Run callback
-            const result = await callback(snapshot);
-            if (result === false) {
-                summary.canceled = true;
-                break; // Stop looping
-            }
-        }
-        return summary;
-    }
-    async getMutations(cursorOrDate) {
-        const cursor = typeof cursorOrDate === 'string' ? cursorOrDate : undefined;
-        const timestamp = cursorOrDate === null || typeof cursorOrDate === 'undefined' ? 0 : cursorOrDate instanceof Date ? cursorOrDate.getTime() : undefined;
-        return this.db.api.getMutations({ path: this.path, cursor, timestamp });
-    }
-    async getChanges(cursorOrDate) {
-        const cursor = typeof cursorOrDate === 'string' ? cursorOrDate : undefined;
-        const timestamp = cursorOrDate === null || typeof cursorOrDate === 'undefined' ? 0 : cursorOrDate instanceof Date ? cursorOrDate.getTime() : undefined;
-        return this.db.api.getChanges({ path: this.path, cursor, timestamp });
-    }
-}
-exports.DataReference = DataReference;
-class DataReferenceQuery {
-    /**
-     * Creates a query on a reference
-     */
-    constructor(ref) {
-        this.ref = ref;
-        this[_private] = {
-            filters: [],
-            skip: 0,
-            take: 0,
-            order: [],
-            events: {},
-        };
-    }
-    /**
-     * Applies a filter to the children of the refence being queried.
-     * If there is an index on the property key being queried, it will be used
-     * to speed up the query
-     * @param key property to test value of
-     * @param op operator to use
-     * @param compare value to compare with
-     */
-    filter(key, op, compare) {
-        if ((op === 'in' || op === '!in') && (!(compare instanceof Array) || compare.length === 0)) {
-            throw new Error(`${op} filter for ${key} must supply an Array compare argument containing at least 1 value`);
-        }
-        if ((op === 'between' || op === '!between') && (!(compare instanceof Array) || compare.length !== 2)) {
-            throw new Error(`${op} filter for ${key} must supply an Array compare argument containing 2 values`);
-        }
-        if ((op === 'matches' || op === '!matches') && !(compare instanceof RegExp)) {
-            throw new Error(`${op} filter for ${key} must supply a RegExp compare argument`);
-        }
-        // DISABLED 2019/10/23 because it is not fully implemented only works locally
-        // if (op === "custom" && typeof compare !== "function") {
-        //     throw `${op} filter for ${key} must supply a Function compare argument`;
-        // }
-        // DISABLED 2022/08/15, implemented by query.ts in acebase
-        // if ((op === 'contains' || op === '!contains') && ((typeof compare === 'object' && !(compare instanceof Array) && !(compare instanceof Date)) || (compare instanceof Array && compare.length === 0))) {
-        //     throw new Error(`${op} filter for ${key} must supply a simple value or (non-zero length) array compare argument`);
-        // }
-        this[_private].filters.push({ key, op, compare });
-        return this;
-    }
-    /**
-     * @deprecated use `.filter` instead
-     */
-    where(key, op, compare) {
-        return this.filter(key, op, compare);
-    }
-    /**
-     * Limits the number of query results
-     */
-    take(n) {
-        this[_private].take = n;
-        return this;
-    }
-    /**
-     * Skips the first n query results
-     */
-    skip(n) {
-        this[_private].skip = n;
-        return this;
-    }
-    sort(key, ascending = true) {
-        if (!['string', 'number'].includes(typeof key)) {
-            throw 'key must be a string or number';
-        }
-        this[_private].order.push({ key, ascending });
-        return this;
-    }
-    /**
-     * @deprecated use `.sort` instead
-     */
-    order(key, ascending = true) {
-        return this.sort(key, ascending);
-    }
-    get(optionsOrCallback, callback) {
-        if (!this.ref.db.isReady) {
-            const promise = this.ref.db.ready().then(() => this.get(optionsOrCallback, callback));
-            return typeof optionsOrCallback !== 'function' && typeof callback !== 'function' ? promise : undefined; // only return promise if no callback is used
-        }
-        callback =
-            typeof optionsOrCallback === 'function'
-                ? optionsOrCallback
-                : typeof callback === 'function'
-                    ? callback
-                    : undefined;
-        const options = new QueryDataRetrievalOptions(typeof optionsOrCallback === 'object' ? optionsOrCallback : { snapshots: true, cache_mode: 'allow' });
-        options.allow_cache = options.cache_mode !== 'bypass'; // Backward compatibility when using older acebase-client
-        options.eventHandler = ev => {
-            // TODO: implement context for query events
-            if (!this[_private].events[ev.name]) {
-                return false;
-            }
-            const listeners = this[_private].events[ev.name];
-            if (typeof listeners !== 'object' || listeners.length === 0) {
-                return false;
-            }
-            if (['add', 'change', 'remove'].includes(ev.name)) {
-                const ref = new DataReference(this.ref.db, ev.path);
-                const eventData = { name: ev.name };
-                if (options.snapshots && ev.name !== 'remove') {
-                    const val = db.types.deserialize(ev.path, ev.value);
-                    eventData.snapshot = new data_snapshot_1.DataSnapshot(ref, val, false);
-                }
-                else {
-                    eventData.ref = ref;
-                }
-                ev = eventData;
-            }
-            listeners.forEach(callback => { try {
-                callback(ev);
-            }
-            catch (e) { } });
-        };
-        // Check if there are event listeners set for realtime changes
-        options.monitor = { add: false, change: false, remove: false };
-        if (this[_private].events) {
-            if (this[_private].events['add'] && this[_private].events['add'].length > 0) {
-                options.monitor.add = true;
-            }
-            if (this[_private].events['change'] && this[_private].events['change'].length > 0) {
-                options.monitor.change = true;
-            }
-            if (this[_private].events['remove'] && this[_private].events['remove'].length > 0) {
-                options.monitor.remove = true;
-            }
-        }
-        // Stop realtime results if they are still enabled on a previous .get on this instance
-        this.stop();
-        // NOTE: returning promise here, regardless of callback argument. Good argument to refactor method to async/await soon
-        const db = this.ref.db;
-        return db.api.query(this.ref.path, this[_private], options)
-            .catch(err => {
-            throw new Error(err);
-        })
-            .then(res => {
-            const { stop } = res;
-            let { results, context } = res;
-            this.stop = async () => {
-                await stop();
-            };
-            if (!('results' in res && 'context' in res)) {
-                console.warn('Query results missing context. Update your acebase and/or acebase-client packages');
-                results = res, context = {};
-            }
-            if (options.snapshots) {
-                const snaps = results.map(result => {
-                    const val = db.types.deserialize(result.path, result.val);
-                    return new data_snapshot_1.DataSnapshot(db.ref(result.path), val, false, undefined, context);
-                });
-                return DataSnapshotsArray.from(snaps);
-            }
-            else {
-                const refs = results.map(path => db.ref(path));
-                return DataReferencesArray.from(refs);
-            }
-        })
-            .then(results => {
-            callback && callback(results);
-            return results;
-        });
-    }
-    /**
-     * Stops a realtime query, no more notifications will be received.
-     */
-    async stop() {
-        // Overridden by .get
-    }
-    /**
-     * Executes the query and returns references. Short for `.get({ snapshots: false })`
-     * @param callback callback to use instead of returning a promise
-     * @returns returns an Promise that resolves with an array of DataReferences, or void when using a callback
-     * @deprecated Use `find` instead
-     */
-    getRefs(callback) {
-        return this.get({ snapshots: false }, callback);
-    }
-    /**
-     * Executes the query and returns an array of references. Short for `.get({ snapshots: false })`
-     */
-    find() {
-        return this.get({ snapshots: false });
-    }
-    /**
-     * Executes the query and returns the number of results
-     */
-    async count() {
-        const refs = await this.find();
-        return refs.length;
-    }
-    /**
-     * Executes the query and returns if there are any results
-     */
-    async exists() {
-        const originalTake = this[_private].take;
-        const p = this.take(1).find();
-        this.take(originalTake);
-        const refs = await p;
-        return refs.length !== 0;
-    }
-    /**
-     * Executes the query, removes all matches from the database
-     * @returns returns a Promise that resolves once all matches have been removed
-     */
-    async remove(callback) {
-        const refs = await this.find();
-        // Perform updates on each distinct parent collection (only 1 parent if this is not a wildcard path)
-        const parentUpdates = refs.reduce((parents, ref) => {
-            const parent = parents[ref.parent.path];
-            if (!parent) {
-                parents[ref.parent.path] = [ref];
-            }
-            else {
-                parent.push(ref);
-            }
-            return parents;
-        }, {});
-        const db = this.ref.db;
-        const promises = Object.keys(parentUpdates).map(async (parentPath) => {
-            const updates = refs.reduce((updates, ref) => {
-                updates[ref.key] = null;
-                return updates;
-            }, {});
-            const ref = db.ref(parentPath);
-            try {
-                await ref.update(updates);
-                return { ref, success: true };
-            }
-            catch (error) {
-                return { ref, success: false, error };
-            }
-        });
-        const results = await Promise.all(promises);
-        callback && callback(results);
-        return results;
-    }
-    on(event, callback) {
-        if (!this[_private].events[event]) {
-            this[_private].events[event] = [];
-        }
-        this[_private].events[event].push(callback);
-        return this;
-    }
-    /**
-     * Unsubscribes from (a) previously added event(s)
-     * @param event Name of the event
-     * @param callback callback function to remove
-     * @returns returns reference to this query
-     */
-    off(event, callback) {
-        if (typeof event === 'undefined') {
-            this[_private].events = {};
-            return this;
-        }
-        if (!this[_private].events[event]) {
-            return this;
-        }
-        if (typeof callback === 'undefined') {
-            delete this[_private].events[event];
-            return this;
-        }
-        const index = this[_private].events[event].indexOf(callback);
-        if (!~index) {
-            return this;
-        }
-        this[_private].events[event].splice(index, 1);
-        return this;
-    }
-    async forEach(callbackOrOptions, callback) {
-        let options;
-        if (typeof callbackOrOptions === 'function') {
-            callback = callbackOrOptions;
-        }
-        else {
-            options = callbackOrOptions;
-        }
-        if (typeof callback !== 'function') {
-            throw new TypeError('No callback function given');
-        }
-        // Get all query results. This could be tweaked further using paging
-        const refs = await this.find();
-        const summary = {
-            canceled: false,
-            total: refs.length,
-            processed: 0,
-        };
-        // Iterate through all children until callback returns false
-        for (let i = 0; i < refs.length; i++) {
-            const ref = refs[i];
-            // Get child data
-            const snapshot = await ref.get(options);
-            summary.processed++;
-            if (!snapshot.exists()) {
-                // Was removed in the meantime, skip
-                continue;
-            }
-            // Run callback
-            const result = await callback(snapshot);
-            if (result === false) {
-                summary.canceled = true;
-                break; // Stop looping
-            }
-        }
-        return summary;
-    }
-}
-exports.DataReferenceQuery = DataReferenceQuery;
-class DataSnapshotsArray extends Array {
-    static from(snaps) {
-        const arr = new DataSnapshotsArray(snaps.length);
-        snaps.forEach((snap, i) => arr[i] = snap);
-        return arr;
-    }
-    getValues() {
-        return this.map(snap => snap.val());
-    }
-}
-exports.DataSnapshotsArray = DataSnapshotsArray;
-class DataReferencesArray extends Array {
-    static from(refs) {
-        const arr = new DataReferencesArray(refs.length);
-        refs.forEach((ref, i) => arr[i] = ref);
-        return arr;
-    }
-    getPaths() {
-        return this.map(ref => ref.path);
-    }
-}
-exports.DataReferencesArray = DataReferencesArray;
-
-},{"./data-proxy":7,"./data-snapshot":9,"./id":11,"./optional-observable":14,"./path-info":16,"./subscription":23}],9:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.MutationsDataSnapshot = exports.DataSnapshot = void 0;
-const path_info_1 = require("./path-info");
-function getChild(snapshot, path, previous = false) {
-    if (!snapshot.exists()) {
-        return null;
-    }
-    let child = previous ? snapshot.previous() : snapshot.val();
-    if (typeof path === 'number') {
-        return child[path];
-    }
-    path_info_1.PathInfo.getPathKeys(path).every(key => {
-        child = child[key];
-        return typeof child !== 'undefined';
-    });
-    return child || null;
-}
-function getChildren(snapshot) {
-    if (!snapshot.exists()) {
-        return [];
-    }
-    const value = snapshot.val();
-    if (value instanceof Array) {
-        return new Array(value.length).map((v, i) => i);
-    }
-    if (typeof value === 'object') {
-        return Object.keys(value);
-    }
-    return [];
-}
-class DataSnapshot {
-    /**
-     * Creates a new DataSnapshot instance
-     */
-    constructor(ref, value, isRemoved = false, prevValue, context) {
-        this.ref = ref;
-        this.val = () => { return value; };
-        this.previous = () => { return prevValue; };
-        this.exists = () => {
-            if (isRemoved) {
-                return false;
-            }
-            return value !== null && typeof value !== 'undefined';
-        };
-        this.context = () => { return context || {}; };
-    }
-    /**
-     * Indicates whether the node exists in the database
-     */
-    exists() { return false; }
-    /**
-     * Creates a `DataSnapshot` instance
-     * @internal (for internal use)
-     */
-    static for(ref, value) {
-        return new DataSnapshot(ref, value);
-    }
-    /**
-     * Gets a new snapshot for a child node
-     * @param path child key or path
-     * @returns Returns a `DataSnapshot` of the child
-     */
-    child(path) {
-        // Create new snapshot for child data
-        const val = getChild(this, path, false);
-        const prev = getChild(this, path, true);
-        return new DataSnapshot(this.ref.child(path), val, false, prev);
-    }
-    /**
-     * Checks if the snapshot's value has a child with the given key or path
-     * @param path child key or path
-     */
-    hasChild(path) {
-        return getChild(this, path) !== null;
-    }
-    /**
-     * Indicates whether the the snapshot's value has any child nodes
-     */
-    hasChildren() {
-        return getChildren(this).length > 0;
-    }
-    /**
-     * The number of child nodes in this snapshot
-     */
-    numChildren() {
-        return getChildren(this).length;
-    }
-    /**
-     * Runs a callback function for each child node in this snapshot until the callback returns false
-     * @param callback function that is called with a snapshot of each child node in this snapshot.
-     * Must return a boolean value that indicates whether to continue iterating or not.
-     */
-    forEach(callback) {
-        const value = this.val();
-        const prev = this.previous();
-        return getChildren(this).every((key) => {
-            const snap = new DataSnapshot(this.ref.child(key), value[key], false, prev[key]);
-            return callback(snap);
-        });
-    }
-    /**
-     * The key of the node's path
-     */
-    get key() { return this.ref.key; }
-}
-exports.DataSnapshot = DataSnapshot;
-class MutationsDataSnapshot extends DataSnapshot {
-    constructor(ref, mutations, context) {
-        super(ref, mutations, false, undefined, context);
-        /**
-         * Don't use this to get previous values of mutated nodes.
-         * Use `.previous` properties on the individual child snapshots instead.
-         * @throws Throws an error if you do use it.
-         */
-        this.previous = () => { throw new Error('Iterate values to get previous values for each mutation'); };
-        this.val = (warn = true) => {
-            if (warn) {
-                console.warn('Unless you know what you are doing, it is best not to use the value of a mutations snapshot directly. Use child methods and forEach to iterate the mutations instead');
-            }
-            return mutations;
-        };
-    }
-    /**
-     * Runs a callback function for each mutation in this snapshot until the callback returns false
-     * @param callback function that is called with a snapshot of each mutation in this snapshot. Must return a boolean value that indicates whether to continue iterating or not.
-     * @returns Returns whether every child was interated
-     */
-    forEach(callback) {
-        const mutations = this.val();
-        return mutations.every(mutation => {
-            const ref = mutation.target.reduce((ref, key) => ref.child(key), this.ref);
-            const snap = new DataSnapshot(ref, mutation.val, false, mutation.prev);
-            return callback(snap);
-        });
-    }
-    /**
-     * Gets a snapshot of a mutated node
-     * @param index index of the mutation
-     * @returns Returns a DataSnapshot of the mutated node
-     */
-    child(index) {
-        if (typeof index !== 'number') {
-            throw new Error('child index must be a number');
-        }
-        const mutation = this.val()[index];
-        const ref = mutation.target.reduce((ref, key) => ref.child(key), this.ref);
-        return new DataSnapshot(ref, mutation.val, false, mutation.prev);
-    }
-}
-exports.MutationsDataSnapshot = MutationsDataSnapshot;
-
-},{"./path-info":16}],10:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.DebugLogger = void 0;
-const process_1 = require("./process");
-// eslint-disable-next-line @typescript-eslint/no-empty-function
-const noop = () => { };
-class DebugLogger {
-    constructor(level = 'log', prefix = '') {
-        this.level = level;
-        this.prefix = prefix;
-        this.setLevel(level);
-    }
-    setLevel(level) {
-        const prefix = this.prefix ? this.prefix + ' %s' : '';
-        this.verbose = ['verbose'].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : noop;
-        this.log = ['verbose', 'log'].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : noop;
-        this.warn = ['verbose', 'log', 'warn'].includes(level) ? prefix ? console.warn.bind(console, prefix) : console.warn.bind(console) : noop;
-        this.error = ['verbose', 'log', 'warn', 'error'].includes(level) ? prefix ? console.error.bind(console, prefix) : console.error.bind(console) : noop;
-        this.write = (text) => {
-            const isRunKit = typeof process_1.default !== 'undefined' && process_1.default.env && typeof process_1.default.env.RUNKIT_ENDPOINT_PATH === 'string';
-            if (text && isRunKit) {
-                text.split('\n').forEach(line => console.log(line)); // Logs each line separately
-            }
-            else {
-                console.log(text);
-            }
-        };
-    }
-}
-exports.DebugLogger = DebugLogger;
-
-},{"./process":18}],11:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ID = void 0;
-const cuid_1 = require("./cuid");
-// const uuid62 = require('uuid62');
-let timeBias = 0;
-class ID {
-    /**
-     * (for internal use)
-     * bias in milliseconds to adjust generated cuid timestamps with
-     */
-    static set timeBias(bias) {
-        if (typeof bias !== 'number') {
-            return;
-        }
-        timeBias = bias;
-    }
-    static generate() {
-        // Could also use https://www.npmjs.com/package/pushid for Firebase style 20 char id's
-        return (0, cuid_1.default)(timeBias).slice(1); // Cuts off the always leading 'c'
-        // return uuid62.v1();
-    }
-}
-exports.ID = ID;
-
-},{"./cuid":5}],12:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ObjectCollection = exports.PartialArray = exports.SchemaDefinition = exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.OrderedCollectionProxy = exports.proxyAccess = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.DataReferencesArray = exports.DataSnapshotsArray = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
-var acebase_base_1 = require("./acebase-base");
-Object.defineProperty(exports, "AceBaseBase", { enumerable: true, get: function () { return acebase_base_1.AceBaseBase; } });
-Object.defineProperty(exports, "AceBaseBaseSettings", { enumerable: true, get: function () { return acebase_base_1.AceBaseBaseSettings; } });
-var api_1 = require("./api");
-Object.defineProperty(exports, "Api", { enumerable: true, get: function () { return api_1.Api; } });
-var data_reference_1 = require("./data-reference");
-Object.defineProperty(exports, "DataReference", { enumerable: true, get: function () { return data_reference_1.DataReference; } });
-Object.defineProperty(exports, "DataReferenceQuery", { enumerable: true, get: function () { return data_reference_1.DataReferenceQuery; } });
-Object.defineProperty(exports, "DataRetrievalOptions", { enumerable: true, get: function () { return data_reference_1.DataRetrievalOptions; } });
-Object.defineProperty(exports, "QueryDataRetrievalOptions", { enumerable: true, get: function () { return data_reference_1.QueryDataRetrievalOptions; } });
-Object.defineProperty(exports, "DataSnapshotsArray", { enumerable: true, get: function () { return data_reference_1.DataSnapshotsArray; } });
-Object.defineProperty(exports, "DataReferencesArray", { enumerable: true, get: function () { return data_reference_1.DataReferencesArray; } });
-var data_snapshot_1 = require("./data-snapshot");
-Object.defineProperty(exports, "DataSnapshot", { enumerable: true, get: function () { return data_snapshot_1.DataSnapshot; } });
-Object.defineProperty(exports, "MutationsDataSnapshot", { enumerable: true, get: function () { return data_snapshot_1.MutationsDataSnapshot; } });
-var data_proxy_1 = require("./data-proxy");
-Object.defineProperty(exports, "proxyAccess", { enumerable: true, get: function () { return data_proxy_1.proxyAccess; } });
-Object.defineProperty(exports, "OrderedCollectionProxy", { enumerable: true, get: function () { return data_proxy_1.OrderedCollectionProxy; } });
-var debug_1 = require("./debug");
-Object.defineProperty(exports, "DebugLogger", { enumerable: true, get: function () { return debug_1.DebugLogger; } });
-var id_1 = require("./id");
-Object.defineProperty(exports, "ID", { enumerable: true, get: function () { return id_1.ID; } });
-var path_reference_1 = require("./path-reference");
-Object.defineProperty(exports, "PathReference", { enumerable: true, get: function () { return path_reference_1.PathReference; } });
-var subscription_1 = require("./subscription");
-Object.defineProperty(exports, "EventStream", { enumerable: true, get: function () { return subscription_1.EventStream; } });
-Object.defineProperty(exports, "EventPublisher", { enumerable: true, get: function () { return subscription_1.EventPublisher; } });
-Object.defineProperty(exports, "EventSubscription", { enumerable: true, get: function () { return subscription_1.EventSubscription; } });
-exports.Transport = require("./transport");
-var type_mappings_1 = require("./type-mappings");
-Object.defineProperty(exports, "TypeMappings", { enumerable: true, get: function () { return type_mappings_1.TypeMappings; } });
-exports.Utils = require("./utils");
-var path_info_1 = require("./path-info");
-Object.defineProperty(exports, "PathInfo", { enumerable: true, get: function () { return path_info_1.PathInfo; } });
-var ascii85_1 = require("./ascii85");
-Object.defineProperty(exports, "ascii85", { enumerable: true, get: function () { return ascii85_1.ascii85; } });
-var simple_cache_1 = require("./simple-cache");
-Object.defineProperty(exports, "SimpleCache", { enumerable: true, get: function () { return simple_cache_1.SimpleCache; } });
-var simple_event_emitter_1 = require("./simple-event-emitter");
-Object.defineProperty(exports, "SimpleEventEmitter", { enumerable: true, get: function () { return simple_event_emitter_1.SimpleEventEmitter; } });
-var simple_colors_1 = require("./simple-colors");
-Object.defineProperty(exports, "ColorStyle", { enumerable: true, get: function () { return simple_colors_1.ColorStyle; } });
-Object.defineProperty(exports, "Colorize", { enumerable: true, get: function () { return simple_colors_1.Colorize; } });
-var schema_1 = require("./schema");
-Object.defineProperty(exports, "SchemaDefinition", { enumerable: true, get: function () { return schema_1.SchemaDefinition; } });
-var partial_array_1 = require("./partial-array");
-Object.defineProperty(exports, "PartialArray", { enumerable: true, get: function () { return partial_array_1.PartialArray; } });
-const object_collection_1 = require("./object-collection");
-Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return object_collection_1.ObjectCollection; } });
-
-},{"./acebase-base":1,"./api":2,"./ascii85":3,"./data-proxy":7,"./data-reference":8,"./data-snapshot":9,"./debug":10,"./id":11,"./object-collection":13,"./partial-array":15,"./path-info":16,"./path-reference":17,"./schema":19,"./simple-cache":20,"./simple-colors":21,"./simple-event-emitter":22,"./subscription":23,"./transport":24,"./type-mappings":25,"./utils":26}],13:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ObjectCollection = void 0;
-const id_1 = require("./id");
-/**
- * Convenience interface for defining an object collection
- * @example
- * type ChatMessage = {
- *    text: string, uid: string, sent: Date
- * }
- * type Chat = {
- *    title: text
- *    messages: ObjectCollection<ChatMessage>
- * }
- */
-class ObjectCollection {
-    /**
-     * Converts and array of values into an object collection, generating a unique key for each item in the array
-     * @param array
-     * @example
-     * const array = [
-     *  { title: "Don't make me think!", author: "Steve Krug" },
-     *  { title: "The tipping point", author: "Malcolm Gladwell" }
-     * ];
-     *
-     * // Convert:
-     * const collection = ObjectCollection.from(array);
-     * // --> {
-     * //   kh1x3ygb000120r7ipw6biln: {
-     * //       title: "Don't make me think!",
-     * //       author: "Steve Krug"
-     * //   },
-     * //   kh1x3ygb000220r757ybpyec: {
-     * //       title: "The tipping point",
-     * //       author: "Malcolm Gladwell"
-     * //   }
-     * // }
-     *
-     * // Now it's easy to add them to the db:
-     * db.ref('books').update(collection);
-     */
-    static from(array) {
-        const collection = {};
-        array.forEach(child => {
-            collection[id_1.ID.generate()] = child;
-        });
-        return collection;
-    }
-}
-exports.ObjectCollection = ObjectCollection;
-
-},{"./id":11}],14:[function(require,module,exports){
-"use strict";
-// Optional dependency on rxjs package. If rxjs is installed into your project, you'll get the correct
-// typings for AceBase methods that use Observables, and you'll be able to use them. If you don't use
-// those methods, there is no need to install rxjs.
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ObservableShim = exports.setObservable = exports.getObservable = void 0;
-let _observable;
-function getObservable() {
-    if (_observable) {
-        return _observable;
-    }
-    if (typeof window !== 'undefined' && window.Observable) {
-        _observable = window.Observable;
-        return _observable;
-    }
-    try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { Observable } = require('rxjs'); // fails in ESM module, need an elegant way to handle this. Can't use dynamic import() because it 1) requires Node 12+ and 2) causes Webpack build to fail if rxjs is not installed
-        if (!Observable) {
-            throw new Error('not loaded');
-        }
-        _observable = Observable;
-        return Observable;
-    }
-    catch (err) {
-        throw new Error('RxJS Observable could not be loaded. If you are using a browser build, add it to AceBase using db.setObservable. For node.js builds, add it to your project with: npm i rxjs');
-    }
-}
-exports.getObservable = getObservable;
-function setObservable(Observable) {
-    if (Observable === 'shim') {
-        console.warn('Using AceBase\'s simple Observable shim. Only use this if you know what you\'re doing.');
-        Observable = ObservableShim;
-    }
-    _observable = Observable;
-}
-exports.setObservable = setObservable;
-/**
- * rxjs is an optional dependency that only needs installing when any of AceBase's observe methods are used.
- * If for some reason rxjs is not available (eg in test suite), we can provide a shim. This class is used when
- * `db.setObservable("shim")` is called
- */
-class ObservableShim {
-    constructor(create) {
-        this._active = false;
-        this._subscribers = [];
-        this._create = create;
-    }
-    subscribe(subscriber) {
-        if (!this._active) {
-            const next = (value) => {
-                // emit value to all subscribers
-                this._subscribers.forEach(s => {
-                    try {
-                        s(value);
-                    }
-                    catch (err) {
-                        console.error('Error in subscriber callback:', err);
-                    }
-                });
-            };
-            const observer = { next };
-            this._cleanup = this._create(observer);
-            this._active = true;
-        }
-        this._subscribers.push(subscriber);
-        const unsubscribe = () => {
-            this._subscribers.splice(this._subscribers.indexOf(subscriber), 1);
-            if (this._subscribers.length === 0) {
-                this._active = false;
-                this._cleanup();
-            }
-        };
-        const subscription = {
-            unsubscribe,
-        };
-        return subscription;
-    }
-}
-exports.ObservableShim = ObservableShim;
-
-},{"rxjs":57}],15:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.PartialArray = void 0;
-/**
- * Sparse/partial array converted to a serializable object. Use `Object.keys(sparseArray)` and `Object.values(sparseArray)` to iterate its indice and/or values
- */
-class PartialArray {
-    constructor(sparseArray) {
-        if (sparseArray instanceof Array) {
-            for (let i = 0; i < sparseArray.length; i++) {
-                if (typeof sparseArray[i] !== 'undefined') {
-                    this[i] = sparseArray[i];
-                }
-            }
-        }
-        else if (sparseArray) {
-            Object.assign(this, sparseArray);
-        }
-    }
-}
-exports.PartialArray = PartialArray;
-
-},{}],16:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.PathInfo = void 0;
-function getPathKeys(path) {
-    path = path.replace(/\[/g, '/[').replace(/^\/+/, '').replace(/\/+$/, ''); // Replace [ with /[, remove leading slashes, remove trailing slashes
-    if (path.length === 0) {
-        return [];
-    }
-    const keys = path.split('/');
-    return keys.map(key => {
-        return key.startsWith('[') ? parseInt(key.slice(1, -1)) : key;
-    });
-}
-class PathInfo {
-    constructor(path) {
-        if (typeof path === 'string') {
-            this.keys = getPathKeys(path);
-        }
-        else if (path instanceof Array) {
-            this.keys = path;
-        }
-        this.path = this.keys.reduce((path, key, i) => i === 0 ? `${key}` : typeof key === 'string' ? `${path}/${key}` : `${path}[${key}]`, '');
-    }
-    static get(path) {
-        return new PathInfo(path);
-    }
-    static getChildPath(path, childKey) {
-        // return getChildPath(path, childKey);
-        return PathInfo.get(path).child(childKey).path;
-    }
-    static getPathKeys(path) {
-        return getPathKeys(path);
-    }
-    get key() {
-        return this.keys.length === 0 ? null : this.keys.slice(-1)[0];
-    }
-    get parent() {
-        if (this.keys.length == 0) {
-            return null;
-        }
-        const parentKeys = this.keys.slice(0, -1);
-        return new PathInfo(parentKeys);
-    }
-    get parentPath() {
-        return this.keys.length === 0 ? null : this.parent.path;
-    }
-    child(childKey) {
-        if (typeof childKey === 'string') {
-            childKey = getPathKeys(childKey);
-        }
-        return new PathInfo(this.keys.concat(childKey));
-    }
-    childPath(childKey) {
-        return this.child(childKey).path;
-    }
-    get pathKeys() {
-        return this.keys;
-    }
-    /**
-     * If varPath contains variables or wildcards, it will return them with the values found in fullPath
-     * @param {string} varPath path containing variables such as * and $name
-     * @param {string} fullPath real path to a node
-     * @returns {{ [index: number]: string|number, [variable: string]: string|number }} returns an array-like object with all variable values. All named variables are also set on the array by their name (eg vars.uid and vars.$uid)
-     * @example
-     * PathInfo.extractVariables('users/$uid/posts/$postid', 'users/ewout/posts/post1/title') === {
-     *  0: 'ewout',
-     *  1: 'post1',
-     *  uid: 'ewout', // or $uid
-     *  postid: 'post1' // or $postid
-     * };
-     *
-     * PathInfo.extractVariables('users/*\/posts/*\/$property', 'users/ewout/posts/post1/title') === {
-     *  0: 'ewout',
-     *  1: 'post1',
-     *  2: 'title',
-     *  property: 'title' // or $property
-     * };
-     *
-     * PathInfo.extractVariables('users/$user/friends[*]/$friend', 'users/dora/friends[4]/diego') === {
-     *  0: 'dora',
-     *  1: 4,
-     *  2: 'diego',
-     *  user: 'dora', // or $user
-     *  friend: 'diego' // or $friend
-     * };
-    */
-    static extractVariables(varPath, fullPath) {
-        if (!varPath.includes('*') && !varPath.includes('$')) {
-            return [];
-        }
-        // if (!this.equals(fullPath)) {
-        //     throw new Error(`path does not match with the path of this PathInfo instance: info.equals(path) === false!`)
-        // }
-        const keys = getPathKeys(varPath);
-        const pathKeys = getPathKeys(fullPath);
-        let count = 0;
-        const variables = {
-            get length() { return count; },
-        };
-        keys.forEach((key, index) => {
-            const pathKey = pathKeys[index];
-            if (key === '*') {
-                variables[count++] = pathKey;
-            }
-            else if (typeof key === 'string' && key[0] === '$') {
-                variables[count++] = pathKey;
-                // Set the $variable property
-                variables[key] = pathKey;
-                // Set friendly property name (without $)
-                const varName = key.slice(1);
-                if (typeof variables[varName] === 'undefined') {
-                    variables[varName] = pathKey;
-                }
-            }
-        });
-        return variables;
-    }
-    /**
-     * If varPath contains variables or wildcards, it will return a path with the variables replaced by the keys found in fullPath.
-     * @example
-     * PathInfo.fillVariables('users/$uid/posts/$postid', 'users/ewout/posts/post1/title') === 'users/ewout/posts/post1'
-     */
-    static fillVariables(varPath, fullPath) {
-        if (varPath.indexOf('*') < 0 && varPath.indexOf('$') < 0) {
-            return varPath;
-        }
-        const keys = getPathKeys(varPath);
-        const pathKeys = getPathKeys(fullPath);
-        const merged = keys.map((key, index) => {
-            if (key === pathKeys[index] || index >= pathKeys.length) {
-                return key;
-            }
-            else if (typeof key === 'string' && (key === '*' || key[0] === '$')) {
-                return pathKeys[index];
-            }
-            else {
-                throw new Error(`Path "${fullPath}" cannot be used to fill variables of path "${varPath}" because they do not match`);
-            }
-        });
-        let mergedPath = '';
-        merged.forEach(key => {
-            if (typeof key === 'number') {
-                mergedPath += `[${key}]`;
-            }
-            else {
-                if (mergedPath.length > 0) {
-                    mergedPath += '/';
-                }
-                mergedPath += key;
-            }
-        });
-        return mergedPath;
-    }
-    /**
-     * Replaces all variables in a path with the values in the vars argument
-     * @param varPath path containing variables
-     * @param vars variables object such as one gotten from PathInfo.extractVariables
-     */
-    static fillVariables2(varPath, vars) {
-        if (typeof vars !== 'object' || Object.keys(vars).length === 0) {
-            return varPath; // Nothing to fill
-        }
-        const pathKeys = getPathKeys(varPath);
-        let n = 0;
-        const targetPath = pathKeys.reduce((path, key) => {
-            if (typeof key === 'string' && (key === '*' || key.startsWith('$'))) {
-                return PathInfo.getChildPath(path, vars[n++]);
-            }
-            else {
-                return PathInfo.getChildPath(path, key);
-            }
-        }, '');
-        return targetPath;
-    }
-    /**
-     * Checks if a given path matches this path, eg "posts/*\/title" matches "posts/12344/title" and "users/123/name" matches "users/$uid/name"
-     */
-    equals(otherPath) {
-        const other = otherPath instanceof PathInfo ? otherPath : new PathInfo(otherPath);
-        if (this.path === other.path) {
-            return true;
-        } // they are identical
-        if (this.keys.length !== other.keys.length) {
-            return false;
-        }
-        return this.keys.every((key, index) => {
-            const otherKey = other.keys[index];
-            return otherKey === key
-                || (typeof otherKey === 'string' && (otherKey === '*' || otherKey[0] === '$'))
-                || (typeof key === 'string' && (key === '*' || key[0] === '$'));
-        });
-    }
-    /**
-     * Checks if a given path is an ancestor, eg "posts" is an ancestor of "posts/12344/title"
-     */
-    isAncestorOf(descendantPath) {
-        const descendant = descendantPath instanceof PathInfo ? descendantPath : new PathInfo(descendantPath);
-        if (descendant.path === '' || this.path === descendant.path) {
-            return false;
-        }
-        if (this.path === '') {
-            return true;
-        }
-        if (this.keys.length >= descendant.keys.length) {
-            return false;
-        }
-        return this.keys.every((key, index) => {
-            const otherKey = descendant.keys[index];
-            return otherKey === key
-                || (typeof otherKey === 'string' && (otherKey === '*' || otherKey[0] === '$'))
-                || (typeof key === 'string' && (key === '*' || key[0] === '$'));
-        });
-    }
-    /**
-     * Checks if a given path is a descendant, eg "posts/1234/title" is a descendant of "posts"
-     */
-    isDescendantOf(ancestorPath) {
-        const ancestor = ancestorPath instanceof PathInfo ? ancestorPath : new PathInfo(ancestorPath);
-        if (this.path === '' || this.path === ancestor.path) {
-            return false;
-        }
-        if (ancestorPath === '') {
-            return true;
-        }
-        if (ancestor.keys.length >= this.keys.length) {
-            return false;
-        }
-        return ancestor.keys.every((key, index) => {
-            const otherKey = this.keys[index];
-            return otherKey === key
-                || (typeof otherKey === 'string' && (otherKey === '*' || otherKey[0] === '$'))
-                || (typeof key === 'string' && (key === '*' || key[0] === '$'));
-        });
-    }
-    /**
-     * Checks if the other path is on the same trail as this path. Paths on the same trail if they share a
-     * common ancestor. Eg: "posts" is on the trail of "posts/1234/title" and vice versa.
-     */
-    isOnTrailOf(otherPath) {
-        const other = otherPath instanceof PathInfo ? otherPath : new PathInfo(otherPath);
-        if (this.path.length === 0 || other.path.length === 0) {
-            return true;
-        }
-        if (this.path === other.path) {
-            return true;
-        }
-        return this.pathKeys.every((key, index) => {
-            if (index >= other.keys.length) {
-                return true;
-            }
-            const otherKey = other.keys[index];
-            return otherKey === key
-                || (typeof otherKey === 'string' && (otherKey === '*' || otherKey[0] === '$'))
-                || (typeof key === 'string' && (key === '*' || key[0] === '$'));
-        });
-    }
-    /**
-     * Checks if a given path is a direct child, eg "posts/1234/title" is a child of "posts/1234"
-     */
-    isChildOf(otherPath) {
-        const other = otherPath instanceof PathInfo ? otherPath : new PathInfo(otherPath);
-        if (this.path === '') {
-            return false;
-        } // If our path is the root, it's nobody's child...
-        return this.parent.equals(other);
-    }
-    /**
-     * Checks if a given path is its parent, eg "posts/1234" is the parent of "posts/1234/title"
-     */
-    isParentOf(otherPath) {
-        const other = otherPath instanceof PathInfo ? otherPath : new PathInfo(otherPath);
-        if (other.path === '') {
-            return false;
-        } // If the other path is the root, this path cannot be its parent
-        return this.equals(other.parent);
-    }
-}
-exports.PathInfo = PathInfo;
-
-},{}],17:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.PathReference = void 0;
-class PathReference {
-    /**
-     * Creates a reference to a path that can be stored in the database. Use this to create cross-references to other data in your database
-     * @param path
-     */
-    constructor(path) {
-        this.path = path;
-    }
-}
-exports.PathReference = PathReference;
-
-},{}],18:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.default = {
-    // eslint-disable-next-line @typescript-eslint/ban-types
-    nextTick(fn) {
-        setTimeout(fn, 0);
-    },
-};
-
-},{}],19:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.SchemaDefinition = void 0;
-// parses a typestring, creates checker functions
-function parse(definition) {
-    // tokenize
-    let pos = 0;
-    function consumeSpaces() {
-        let c;
-        while (c = definition[pos], [' ', '\r', '\n', '\t'].includes(c)) {
-            pos++;
-        }
-    }
-    function consumeCharacter(c) {
-        if (definition[pos] !== c) {
-            throw new Error(`Unexpected character at position ${pos}. Expected: '${c}', found '${definition[pos]}'`);
-        }
-        pos++;
-    }
-    function readProperty() {
-        consumeSpaces();
-        const prop = { name: '', optional: false, wildcard: false };
-        let c;
-        while (c = definition[pos], c === '_' || c === '$' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (prop.name.length > 0 && c >= '0' && c <= '9') || (prop.name.length === 0 && c === '*')) {
-            prop.name += c;
-            pos++;
-        }
-        if (prop.name.length === 0) {
-            throw new Error(`Property name expected at position ${pos}, found: ${definition.slice(pos, pos + 10)}..`);
-        }
-        if (definition[pos] === '?') {
-            prop.optional = true;
-            pos++;
-        }
-        if (prop.name === '*' || prop.name[0] === '$') {
-            prop.optional = true;
-            prop.wildcard = true;
-        }
-        consumeSpaces();
-        consumeCharacter(':');
-        return prop;
-    }
-    function readType() {
-        consumeSpaces();
-        let type = { typeOf: 'any' }, c;
-        // try reading simple type first: (string,number,boolean,Date etc)
-        let name = '';
-        while (c = definition[pos], (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
-            name += c;
-            pos++;
-        }
-        if (name.length === 0) {
-            if (definition[pos] === '*') {
-                // any value
-                consumeCharacter('*');
-                type.typeOf = 'any';
-            }
-            else if (['\'', '"', '`'].includes(definition[pos])) {
-                // Read string value
-                type.typeOf = 'string';
-                type.value = '';
-                const quote = definition[pos];
-                consumeCharacter(quote);
-                while (c = definition[pos], c && c !== quote) {
-                    type.value += c;
-                    pos++;
-                }
-                consumeCharacter(quote);
-            }
-            else if (definition[pos] >= '0' && definition[pos] <= '9') {
-                // read numeric value
-                type.typeOf = 'number';
-                let nr = '';
-                while (c = definition[pos], c === '.' || c === 'n' || (c >= '0' && c <= '9')) {
-                    nr += c;
-                    pos++;
-                }
-                if (nr.endsWith('n')) {
-                    type.value = BigInt(nr);
-                }
-                else if (nr.includes('.')) {
-                    type.value = parseFloat(nr);
-                }
-                else {
-                    type.value = parseInt(nr);
-                }
-            }
-            else if (definition[pos] === '{') {
-                // Read object (interface) definition
-                consumeCharacter('{');
-                type.typeOf = 'object';
-                type.instanceOf = Object;
-                // Read children:
-                type.children = [];
-                while (true) {
-                    const prop = readProperty();
-                    const types = readTypes();
-                    type.children.push({ name: prop.name, optional: prop.optional, wildcard: prop.wildcard, types });
-                    consumeSpaces();
-                    if (definition[pos] === '}') {
-                        break;
-                    }
-                    consumeCharacter(',');
-                }
-                consumeCharacter('}');
-            }
-            else if (definition[pos] === '/') {
-                // Read regular expression definition
-                consumeCharacter('/');
-                let pattern = '', flags = '';
-                while (c = definition[pos], c !== '/' || pattern.endsWith('\\')) {
-                    pattern += c;
-                    pos++;
-                }
-                consumeCharacter('/');
-                while (c = definition[pos], ['g', 'i', 'm', 's', 'u', 'y', 'd'].includes(c)) {
-                    flags += c;
-                    pos++;
-                }
-                type.typeOf = 'string';
-                type.matches = new RegExp(pattern, flags);
-            }
-            else {
-                throw new Error(`Expected a type definition at position ${pos}, found character '${definition[pos]}'`);
-            }
-        }
-        else if (['string', 'number', 'boolean', 'bigint', 'undefined', 'String', 'Number', 'Boolean', 'BigInt'].includes(name)) {
-            type.typeOf = name.toLowerCase();
-        }
-        else if (name === 'Object' || name === 'object') {
-            type.typeOf = 'object';
-            type.instanceOf = Object;
-        }
-        else if (name === 'Date') {
-            type.typeOf = 'object';
-            type.instanceOf = Date;
-        }
-        else if (name === 'Binary' || name === 'binary') {
-            type.typeOf = 'object';
-            type.instanceOf = ArrayBuffer;
-        }
-        else if (name === 'any') {
-            type.typeOf = 'any';
-        }
-        else if (name === 'null') {
-            // This is ignored, null values are not stored in the db (null indicates deletion)
-            type.typeOf = 'object';
-            type.value = null;
-        }
-        else if (name === 'Array') {
-            // Read generic Array defintion
-            consumeCharacter('<');
-            type.typeOf = 'object';
-            type.instanceOf = Array; //name;
-            type.genericTypes = readTypes();
-            consumeCharacter('>');
-        }
-        else if (['true', 'false'].includes(name)) {
-            type.typeOf = 'boolean';
-            type.value = name === 'true';
-        }
-        else {
-            throw new Error(`Unknown type at position ${pos}: "${type}"`);
-        }
-        // Check if it's an Array of given type (eg: string[] or string[][])
-        // Also converts to generics, string[] becomes Array<string>, string[][] becomes Array<Array<string>>
-        consumeSpaces();
-        while (definition[pos] === '[') {
-            consumeCharacter('[');
-            consumeCharacter(']');
-            type = { typeOf: 'object', instanceOf: Array, genericTypes: [type] };
-        }
-        return type;
-    }
-    function readTypes() {
-        consumeSpaces();
-        const types = [readType()];
-        while (definition[pos] === '|') {
-            consumeCharacter('|');
-            types.push(readType());
-            consumeSpaces();
-        }
-        return types;
-    }
-    return readType();
-}
-function checkObject(path, properties, obj, partial) {
-    // Are there any properties that should not be in there?
-    const invalidProperties = properties.find(prop => prop.name === '*' || prop.name[0] === '$') // Only if no wildcard properties are allowed
-        ? []
-        : Object.keys(obj).filter(key => ![null, undefined].includes(obj[key]) // Ignore null or undefined values
-            && !properties.find(prop => prop.name === key));
-    if (invalidProperties.length > 0) {
-        return { ok: false, reason: `Object at path "${path}" cannot have propert${invalidProperties.length === 1 ? 'y' : 'ies'} ${invalidProperties.map(p => `"${p}"`).join(', ')}` };
-    }
-    // Loop through properties that should be present
-    function checkProperty(property) {
-        const hasValue = ![null, undefined].includes(obj[property.name]);
-        if (!property.optional && (partial ? obj[property.name] === null : !hasValue)) {
-            return { ok: false, reason: `Property at path "${path}/${property.name}" is not optional` };
-        }
-        if (hasValue && property.types.length === 1) {
-            return checkType(`${path}/${property.name}`, property.types[0], obj[property.name], false);
-        }
-        if (hasValue && !property.types.some(type => checkType(`${path}/${property.name}`, type, obj[property.name], false).ok)) {
-            return { ok: false, reason: `Property at path "${path}/${property.name}" does not match any of ${property.types.length} allowed types` };
-        }
-        return { ok: true };
-    }
-    const namedProperties = properties.filter(prop => !prop.wildcard);
-    const failedProperty = namedProperties.find(prop => !checkProperty(prop).ok);
-    if (failedProperty) {
-        const reason = checkProperty(failedProperty).reason;
-        return { ok: false, reason };
-    }
-    const wildcardProperty = properties.find(prop => prop.wildcard);
-    if (!wildcardProperty) {
-        return { ok: true };
-    }
-    const wildcardChildKeys = Object.keys(obj).filter(key => !namedProperties.find(prop => prop.name === key));
-    let result = { ok: true };
-    for (let i = 0; i < wildcardChildKeys.length && result.ok; i++) {
-        const childKey = wildcardChildKeys[i];
-        result = checkProperty({ name: childKey, types: wildcardProperty.types, optional: true, wildcard: true });
-    }
-    return result;
-}
-function checkType(path, type, value, partial, trailKeys) {
-    const ok = { ok: true };
-    if (type.typeOf === 'any') {
-        return ok;
-    }
-    if (trailKeys instanceof Array && trailKeys.length > 0) {
-        // The value to check resides in a descendant path of given type definition.
-        // Recursivly check child type definitions to find a match
-        if (type.typeOf !== 'object') {
-            return { ok: false, reason: `path "${path}" must be typeof ${type.typeOf}` }; // given value resides in a child path, but parent is not allowed be an object.
-        }
-        if (!type.children) {
-            return ok;
-        }
-        const childKey = trailKeys[0];
-        let property = type.children.find(prop => prop.name === childKey);
-        if (!property) {
-            property = type.children.find(prop => prop.name === '*' || prop.name[0] === '$');
-        }
-        if (!property) {
-            return { ok: false, reason: `Object at path "${path}" cannot have property "${childKey}"` };
-        }
-        if (property.optional && value === null && trailKeys.length === 1) {
-            return ok;
-        }
-        let result;
-        property.types.some(type => {
-            const childPath = typeof childKey === 'number' ? `${path}[${childKey}]` : `${path}/${childKey}`;
-            result = checkType(childPath, type, value, partial, trailKeys.slice(1));
-            return result.ok;
-        });
-        return result;
-    }
-    if (value === null) {
-        return ok;
-    }
-    if (type.instanceOf === Object && (typeof value !== 'object' || value instanceof Array || value instanceof Date)) {
-        return { ok: false, reason: `path "${path}" must be an object collection` };
-    }
-    if (type.instanceOf && (typeof value !== 'object' || value.constructor !== type.instanceOf)) { // !(value instanceof type.instanceOf) // value.constructor.name !== type.instanceOf
-        return { ok: false, reason: `path "${path}" must be an instance of ${type.instanceOf.name}` };
-    }
-    if ('value' in type && value !== type.value) {
-        return { ok: false, reason: `path "${path}" must be value: ${type.value}` };
-    }
-    if (typeof value !== type.typeOf) {
-        return { ok: false, reason: `path "${path}" must be typeof ${type.typeOf}` };
-    }
-    if (type.instanceOf === Array && type.genericTypes && !value.every(v => type.genericTypes.some(t => checkType(path, t, v, false).ok))) {
-        return { ok: false, reason: `every array value of path "${path}" must match one of the specified types` };
-    }
-    if (type.typeOf === 'object' && type.children) {
-        return checkObject(path, type.children, value, partial);
-    }
-    if (type.matches && !type.matches.test(value)) {
-        return { ok: false, reason: `path "${path}" must match regular expression /${type.matches.source}/${type.matches.flags}` };
-    }
-    return ok;
-}
-// eslint-disable-next-line @typescript-eslint/ban-types
-function getConstructorType(val) {
-    switch (val) {
-        case String: return 'string';
-        case Number: return 'number';
-        case Boolean: return 'boolean';
-        case Date: return 'Date';
-        case BigInt: return 'bigint';
-        case Array: throw new Error('Schema error: Array cannot be used without a type. Use string[] or Array<string> instead');
-        default: throw new Error(`Schema error: unknown type used: ${val.name}`);
-    }
-}
-class SchemaDefinition {
-    constructor(definition) {
-        this.source = definition;
-        if (typeof definition === 'object') {
-            // Turn object into typescript definitions
-            // eg:
-            // const example = {
-            //     name: String,
-            //     born: Date,
-            //     instrument: "'guitar'|'piano'",
-            //     "address?": {
-            //         street: String
-            //     }
-            // };
-            // Resulting ts: "{name:string,born:Date,instrument:'guitar'|'piano',address?:{street:string}}"
-            const toTS = (obj) => {
-                return '{' + Object.keys(obj)
-                    .map(key => {
-                    let val = obj[key];
-                    if (val === undefined) {
-                        val = 'undefined';
-                    }
-                    else if (val instanceof RegExp) {
-                        val = `/${val.source}/${val.flags}`;
-                    }
-                    else if (typeof val === 'object') {
-                        val = toTS(val);
-                    }
-                    else if (typeof val === 'function') {
-                        val = getConstructorType(val);
-                    }
-                    else if (!['string', 'number', 'boolean', 'bigint'].includes(typeof val)) {
-                        throw new Error(`Type definition for key "${key}" must be a string, number, boolean, bigint, object, regular expression, or one of these classes: String, Number, Boolean, Date, BigInt`);
-                    }
-                    return `${key}:${val}`;
-                })
-                    .join(',') + '}';
-            };
-            this.text = toTS(definition);
-        }
-        else if (typeof definition === 'string') {
-            this.text = definition;
-        }
-        else {
-            throw new Error('Type definiton must be a string or an object');
-        }
-        this.type = parse(this.text);
-    }
-    check(path, value, partial, trailKeys) {
-        return checkType(path, this.type, value, partial, trailKeys);
-    }
-}
-exports.SchemaDefinition = SchemaDefinition;
-
-},{}],20:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.SimpleCache = void 0;
-const utils_1 = require("./utils");
-const calculateExpiryTime = (expirySeconds) => expirySeconds > 0 ? Date.now() + (expirySeconds * 1000) : Infinity;
-/**
- * Simple cache implementation that retains immutable values in memory for a limited time.
- * Immutability is enforced by cloning the stored and retrieved values. To change a cached value, it will have to be `set` again with the new value.
- */
-class SimpleCache {
-    constructor(options) {
-        var _a;
-        this.enabled = true;
-        if (typeof options === 'number') {
-            // Old signature: only expirySeconds given
-            options = { expirySeconds: options };
-        }
-        options.cloneValues = options.cloneValues !== false;
-        if (typeof options.expirySeconds !== 'number' && typeof options.maxEntries !== 'number') {
-            throw new Error('Either expirySeconds or maxEntries must be specified');
-        }
-        this.options = options;
-        this.cache = new Map();
-        // Cleanup every minute
-        const interval = setInterval(() => { this.cleanUp(); }, 60 * 1000);
-        (_a = interval.unref) === null || _a === void 0 ? void 0 : _a.call(interval);
-    }
-    get size() { return this.cache.size; }
-    has(key) {
-        if (!this.enabled) {
-            return false;
-        }
-        return this.cache.has(key);
-    }
-    get(key) {
-        if (!this.enabled) {
-            return null;
-        }
-        const entry = this.cache.get(key);
-        if (!entry) {
-            return null;
-        } // if (!entry || entry.expires <= Date.now()) { return null; }
-        entry.expires = calculateExpiryTime(this.options.expirySeconds);
-        entry.accessed = Date.now();
-        return this.options.cloneValues ? (0, utils_1.cloneObject)(entry.value) : entry.value;
-    }
-    set(key, value) {
-        if (this.options.maxEntries > 0 && this.cache.size >= this.options.maxEntries && !this.cache.has(key)) {
-            // console.warn(`* cache limit ${this.options.maxEntries} reached: ${this.cache.size}`);
-            // Remove an expired item or the one that was accessed longest ago
-            let oldest = null;
-            const now = Date.now();
-            for (const [key, entry] of this.cache.entries()) {
-                if (entry.expires <= now) {
-                    // Found an expired item. Remove it now and stop
-                    this.cache.delete(key);
-                    oldest = null;
-                    break;
-                }
-                if (!oldest || entry.accessed < oldest.accessed) {
-                    oldest = { key, accessed: entry.accessed };
-                }
-            }
-            if (oldest !== null) {
-                this.cache.delete(oldest.key);
-            }
-        }
-        this.cache.set(key, { value: this.options.cloneValues ? (0, utils_1.cloneObject)(value) : value, added: Date.now(), accessed: Date.now(), expires: calculateExpiryTime(this.options.expirySeconds) });
-    }
-    remove(key) {
-        this.cache.delete(key);
-    }
-    cleanUp() {
-        const now = Date.now();
-        this.cache.forEach((entry, key) => {
-            if (entry.expires <= now) {
-                this.cache.delete(key);
-            }
-        });
-    }
-}
-exports.SimpleCache = SimpleCache;
-
-},{"./utils":26}],21:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.Colorize = exports.SetColorsEnabled = exports.ColorsSupported = exports.ColorStyle = void 0;
-const process_1 = require("./process");
-// See from https://en.wikipedia.org/wiki/ANSI_escape_code
-const FontCode = {
-    bold: 1,
-    dim: 2,
-    italic: 3,
-    underline: 4,
-    inverse: 7,
-    hidden: 8,
-    strikethrough: 94,
-};
-const ColorCode = {
-    black: 30,
-    red: 31,
-    green: 32,
-    yellow: 33,
-    blue: 34,
-    magenta: 35,
-    cyan: 36,
-    white: 37,
-    grey: 90,
-    // Bright colors:
-    brightRed: 91,
-    // TODO, other bright colors
-};
-const BgColorCode = {
-    bgBlack: 40,
-    bgRed: 41,
-    bgGreen: 42,
-    bgYellow: 43,
-    bgBlue: 44,
-    bgMagenta: 45,
-    bgCyan: 46,
-    bgWhite: 47,
-    bgGrey: 100,
-    bgBrightRed: 101,
-    // TODO, other bright colors
-};
-const ResetCode = {
-    all: 0,
-    color: 39,
-    background: 49,
-    bold: 22,
-    dim: 22,
-    italic: 23,
-    underline: 24,
-    inverse: 27,
-    hidden: 28,
-    strikethrough: 29,
-};
-var ColorStyle;
-(function (ColorStyle) {
-    ColorStyle["reset"] = "reset";
-    ColorStyle["bold"] = "bold";
-    ColorStyle["dim"] = "dim";
-    ColorStyle["italic"] = "italic";
-    ColorStyle["underline"] = "underline";
-    ColorStyle["inverse"] = "inverse";
-    ColorStyle["hidden"] = "hidden";
-    ColorStyle["strikethrough"] = "strikethrough";
-    ColorStyle["black"] = "black";
-    ColorStyle["red"] = "red";
-    ColorStyle["green"] = "green";
-    ColorStyle["yellow"] = "yellow";
-    ColorStyle["blue"] = "blue";
-    ColorStyle["magenta"] = "magenta";
-    ColorStyle["cyan"] = "cyan";
-    ColorStyle["grey"] = "grey";
-    ColorStyle["bgBlack"] = "bgBlack";
-    ColorStyle["bgRed"] = "bgRed";
-    ColorStyle["bgGreen"] = "bgGreen";
-    ColorStyle["bgYellow"] = "bgYellow";
-    ColorStyle["bgBlue"] = "bgBlue";
-    ColorStyle["bgMagenta"] = "bgMagenta";
-    ColorStyle["bgCyan"] = "bgCyan";
-    ColorStyle["bgWhite"] = "bgWhite";
-    ColorStyle["bgGrey"] = "bgGrey";
-})(ColorStyle = exports.ColorStyle || (exports.ColorStyle = {}));
-function ColorsSupported() {
-    // Checks for basic color support
-    if (typeof process_1.default === 'undefined' || !process_1.default.stdout || !process_1.default.env || !process_1.default.platform || process_1.default.platform === 'browser') {
-        return false;
-    }
-    if (process_1.default.platform === 'win32') {
-        return true;
-    }
-    const env = process_1.default.env;
-    if (env.COLORTERM) {
-        return true;
-    }
-    if (env.TERM === 'dumb') {
-        return false;
-    }
-    if (env.CI || env.TEAMCITY_VERSION) {
-        return !!env.TRAVIS;
-    }
-    if (['iTerm.app', 'HyperTerm', 'Hyper', 'MacTerm', 'Apple_Terminal', 'vscode'].includes(env.TERM_PROGRAM)) {
-        return true;
-    }
-    if (/^xterm-256|^screen|^xterm|^vt100|color|ansi|cygwin|linux/i.test(env.TERM)) {
-        return true;
-    }
-    return false;
-}
-exports.ColorsSupported = ColorsSupported;
-let _enabled = ColorsSupported();
-function SetColorsEnabled(enabled) {
-    _enabled = ColorsSupported() && enabled;
-}
-exports.SetColorsEnabled = SetColorsEnabled;
-function Colorize(str, style) {
-    if (!_enabled) {
-        return str;
-    }
-    const openCodes = [], closeCodes = [];
-    const addStyle = (style) => {
-        if (style === ColorStyle.reset) {
-            openCodes.push(ResetCode.all);
-        }
-        else if (style in FontCode) {
-            openCodes.push(FontCode[style]);
-            closeCodes.push(ResetCode[style]);
-        }
-        else if (style in ColorCode) {
-            openCodes.push(ColorCode[style]);
-            closeCodes.push(ResetCode.color);
-        }
-        else if (style in BgColorCode) {
-            openCodes.push(BgColorCode[style]);
-            closeCodes.push(ResetCode.background);
-        }
-    };
-    if (style instanceof Array) {
-        style.forEach(addStyle);
-    }
-    else {
-        addStyle(style);
-    }
-    // const open = '\u001b[' + openCodes.join(';') + 'm';
-    // const close = '\u001b[' + closeCodes.join(';') + 'm';
-    const open = openCodes.map(code => '\u001b[' + code + 'm').join('');
-    const close = closeCodes.map(code => '\u001b[' + code + 'm').join('');
-    // return open + str + close;
-    return str.split('\n').map(line => open + line + close).join('\n');
-}
-exports.Colorize = Colorize;
-String.prototype.colorize = function (style) {
-    return Colorize(this, style);
-};
-
-},{"./process":18}],22:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.SimpleEventEmitter = void 0;
-function runCallback(callback, data) {
-    try {
-        callback(data);
-    }
-    catch (err) {
-        console.error('Error in subscription callback', err);
-    }
-}
-class SimpleEventEmitter {
-    constructor() {
-        this._subscriptions = [];
-        this._oneTimeEvents = new Map();
-    }
-    on(event, callback) {
-        if (this._oneTimeEvents.has(event)) {
-            return runCallback(callback, this._oneTimeEvents.get(event));
-        }
-        this._subscriptions.push({ event, callback, once: false });
-        return this;
-    }
-    off(event, callback) {
-        this._subscriptions = this._subscriptions.filter(s => s.event !== event || (callback && s.callback !== callback));
-        return this;
-    }
-    once(event, callback) {
-        return new Promise(resolve => {
-            const ourCallback = (data) => {
-                resolve(data);
-                callback === null || callback === void 0 ? void 0 : callback(data);
-            };
-            if (this._oneTimeEvents.has(event)) {
-                runCallback(ourCallback, this._oneTimeEvents.get(event));
-            }
-            else {
-                this._subscriptions.push({ event, callback: ourCallback, once: true });
-            }
-        });
-    }
-    emit(event, data) {
-        if (this._oneTimeEvents.has(event)) {
-            throw new Error(`Event "${event}" was supposed to be emitted only once`);
-        }
-        for (let i = 0; i < this._subscriptions.length; i++) {
-            const s = this._subscriptions[i];
-            if (s.event !== event) {
-                continue;
-            }
-            runCallback(s.callback, data);
-            if (s.once) {
-                this._subscriptions.splice(i, 1);
-                i--;
-            }
-        }
-        return this;
-    }
-    emitOnce(event, data) {
-        if (this._oneTimeEvents.has(event)) {
-            throw new Error(`Event "${event}" was supposed to be emitted only once`);
-        }
-        this.emit(event, data);
-        this._oneTimeEvents.set(event, data); // Mark event as being emitted once for future subscribers
-        this.off(event); // Remove all listeners for this event, they won't fire again
-        return this;
-    }
-}
-exports.SimpleEventEmitter = SimpleEventEmitter;
-
-},{}],23:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.EventStream = exports.EventPublisher = exports.EventSubscription = void 0;
-class EventSubscription {
-    /**
-     * @param stop function that stops the subscription from receiving future events
-     */
-    constructor(stop) {
-        this.stop = stop;
-        this._internal = {
-            state: 'init',
-            activatePromises: [],
-        };
-    }
-    /**
-     * Notifies when subscription is activated or canceled
-     * @param callback optional callback to run each time activation state changes
-     * @returns returns a promise that resolves once activated, or rejects when it is denied (and no callback was supplied)
-     */
-    activated(callback) {
-        if (callback) {
-            this._internal.activatePromises.push({ callback });
-            if (this._internal.state === 'active') {
-                callback(true);
-            }
-            else if (this._internal.state === 'canceled') {
-                callback(false, this._internal.cancelReason);
-            }
-        }
-        // Changed behaviour: now also returns a Promise when the callback is used.
-        // This allows for 1 activated call to both handle: first activation result,
-        // and any future events using the callback
-        return new Promise((resolve, reject) => {
-            if (this._internal.state === 'active') {
-                return resolve();
-            }
-            else if (this._internal.state === 'canceled' && !callback) {
-                return reject(new Error(this._internal.cancelReason));
-            }
-            // eslint-disable-next-line @typescript-eslint/no-empty-function
-            const noop = () => { };
-            this._internal.activatePromises.push({
-                resolve,
-                reject: callback ? noop : reject, // Don't reject when callback is used: let callback handle this (prevents UnhandledPromiseRejection if only callback is used)
-            });
-        });
-    }
-    /** (for internal use) */
-    _setActivationState(activated, cancelReason) {
-        this._internal.cancelReason = cancelReason;
-        this._internal.state = activated ? 'active' : 'canceled';
-        while (this._internal.activatePromises.length > 0) {
-            const p = this._internal.activatePromises.shift();
-            if (activated) {
-                p.callback && p.callback(true);
-                p.resolve && p.resolve();
-            }
-            else {
-                p.callback && p.callback(false, cancelReason);
-                p.reject && p.reject(cancelReason);
-            }
-        }
-    }
-}
-exports.EventSubscription = EventSubscription;
-class EventPublisher {
-    /**
-     *
-     * @param publish function that publishes a new value to subscribers, return if there are any active subscribers
-     * @param start function that notifies subscribers their subscription is activated
-     * @param cancel function that notifies subscribers their subscription has been canceled, removes all subscriptions
-     */
-    constructor(publish, start, cancel) {
-        this.publish = publish;
-        this.start = start;
-        this.cancel = cancel;
-    }
-}
-exports.EventPublisher = EventPublisher;
-class EventStream {
-    constructor(eventPublisherCallback) {
-        const subscribers = [];
-        let noMoreSubscribersCallback;
-        let activationState; // TODO: refactor to string only: STATE_INIT, STATE_STOPPED, STATE_ACTIVATED, STATE_CANCELED
-        const STATE_STOPPED = 'stopped (no more subscribers)';
-        this.subscribe = (callback, activationCallback) => {
-            if (typeof callback !== 'function') {
-                throw new TypeError('callback must be a function');
-            }
-            else if (activationState === STATE_STOPPED) {
-                throw new Error('stream can\'t be used anymore because all subscribers were stopped');
-            }
-            const sub = {
-                callback,
-                activationCallback: function (activated, cancelReason) {
-                    activationCallback === null || activationCallback === void 0 ? void 0 : activationCallback(activated, cancelReason);
-                    this.subscription._setActivationState(activated, cancelReason);
-                },
-                subscription: new EventSubscription(function stop() {
-                    subscribers.splice(subscribers.indexOf(this), 1);
-                    return checkActiveSubscribers();
-                }),
-            };
-            subscribers.push(sub);
-            if (typeof activationState !== 'undefined') {
-                if (activationState === true) {
-                    activationCallback === null || activationCallback === void 0 ? void 0 : activationCallback(true);
-                    sub.subscription._setActivationState(true);
-                }
-                else if (typeof activationState === 'string') {
-                    activationCallback === null || activationCallback === void 0 ? void 0 : activationCallback(false, activationState);
-                    sub.subscription._setActivationState(false, activationState);
-                }
-            }
-            return sub.subscription;
-        };
-        const checkActiveSubscribers = () => {
-            let ret;
-            if (subscribers.length === 0) {
-                ret = noMoreSubscribersCallback === null || noMoreSubscribersCallback === void 0 ? void 0 : noMoreSubscribersCallback();
-                activationState = STATE_STOPPED;
-            }
-            return Promise.resolve(ret);
-        };
-        this.unsubscribe = (callback) => {
-            const remove = callback
-                ? subscribers.filter(sub => sub.callback === callback)
-                : subscribers;
-            remove.forEach(sub => {
-                const i = subscribers.indexOf(sub);
-                subscribers.splice(i, 1);
-            });
-            checkActiveSubscribers();
-        };
-        this.stop = () => {
-            // Stop (remove) all subscriptions
-            subscribers.splice(0);
-            checkActiveSubscribers();
-        };
-        /**
-         * For publishing side: adds a value that will trigger callbacks to all subscribers
-         * @param val
-         * @returns returns whether there are subscribers left
-         */
-        const publish = (val) => {
-            subscribers.forEach(sub => {
-                try {
-                    sub.callback(val);
-                }
-                catch (err) {
-                    console.error(`Error running subscriber callback: ${err.message}`);
-                }
-            });
-            if (subscribers.length === 0) {
-                checkActiveSubscribers();
-            }
-            return subscribers.length > 0;
-        };
-        /**
-         * For publishing side: let subscribers know their subscription is activated. Should be called only once
-         */
-        const start = (allSubscriptionsStoppedCallback) => {
-            activationState = true;
-            noMoreSubscribersCallback = allSubscriptionsStoppedCallback;
-            subscribers.forEach(sub => {
-                var _a;
-                (_a = sub.activationCallback) === null || _a === void 0 ? void 0 : _a.call(sub, true);
-            });
-        };
-        /**
-         * For publishing side: let subscribers know their subscription has been canceled. Should be called only once
-         */
-        const cancel = (reason) => {
-            activationState = reason;
-            subscribers.forEach(sub => {
-                var _a;
-                (_a = sub.activationCallback) === null || _a === void 0 ? void 0 : _a.call(sub, false, reason || new Error('unknown reason'));
-            });
-            subscribers.splice(0); // Clear all
-        };
-        const publisher = new EventPublisher(publish, start, cancel);
-        eventPublisherCallback(publisher);
-    }
-}
-exports.EventStream = EventStream;
-
-},{}],24:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.deserialize2 = exports.serialize2 = exports.serialize = exports.detectSerializeVersion = exports.deserialize = void 0;
-const path_reference_1 = require("./path-reference");
-const utils_1 = require("./utils");
-const ascii85_1 = require("./ascii85");
-const path_info_1 = require("./path-info");
-const partial_array_1 = require("./partial-array");
-/*
-    There are now 2 different serialization methods for transporting values.
-
-    v1:
-    The original version (v1) created an object with "map" and "val" properties.
-    The "map" property was made optional in v1.14.1 so they won't be present for values needing no serializing
-
-    v2:
-    The new version replaces serialized values inline by objects containing ".type" and ".val" properties.
-    This serializing method was introduced by `export` and `import` methods because they use streaming and
-    are unable to prepare type mappings up-front. This format is smaller in transmission (in many cases),
-    and easier to read and process.
-
-    original: { "date": (some date) }
-    v1 serialized: { "map": { "date": "date" }, "val": { date: "2022-04-22T07:49:23Z" } }
-    v2 serialized: { "date": { ".type": "date", ".val": "2022-04-22T07:49:23Z" } }
-
-    original: (some date)
-    v1 serialized: { "map": "date", "val": "2022-04-22T07:49:23Z" }
-    v2 serialized: { ".type": "date", ".val": "2022-04-22T07:49:23Z" }
-    comment: top level value that need serializing is wrapped in an object with ".type" and ".val". v1 is smaller in this case
-
-    original: 'some string'
-    v1 serialized: { "map": {}, "val": "some string" }
-    v2 serialized: "some string"
-    comment: primitive types such as strings don't need serializing and are returned as is in v2
-
-    original: { "date": (some date), "text": "Some string" }
-    v1 serialized: { "map": { "date": "date" }, "val": { date: "2022-04-22T07:49:23Z", "text": "Some string" } }
-    v2 serialized: { "date": { ".type": "date", ".val": "2022-04-22T07:49:23Z" }, "text": "Some string" }
-*/
-/**
- * Original deserialization method using global `map` and `val` properties
- * @param data
- * @returns
- */
-const deserialize = (data) => {
-    if (data.map === null || typeof data.map === 'undefined') {
-        if (typeof data.val === 'undefined') {
-            throw new Error('serialized value must have a val property');
-        }
-        return data.val;
-    }
-    const deserializeValue = (type, val) => {
-        if (type === 'date') {
-            // Date was serialized as a string (UTC)
-            return new Date(val);
-        }
-        else if (type === 'binary') {
-            // ascii85 encoded binary data
-            return ascii85_1.ascii85.decode(val);
-        }
-        else if (type === 'reference') {
-            return new path_reference_1.PathReference(val);
-        }
-        else if (type === 'regexp') {
-            return new RegExp(val.pattern, val.flags);
-        }
-        else if (type === 'array') {
-            return new partial_array_1.PartialArray(val);
-        }
-        else if (type === 'bigint') {
-            return BigInt(val);
-        }
-        return val;
-    };
-    if (typeof data.map === 'string') {
-        // Single value
-        return deserializeValue(data.map, data.val);
-    }
-    Object.keys(data.map).forEach(path => {
-        const type = data.map[path];
-        const keys = path_info_1.PathInfo.getPathKeys(path);
-        let parent = data;
-        let key = 'val';
-        let val = data.val;
-        keys.forEach(k => {
-            key = k;
-            parent = val;
-            val = val[key]; // If an error occurs here, there's something wrong with the calling code...
-        });
-        parent[key] = deserializeValue(type, val);
-    });
-    return data.val;
-};
-exports.deserialize = deserialize;
-/**
- * Function to detect the used serialization method with for the given object
- * @param data
- * @returns
- */
-const detectSerializeVersion = (data) => {
-    if (typeof data !== 'object' || data === null) {
-        // This can only be v2, which allows primitive types to bypass serializing
-        return 2;
-    }
-    if ('map' in data && 'val' in data) {
-        return 1;
-    }
-    else if ('val' in data) {
-        // If it's v1, 'val' will be the only key in the object because serialize2 adds ".version": 2 to the object to prevent confusion.
-        if (Object.keys(data).length > 1) {
-            return 2;
-        }
-        return 1;
-    }
-    return 2;
-};
-exports.detectSerializeVersion = detectSerializeVersion;
-/**
- * Original serialization method using global `map` and `val` properties
- * @param data
- * @returns
- */
-const serialize = (obj) => {
-    var _a;
-    // Recursively find dates and binary data
-    if (obj === null || typeof obj !== 'object' || obj instanceof Date || obj instanceof ArrayBuffer || obj instanceof path_reference_1.PathReference || obj instanceof RegExp) {
-        // Single value
-        const ser = (0, exports.serialize)({ value: obj });
-        return {
-            map: (_a = ser.map) === null || _a === void 0 ? void 0 : _a.value,
-            val: ser.val.value,
-        };
-    }
-    obj = (0, utils_1.cloneObject)(obj); // Make sure we don't alter the original object
-    const process = (obj, mappings, prefix) => {
-        if (obj instanceof partial_array_1.PartialArray) {
-            mappings[prefix] = 'array';
-        }
-        Object.keys(obj).forEach(key => {
-            const val = obj[key];
-            const path = prefix.length === 0 ? key : `${prefix}/${key}`;
-            if (typeof val === 'bigint') {
-                obj[key] = val.toString();
-                mappings[path] = 'bigint';
-            }
-            else if (val instanceof Date) {
-                // serialize date to UTC string
-                obj[key] = val.toISOString();
-                mappings[path] = 'date';
-            }
-            else if (val instanceof ArrayBuffer) {
-                // Serialize binary data with ascii85
-                obj[key] = ascii85_1.ascii85.encode(val); //ascii85.encode(Buffer.from(val)).toString();
-                mappings[path] = 'binary';
-            }
-            else if (val instanceof path_reference_1.PathReference) {
-                obj[key] = val.path;
-                mappings[path] = 'reference';
-            }
-            else if (val instanceof RegExp) {
-                // Queries using the 'matches' filter with a regular expression can now also be used on remote db's
-                obj[key] = { pattern: val.source, flags: val.flags };
-                mappings[path] = 'regexp';
-            }
-            else if (typeof val === 'object' && val !== null) {
-                process(val, mappings, path);
-            }
-        });
-    };
-    const mappings = {};
-    process(obj, mappings, '');
-    const serialized = { val: obj };
-    if (Object.keys(mappings).length > 0) {
-        serialized.map = mappings;
-    }
-    return serialized;
-};
-exports.serialize = serialize;
-/**
- * New serialization method using inline `.type` and `.val` properties
- * @param obj
- * @returns
- */
-const serialize2 = (obj) => {
-    // Recursively find data that needs serializing
-    const getSerializedValue = (val) => {
-        if (typeof val === 'bigint') {
-            // serialize bigint to string
-            return {
-                '.type': 'bigint',
-                '.val': val.toString(),
-            };
-        }
-        else if (val instanceof Date) {
-            // serialize date to UTC string
-            return {
-                '.type': 'date',
-                '.val': val.toISOString(),
-            };
-        }
-        else if (val instanceof ArrayBuffer) {
-            // Serialize binary data with ascii85
-            return {
-                '.type': 'binary',
-                '.val': ascii85_1.ascii85.encode(val),
-            };
-        }
-        else if (val instanceof path_reference_1.PathReference) {
-            return {
-                '.type': 'reference',
-                '.val': val.path,
-            };
-        }
-        else if (val instanceof RegExp) {
-            // Queries using the 'matches' filter with a regular expression can now also be used on remote db's
-            return {
-                '.type': 'regexp',
-                '.val': `/${val.source}/${val.flags}`, // new: shorter
-                // '.val': {
-                //     pattern: val.source,
-                //     flags: val.flags
-                // }
-            };
-        }
-        else if (typeof val === 'object' && val !== null) {
-            if (val instanceof Array) {
-                const copy = [];
-                for (let i = 0; i < val.length; i++) {
-                    copy[i] = getSerializedValue(val[i]);
-                }
-                return copy;
-            }
-            else {
-                const copy = {}; //val instanceof Array ? [] : {} as SerializedValueV2;
-                if (val instanceof partial_array_1.PartialArray) {
-                    // Mark the object as partial ("sparse") array
-                    copy['.type'] = 'array';
-                }
-                for (const prop in val) {
-                    copy[prop] = getSerializedValue(val[prop]);
-                }
-                return copy;
-            }
-        }
-        else {
-            // Primitive value. Don't serialize
-            return val;
-        }
-    };
-    const serialized = getSerializedValue(obj);
-    if (serialized !== null && typeof serialized === 'object' && 'val' in serialized && Object.keys(serialized).length === 1) {
-        // acebase-core v1.14.1 made the 'map' property optional.
-        // This v2 serialized object might be confused with a v1 without mappings, because it only has a "val" property
-        // To prevent this, mark the serialized object with version 2
-        serialized['.version'] = 2;
-    }
-    return serialized;
-};
-exports.serialize2 = serialize2;
-/**
- * New deserialization method using inline `.type` and `.val` properties
- * @param obj
- * @returns
- */
-const deserialize2 = (data) => {
-    if (typeof data !== 'object' || data === null) {
-        // primitive value, not serialized
-        return data;
-    }
-    if (typeof data['.type'] === 'undefined') {
-        // No type given: this is a plain object or array
-        if (data instanceof Array) {
-            // Plain array, deserialize items into a copy
-            const copy = [];
-            const arr = data;
-            for (let i = 0; i < arr.length; i++) {
-                copy.push((0, exports.deserialize2)(arr[i]));
-            }
-            return copy;
-        }
-        else {
-            // Plain object, deserialize properties into a copy
-            const copy = {};
-            const obj = data;
-            for (const prop in obj) {
-                copy[prop] = (0, exports.deserialize2)(obj[prop]);
-            }
-            return copy;
-        }
-    }
-    else if (typeof data['.type'] === 'string') {
-        const dataType = data['.type'].toLowerCase();
-        if (dataType === 'bigint') {
-            const val = data['.val'];
-            return BigInt(val);
-        }
-        else if (dataType === 'array') {
-            // partial ("sparse") array, deserialize children into a copy
-            const arr = data;
-            const copy = {};
-            for (const index in arr) {
-                copy[index] = (0, exports.deserialize2)(arr[index]);
-            }
-            delete copy['.type'];
-            return new partial_array_1.PartialArray(copy);
-        }
-        else if (dataType === 'date') {
-            // Date was serialized as a string (UTC)
-            const val = data['.val'];
-            return new Date(val);
-        }
-        else if (dataType === 'binary') {
-            // ascii85 encoded binary data
-            const val = data['.val'];
-            return ascii85_1.ascii85.decode(val);
-        }
-        else if (dataType === 'reference') {
-            const val = data['.val'];
-            return new path_reference_1.PathReference(val);
-        }
-        else if (dataType === 'regexp') {
-            const val = data['.val'];
-            if (typeof val === 'string') {
-                // serialized as '/(pattern)/flags'
-                const match = /^\/(.*)\/([a-z]+)$/.exec(val);
-                return new RegExp(match[1], match[2]);
-            }
-            // serialized as object with pattern & flags properties
-            return new RegExp(val.pattern, val.flags);
-        }
-    }
-    throw new Error(`Unknown data type "${data['.type']}" in serialized value`);
-};
-exports.deserialize2 = deserialize2;
-
-},{"./ascii85":3,"./partial-array":15,"./path-info":16,"./path-reference":17,"./utils":26}],25:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.TypeMappings = void 0;
-const utils_1 = require("./utils");
-const path_info_1 = require("./path-info");
-const data_reference_1 = require("./data-reference");
-const data_snapshot_1 = require("./data-snapshot");
-/**
- * (for internal use) - gets the mapping set for a specific path
- */
-function get(mappings, path) {
-    // path points to the mapped (object container) location
-    path = path.replace(/^\/|\/$/g, ''); // trim slashes
-    const keys = path_info_1.PathInfo.getPathKeys(path);
-    const mappedPath = Object.keys(mappings).find(mpath => {
-        const mkeys = path_info_1.PathInfo.getPathKeys(mpath);
-        if (mkeys.length !== keys.length) {
-            return false; // Can't be a match
-        }
-        return mkeys.every((mkey, index) => {
-            if (mkey === '*' || (typeof mkey === 'string' && mkey[0] === '$')) {
-                return true; // wildcard
-            }
-            return mkey === keys[index];
-        });
-    });
-    const mapping = mappings[mappedPath];
-    return mapping;
-}
-/**
- * (for internal use) - gets the mapping set for a specific path's parent
- */
-function map(mappings, path) {
-    // path points to the object location, its parent should have the mapping
-    const targetPath = path_info_1.PathInfo.get(path).parentPath;
-    if (targetPath === null) {
-        return;
-    }
-    return get(mappings, targetPath);
-}
-/**
- * (for internal use) - gets all mappings set for a specific path and all subnodes
- * @returns returns array of all matched mappings in path
- */
-function mapDeep(mappings, entryPath) {
-    // returns mapping for this node, and all mappings for nested nodes
-    // entryPath: "users/ewout"
-    // mappingPath: "users"
-    // mappingPath: "users/*/posts"
-    entryPath = entryPath.replace(/^\/|\/$/g, ''); // trim slashes
-    // Start with current path's parent node
-    const pathInfo = path_info_1.PathInfo.get(entryPath);
-    const startPath = pathInfo.parentPath;
-    const keys = startPath ? path_info_1.PathInfo.getPathKeys(startPath) : [];
-    // Every path that starts with startPath, is a match
-    // TODO: refactor to return Object.keys(mappings),filter(...)
-    const matches = Object.keys(mappings).reduce((m, mpath) => {
-        //const mkeys = mpath.length > 0 ? mpath.split("/") : [];
-        const mkeys = path_info_1.PathInfo.getPathKeys(mpath);
-        if (mkeys.length < keys.length) {
-            return m; // Can't be a match
-        }
-        let isMatch = true;
-        if (keys.length === 0 && startPath !== null) {
-            // Only match first node's children if mapping pattern is "*" or "$variable"
-            isMatch = mkeys.length === 1 && (mkeys[0] === '*' || (typeof mkeys[0] === 'string' && mkeys[0][0] === '$'));
-        }
-        else {
-            mkeys.every((mkey, index) => {
-                if (index >= keys.length) {
-                    return false; // stop .every loop
-                }
-                else if ((mkey === '*' || (typeof mkey === 'string' && mkey[0] === '$')) || mkey === keys[index]) {
-                    return true; // continue .every loop
-                }
-                else {
-                    isMatch = false;
-                    return false; // stop .every loop
-                }
-            });
-        }
-        if (isMatch) {
-            const mapping = mappings[mpath];
-            m.push({ path: mpath, type: mapping });
-        }
-        return m;
-    }, []);
-    return matches;
-}
-/**
- * (for internal use) - serializes or deserializes an object using type mappings
- * @returns returns the (de)serialized value
- */
-function process(db, mappings, path, obj, action) {
-    if (obj === null || typeof obj !== 'object') {
-        return obj;
-    }
-    const keys = path_info_1.PathInfo.getPathKeys(path); // path.length > 0 ? path.split("/") : [];
-    const m = mapDeep(mappings, path);
-    const changes = [];
-    m.sort((a, b) => path_info_1.PathInfo.getPathKeys(a.path).length > path_info_1.PathInfo.getPathKeys(b.path).length ? -1 : 1); // Deepest paths first
-    m.forEach(mapping => {
-        const mkeys = path_info_1.PathInfo.getPathKeys(mapping.path); //mapping.path.length > 0 ? mapping.path.split("/") : [];
-        mkeys.push('*');
-        const mTrailKeys = mkeys.slice(keys.length);
-        if (mTrailKeys.length === 0) {
-            const vars = path_info_1.PathInfo.extractVariables(mapping.path, path);
-            const ref = new data_reference_1.DataReference(db, path, vars);
-            if (action === 'serialize') {
-                // serialize this object
-                obj = mapping.type.serialize(obj, ref);
-            }
-            else if (action === 'deserialize') {
-                // deserialize this object
-                const snap = new data_snapshot_1.DataSnapshot(ref, obj);
-                obj = mapping.type.deserialize(snap);
-            }
-            return;
-        }
-        // Find all nested objects at this trail path
-        const process = (parentPath, parent, keys) => {
-            if (obj === null || typeof obj !== 'object') {
-                return obj;
-            }
-            const key = keys[0];
-            let children = [];
-            if (key === '*' || (typeof key === 'string' && key[0] === '$')) {
-                // Include all children
-                if (parent instanceof Array) {
-                    children = parent.map((val, index) => ({ key: index, val }));
-                }
-                else {
-                    children = Object.keys(parent).map(k => ({ key: k, val: parent[k] }));
-                }
-            }
-            else {
-                // Get the 1 child
-                const child = parent[key];
-                if (typeof child === 'object') {
-                    children.push({ key, val: child });
-                }
-            }
-            children.forEach(child => {
-                const childPath = path_info_1.PathInfo.getChildPath(parentPath, child.key);
-                const vars = path_info_1.PathInfo.extractVariables(mapping.path, childPath);
-                const ref = new data_reference_1.DataReference(db, childPath, vars);
-                if (keys.length === 1) {
-                    // TODO: this alters the existing object, we must build our own copy!
-                    if (action === 'serialize') {
-                        // serialize this object
-                        changes.push({ parent, key: child.key, original: parent[child.key] });
-                        parent[child.key] = mapping.type.serialize(child.val, ref);
-                    }
-                    else if (action === 'deserialize') {
-                        // deserialize this object
-                        const snap = new data_snapshot_1.DataSnapshot(ref, child.val);
-                        parent[child.key] = mapping.type.deserialize(snap);
-                    }
-                }
-                else {
-                    // Dig deeper
-                    process(childPath, child.val, keys.slice(1));
-                }
-            });
-        };
-        process(path, obj, mTrailKeys);
-    });
-    if (action === 'serialize') {
-        // Clone this serialized object so any types that remained
-        // will become plain objects without functions, and we can restore
-        // the original object's values if any mappings were processed.
-        // This will also prevent circular references
-        obj = (0, utils_1.cloneObject)(obj);
-        if (changes.length > 0) {
-            // Restore the changes made to the original object
-            changes.forEach(change => {
-                change.parent[change.key] = change.original;
-            });
-        }
-    }
-    return obj;
-}
-const _mappings = Symbol('mappings');
-class TypeMappings {
-    constructor(db) {
-        this.db = db;
-        this[_mappings] = {};
-    }
-    /** (for internal use) */
-    get mappings() { return this[_mappings]; }
-    /** (for internal use) */
-    map(path) {
-        return map(this[_mappings], path);
-    }
-    /**
-     * Maps objects that are stored in a specific path to a class, so they can automatically be
-     * serialized when stored to, and deserialized (instantiated) when loaded from the database.
-     * @param path path to an object container, eg "users" or "users/*\/posts"
-     * @param type class to bind all child objects of path to
-     * Best practice is to implement 2 methods for instantiation and serializing of your objects:
-     * 1) `static create(snap: DataSnapshot)` and 2) `serialize(ref: DataReference)`. See example
-     * @param options (optional) You can specify the functions to use to
-     * serialize and/or instantiate your class. If you do not specificy a creator (constructor) method,
-     * AceBase will call `YourClass.create(snapshot)` method if it exists, or create an instance of
-     * YourClass with `new YourClass(snapshot)`.
-     * If you do not specifiy a serializer method, AceBase will call `YourClass.prototype.serialize(ref)`
-     * if it exists, or tries storing your object's fields unaltered. NOTE: `this` in your creator
-     * function will point to `YourClass`, and `this` in your serializer function will point to the
-     * `instance` of `YourClass`.
-     * @example
-     * class User {
-     *    static create(snap: DataSnapshot): User {
-     *        // Deserialize (instantiate) User from plain database object
-     *        let user = new User();
-     *        Object.assign(user, snap.val()); // Copy all properties to user
-     *        user.id = snap.ref.key; // Add the key as id
-     *        return user;
-     *    }
-     *    serialize(ref: DataReference) {
-     *        // Serialize user for database storage
-     *        return {
-     *            name: this.name
-     *            email: this.email
-     *        };
-     *    }
-     * }
-     * db.types.bind('users', User); // Automatically uses serialize and static create methods
-     */
-    bind(path, type, options = {}) {
-        // Maps objects that are stored in a specific path to a constructor method,
-        // so they are automatically deserialized
-        if (typeof path !== 'string') {
-            throw new TypeError('path must be a string');
-        }
-        if (typeof type !== 'function') {
-            throw new TypeError('constructor must be a function');
-        }
-        if (typeof options.serializer === 'undefined') {
-            // if (typeof type.prototype.serialize === 'function') {
-            //     // Use .serialize instance method
-            //     options.serializer = type.prototype.serialize;
-            // }
-            // Use object's serialize method upon serialization (if available)
-        }
-        else if (typeof options.serializer === 'string') {
-            if (typeof type.prototype[options.serializer] === 'function') {
-                options.serializer = type.prototype[options.serializer];
-            }
-            else {
-                throw new TypeError(`${type.name}.prototype.${options.serializer} is not a function, cannot use it as serializer`);
-            }
-        }
-        else if (typeof options.serializer !== 'function') {
-            throw new TypeError(`serializer for class ${type.name} must be a function, or the name of a prototype method`);
-        }
-        if (typeof options.creator === 'undefined') {
-            if (typeof type.create === 'function') {
-                // Use static .create as creator method
-                options.creator = type.create;
-            }
-        }
-        else if (typeof options.creator === 'string') {
-            if (typeof type[options.creator] === 'function') {
-                options.creator = type[options.creator];
-            }
-            else {
-                throw new TypeError(`${type.name}.${options.creator} is not a function, cannot use it as creator`);
-            }
-        }
-        else if (typeof options.creator !== 'function') {
-            throw new TypeError(`creator for class ${type.name} must be a function, or the name of a static method`);
-        }
-        path = path.replace(/^\/|\/$/g, ''); // trim slashes
-        this[_mappings][path] = {
-            db: this.db,
-            type,
-            creator: options.creator,
-            serializer: options.serializer,
-            deserialize(snap) {
-                // run constructor method
-                let obj;
-                if (this.creator) {
-                    obj = this.creator.call(this.type, snap);
-                }
-                else {
-                    obj = new this.type(snap);
-                }
-                return obj;
-            },
-            serialize(obj, ref) {
-                if (this.serializer) {
-                    obj = this.serializer.call(obj, ref, obj);
-                }
-                else if (obj && typeof obj.serialize === 'function') {
-                    obj = obj.serialize(ref, obj);
-                }
-                return obj;
-            },
-        };
-    }
-    /**
-     * @internal (for internal use)
-     * Serializes any child in given object that has a type mapping
-     * @param path | path to the object's location
-     * @param obj object to serialize
-     */
-    serialize(path, obj) {
-        return process(this.db, this[_mappings], path, obj, 'serialize');
-    }
-    /**
-     * @internal (for internal use)
-     * Deserialzes any child in given object that has a type mapping
-     * @param path path to the object's location
-     * @param obj object to deserialize
-     */
-    deserialize(path, obj) {
-        return process(this.db, this[_mappings], path, obj, 'deserialize');
-    }
-}
-exports.TypeMappings = TypeMappings;
-
-},{"./data-reference":8,"./data-snapshot":9,"./path-info":16,"./utils":26}],26:[function(require,module,exports){
-(function (Buffer){(function (){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.defer = exports.getChildValues = exports.getMutations = exports.compareValues = exports.ObjectDifferences = exports.valuesAreEqual = exports.cloneObject = exports.concatTypedArrays = exports.decodeString = exports.encodeString = exports.bytesToBigint = exports.bigintToBytes = exports.bytesToNumber = exports.numberToBytes = void 0;
-const path_reference_1 = require("./path-reference");
-const process_1 = require("./process");
-const partial_array_1 = require("./partial-array");
-function numberToBytes(number) {
-    const bytes = new Uint8Array(8);
-    const view = new DataView(bytes.buffer);
-    view.setFloat64(0, number);
-    return new Array(...bytes);
-}
-exports.numberToBytes = numberToBytes;
-function bytesToNumber(bytes) {
-    const length = Array.isArray(bytes) ? bytes.length : bytes.byteLength;
-    if (length !== 8) {
-        throw new TypeError('must be 8 bytes');
-    }
-    const bin = new Uint8Array(bytes);
-    const view = new DataView(bin.buffer);
-    const nr = view.getFloat64(0);
-    return nr;
-}
-exports.bytesToNumber = bytesToNumber;
-const big = {
-    zero: BigInt(0),
-    one: BigInt(1),
-    two: BigInt(2),
-    eight: BigInt(8),
-    ff: BigInt(0xff),
-};
-function bigintToBytes(number) {
-    if (typeof number !== 'bigint') {
-        throw new Error('number must be a bigint');
-    }
-    const bytes = [];
-    const negative = number < big.zero;
-    do {
-        const byte = Number(number & big.ff); // NOTE: bits are inverted on negative numbers
-        bytes.push(byte);
-        number = number >> big.eight;
-    } while (number !== (negative ? -big.one : big.zero));
-    bytes.reverse(); // little-endian
-    if (negative ? bytes[0] < 128 : bytes[0] >= 128) {
-        bytes.unshift(negative ? 255 : 0); // extra sign byte needed
-    }
-    return bytes;
-}
-exports.bigintToBytes = bigintToBytes;
-function bytesToBigint(bytes) {
-    const negative = bytes[0] >= 128;
-    let number = big.zero;
-    for (let b of bytes) {
-        if (negative) {
-            b = ~b & 0xff;
-        } // Invert the bits
-        number = (number << big.eight) + BigInt(b);
-    }
-    if (negative) {
-        number = -(number + big.one);
-    }
-    return number;
-}
-exports.bytesToBigint = bytesToBigint;
-/**
- * Converts a string to a utf-8 encoded Uint8Array
- */
-function encodeString(str) {
-    if (typeof TextEncoder !== 'undefined') {
-        // Modern browsers, Node.js v11.0.0+ (or v8.3.0+ with util.TextEncoder)
-        const encoder = new TextEncoder();
-        return encoder.encode(str);
-    }
-    else if (typeof Buffer === 'function') {
-        // Node.js
-        const buf = Buffer.from(str, 'utf-8');
-        return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-    }
-    else {
-        // Older browsers. Manually encode
-        const arr = [];
-        for (let i = 0; i < str.length; i++) {
-            let code = str.charCodeAt(i);
-            if (code > 128) {
-                // Attempt simple UTF-8 conversion. See https://en.wikipedia.org/wiki/UTF-8
-                if ((code & 0xd800) === 0xd800) {
-                    // code starts with 1101 10...: this is a 2-part utf-16 char code
-                    const nextCode = str.charCodeAt(i + 1);
-                    if ((nextCode & 0xdc00) !== 0xdc00) {
-                        // next code must start with 1101 11...
-                        throw new Error('follow-up utf-16 character does not start with 0xDC00');
-                    }
-                    i++;
-                    const p1 = code & 0x3ff; // Only use last 10 bits
-                    const p2 = nextCode & 0x3ff;
-                    // Create code point from these 2: (see https://en.wikipedia.org/wiki/UTF-16)
-                    code = 0x10000 | (p1 << 10) | p2;
-                }
-                if (code < 2048) {
-                    // Use 2 bytes for 11 bit value, first byte starts with 110xxxxx (0xc0), 2nd byte with 10xxxxxx (0x80)
-                    const b1 = 0xc0 | ((code >> 6) & 0x1f); // 0xc0 = 11000000, 0x1f = 11111
-                    const b2 = 0x80 | (code & 0x3f); // 0x80 = 10000000, 0x3f = 111111
-                    arr.push(b1, b2);
-                }
-                else if (code < 65536) {
-                    // Use 3 bytes for 16-bit value, bits per byte: 4, 6, 6
-                    const b1 = 0xe0 | ((code >> 12) & 0xf); // 0xe0 = 11100000, 0xf = 1111
-                    const b2 = 0x80 | ((code >> 6) & 0x3f); // 0x80 = 10000000, 0x3f = 111111
-                    const b3 = 0x80 | (code & 0x3f);
-                    arr.push(b1, b2, b3);
-                }
-                else if (code < 2097152) {
-                    // Use 4 bytes for 21-bit value, bits per byte: 3, 6, 6, 6
-                    const b1 = 0xf0 | ((code >> 18) & 0x7); // 0xf0 = 11110000, 0x7 = 111
-                    const b2 = 0x80 | ((code >> 12) & 0x3f); // 0x80 = 10000000, 0x3f = 111111
-                    const b3 = 0x80 | ((code >> 6) & 0x3f); // 0x80 = 10000000, 0x3f = 111111
-                    const b4 = 0x80 | (code & 0x3f);
-                    arr.push(b1, b2, b3, b4);
-                }
-                else {
-                    throw new Error(`Cannot convert character ${str.charAt(i)} (code ${code}) to utf-8`);
-                }
-            }
-            else {
-                arr.push(code < 128 ? code : 63); // 63 = ?
-            }
-        }
-        return new Uint8Array(arr);
-    }
-}
-exports.encodeString = encodeString;
-/**
- * Converts a utf-8 encoded buffer to string
- */
-function decodeString(buffer) {
-    if (typeof TextDecoder !== 'undefined') {
-        // Modern browsers, Node.js v11.0.0+ (or v8.3.0+ with util.TextDecoder)
-        const decoder = new TextDecoder();
-        if (buffer instanceof Uint8Array) {
-            return decoder.decode(buffer);
-        }
-        const buf = Uint8Array.from(buffer);
-        return decoder.decode(buf);
-    }
-    else if (typeof Buffer === 'function') {
-        // Node.js (v10 and below)
-        if (buffer instanceof Array) {
-            buffer = Uint8Array.from(buffer); // convert to typed array
-        }
-        if (!(buffer instanceof Buffer) && 'buffer' in buffer && buffer.buffer instanceof ArrayBuffer) {
-            const typedArray = buffer;
-            buffer = Buffer.from(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength); // Convert typed array to node.js Buffer
-        }
-        if (!(buffer instanceof Buffer)) {
-            throw new Error('Unsupported buffer argument');
-        }
-        return buffer.toString('utf-8');
-    }
-    else {
-        // Older browsers. Manually decode!
-        if (!(buffer instanceof Uint8Array) && 'buffer' in buffer && buffer['buffer'] instanceof ArrayBuffer) {
-            // Convert TypedArray to Uint8Array
-            const typedArray = buffer;
-            buffer = new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength);
-        }
-        if (buffer instanceof Buffer || buffer instanceof Array || buffer instanceof Uint8Array) {
-            let str = '';
-            for (let i = 0; i < buffer.length; i++) {
-                let code = buffer[i];
-                if (code > 128) {
-                    // Decode Unicode character
-                    if ((code & 0xf0) === 0xf0) {
-                        // 4 byte char
-                        const b1 = code, b2 = buffer[i + 1], b3 = buffer[i + 2], b4 = buffer[i + 3];
-                        code = ((b1 & 0x7) << 18) | ((b2 & 0x3f) << 12) | ((b3 & 0x3f) << 6) | (b4 & 0x3f);
-                        i += 3;
-                    }
-                    else if ((code & 0xe0) === 0xe0) {
-                        // 3 byte char
-                        const b1 = code, b2 = buffer[i + 1], b3 = buffer[i + 2];
-                        code = ((b1 & 0xf) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
-                        i += 2;
-                    }
-                    else if ((code & 0xc0) === 0xc0) {
-                        // 2 byte char
-                        const b1 = code, b2 = buffer[i + 1];
-                        code = ((b1 & 0x1f) << 6) | (b2 & 0x3f);
-                        i++;
-                    }
-                    else {
-                        throw new Error('invalid utf-8 data');
-                    }
-                }
-                if (code >= 65536) {
-                    // Split into 2-part utf-16 char codes
-                    code ^= 0x10000;
-                    const p1 = 0xd800 | (code >> 10);
-                    const p2 = 0xdc00 | (code & 0x3ff);
-                    str += String.fromCharCode(p1);
-                    str += String.fromCharCode(p2);
-                }
-                else {
-                    str += String.fromCharCode(code);
-                }
-            }
-            return str;
-        }
-        else {
-            throw new Error('Unsupported buffer argument');
-        }
-    }
-}
-exports.decodeString = decodeString;
-function concatTypedArrays(a, b) {
-    const c = new a.constructor(a.length + b.length);
-    c.set(a);
-    c.set(b, a.length);
-    return c;
-}
-exports.concatTypedArrays = concatTypedArrays;
-function cloneObject(original, stack) {
-    var _a;
-    if (((_a = original === null || original === void 0 ? void 0 : original.constructor) === null || _a === void 0 ? void 0 : _a.name) === 'DataSnapshot') {
-        throw new TypeError(`Object to clone is a DataSnapshot (path "${original.ref.path}")`);
-    }
-    const checkAndFixTypedArray = (obj) => {
-        if (obj !== null && typeof obj === 'object'
-            && typeof obj.constructor === 'function' && typeof obj.constructor.name === 'string'
-            && ['Buffer', 'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array', 'BigUint64Array', 'BigInt64Array'].includes(obj.constructor.name)) {
-            // FIX for typed array being converted to objects with numeric properties:
-            // Convert Buffer or TypedArray to ArrayBuffer
-            obj = obj.buffer.slice(obj.byteOffset, obj.byteOffset + obj.byteLength);
-        }
-        return obj;
-    };
-    original = checkAndFixTypedArray(original);
-    if (typeof original !== 'object' || original === null || original instanceof Date || original instanceof ArrayBuffer || original instanceof path_reference_1.PathReference || original instanceof RegExp) {
-        return original;
-    }
-    const cloneValue = (val) => {
-        if (stack.indexOf(val) >= 0) {
-            throw new ReferenceError('object contains a circular reference');
-        }
-        val = checkAndFixTypedArray(val);
-        if (val === null || val instanceof Date || val instanceof ArrayBuffer || val instanceof path_reference_1.PathReference || val instanceof RegExp) { // || val instanceof ID
-            return val;
-        }
-        else if (typeof val === 'object') {
-            stack.push(val);
-            val = cloneObject(val, stack);
-            stack.pop();
-            return val;
-        }
-        else {
-            return val; // Anything other can just be copied
-        }
-    };
-    if (typeof stack === 'undefined') {
-        stack = [original];
-    }
-    const clone = original instanceof Array ? [] : original instanceof partial_array_1.PartialArray ? new partial_array_1.PartialArray() : {};
-    Object.keys(original).forEach(key => {
-        const val = original[key];
-        if (typeof val === 'function') {
-            return; // skip functions
-        }
-        clone[key] = cloneValue(val);
-    });
-    return clone;
-}
-exports.cloneObject = cloneObject;
-const isTypedArray = (val) => typeof val === 'object' && ['ArrayBuffer', 'Buffer', 'Uint8Array', 'Uint16Array', 'Uint32Array', 'Int8Array', 'Int16Array', 'Int32Array'].includes(val.constructor.name);
-// CONSIDER: updating isTypedArray to: const isTypedArray = val => typeof val === 'object' && 'buffer' in val && 'byteOffset' in val && 'byteLength' in val;
-function valuesAreEqual(val1, val2) {
-    if (val1 === val2) {
-        return true;
-    }
-    if (typeof val1 !== typeof val2) {
-        return false;
-    }
-    if (typeof val1 === 'object' || typeof val2 === 'object') {
-        if (val1 === null || val2 === null) {
-            return false;
-        }
-        if (val1 instanceof path_reference_1.PathReference || val2 instanceof path_reference_1.PathReference) {
-            return val1 instanceof path_reference_1.PathReference && val2 instanceof path_reference_1.PathReference && val1.path === val2.path;
-        }
-        if (val1 instanceof Date || val2 instanceof Date) {
-            return val1 instanceof Date && val2 instanceof Date && val1.getTime() === val2.getTime();
-        }
-        if (val1 instanceof Array || val2 instanceof Array) {
-            return val1 instanceof Array && val2 instanceof Array && val1.length === val2.length && val1.every((item, i) => valuesAreEqual(val1[i], val2[i]));
-        }
-        if (isTypedArray(val1) || isTypedArray(val2)) {
-            if (!isTypedArray(val1) || !isTypedArray(val2) || val1.byteLength === val2.byteLength) {
-                return false;
-            }
-            const typed1 = val1 instanceof ArrayBuffer ? new Uint8Array(val1) : new Uint8Array(val1.buffer, val1.byteOffset, val1.byteLength), typed2 = val2 instanceof ArrayBuffer ? new Uint8Array(val2) : new Uint8Array(val2.buffer, val2.byteOffset, val2.byteLength);
-            return typed1.every((val, i) => typed2[i] === val);
-        }
-        const keys1 = Object.keys(val1), keys2 = Object.keys(val2);
-        return keys1.length === keys2.length && keys1.every(key => keys2.includes(key)) && keys1.every(key => valuesAreEqual(val1[key], val2[key]));
-    }
-    return false;
-}
-exports.valuesAreEqual = valuesAreEqual;
-class ObjectDifferences {
-    constructor(added, removed, changed) {
-        this.added = added;
-        this.removed = removed;
-        this.changed = changed;
-    }
-    forChild(key) {
-        if (this.added.includes(key)) {
-            return 'added';
-        }
-        if (this.removed.includes(key)) {
-            return 'removed';
-        }
-        const changed = this.changed.find(ch => ch.key === key);
-        return changed ? changed.change : 'identical';
-    }
-}
-exports.ObjectDifferences = ObjectDifferences;
-function compareValues(oldVal, newVal, sortedResults = false) {
-    const voids = [undefined, null];
-    if (oldVal === newVal) {
-        return 'identical';
-    }
-    else if (voids.indexOf(oldVal) >= 0 && voids.indexOf(newVal) < 0) {
-        return 'added';
-    }
-    else if (voids.indexOf(oldVal) < 0 && voids.indexOf(newVal) >= 0) {
-        return 'removed';
-    }
-    else if (typeof oldVal !== typeof newVal) {
-        return 'changed';
-    }
-    else if (isTypedArray(oldVal) || isTypedArray(newVal)) {
-        // One or both values are typed arrays.
-        if (!isTypedArray(oldVal) || !isTypedArray(newVal)) {
-            return 'changed';
-        }
-        // Both are typed. Compare lengths and byte content of typed arrays
-        const typed1 = oldVal instanceof Uint8Array ? oldVal : oldVal instanceof ArrayBuffer ? new Uint8Array(oldVal) : new Uint8Array(oldVal.buffer, oldVal.byteOffset, oldVal.byteLength);
-        const typed2 = newVal instanceof Uint8Array ? newVal : newVal instanceof ArrayBuffer ? new Uint8Array(newVal) : new Uint8Array(newVal.buffer, newVal.byteOffset, newVal.byteLength);
-        return typed1.byteLength === typed2.byteLength && typed1.every((val, i) => typed2[i] === val) ? 'identical' : 'changed';
-    }
-    else if (oldVal instanceof Date || newVal instanceof Date) {
-        return oldVal instanceof Date && newVal instanceof Date && oldVal.getTime() === newVal.getTime() ? 'identical' : 'changed';
-    }
-    else if (oldVal instanceof path_reference_1.PathReference || newVal instanceof path_reference_1.PathReference) {
-        return oldVal instanceof path_reference_1.PathReference && newVal instanceof path_reference_1.PathReference && oldVal.path === newVal.path ? 'identical' : 'changed';
-    }
-    else if (typeof oldVal === 'object') {
-        // Do key-by-key comparison of objects
-        const isArray = oldVal instanceof Array;
-        const getKeys = (obj) => {
-            let keys = Object.keys(obj).filter(key => !voids.includes(obj[key]));
-            if (isArray) {
-                keys = keys.map((v) => parseInt(v));
-            }
-            return keys;
-        };
-        const oldKeys = getKeys(oldVal);
-        const newKeys = getKeys(newVal);
-        const removedKeys = oldKeys.filter(key => !newKeys.includes(key));
-        const addedKeys = newKeys.filter(key => !oldKeys.includes(key));
-        const changedKeys = newKeys.reduce((changed, key) => {
-            if (oldKeys.includes(key)) {
-                const val1 = oldVal[key];
-                const val2 = newVal[key];
-                const c = compareValues(val1, val2);
-                if (c !== 'identical') {
-                    changed.push({ key, change: c });
-                }
-            }
-            return changed;
-        }, []);
-        if (addedKeys.length === 0 && removedKeys.length === 0 && changedKeys.length === 0) {
-            return 'identical';
-        }
-        else {
-            return new ObjectDifferences(addedKeys, removedKeys, sortedResults ? changedKeys.sort((a, b) => a.key < b.key ? -1 : 1) : changedKeys);
-        }
-    }
-    return 'changed';
-}
-exports.compareValues = compareValues;
-function getMutations(oldVal, newVal, sortedResults = false) {
-    const process = (target, compareResult, prev, val) => {
-        switch (compareResult) {
-            case 'identical': return [];
-            case 'changed': return [{ target, prev, val }];
-            case 'added': return [{ target, prev: null, val }];
-            case 'removed': return [{ target, prev, val: null }];
-            default: {
-                let changes = [];
-                compareResult.added.forEach(key => changes.push({ target: target.concat(key), prev: null, val: val[key] }));
-                compareResult.removed.forEach(key => changes.push({ target: target.concat(key), prev: prev[key], val: null }));
-                compareResult.changed.forEach(item => {
-                    const childChanges = process(target.concat(item.key), item.change, prev[item.key], val[item.key]);
-                    changes = changes.concat(childChanges);
-                });
-                return changes;
-            }
-        }
-    };
-    const compareResult = compareValues(oldVal, newVal, sortedResults);
-    return process([], compareResult, oldVal, newVal);
-}
-exports.getMutations = getMutations;
-function getChildValues(childKey, oldValue, newValue) {
-    oldValue = oldValue === null ? null : oldValue[childKey];
-    if (typeof oldValue === 'undefined') {
-        oldValue = null;
-    }
-    newValue = newValue === null ? null : newValue[childKey];
-    if (typeof newValue === 'undefined') {
-        newValue = null;
-    }
-    return { oldValue, newValue };
-}
-exports.getChildValues = getChildValues;
-function defer(fn) {
-    process_1.default.nextTick(fn);
-}
-exports.defer = defer;
-
-}).call(this)}).call(this,require("buffer").Buffer)
-},{"./partial-array":15,"./path-reference":17,"./process":18,"buffer":57}],27:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 exports.BrowserAceBase = void 0;
 const acebase_local_1 = require("./acebase-local");
 const indexed_db_1 = require("./storage/custom/indexed-db");
@@ -5403,7 +45,7 @@ class BrowserAceBase extends acebase_local_1.AceBase {
 }
 exports.BrowserAceBase = BrowserAceBase;
 
-},{"./acebase-local":28,"./storage/custom/indexed-db":47}],28:[function(require,module,exports){
+},{"./acebase-local":2,"./storage/custom/indexed-db":21}],2:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBase = exports.AceBaseLocalSettings = exports.IndexedDBStorageSettings = exports.LocalStorageSettings = void 0;
@@ -5489,7 +131,7 @@ class AceBase extends acebase_core_1.AceBaseBase {
 }
 exports.AceBase = AceBase;
 
-},{"./api-local":29,"./storage/binary":43,"./storage/custom/indexed-db/settings":48,"./storage/custom/local-storage":50,"acebase-core":12}],29:[function(require,module,exports){
+},{"./api-local":3,"./storage/binary":17,"./storage/custom/indexed-db/settings":22,"./storage/custom/local-storage":24,"acebase-core":42}],3:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalApi = void 0;
@@ -5786,7 +428,7 @@ class LocalApi extends acebase_core_1.Api {
 }
 exports.LocalApi = LocalApi;
 
-},{"./node-value-types":39,"./query":42,"./storage/binary":43,"./storage/custom":46,"./storage/mssql":55,"./storage/sqlite":56,"acebase-core":12}],30:[function(require,module,exports){
+},{"./node-value-types":13,"./query":16,"./storage/binary":17,"./storage/custom":20,"./storage/mssql":29,"./storage/sqlite":30,"acebase-core":42}],4:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AsyncTaskBatch = void 0;
@@ -5866,7 +508,7 @@ class AsyncTaskBatch {
 }
 exports.AsyncTaskBatch = AsyncTaskBatch;
 
-},{}],31:[function(require,module,exports){
+},{}],5:[function(require,module,exports){
 "use strict";
 /**
    ________________________________________________________________________________
@@ -5946,7 +588,7 @@ var storage_1 = require("./storage");
 Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return storage_1.StorageSettings; } });
 Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return storage_1.SchemaValidationError; } });
 
-},{"./acebase-browser":27,"./acebase-local":28,"./storage":53,"./storage/binary":43,"./storage/custom":46,"./storage/mssql":55,"./storage/sqlite":56,"acebase-core":12}],32:[function(require,module,exports){
+},{"./acebase-browser":1,"./acebase-local":2,"./storage":27,"./storage/binary":17,"./storage/custom":20,"./storage/mssql":29,"./storage/sqlite":30,"acebase-core":42}],6:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ArrayIndex = exports.GeoIndex = exports.FullTextIndex = exports.DataIndex = void 0;
@@ -5976,7 +618,7 @@ class ArrayIndex extends not_supported_1.NotSupported {
 }
 exports.ArrayIndex = ArrayIndex;
 
-},{"../not-supported":40}],33:[function(require,module,exports){
+},{"../not-supported":14}],7:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RemoteIPCPeer = exports.IPCPeer = void 0;
@@ -6119,7 +761,7 @@ class RemoteIPCPeer extends not_supported_1.NotSupported {
 }
 exports.RemoteIPCPeer = RemoteIPCPeer;
 
-},{"../not-supported":40,"./ipc":34,"acebase-core":12}],34:[function(require,module,exports){
+},{"../not-supported":14,"./ipc":8,"acebase-core":42}],8:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
@@ -6618,7 +1260,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock":38,"acebase-core":12}],35:[function(require,module,exports){
+},{"../node-lock":12,"acebase-core":42}],9:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RemovedNodeAddress = exports.NodeAddress = void 0;
@@ -6653,7 +1295,7 @@ class RemovedNodeAddress extends NodeAddress {
 }
 exports.RemovedNodeAddress = RemovedNodeAddress;
 
-},{}],36:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeRevisionError = exports.NodeNotFoundError = void 0;
@@ -6664,7 +1306,7 @@ class NodeRevisionError extends Error {
 }
 exports.NodeRevisionError = NodeRevisionError;
 
-},{}],37:[function(require,module,exports){
+},{}],11:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeInfo = void 0;
@@ -6713,7 +1355,7 @@ class NodeInfo {
 }
 exports.NodeInfo = NodeInfo;
 
-},{"./node-value-types":39,"acebase-core":12}],38:[function(require,module,exports){
+},{"./node-value-types":13,"acebase-core":42}],12:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeLock = exports.NodeLocker = exports.LOCK_STATE = void 0;
@@ -6997,7 +1639,7 @@ class NodeLock {
 }
 exports.NodeLock = NodeLock;
 
-},{"acebase-core":12}],39:[function(require,module,exports){
+},{"acebase-core":42}],13:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getValueType = exports.getNodeValueType = exports.getValueTypeName = exports.VALUE_TYPES = void 0;
@@ -7089,7 +1731,7 @@ function getValueType(value) {
 }
 exports.getValueType = getValueType;
 
-},{"acebase-core":12}],40:[function(require,module,exports){
+},{"acebase-core":42}],14:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotSupported = void 0;
@@ -7098,7 +1740,7 @@ class NotSupported {
 }
 exports.NotSupported = NotSupported;
 
-},{}],41:[function(require,module,exports){
+},{}],15:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pfs = void 0;
@@ -7108,7 +1750,7 @@ class pfs {
 }
 exports.pfs = pfs;
 
-},{}],42:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.query = void 0;
@@ -7838,7 +2480,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
 }
 exports.query = query;
 
-},{"./async-task-batch":30,"./data-index":32,"./node-errors":36,"./node-value-types":39,"acebase-core":12}],43:[function(require,module,exports){
+},{"./async-task-batch":4,"./data-index":6,"./node-errors":10,"./node-value-types":13,"acebase-core":42}],17:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseStorage = exports.AceBaseStorageSettings = void 0;
@@ -7856,7 +2498,7 @@ class AceBaseStorage extends not_supported_1.NotSupported {
 }
 exports.AceBaseStorage = AceBaseStorage;
 
-},{"../../not-supported":40}],44:[function(require,module,exports){
+},{"../../not-supported":14}],18:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
@@ -7933,7 +2575,7 @@ async function createIndex(context, path, key, options) {
 }
 exports.createIndex = createIndex;
 
-},{"../data-index":32,"../promise-fs":41,"acebase-core":12}],45:[function(require,module,exports){
+},{"../data-index":6,"../promise-fs":15,"acebase-core":42}],19:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorageHelpers = void 0;
@@ -8002,7 +2644,7 @@ class CustomStorageHelpers {
 }
 exports.CustomStorageHelpers = CustomStorageHelpers;
 
-},{"acebase-core":12}],46:[function(require,module,exports){
+},{"acebase-core":42}],20:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorage = exports.CustomStorageNodeInfo = exports.CustomStorageNodeAddress = exports.CustomStorageSettings = exports.CustomStorageTransaction = exports.ICustomStorageNode = exports.ICustomStorageNodeMetaData = exports.CustomStorageHelpers = void 0;
@@ -9216,7 +3858,7 @@ class CustomStorage extends index_1.Storage {
 }
 exports.CustomStorage = CustomStorage;
 
-},{"../../node-address":35,"../../node-errors":36,"../../node-info":37,"../../node-lock":38,"../../node-value-types":39,"../index":53,"./helpers":45,"acebase-core":12}],47:[function(require,module,exports){
+},{"../../node-address":9,"../../node-errors":10,"../../node-info":11,"../../node-lock":12,"../../node-value-types":13,"../index":27,"./helpers":19,"acebase-core":42}],21:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndexedDBInstance = void 0;
@@ -9294,7 +3936,7 @@ function createIndexedDBInstance(dbname, init = {}) {
 }
 exports.createIndexedDBInstance = createIndexedDBInstance;
 
-},{"..":46,"../../..":31,"./settings":48,"./transaction":49,"acebase-core":12}],48:[function(require,module,exports){
+},{"..":20,"../../..":5,"./settings":22,"./transaction":23,"acebase-core":42}],22:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageSettings = void 0;
@@ -9338,7 +3980,7 @@ class IndexedDBStorageSettings extends __1.StorageSettings {
 }
 exports.IndexedDBStorageSettings = IndexedDBStorageSettings;
 
-},{"../..":53}],49:[function(require,module,exports){
+},{"../..":27}],23:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageTransaction = void 0;
@@ -9565,7 +4207,7 @@ class IndexedDBStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.IndexedDBStorageTransaction = IndexedDBStorageTransaction;
 
-},{"..":46}],50:[function(require,module,exports){
+},{"..":20}],24:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createLocalStorageInstance = exports.LocalStorageTransaction = exports.LocalStorageSettings = void 0;
@@ -9606,7 +4248,7 @@ function createLocalStorageInstance(dbname, init = {}) {
 }
 exports.createLocalStorageInstance = createLocalStorageInstance;
 
-},{"..":46,"../../..":31,"./settings":51,"./transaction":52}],51:[function(require,module,exports){
+},{"..":20,"../../..":5,"./settings":25,"./transaction":26}],25:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageSettings = void 0;
@@ -9648,7 +4290,7 @@ class LocalStorageSettings extends __1.StorageSettings {
 }
 exports.LocalStorageSettings = LocalStorageSettings;
 
-},{"../..":53}],52:[function(require,module,exports){
+},{"../..":27}],26:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageTransaction = void 0;
@@ -9742,7 +4384,7 @@ class LocalStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.LocalStorageTransaction = LocalStorageTransaction;
 
-},{"..":46}],53:[function(require,module,exports){
+},{"..":20}],27:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Storage = exports.StorageSettings = exports.SchemaValidationError = void 0;
@@ -11813,14 +6455,14 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
 }
 exports.Storage = Storage;
 
-},{"../data-index":32,"../ipc":33,"../node-errors":36,"../node-info":37,"../node-value-types":39,"../promise-fs":41,"./indexes":54,"acebase-core":12}],54:[function(require,module,exports){
+},{"../data-index":6,"../ipc":7,"../node-errors":10,"../node-info":11,"../node-value-types":13,"../promise-fs":15,"./indexes":28,"acebase-core":42}],28:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
 var create_index_1 = require("./create-index");
 Object.defineProperty(exports, "createIndex", { enumerable: true, get: function () { return create_index_1.createIndex; } });
 
-},{"./create-index":44}],55:[function(require,module,exports){
+},{"./create-index":18}],29:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MSSQLStorage = exports.MSSQLStorageSettings = void 0;
@@ -11838,7 +6480,7 @@ class MSSQLStorage extends not_supported_1.NotSupported {
 }
 exports.MSSQLStorage = MSSQLStorage;
 
-},{"../../not-supported":40}],56:[function(require,module,exports){
+},{"../../not-supported":14}],30:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SQLiteStorage = exports.SQLiteStorageSettings = void 0;
@@ -11856,7 +6498,5392 @@ class SQLiteStorage extends not_supported_1.NotSupported {
 }
 exports.SQLiteStorage = SQLiteStorage;
 
-},{"../../not-supported":40}],57:[function(require,module,exports){
+},{"../../not-supported":14}],31:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AceBaseBase = exports.AceBaseBaseSettings = void 0;
+/**
+   ________________________________________________________________________________
 
-},{}]},{},[31])(31)
+      ___          ______
+     / _ \         | ___ \
+    / /_\ \ ___ ___| |_/ / __ _ ___  ___
+    |  _  |/ __/ _ \ ___ \/ _` / __|/ _ \
+    | | | | (_|  __/ |_/ / (_| \__ \  __/
+    \_| |_/\___\___\____/ \__,_|___/\___|
+                        realtime database
+
+   Copyright 2018-2022 by Ewout Stortenbeker (me@appy.one)
+   Published under MIT license
+
+   See docs at https://github.com/appy-one/acebase
+   ________________________________________________________________________________
+
+*/
+const simple_event_emitter_1 = require("./simple-event-emitter");
+const data_reference_1 = require("./data-reference");
+const type_mappings_1 = require("./type-mappings");
+const optional_observable_1 = require("./optional-observable");
+const debug_1 = require("./debug");
+const simple_colors_1 = require("./simple-colors");
+class AceBaseBaseSettings {
+    constructor(options) {
+        /**
+         * What level to use for console logging.
+         * @default 'log'
+         */
+        this.logLevel = 'log';
+        /**
+         * Whether to use colors in the console logs output
+         * @default true
+         */
+        this.logColors = true;
+        /**
+         * @internal (for internal use)
+         */
+        this.info = 'realtime database';
+        /**
+         * You can turn this on if you are a sponsor. See https://github.com/appy-one/acebase/discussions/100 for more info
+         */
+        this.sponsor = false;
+        if (typeof options !== 'object') {
+            options = {};
+        }
+        if (typeof options.logLevel === 'string') {
+            this.logLevel = options.logLevel;
+        }
+        if (typeof options.logColors === 'boolean') {
+            this.logColors = options.logColors;
+        }
+        if (typeof options.info === 'string') {
+            this.info = options.info;
+        }
+        if (typeof options.sponsor === 'boolean') {
+            this.sponsor = options.sponsor;
+        }
+    }
+}
+exports.AceBaseBaseSettings = AceBaseBaseSettings;
+class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
+    /**
+     * @param dbname Name of the database to open or create
+     */
+    constructor(dbname, options = {}) {
+        super();
+        this._ready = false;
+        options = new AceBaseBaseSettings(options);
+        this.name = dbname;
+        // Setup console logging
+        this.debug = new debug_1.DebugLogger(options.logLevel, `[${dbname}]`);
+        // Enable/disable logging with colors
+        (0, simple_colors_1.SetColorsEnabled)(options.logColors);
+        // ASCI art: http://patorjk.com/software/taag/#p=display&f=Doom&t=AceBase
+        const logoStyle = [simple_colors_1.ColorStyle.magenta, simple_colors_1.ColorStyle.bold];
+        const logo = '     ___          ______                ' + '\n' +
+            '    / _ \\         | ___ \\               ' + '\n' +
+            '   / /_\\ \\ ___ ___| |_/ / __ _ ___  ___ ' + '\n' +
+            '   |  _  |/ __/ _ \\ ___ \\/ _` / __|/ _ \\' + '\n' +
+            '   | | | | (_|  __/ |_/ / (_| \\__ \\  __/' + '\n' +
+            '   \\_| |_/\\___\\___\\____/ \\__,_|___/\\___|';
+        const info = (options.info ? ''.padStart(40 - options.info.length, ' ') + options.info + '\n' : '');
+        if (!options.sponsor) {
+            // if you are a sponsor, you can switch off the "AceBase banner ad"
+            this.debug.write(logo.colorize(logoStyle));
+            info && this.debug.write(info.colorize(simple_colors_1.ColorStyle.magenta));
+        }
+        // Setup type mapping functionality
+        this.types = new type_mappings_1.TypeMappings(this);
+        this.once('ready', () => {
+            // console.log(`database "${dbname}" (${this.constructor.name}) is ready to use`);
+            this._ready = true;
+        });
+    }
+    /**
+     * Waits for the database to be ready before running your callback.
+     * @param callback (optional) callback function that is called when the database is ready to be used. You can also use the returned promise.
+     * @returns returns a promise that resolves when ready
+     */
+    async ready(callback) {
+        if (!this._ready) {
+            // Wait for ready event
+            await new Promise(resolve => this.on('ready', resolve));
+        }
+        callback === null || callback === void 0 ? void 0 : callback();
+    }
+    get isReady() {
+        return this._ready;
+    }
+    /**
+     * Allow specific observable implementation to be used
+     * @param ObservableImpl Implementation to use
+     */
+    setObservable(ObservableImpl) {
+        (0, optional_observable_1.setObservable)(ObservableImpl);
+    }
+    /**
+     * Creates a reference to a node
+     * @param path
+     * @returns reference to the requested node
+     */
+    ref(path) {
+        return new data_reference_1.DataReference(this, path);
+    }
+    /**
+     * Get a reference to the root database node
+     * @returns reference to root node
+     */
+    get root() {
+        return this.ref('');
+    }
+    /**
+     * Creates a query on the requested node
+     * @param path
+     * @returns query for the requested node
+     */
+    query(path) {
+        const ref = new data_reference_1.DataReference(this, path);
+        return new data_reference_1.DataReferenceQuery(ref);
+    }
+    get indexes() {
+        return {
+            /**
+             * Gets all indexes
+             */
+            get: () => {
+                return this.api.getIndexes();
+            },
+            /**
+             * Creates an index on "key" for all child nodes at "path". If the index already exists, nothing happens.
+             * Example: creating an index on all "name" keys of child objects of path "system/users",
+             * will index "system/users/user1/name", "system/users/user2/name" etc.
+             * You can also use wildcard paths to enable indexing and quering of fragmented data.
+             * Example: path "users/*\/posts", key "title": will index all "title" keys in all posts of all users.
+             * @param path path to the container node
+             * @param key name of the key to index every container child node
+             * @param options any additional options
+             */
+            create: (path, key, options) => {
+                return this.api.createIndex(path, key, options);
+            },
+            /**
+             * Deletes an existing index from the database
+             */
+            delete: async (filePath) => {
+                return this.api.deleteIndex(filePath);
+            },
+        };
+    }
+    get schema() {
+        return {
+            get: (path) => {
+                return this.api.getSchema(path);
+            },
+            set: (path, schema) => {
+                return this.api.setSchema(path, schema);
+            },
+            all: () => {
+                return this.api.getSchemas();
+            },
+            check: (path, value, isUpdate) => {
+                return this.api.validateSchema(path, value, isUpdate);
+            },
+        };
+    }
+}
+exports.AceBaseBase = AceBaseBase;
+
+},{"./data-reference":38,"./debug":40,"./optional-observable":44,"./simple-colors":51,"./simple-event-emitter":52,"./type-mappings":55}],32:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Api = void 0;
+class NotImplementedError extends Error {
+    constructor(name) { super(`${name} is not implemented`); }
+}
+/**
+ * Refactor to type/interface once acebase and acebase-client have been ported to TS
+ */
+class Api {
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    constructor() { }
+    /**
+     * Provides statistics
+     * @param options
+     */
+    stats(options) { throw new NotImplementedError('stats'); }
+    /**
+     * @param path
+     * @param event event to subscribe to ("value", "child_added" etc)
+     * @param callback callback function
+     */
+    subscribe(path, event, callback, settings) { throw new NotImplementedError('subscribe'); }
+    unsubscribe(path, event, callback) { throw new NotImplementedError('unsubscribe'); }
+    update(path, updates, options) { throw new NotImplementedError('update'); }
+    set(path, value, options) { throw new NotImplementedError('set'); }
+    get(path, options) { throw new NotImplementedError('get'); }
+    transaction(path, callback, options) { throw new NotImplementedError('transaction'); }
+    exists(path) { throw new NotImplementedError('exists'); }
+    query(path, query, options) { throw new NotImplementedError('query'); }
+    reflect(path, type, args) { throw new NotImplementedError('reflect'); }
+    export(path, write, options) { throw new NotImplementedError('export'); }
+    import(path, read, options) { throw new NotImplementedError('import'); }
+    /** Creates an index on key for all child nodes at path */
+    createIndex(path, key, options) { throw new NotImplementedError('createIndex'); }
+    getIndexes() { throw new NotImplementedError('getIndexes'); }
+    deleteIndex(filePath) { throw new NotImplementedError('deleteIndex'); }
+    setSchema(path, schema) { throw new NotImplementedError('setSchema'); }
+    getSchema(path) { throw new NotImplementedError('getSchema'); }
+    getSchemas() { throw new NotImplementedError('getSchemas'); }
+    validateSchema(path, value, isUpdate) { throw new NotImplementedError('validateSchema'); }
+    getMutations(filter) { throw new NotImplementedError('getMutations'); }
+    getChanges(filter) { throw new NotImplementedError('getChanges'); }
+}
+exports.Api = Api;
+
+},{}],33:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ascii85 = void 0;
+function c(input, length, result) {
+    const b = [0, 0, 0, 0, 0];
+    for (let i = 0; i < length; i += 4) {
+        let n = ((input[i] * 256 + input[i + 1]) * 256 + input[i + 2]) * 256 + input[i + 3];
+        if (!n) {
+            result.push('z');
+        }
+        else {
+            for (let j = 0; j < 5; b[j++] = n % 85 + 33, n = Math.floor(n / 85))
+                ;
+            result.push(String.fromCharCode(b[4], b[3], b[2], b[1], b[0]));
+        }
+    }
+}
+function encode(arr) {
+    // summary: encodes input data in ascii85 string
+    // input: ArrayLike
+    const input = arr, result = [], remainder = input.length % 4, length = input.length - remainder;
+    c(input, length, result);
+    if (remainder) {
+        const t = new Uint8Array(4);
+        t.set(input.slice(length), 0);
+        c(t, 4, result);
+        let x = result.pop();
+        if (x == 'z') {
+            x = '!!!!!';
+        }
+        result.push(x.substr(0, remainder + 1));
+    }
+    let ret = result.join(''); // String
+    ret = '<~' + ret + '~>';
+    return ret;
+}
+exports.ascii85 = {
+    encode: function (arr) {
+        if (arr instanceof ArrayBuffer) {
+            arr = new Uint8Array(arr, 0, arr.byteLength);
+        }
+        return encode(arr);
+    },
+    decode: function (input) {
+        // summary: decodes the input string back to an ArrayBuffer
+        // input: String: the input string to decode
+        if (!input.startsWith('<~') || !input.endsWith('~>')) {
+            throw new Error('Invalid input string');
+        }
+        input = input.substr(2, input.length - 4);
+        const n = input.length, r = [], b = [0, 0, 0, 0, 0];
+        let t, x, y, d;
+        for (let i = 0; i < n; ++i) {
+            if (input.charAt(i) == 'z') {
+                r.push(0, 0, 0, 0);
+                continue;
+            }
+            for (let j = 0; j < 5; ++j) {
+                b[j] = input.charCodeAt(i + j) - 33;
+            }
+            d = n - i;
+            if (d < 5) {
+                for (let j = d; j < 4; b[++j] = 0)
+                    ;
+                b[d] = 85;
+            }
+            t = (((b[0] * 85 + b[1]) * 85 + b[2]) * 85 + b[3]) * 85 + b[4];
+            x = t & 255;
+            t >>>= 8;
+            y = t & 255;
+            t >>>= 8;
+            r.push(t >>> 8, t & 255, y, x);
+            for (let j = d; j < 5; ++j, r.pop())
+                ;
+            i += 4;
+        }
+        const data = new Uint8Array(r);
+        return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    },
+};
+
+},{}],34:[function(require,module,exports){
+"use strict";
+var _a, _b;
+Object.defineProperty(exports, "__esModule", { value: true });
+const pad_1 = require("../pad");
+const env = typeof window === 'object' ? window : self, globalCount = Object.keys(env).length, mimeTypesLength = (_b = (_a = navigator.mimeTypes) === null || _a === void 0 ? void 0 : _a.length) !== null && _b !== void 0 ? _b : 0, clientId = (0, pad_1.default)((mimeTypesLength
+    + navigator.userAgent.length).toString(36)
+    + globalCount.toString(36), 4);
+function fingerprint() {
+    return clientId;
+}
+exports.default = fingerprint;
+
+},{"../pad":36}],35:[function(require,module,exports){
+"use strict";
+/**
+ * cuid.js
+ * Collision-resistant UID generator for browsers and node.
+ * Sequential for fast db lookups and recency sorting.
+ * Safe for element IDs and server-side lookups.
+ *
+ * Extracted from CLCTR
+ *
+ * Copyright (c) Eric Elliott 2012
+ * MIT License
+ *
+ * time biasing added by Ewout Stortenbeker for AceBase
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+const fingerprint_1 = require("./fingerprint");
+const pad_1 = require("./pad");
+let c = 0;
+const blockSize = 4, base = 36, discreteValues = Math.pow(base, blockSize);
+function randomBlock() {
+    return (0, pad_1.default)((Math.random() * discreteValues << 0).toString(base), blockSize);
+}
+function safeCounter() {
+    c = c < discreteValues ? c : 0;
+    c++; // this is not subliminal
+    return c - 1;
+}
+function cuid(timebias = 0) {
+    // Starting with a lowercase letter makes
+    // it HTML element ID friendly.
+    const letter = 'c', // hard-coded allows for sequential access
+    // timestamp
+    // warning: this exposes the exact date and time
+    // that the uid was created.
+    // NOTES Ewout:
+    // - added timebias
+    // - at '2059/05/25 19:38:27.456', timestamp will become 1 character larger!
+    timestamp = (new Date().getTime() + timebias).toString(base), 
+    // Prevent same-machine collisions.
+    counter = (0, pad_1.default)(safeCounter().toString(base), blockSize), 
+    // A few chars to generate distinct ids for different
+    // clients (so different computers are far less
+    // likely to generate the same id)
+    print = (0, fingerprint_1.default)(), 
+    // Grab some more chars from Math.random()
+    random = randomBlock() + randomBlock();
+    return letter + timestamp + counter + print + random;
+}
+exports.default = cuid;
+// Not using slugs, removed code
+
+},{"./fingerprint":34,"./pad":36}],36:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+function pad(num, size) {
+    const s = '000000000' + num;
+    return s.substr(s.length - size);
+}
+exports.default = pad;
+
+},{}],37:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.OrderedCollectionProxy = exports.proxyAccess = exports.LiveDataProxy = void 0;
+const utils_1 = require("./utils");
+const data_reference_1 = require("./data-reference");
+const data_snapshot_1 = require("./data-snapshot");
+const path_reference_1 = require("./path-reference");
+const id_1 = require("./id");
+const optional_observable_1 = require("./optional-observable");
+const process_1 = require("./process");
+const path_info_1 = require("./path-info");
+const simple_event_emitter_1 = require("./simple-event-emitter");
+class RelativeNodeTarget extends Array {
+    static areEqual(t1, t2) {
+        return t1.length === t2.length && t1.every((key, i) => t2[i] === key);
+    }
+    static isAncestor(ancestor, other) {
+        return ancestor.length < other.length && ancestor.every((key, i) => other[i] === key);
+    }
+    static isDescendant(descendant, other) {
+        return descendant.length > other.length && other.every((key, i) => descendant[i] === key);
+    }
+}
+const isProxy = Symbol('isProxy');
+class LiveDataProxy {
+    /**
+     * Creates a live data proxy for the given reference. The data of the reference's path will be loaded, and kept in-sync
+     * with live data by listening for 'mutations' events. Any changes made to the value by the client will be synced back
+     * to the database.
+     * @param ref DataReference to create proxy for.
+     * @param options proxy initialization options
+     * be written to the database.
+     */
+    static async create(ref, options) {
+        var _a;
+        ref = new data_reference_1.DataReference(ref.db, ref.path); // Use copy to prevent context pollution on original reference
+        let cache, loaded = false;
+        let latestCursor = options === null || options === void 0 ? void 0 : options.cursor;
+        let proxy;
+        const proxyId = id_1.ID.generate(); //ref.push().key;
+        // let onMutationCallback: ProxyObserveMutationsCallback;
+        // let onErrorCallback: ProxyObserveErrorCallback = err => {
+        //     console.error(err.message, err.details);
+        // };
+        const clientSubscriptions = [];
+        const clientEventEmitter = new simple_event_emitter_1.SimpleEventEmitter();
+        clientEventEmitter.on('cursor', (cursor) => latestCursor = cursor);
+        clientEventEmitter.on('error', (err) => {
+            console.error(err.message, err.details);
+        });
+        const applyChange = (keys, newValue) => {
+            // Make changes to cache
+            if (keys.length === 0) {
+                cache = newValue;
+                return true;
+            }
+            const allowCreation = false; //cache === null; // If the proxy'd target did not exist upon load, we must allow it to be created now.
+            if (allowCreation) {
+                cache = typeof keys[0] === 'number' ? [] : {};
+            }
+            let target = cache;
+            const trailKeys = keys.slice();
+            while (trailKeys.length > 1) {
+                const key = trailKeys.shift();
+                if (!(key in target)) {
+                    if (allowCreation) {
+                        target[key] = typeof key === 'number' ? [] : {};
+                    }
+                    else {
+                        // Have we missed an event, or are local pending mutations creating this conflict?
+                        return false; // Do not proceed
+                    }
+                }
+                target = target[key];
+            }
+            const prop = trailKeys.shift();
+            if (newValue === null) {
+                // Remove it
+                target instanceof Array ? target.splice(prop, 1) : delete target[prop];
+            }
+            else {
+                // Set or update it
+                target[prop] = newValue;
+            }
+            return true;
+        };
+        // Subscribe to mutations events on the target path
+        const syncFallback = async () => {
+            if (!loaded) {
+                return;
+            }
+            await reload();
+        };
+        const subscription = ref.on('mutations', { syncFallback }).subscribe(async (snap) => {
+            var _a;
+            if (!loaded) {
+                return;
+            }
+            const context = snap.context();
+            const isRemote = ((_a = context.acebase_proxy) === null || _a === void 0 ? void 0 : _a.id) !== proxyId;
+            if (!isRemote) {
+                return; // Update was done through this proxy, no need to update cache or trigger local value subscriptions
+            }
+            const mutations = snap.val(false);
+            const proceed = mutations.every(mutation => {
+                if (!applyChange(mutation.target, mutation.val)) {
+                    return false;
+                }
+                // if (onMutationCallback) {
+                const changeRef = mutation.target.reduce((ref, key) => ref.child(key), ref);
+                const changeSnap = new data_snapshot_1.DataSnapshot(changeRef, mutation.val, false, mutation.prev, snap.context());
+                // onMutationCallback(changeSnap, isRemote); // onMutationCallback uses try/catch for client callback
+                clientEventEmitter.emit('mutation', { snapshot: changeSnap, isRemote });
+                // }
+                return true;
+            });
+            if (proceed) {
+                clientEventEmitter.emit('cursor', context.acebase_cursor); // // NOTE: cursor is only present in mutations done remotely. For our own updates, server cursors are returned by ref.set and ref.update
+                localMutationsEmitter.emit('mutations', { origin: 'remote', snap });
+            }
+            else {
+                console.warn(`Cached value of live data proxy on "${ref.path}" appears outdated, will be reloaded`);
+                await reload();
+            }
+        });
+        // Setup updating functionality: enqueue all updates, process them at next tick in the order they were issued
+        let processPromise = Promise.resolve();
+        const mutationQueue = [];
+        const transactions = [];
+        const pushLocalMutations = async () => {
+            // Sync all local mutations that are not in a transaction
+            const mutations = [];
+            for (let i = 0, m = mutationQueue[0]; i < mutationQueue.length; i++, m = mutationQueue[i]) {
+                if (!transactions.find(t => RelativeNodeTarget.areEqual(t.target, m.target) || RelativeNodeTarget.isAncestor(t.target, m.target))) {
+                    mutationQueue.splice(i, 1);
+                    i--;
+                    mutations.push(m);
+                }
+            }
+            if (mutations.length === 0) {
+                return;
+            }
+            // Add current (new) values to mutations
+            mutations.forEach(mutation => {
+                mutation.value = (0, utils_1.cloneObject)(getTargetValue(cache, mutation.target));
+            });
+            // Run local onMutation & onChange callbacks in the next tick
+            process_1.default.nextTick(() => {
+                // Run onMutation callback for each changed node
+                const context = { acebase_proxy: { id: proxyId, source: 'update' } };
+                // if (onMutationCallback) {
+                mutations.forEach(mutation => {
+                    const mutationRef = mutation.target.reduce((ref, key) => ref.child(key), ref);
+                    const mutationSnap = new data_snapshot_1.DataSnapshot(mutationRef, mutation.value, false, mutation.previous, context);
+                    // onMutationCallback(mutationSnap, false);
+                    clientEventEmitter.emit('mutation', { snapshot: mutationSnap, isRemote: false });
+                });
+                // }
+                // Notify local subscribers
+                const snap = new data_snapshot_1.MutationsDataSnapshot(ref, mutations.map(m => ({ target: m.target, val: m.value, prev: m.previous })), context);
+                localMutationsEmitter.emit('mutations', { origin: 'local', snap });
+            });
+            // Update database async
+            // const batchId = ID.generate();
+            processPromise = mutations
+                .reduce((mutations, m, i, arr) => {
+                // Only keep top path mutations to prevent unneccessary child path updates
+                if (!arr.some(other => RelativeNodeTarget.isAncestor(other.target, m.target))) {
+                    mutations.push(m);
+                }
+                return mutations;
+            }, [])
+                .reduce((updates, m) => {
+                // Prepare db updates
+                const target = m.target;
+                if (target.length === 0) {
+                    // Overwrite this proxy's root value
+                    updates.push({ ref, target, value: cache, type: 'set', previous: m.previous });
+                }
+                else {
+                    const parentTarget = target.slice(0, -1);
+                    const key = target.slice(-1)[0];
+                    const parentRef = parentTarget.reduce((ref, key) => ref.child(key), ref);
+                    const parentUpdate = updates.find(update => update.ref.path === parentRef.path);
+                    const cacheValue = getTargetValue(cache, target); // m.value?
+                    const prevValue = m.previous;
+                    if (parentUpdate) {
+                        parentUpdate.value[key] = cacheValue;
+                        parentUpdate.previous[key] = prevValue;
+                    }
+                    else {
+                        updates.push({ ref: parentRef, target: parentTarget, value: { [key]: cacheValue }, type: 'update', previous: { [key]: prevValue } });
+                    }
+                }
+                return updates;
+            }, [])
+                .reduce(async (promise, update /*, i, updates */) => {
+                // Execute db update
+                // i === 0 && console.log(`Proxy: processing ${updates.length} db updates to paths:`, updates.map(update => update.ref.path));
+                const context = {
+                    acebase_proxy: {
+                        id: proxyId,
+                        source: update.type,
+                        // update_id: ID.generate(),
+                        // batch_id: batchId,
+                        // batch_updates: updates.length
+                    },
+                };
+                await promise;
+                await update.ref
+                    .context(context)[update.type](update.value) // .set or .update
+                    .catch(err => {
+                    clientEventEmitter.emit('error', { source: 'update', message: `Error processing update of "/${ref.path}"`, details: err });
+                    // console.warn(`Proxy could not update DB, should rollback (${update.type}) the proxy value of "${update.ref.path}" to: `, update.previous);
+                    const context = { acebase_proxy: { id: proxyId, source: 'update-rollback' } };
+                    const mutations = [];
+                    if (update.type === 'set') {
+                        setTargetValue(cache, update.target, update.previous);
+                        const mutationSnap = new data_snapshot_1.DataSnapshot(update.ref, update.previous, false, update.value, context);
+                        clientEventEmitter.emit('mutation', { snapshot: mutationSnap, isRemote: false });
+                        mutations.push({ target: update.target, val: update.previous, prev: update.value });
+                    }
+                    else {
+                        // update
+                        Object.keys(update.previous).forEach(key => {
+                            setTargetValue(cache, update.target.concat(key), update.previous[key]);
+                            const mutationSnap = new data_snapshot_1.DataSnapshot(update.ref.child(key), update.previous[key], false, update.value[key], context);
+                            clientEventEmitter.emit('mutation', { snapshot: mutationSnap, isRemote: false });
+                            mutations.push({ target: update.target.concat(key), val: update.previous[key], prev: update.value[key] });
+                        });
+                    }
+                    // Run onMutation callback for each node being rolled back
+                    mutations.forEach(m => {
+                        const mutationRef = m.target.reduce((ref, key) => ref.child(key), ref);
+                        const mutationSnap = new data_snapshot_1.DataSnapshot(mutationRef, m.val, false, m.prev, context);
+                        clientEventEmitter.emit('mutation', { snapshot: mutationSnap, isRemote: false });
+                    });
+                    // Notify local subscribers:
+                    const snap = new data_snapshot_1.MutationsDataSnapshot(update.ref, mutations, context);
+                    localMutationsEmitter.emit('mutations', { origin: 'local', snap });
+                });
+                if (update.ref.cursor) {
+                    // Should also be available in context.acebase_cursor now
+                    clientEventEmitter.emit('cursor', update.ref.cursor);
+                }
+            }, processPromise);
+            await processPromise;
+        };
+        let syncInProgress = false;
+        const syncPromises = [];
+        const syncCompleted = () => {
+            let resolve;
+            const promise = new Promise(rs => resolve = rs);
+            syncPromises.push({ resolve });
+            return promise;
+        };
+        let processQueueTimeout = null;
+        const scheduleSync = () => {
+            if (!processQueueTimeout) {
+                processQueueTimeout = setTimeout(async () => {
+                    syncInProgress = true;
+                    processQueueTimeout = null;
+                    await pushLocalMutations();
+                    syncInProgress = false;
+                    syncPromises.splice(0).forEach(p => p.resolve());
+                }, 0);
+            }
+        };
+        const flagOverwritten = (target) => {
+            if (!mutationQueue.find(m => RelativeNodeTarget.areEqual(m.target, target))) {
+                mutationQueue.push({ target, previous: (0, utils_1.cloneObject)(getTargetValue(cache, target)) });
+            }
+            // schedule database updates
+            scheduleSync();
+        };
+        const localMutationsEmitter = new simple_event_emitter_1.SimpleEventEmitter();
+        const addOnChangeHandler = (target, callback) => {
+            const isObject = (val) => val !== null && typeof val === 'object';
+            const mutationsHandler = async (details) => {
+                var _a;
+                const { snap, origin } = details;
+                const context = snap.context();
+                const causedByOurProxy = ((_a = context.acebase_proxy) === null || _a === void 0 ? void 0 : _a.id) === proxyId;
+                if (details.origin === 'remote' && causedByOurProxy) {
+                    // Any local changes already triggered subscription callbacks
+                    console.error('DEV ISSUE: mutationsHandler was called from remote event originating from our own proxy');
+                    return;
+                }
+                const mutations = snap.val(false).filter(mutation => {
+                    // Keep mutations impacting the subscribed target: mutations on target, or descendant or ancestor of target
+                    return mutation.target.slice(0, target.length).every((key, i) => target[i] === key);
+                });
+                if (mutations.length === 0) {
+                    return;
+                }
+                let newValue, previousValue;
+                // If there is a mutation on the target itself, or parent/ancestor path, there can only be one. We can take a shortcut
+                const singleMutation = mutations.find(m => m.target.length <= target.length);
+                if (singleMutation) {
+                    const trailKeys = target.slice(singleMutation.target.length);
+                    newValue = trailKeys.reduce((val, key) => !isObject(val) || !(key in val) ? null : val[key], singleMutation.val);
+                    previousValue = trailKeys.reduce((val, key) => !isObject(val) || !(key in val) ? null : val[key], singleMutation.prev);
+                }
+                else {
+                    // All mutations are on children/descendants of our target
+                    // Construct new & previous values by combining cache and snapshot
+                    const currentValue = getTargetValue(cache, target);
+                    newValue = (0, utils_1.cloneObject)(currentValue);
+                    previousValue = (0, utils_1.cloneObject)(newValue);
+                    mutations.forEach(mutation => {
+                        // mutation.target is relative to proxy root
+                        const trailKeys = mutation.target.slice(target.length);
+                        for (let i = 0, val = newValue, prev = previousValue; i < trailKeys.length; i++) { // arr = PathInfo.getPathKeys(mutationPath).slice(PathInfo.getPathKeys(targetRef.path).length)
+                            const last = i + 1 === trailKeys.length, key = trailKeys[i];
+                            if (last) {
+                                val[key] = mutation.val;
+                                if (val[key] === null) {
+                                    delete val[key];
+                                }
+                                prev[key] = mutation.prev;
+                                if (prev[key] === null) {
+                                    delete prev[key];
+                                }
+                            }
+                            else {
+                                val = val[key] = key in val ? val[key] : {};
+                                prev = prev[key] = key in prev ? prev[key] : {};
+                            }
+                        }
+                    });
+                }
+                process_1.default.nextTick(() => {
+                    // Run callback with read-only (frozen) values in next tick
+                    let keepSubscription = true;
+                    try {
+                        keepSubscription = false !== callback(Object.freeze(newValue), Object.freeze(previousValue), !causedByOurProxy, context);
+                    }
+                    catch (err) {
+                        clientEventEmitter.emit('error', { source: origin === 'remote' ? 'remote_update' : 'local_update', message: 'Error running subscription callback', details: err });
+                    }
+                    if (keepSubscription === false) {
+                        stop();
+                    }
+                });
+            };
+            localMutationsEmitter.on('mutations', mutationsHandler);
+            const stop = () => {
+                localMutationsEmitter.off('mutations').off('mutations', mutationsHandler);
+                clientSubscriptions.splice(clientSubscriptions.findIndex(cs => cs.stop === stop), 1);
+            };
+            clientSubscriptions.push({ target, stop });
+            return { stop };
+        };
+        const handleFlag = (flag, target, args) => {
+            if (flag === 'write') {
+                return flagOverwritten(target);
+            }
+            else if (flag === 'onChange') {
+                return addOnChangeHandler(target, args.callback);
+            }
+            else if (flag === 'subscribe' || flag === 'observe') {
+                const subscribe = (subscriber) => {
+                    const currentValue = getTargetValue(cache, target);
+                    subscriber.next(currentValue);
+                    const subscription = addOnChangeHandler(target, (value /*, previous, isRemote, context */) => {
+                        subscriber.next(value);
+                    });
+                    return function unsubscribe() {
+                        subscription.stop();
+                    };
+                };
+                if (flag === 'subscribe') {
+                    return subscribe;
+                }
+                // Try to load Observable
+                const Observable = (0, optional_observable_1.getObservable)();
+                return new Observable(subscribe);
+            }
+            else if (flag === 'transaction') {
+                const hasConflictingTransaction = transactions.some(t => RelativeNodeTarget.areEqual(target, t.target) || RelativeNodeTarget.isAncestor(target, t.target) || RelativeNodeTarget.isDescendant(target, t.target));
+                if (hasConflictingTransaction) {
+                    // TODO: Wait for this transaction to finish, then try again
+                    return Promise.reject(new Error('Cannot start transaction because it conflicts with another transaction'));
+                }
+                return new Promise(async (resolve) => {
+                    // If there are pending mutations on target (or deeper), wait until they have been synchronized
+                    const hasPendingMutations = mutationQueue.some(m => RelativeNodeTarget.areEqual(target, m.target) || RelativeNodeTarget.isAncestor(target, m.target));
+                    if (hasPendingMutations) {
+                        if (!syncInProgress) {
+                            scheduleSync();
+                        }
+                        await syncCompleted();
+                    }
+                    const tx = { target, status: 'started', transaction: null };
+                    transactions.push(tx);
+                    tx.transaction = {
+                        get status() { return tx.status; },
+                        get completed() { return tx.status !== 'started'; },
+                        get mutations() {
+                            return mutationQueue.filter(m => RelativeNodeTarget.areEqual(tx.target, m.target) || RelativeNodeTarget.isAncestor(tx.target, m.target));
+                        },
+                        get hasMutations() {
+                            return this.mutations.length > 0;
+                        },
+                        async commit() {
+                            if (this.completed) {
+                                throw new Error(`Transaction has completed already (status '${tx.status}')`);
+                            }
+                            tx.status = 'finished';
+                            transactions.splice(transactions.indexOf(tx), 1);
+                            if (syncInProgress) {
+                                // Currently syncing without our mutations
+                                await syncCompleted();
+                            }
+                            scheduleSync();
+                            await syncCompleted();
+                        },
+                        rollback() {
+                            // Remove mutations from queue
+                            if (this.completed) {
+                                throw new Error(`Transaction has completed already (status '${tx.status}')`);
+                            }
+                            tx.status = 'canceled';
+                            const mutations = [];
+                            for (let i = 0; i < mutationQueue.length; i++) {
+                                const m = mutationQueue[i];
+                                if (RelativeNodeTarget.areEqual(tx.target, m.target) || RelativeNodeTarget.isAncestor(tx.target, m.target)) {
+                                    mutationQueue.splice(i, 1);
+                                    i--;
+                                    mutations.push(m);
+                                }
+                            }
+                            // Replay mutations in reverse order
+                            mutations.reverse()
+                                .forEach(m => {
+                                if (m.target.length === 0) {
+                                    cache = m.previous;
+                                }
+                                else {
+                                    setTargetValue(cache, m.target, m.previous);
+                                }
+                            });
+                            // Remove transaction
+                            transactions.splice(transactions.indexOf(tx), 1);
+                        },
+                    };
+                    resolve(tx.transaction);
+                });
+            }
+        };
+        const snap = await ref.get({ cache_mode: 'allow', cache_cursor: options === null || options === void 0 ? void 0 : options.cursor });
+        // const gotOfflineStartValue = snap.context().acebase_origin === 'cache';
+        // if (gotOfflineStartValue) {
+        //     console.warn(`Started data proxy with cached value of "${ref.path}", check if its value is reloaded on next connection!`);
+        // }
+        if (snap.context().acebase_origin !== 'cache') {
+            clientEventEmitter.emit('cursor', (_a = ref.cursor) !== null && _a !== void 0 ? _a : null); // latestCursor = snap.context().acebase_cursor ?? null;
+        }
+        loaded = true;
+        cache = snap.val();
+        if (cache === null && typeof (options === null || options === void 0 ? void 0 : options.defaultValue) !== 'undefined') {
+            cache = options.defaultValue;
+            const context = {
+                acebase_proxy: {
+                    id: proxyId,
+                    source: 'default',
+                    // update_id: ID.generate()
+                },
+            };
+            await ref.context(context).set(cache);
+        }
+        proxy = createProxy({ root: { ref, get cache() { return cache; } }, target: [], id: proxyId, flag: handleFlag });
+        const assertProxyAvailable = () => {
+            if (proxy === null) {
+                throw new Error('Proxy was destroyed');
+            }
+        };
+        const reload = async () => {
+            // Manually reloads current value when cache is out of sync, which should only
+            // be able to happen if an AceBaseClient is used without cache database,
+            // and the connection to the server was lost for a while. In all other cases,
+            // there should be no need to call this method.
+            assertProxyAvailable();
+            mutationQueue.splice(0); // Remove pending mutations. Will be empty in production, but might not be while debugging, leading to weird behaviour.
+            const snap = await ref.get({ allow_cache: false });
+            const oldVal = cache, newVal = snap.val();
+            cache = newVal;
+            // Compare old and new values
+            const mutations = (0, utils_1.getMutations)(oldVal, newVal);
+            if (mutations.length === 0) {
+                return; // Nothing changed
+            }
+            // Run onMutation callback for each changed node
+            const context = snap.context(); // context might contain acebase_cursor if server support that
+            context.acebase_proxy = { id: proxyId, source: 'reload' };
+            // if (onMutationCallback) {
+            mutations.forEach(m => {
+                const targetRef = getTargetRef(ref, m.target);
+                const newSnap = new data_snapshot_1.DataSnapshot(targetRef, m.val, m.val === null, m.prev, context);
+                clientEventEmitter.emit('mutation', { snapshot: newSnap, isRemote: true });
+            });
+            // }
+            // Notify local subscribers
+            const mutationsSnap = new data_snapshot_1.MutationsDataSnapshot(ref, mutations, context);
+            localMutationsEmitter.emit('mutations', { origin: 'local', snap: mutationsSnap });
+        };
+        return {
+            async destroy() {
+                await processPromise;
+                const promises = [
+                    subscription.stop(),
+                    ...clientSubscriptions.map(cs => cs.stop()),
+                ];
+                await Promise.all(promises);
+                ['cursor', 'mutation', 'error'].forEach(event => clientEventEmitter.off(event));
+                cache = null; // Remove cache
+                proxy = null;
+            },
+            stop() {
+                this.destroy();
+            },
+            get value() {
+                assertProxyAvailable();
+                return proxy;
+            },
+            get hasValue() {
+                assertProxyAvailable();
+                return cache !== null;
+            },
+            set value(val) {
+                // Overwrite the value of the proxied path itself!
+                assertProxyAvailable();
+                if (val !== null && typeof val === 'object' && val[isProxy]) {
+                    // Assigning one proxied value to another
+                    val = val.valueOf();
+                }
+                flagOverwritten([]);
+                cache = val;
+            },
+            get ref() {
+                return ref;
+            },
+            get cursor() {
+                return latestCursor;
+            },
+            reload,
+            onMutation(callback) {
+                // Fires callback each time anything changes
+                assertProxyAvailable();
+                clientEventEmitter.off('mutation'); // Mimic legacy behaviour that overwrites handler
+                clientEventEmitter.on('mutation', ({ snapshot, isRemote }) => {
+                    try {
+                        callback(snapshot, isRemote);
+                    }
+                    catch (err) {
+                        clientEventEmitter.emit('error', { source: 'mutation_callback', message: 'Error in dataproxy onMutation callback', details: err });
+                    }
+                });
+            },
+            onError(callback) {
+                // Fires callback each time anything goes wrong
+                assertProxyAvailable();
+                clientEventEmitter.off('error'); // Mimic legacy behaviour that overwrites handler
+                clientEventEmitter.on('error', (err) => {
+                    try {
+                        callback(err);
+                    }
+                    catch (err) {
+                        console.error(`Error in dataproxy onError callback: ${err.message}`);
+                    }
+                });
+            },
+            on(event, callback) {
+                clientEventEmitter.on(event, callback);
+            },
+            off(event, callback) {
+                clientEventEmitter.off(event, callback);
+            },
+        };
+    }
+}
+exports.LiveDataProxy = LiveDataProxy;
+function getTargetValue(obj, target) {
+    let val = obj;
+    for (const key of target) {
+        val = typeof val === 'object' && val !== null && key in val ? val[key] : null;
+    }
+    return val;
+}
+function setTargetValue(obj, target, value) {
+    if (target.length === 0) {
+        throw new Error('Cannot update root target, caller must do that itself!');
+    }
+    const targetObject = target.slice(0, -1).reduce((obj, key) => obj[key], obj);
+    const prop = target.slice(-1)[0];
+    if (value === null || typeof value === 'undefined') {
+        // Remove it
+        targetObject instanceof Array ? targetObject.splice(prop, 1) : delete targetObject[prop];
+    }
+    else {
+        // Set or update it
+        targetObject[prop] = value;
+    }
+}
+function getTargetRef(ref, target) {
+    // Create new DataReference to prevent context reuse
+    const path = path_info_1.PathInfo.get(ref.path).childPath(target);
+    return new data_reference_1.DataReference(ref.db, path);
+}
+function createProxy(context) {
+    const targetRef = getTargetRef(context.root.ref, context.target);
+    const childProxies = [];
+    const handler = {
+        get(target, prop, receiver) {
+            target = getTargetValue(context.root.cache, context.target);
+            if (typeof prop === 'symbol') {
+                if (prop.toString() === Symbol.iterator.toString()) {
+                    // Use .values for @@iterator symbol
+                    prop = 'values';
+                }
+                else if (prop.toString() === isProxy.toString()) {
+                    return true;
+                }
+                else {
+                    return Reflect.get(target, prop, receiver);
+                }
+            }
+            if (prop === 'valueOf') {
+                return function valueOf() { return target; };
+            }
+            if (target === null || typeof target !== 'object') {
+                throw new Error(`Cannot read property "${prop}" of ${target}. Value of path "/${targetRef.path}" is not an object (anymore)`);
+            }
+            if (target instanceof Array && typeof prop === 'string' && /^[0-9]+$/.test(prop)) {
+                // Proxy type definitions say prop can be a number, but this is never the case.
+                prop = parseInt(prop);
+            }
+            const value = target[prop];
+            if (value === null) {
+                // Removed property. Should never happen, but if it does:
+                delete target[prop];
+                return; // undefined
+            }
+            // Check if we have a child proxy for this property already.
+            // If so, and the properties' typeof value did not change, return that
+            const childProxy = childProxies.find(proxy => proxy.prop === prop);
+            if (childProxy) {
+                if (childProxy.typeof === typeof value) {
+                    return childProxy.value;
+                }
+                childProxies.splice(childProxies.indexOf(childProxy), 1);
+            }
+            const proxifyChildValue = (prop) => {
+                const value = target[prop]; //
+                const childProxy = childProxies.find(child => child.prop === prop);
+                if (childProxy) {
+                    if (childProxy.typeof === typeof value) {
+                        return childProxy.value;
+                    }
+                    childProxies.splice(childProxies.indexOf(childProxy), 1);
+                }
+                if (typeof value !== 'object') {
+                    // Can't proxify non-object values
+                    return value;
+                }
+                const newChildProxy = createProxy({ root: context.root, target: context.target.concat(prop), id: context.id, flag: context.flag });
+                childProxies.push({ typeof: typeof value, prop, value: newChildProxy });
+                return newChildProxy;
+            };
+            const unproxyValue = (value) => {
+                return value !== null && typeof value === 'object' && value[isProxy]
+                    ? value.getTarget()
+                    : value;
+            };
+            // If the property contains a simple value, return it.
+            if (['string', 'number', 'boolean'].includes(typeof value)
+                || value instanceof Date
+                || value instanceof path_reference_1.PathReference
+                || value instanceof ArrayBuffer
+                || (typeof value === 'object' && 'buffer' in value) // Typed Arrays
+            ) {
+                return value;
+            }
+            const isArray = target instanceof Array;
+            if (prop === 'toString') {
+                return function toString() {
+                    return `[LiveDataProxy for "${targetRef.path}"]`;
+                };
+            }
+            if (typeof value === 'undefined') {
+                if (prop === 'push') {
+                    // Push item to an object collection
+                    return function push(item) {
+                        const childRef = targetRef.push();
+                        context.flag('write', context.target.concat(childRef.key)); //, { previous: null }
+                        target[childRef.key] = item;
+                        return childRef.key;
+                    };
+                }
+                if (prop === 'getTarget') {
+                    // Get unproxied readonly (but still live) version of data.
+                    return function (warn = true) {
+                        warn && console.warn('Use getTarget with caution - any changes will not be synchronized!');
+                        return target;
+                    };
+                }
+                if (prop === 'getRef') {
+                    // Gets the DataReference to this data target
+                    return function getRef() {
+                        const ref = getTargetRef(context.root.ref, context.target);
+                        return ref;
+                    };
+                }
+                if (prop === 'forEach') {
+                    return function forEach(callback) {
+                        const keys = Object.keys(target);
+                        // Fix: callback with unproxied value
+                        let stop = false;
+                        for (let i = 0; !stop && i < keys.length; i++) {
+                            const key = keys[i];
+                            const value = proxifyChildValue(key); //, target[key]
+                            stop = callback(value, key, i) === false;
+                        }
+                    };
+                }
+                if (['values', 'entries', 'keys'].includes(prop)) {
+                    return function* generator() {
+                        const keys = Object.keys(target);
+                        for (const key of keys) {
+                            if (prop === 'keys') {
+                                yield key;
+                            }
+                            else {
+                                const value = proxifyChildValue(key); //, target[key]
+                                if (prop === 'entries') {
+                                    yield [key, value];
+                                }
+                                else {
+                                    yield value;
+                                }
+                            }
+                        }
+                    };
+                }
+                if (prop === 'toArray') {
+                    return function toArray(sortFn) {
+                        const arr = Object.keys(target).map(key => proxifyChildValue(key)); //, target[key]
+                        if (sortFn) {
+                            arr.sort(sortFn);
+                        }
+                        return arr;
+                    };
+                }
+                if (prop === 'onChanged') {
+                    // Starts monitoring the value
+                    return function onChanged(callback) {
+                        return context.flag('onChange', context.target, { callback });
+                    };
+                }
+                if (prop === 'subscribe') {
+                    // Gets subscriber function to use with Observables, or custom handling
+                    return function subscribe() {
+                        return context.flag('subscribe', context.target);
+                    };
+                }
+                if (prop === 'getObservable') {
+                    // Creates an observable for monitoring the value
+                    return function getObservable() {
+                        return context.flag('observe', context.target);
+                    };
+                }
+                if (prop === 'getOrderedCollection') {
+                    return function getOrderedCollection(orderProperty, orderIncrement) {
+                        return new OrderedCollectionProxy(this, orderProperty, orderIncrement);
+                    };
+                }
+                if (prop === 'startTransaction') {
+                    return function startTransaction() {
+                        return context.flag('transaction', context.target);
+                    };
+                }
+                if (prop === 'remove' && !isArray) {
+                    // Removes target from object collection
+                    return function remove() {
+                        if (context.target.length === 0) {
+                            throw new Error('Can\'t remove proxy root value');
+                        }
+                        const parent = getTargetValue(context.root.cache, context.target.slice(0, -1));
+                        const key = context.target.slice(-1)[0];
+                        context.flag('write', context.target);
+                        delete parent[key];
+                    };
+                }
+                return; // undefined
+            }
+            else if (typeof value === 'function') {
+                if (isArray) {
+                    // Handle array methods
+                    const writeArray = (action) => {
+                        context.flag('write', context.target);
+                        return action();
+                    };
+                    const cleanArrayValues = (values) => values.map((value) => {
+                        value = unproxyValue(value);
+                        removeVoidProperties(value);
+                        return value;
+                    });
+                    // Methods that directly change the array:
+                    if (prop === 'push') {
+                        return function push(...items) {
+                            items = cleanArrayValues(items);
+                            return writeArray(() => target.push(...items)); // push the items to the cache array
+                        };
+                    }
+                    if (prop === 'pop') {
+                        return function pop() {
+                            return writeArray(() => target.pop());
+                        };
+                    }
+                    if (prop === 'splice') {
+                        return function splice(start, deleteCount, ...items) {
+                            items = cleanArrayValues(items);
+                            return writeArray(() => target.splice(start, deleteCount, ...items));
+                        };
+                    }
+                    if (prop === 'shift') {
+                        return function shift() {
+                            return writeArray(() => target.shift());
+                        };
+                    }
+                    if (prop === 'unshift') {
+                        return function unshift(...items) {
+                            items = cleanArrayValues(items);
+                            return writeArray(() => target.unshift(...items));
+                        };
+                    }
+                    if (prop === 'sort') {
+                        return function sort(compareFn) {
+                            return writeArray(() => target.sort(compareFn));
+                        };
+                    }
+                    if (prop === 'reverse') {
+                        return function reverse() {
+                            return writeArray(() => target.reverse());
+                        };
+                    }
+                    // Methods that do not change the array themselves, but
+                    // have callbacks that might, or return child values:
+                    if (['indexOf', 'lastIndexOf'].includes(prop)) {
+                        return function indexOf(item, start) {
+                            if (item !== null && typeof item === 'object' && item[isProxy]) {
+                                // Use unproxied value, or array.indexOf will return -1 (fixes issue #1)
+                                item = item.getTarget(false);
+                            }
+                            return target[prop](item, start);
+                        };
+                    }
+                    if (['forEach', 'every', 'some', 'filter', 'map'].includes(prop)) {
+                        return function iterate(callback) {
+                            return target[prop]((value, i) => {
+                                return callback(proxifyChildValue(i), i, proxy); //, value
+                            });
+                        };
+                    }
+                    if (['reduce', 'reduceRight'].includes(prop)) {
+                        return function reduce(callback, initialValue) {
+                            return target[prop]((prev, value, i) => {
+                                return callback(prev, proxifyChildValue(i), i, proxy); //, value
+                            }, initialValue);
+                        };
+                    }
+                    if (['find', 'findIndex'].includes(prop)) {
+                        return function find(callback) {
+                            let value = target[prop]((value, i) => {
+                                return callback(proxifyChildValue(i), i, proxy); // , value
+                            });
+                            if (prop === 'find' && value) {
+                                const index = target.indexOf(value);
+                                value = proxifyChildValue(index); //, value
+                            }
+                            return value;
+                        };
+                    }
+                    if (['values', 'entries', 'keys'].includes(prop)) {
+                        return function* generator() {
+                            for (let i = 0; i < target.length; i++) {
+                                if (prop === 'keys') {
+                                    yield i;
+                                }
+                                else {
+                                    const value = proxifyChildValue(i); //, target[i]
+                                    if (prop === 'entries') {
+                                        yield [i, value];
+                                    }
+                                    else {
+                                        yield value;
+                                    }
+                                }
+                            }
+                        };
+                    }
+                }
+                // Other function (or not an array), should not alter its value
+                // return function fn(...args) {
+                //     return target[prop](...args);
+                // }
+                return value;
+            }
+            // Proxify any other value
+            return proxifyChildValue(prop); //, value
+        },
+        set(target, prop, value, receiver) {
+            // Eg: chats.chat1.title = 'New chat title';
+            // target === chats.chat1, prop === 'title'
+            target = getTargetValue(context.root.cache, context.target);
+            if (typeof prop === 'symbol') {
+                return Reflect.set(target, prop, value, receiver);
+            }
+            if (target === null || typeof target !== 'object') {
+                throw new Error(`Cannot set property "${prop}" of ${target}. Value of path "/${targetRef.path}" is not an object`);
+            }
+            if (target instanceof Array && typeof prop === 'string') {
+                if (!/^[0-9]+$/.test(prop)) {
+                    throw new Error(`Cannot set property "${prop}" on array value of path "/${targetRef.path}"`);
+                }
+                prop = parseInt(prop);
+            }
+            if (value !== null) {
+                if (typeof value === 'object') {
+                    if (value[isProxy]) {
+                        // Assigning one proxied value to another
+                        value = value.valueOf();
+                    }
+                    // else if (Object.isFrozen(value)) {
+                    //     // Create a copy to unfreeze it
+                    //     value = cloneObject(value);
+                    // }
+                    value = (0, utils_1.cloneObject)(value); // Fix #10, always clone objects so changes made through the proxy won't change the original object (and vice versa)
+                }
+                if ((0, utils_1.valuesAreEqual)(value, target[prop])) { //if (compareValues(value, target[prop]) === 'identical') { // (typeof value !== 'object' && target[prop] === value) {
+                    // not changing the actual value, ignore
+                    return true;
+                }
+            }
+            if (context.target.some(key => typeof key === 'number')) {
+                // Updating an object property inside an array. Flag the first array in target to be written.
+                // Eg: when chat.members === [{ name: 'Ewout', id: 'someid' }]
+                // --> chat.members[0].name = 'Ewout' --> Rewrite members array instead of chat/members[0]/name
+                context.flag('write', context.target.slice(0, context.target.findIndex(key => typeof key === 'number')));
+            }
+            else if (target instanceof Array) {
+                // Flag the entire array to be overwritten
+                context.flag('write', context.target);
+            }
+            else {
+                // Flag child property
+                context.flag('write', context.target.concat(prop));
+            }
+            // Set cached value:
+            if (value === null) {
+                delete target[prop];
+            }
+            else {
+                removeVoidProperties(value);
+                target[prop] = value;
+            }
+            return true;
+        },
+        deleteProperty(target, prop) {
+            target = getTargetValue(context.root.cache, context.target);
+            if (target === null) {
+                throw new Error(`Cannot delete property ${prop.toString()} of null`);
+            }
+            if (typeof prop === 'symbol') {
+                return Reflect.deleteProperty(target, prop);
+            }
+            if (!(prop in target)) {
+                return true; // Nothing to delete
+            }
+            context.flag('write', context.target.concat(prop));
+            delete target[prop];
+            return true;
+        },
+        ownKeys(target) {
+            target = getTargetValue(context.root.cache, context.target);
+            return Reflect.ownKeys(target);
+        },
+        has(target, prop) {
+            target = getTargetValue(context.root.cache, context.target);
+            return Reflect.has(target, prop);
+        },
+        getOwnPropertyDescriptor(target, prop) {
+            target = getTargetValue(context.root.cache, context.target);
+            const descriptor = Reflect.getOwnPropertyDescriptor(target, prop);
+            if (descriptor) {
+                descriptor.configurable = true; // prevent "TypeError: 'getOwnPropertyDescriptor' on proxy: trap reported non-configurability for property '...' which is either non-existant or configurable in the proxy target"
+            }
+            return descriptor;
+        },
+        getPrototypeOf(target) {
+            target = getTargetValue(context.root.cache, context.target);
+            return Reflect.getPrototypeOf(target);
+        },
+    };
+    const proxy = new Proxy({}, handler);
+    return proxy;
+}
+function removeVoidProperties(obj) {
+    if (typeof obj !== 'object') {
+        return;
+    }
+    Object.keys(obj).forEach(key => {
+        const val = obj[key];
+        if (val === null || typeof val === 'undefined') {
+            delete obj[key];
+        }
+        else if (typeof val === 'object') {
+            removeVoidProperties(val);
+        }
+    });
+}
+/**
+ * Convenience function to access ILiveDataProxyValue methods on a proxied value
+ * @param proxiedValue The proxied value to get access to
+ * @returns Returns the same object typecasted to an ILiveDataProxyValue
+ * @example
+ * // IChatMessages is an ObjectCollection<IChatMessage>
+ * let observable: Observable<IChatMessages>;
+ *
+ * // Allows you to do this:
+ * observable = proxyAccess<IChatMessages>(chat.messages).getObservable();
+ *
+ * // Instead of:
+ * observable = (chat.messages.msg1 as any as ILiveDataProxyValue<IChatMessages>).getObservable();
+ *
+ * // Both do the exact same, but the first is less obscure
+ */
+function proxyAccess(proxiedValue) {
+    if (typeof proxiedValue !== 'object' || !proxiedValue[isProxy]) {
+        throw new Error('Given value is not proxied. Make sure you are referencing the value through the live data proxy.');
+    }
+    return proxiedValue;
+}
+exports.proxyAccess = proxyAccess;
+/**
+ * Provides functionality to work with ordered collections through a live data proxy. Eliminates
+ * the need for arrays to handle ordered data by adding a 'sort' properties to child objects in a
+ * collection, and provides functionality to sort and reorder items with a minimal amount of database
+ * updates.
+ */
+class OrderedCollectionProxy {
+    constructor(collection, orderProperty = 'order', orderIncrement = 10) {
+        this.collection = collection;
+        this.orderProperty = orderProperty;
+        this.orderIncrement = orderIncrement;
+        if (typeof collection !== 'object' || !collection[isProxy]) {
+            throw new Error('Collection is not proxied');
+        }
+        if (collection.valueOf() instanceof Array) {
+            throw new Error('Collection is an array, not an object collection');
+        }
+        if (!Object.keys(collection).every(key => typeof collection[key] === 'object')) {
+            throw new Error('Collection has non-object children');
+        }
+        // Check if the collection has order properties. If not, assign them now
+        const ok = Object.keys(collection).every(key => typeof collection[key][orderProperty] === 'number');
+        if (!ok) {
+            // Assign order properties now. Database will be updated automatically
+            const keys = Object.keys(collection);
+            for (let i = 0; i < keys.length; i++) {
+                const item = collection[keys[i]];
+                item[orderProperty] = i * orderIncrement; // 0, 10, 20, 30 etc
+            }
+        }
+    }
+    /**
+     * Gets an observable for the target object collection. Same as calling `collection.getObservable()`
+     * @returns
+     */
+    getObservable() {
+        return proxyAccess(this.collection).getObservable();
+    }
+    /**
+     * Gets an observable that emits a new ordered array representation of the object collection each time
+     * the unlaying data is changed. Same as calling `getArray()` in a `getObservable().subscribe` callback
+     * @returns
+     */
+    getArrayObservable() {
+        const Observable = (0, optional_observable_1.getObservable)();
+        return new Observable((subscriber => {
+            const subscription = this.getObservable().subscribe(( /*value*/) => {
+                const newArray = this.getArray();
+                subscriber.next(newArray);
+            });
+            return function unsubscribe() {
+                subscription.unsubscribe();
+            };
+        }));
+    }
+    /**
+     * Gets an ordered array representation of the items in your object collection. The items in the array
+     * are proxied values, changes will be in sync with the database. Note that the array itself
+     * is not mutable: adding or removing items to it will NOT update the collection in the
+     * the database and vice versa. Use `add`, `delete`, `sort` and `move` methods to make changes
+     * that impact the collection's sorting order
+     * @returns order array
+     */
+    getArray() {
+        const arr = proxyAccess(this.collection).toArray((a, b) => a[this.orderProperty] - b[this.orderProperty]);
+        // arr.push = (...items: T[]) => {
+        //     items.forEach(item => this.add(item));
+        //     return arr.length;
+        // };
+        return arr;
+    }
+    add(newItem, index, from) {
+        const item = newItem;
+        const arr = this.getArray();
+        let minOrder = Number.POSITIVE_INFINITY, maxOrder = Number.NEGATIVE_INFINITY;
+        for (let i = 0; i < arr.length; i++) {
+            const order = arr[i][this.orderProperty];
+            minOrder = Math.min(order, minOrder);
+            maxOrder = Math.max(order, maxOrder);
+        }
+        let fromKey;
+        if (typeof from === 'number') {
+            // Moving existing item
+            fromKey = Object.keys(this.collection).find(key => this.collection[key] === item);
+            if (!fromKey) {
+                throw new Error('item not found in collection');
+            }
+            if (from === index) {
+                return { key: fromKey, index };
+            }
+            if (Math.abs(from - index) === 1) {
+                // Position being swapped, swap their order property values
+                const otherItem = arr[index];
+                const otherOrder = otherItem[this.orderProperty];
+                otherItem[this.orderProperty] = item[this.orderProperty];
+                item[this.orderProperty] = otherOrder;
+                return { key: fromKey, index };
+            }
+            else {
+                // Remove from array, code below will add again
+                arr.splice(from, 1);
+            }
+        }
+        if (typeof index !== 'number' || index >= arr.length) {
+            // append at the end
+            index = arr.length;
+            item[this.orderProperty] = arr.length == 0 ? 0 : maxOrder + this.orderIncrement;
+        }
+        else if (index === 0) {
+            // insert before all others
+            item[this.orderProperty] = arr.length == 0 ? 0 : minOrder - this.orderIncrement;
+        }
+        else {
+            // insert between 2 others
+            const orders = arr.map(item => item[this.orderProperty]);
+            const gap = orders[index] - orders[index - 1];
+            if (gap > 1) {
+                item[this.orderProperty] = orders[index] - Math.floor(gap / 2);
+            }
+            else {
+                // TODO: Can this gap be enlarged by moving one of both orders?
+                // For now, change all other orders
+                arr.splice(index, 0, item);
+                for (let i = 0; i < arr.length; i++) {
+                    arr[i][this.orderProperty] = i * this.orderIncrement;
+                }
+            }
+        }
+        const key = typeof fromKey === 'string'
+            ? fromKey // Moved item, don't add it
+            : proxyAccess(this.collection).push(item);
+        return { key, index };
+    }
+    /**
+     * Deletes an item from the object collection using the their index in the sorted array representation
+     * @param index
+     * @returns the key of the collection's child that was deleted
+     */
+    delete(index) {
+        const arr = this.getArray();
+        const item = arr[index];
+        if (!item) {
+            throw new Error(`Item at index ${index} not found`);
+        }
+        const key = Object.keys(this.collection).find(key => this.collection[key] === item);
+        if (!key) {
+            throw new Error('Cannot find target object to delete');
+        }
+        this.collection[key] = null; // Deletes it from db
+        return { key, index };
+    }
+    /**
+     * Moves an item in the object collection by reordering it
+     * @param fromIndex Current index in the array (the ordered representation of the object collection)
+     * @param toIndex Target index in the array
+     * @returns
+     */
+    move(fromIndex, toIndex) {
+        const arr = this.getArray();
+        return this.add(arr[fromIndex], toIndex, fromIndex);
+    }
+    /**
+     * Reorders the object collection using given sort function. Allows quick reordering of the collection which is persisted in the database
+     * @param sortFn
+     */
+    sort(sortFn) {
+        const arr = this.getArray();
+        arr.sort(sortFn);
+        for (let i = 0; i < arr.length; i++) {
+            arr[i][this.orderProperty] = i * this.orderIncrement;
+        }
+    }
+}
+exports.OrderedCollectionProxy = OrderedCollectionProxy;
+
+},{"./data-reference":38,"./data-snapshot":39,"./id":41,"./optional-observable":44,"./path-info":46,"./path-reference":47,"./process":48,"./simple-event-emitter":52,"./utils":56}],38:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DataReferencesArray = exports.DataSnapshotsArray = exports.DataReferenceQuery = exports.DataReference = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = void 0;
+const data_snapshot_1 = require("./data-snapshot");
+const subscription_1 = require("./subscription");
+const id_1 = require("./id");
+const path_info_1 = require("./path-info");
+const data_proxy_1 = require("./data-proxy");
+const optional_observable_1 = require("./optional-observable");
+class DataRetrievalOptions {
+    /**
+     * Options for data retrieval, allows selective loading of object properties
+     */
+    constructor(options) {
+        if (!options) {
+            options = {};
+        }
+        if (typeof options.include !== 'undefined' && !(options.include instanceof Array)) {
+            throw new TypeError('options.include must be an array');
+        }
+        if (typeof options.exclude !== 'undefined' && !(options.exclude instanceof Array)) {
+            throw new TypeError('options.exclude must be an array');
+        }
+        if (typeof options.child_objects !== 'undefined' && typeof options.child_objects !== 'boolean') {
+            throw new TypeError('options.child_objects must be a boolean');
+        }
+        if (typeof options.cache_mode === 'string' && !['allow', 'bypass', 'force'].includes(options.cache_mode)) {
+            throw new TypeError('invalid value for options.cache_mode');
+        }
+        this.include = options.include || undefined;
+        this.exclude = options.exclude || undefined;
+        this.child_objects = typeof options.child_objects === 'boolean' ? options.child_objects : undefined;
+        this.cache_mode = typeof options.cache_mode === 'string'
+            ? options.cache_mode
+            : typeof options.allow_cache === 'boolean'
+                ? options.allow_cache ? 'allow' : 'bypass'
+                : 'allow';
+        this.cache_cursor = typeof options.cache_cursor === 'string' ? options.cache_cursor : undefined;
+    }
+}
+exports.DataRetrievalOptions = DataRetrievalOptions;
+class QueryDataRetrievalOptions extends DataRetrievalOptions {
+    /**
+     * @param options Options for data retrieval, allows selective loading of object properties
+     */
+    constructor(options) {
+        super(options);
+        if (!['undefined', 'boolean'].includes(typeof options.snapshots)) {
+            throw new TypeError('options.snapshots must be a boolean');
+        }
+        this.snapshots = typeof options.snapshots === 'boolean' ? options.snapshots : true;
+    }
+}
+exports.QueryDataRetrievalOptions = QueryDataRetrievalOptions;
+const _private = Symbol('private');
+class DataReference {
+    /**
+     * Creates a reference to a node
+     */
+    constructor(db, path, vars) {
+        this.db = db;
+        if (!path) {
+            path = '';
+        }
+        path = path.replace(/^\/|\/$/g, ''); // Trim slashes
+        const pathInfo = path_info_1.PathInfo.get(path);
+        const key = pathInfo.key;
+        const callbacks = [];
+        this[_private] = {
+            get path() { return path; },
+            get key() { return key; },
+            get callbacks() { return callbacks; },
+            vars: vars || {},
+            context: {},
+            pushed: false,
+            cursor: null,
+        };
+    }
+    context(context, merge = false) {
+        const currentContext = this[_private].context;
+        if (typeof context === 'object') {
+            const newContext = context ? merge ? currentContext || {} : context : {};
+            if (context) {
+                // Merge new with current context
+                Object.keys(context).forEach(key => {
+                    newContext[key] = context[key];
+                });
+            }
+            this[_private].context = newContext;
+            return this;
+        }
+        else if (typeof context === 'undefined') {
+            console.warn('Use snap.context() instead of snap.ref.context() to get updating context in event callbacks');
+            return currentContext;
+        }
+        else {
+            throw new Error('Invalid context argument');
+        }
+    }
+    /**
+     * Contains the last received cursor for this referenced path (if the connected database has transaction logging enabled).
+     * If you want to be notified if this value changes, add a handler with `ref.onCursor(callback)`
+     */
+    get cursor() {
+        return this[_private].cursor;
+    }
+    set cursor(value) {
+        var _a;
+        this[_private].cursor = value;
+        (_a = this.onCursor) === null || _a === void 0 ? void 0 : _a.call(this, value);
+    }
+    /**
+    * The path this instance was created with
+    */
+    get path() { return this[_private].path; }
+    /**
+     * The key or index of this node
+     */
+    get key() {
+        const key = this[_private].key;
+        return typeof key === 'number' ? `[${key}]` : key;
+    }
+    /**
+     * If the "key" is a number, it is an index!
+     */
+    get index() {
+        const key = this[_private].key;
+        if (typeof key !== 'number') {
+            throw new Error(`"${key}" is not a number`);
+        }
+        return key;
+    }
+    /**
+     * Returns a new reference to this node's parent
+     */
+    get parent() {
+        const currentPath = path_info_1.PathInfo.fillVariables2(this.path, this.vars);
+        const info = path_info_1.PathInfo.get(currentPath);
+        if (info.parentPath === null) {
+            return null;
+        }
+        return new DataReference(this.db, info.parentPath).context(this[_private].context);
+    }
+    /**
+     * Contains values of the variables/wildcards used in a subscription path if this reference was
+     * created by an event ("value", "child_added" etc), or in a type mapping path when serializing / instantiating typed objects
+     */
+    get vars() {
+        return this[_private].vars;
+    }
+    /**
+     * Returns a new reference to a child node
+     * @param childPath Child key, index or path
+     * @returns reference to the child
+     */
+    child(childPath) {
+        childPath = typeof childPath === 'number' ? childPath : childPath.replace(/^\/|\/$/g, '');
+        const currentPath = path_info_1.PathInfo.fillVariables2(this.path, this.vars);
+        const targetPath = path_info_1.PathInfo.getChildPath(currentPath, childPath);
+        return new DataReference(this.db, targetPath).context(this[_private].context); //  `${this.path}/${childPath}`
+    }
+    /**
+     * Sets or overwrites the stored value
+     * @param value value to store in database
+     * @param onComplete optional completion callback to use instead of returning promise
+     * @returns promise that resolves with this reference when completed
+     */
+    async set(value, onComplete) {
+        try {
+            if (this.isWildcardPath) {
+                throw new Error(`Cannot set the value of wildcard path "/${this.path}"`);
+            }
+            if (this.parent === null) {
+                throw new Error('Cannot set the root object. Use update, or set individual child properties');
+            }
+            if (typeof value === 'undefined') {
+                throw new TypeError(`Cannot store undefined value in "/${this.path}"`);
+            }
+            if (!this.db.isReady) {
+                await this.db.ready();
+            }
+            value = this.db.types.serialize(this.path, value);
+            const { cursor } = await this.db.api.set(this.path, value, { context: this[_private].context });
+            this.cursor = cursor;
+            if (typeof onComplete === 'function') {
+                try {
+                    onComplete(null, this);
+                }
+                catch (err) {
+                    console.error('Error in onComplete callback:', err);
+                }
+            }
+        }
+        catch (err) {
+            if (typeof onComplete === 'function') {
+                try {
+                    onComplete(err, this);
+                }
+                catch (err) {
+                    console.error('Error in onComplete callback:', err);
+                }
+            }
+            else {
+                // throw again
+                throw err;
+            }
+        }
+        return this;
+    }
+    /**
+     * Updates properties of the referenced node
+     * @param updates object containing the properties to update
+     * @param onComplete optional completion callback to use instead of returning promise
+     * @return returns promise that resolves with this reference once completed
+     */
+    async update(updates, onComplete) {
+        try {
+            if (this.isWildcardPath) {
+                throw new Error(`Cannot update the value of wildcard path "/${this.path}"`);
+            }
+            if (!this.db.isReady) {
+                await this.db.ready();
+            }
+            if (typeof updates !== 'object' || updates instanceof Array || updates instanceof ArrayBuffer || updates instanceof Date) {
+                await this.set(updates);
+            }
+            else if (Object.keys(updates).length === 0) {
+                console.warn(`update called on path "/${this.path}", but there is nothing to update`);
+            }
+            else {
+                updates = this.db.types.serialize(this.path, updates);
+                const { cursor } = await this.db.api.update(this.path, updates, { context: this[_private].context });
+                this.cursor = cursor;
+            }
+            if (typeof onComplete === 'function') {
+                try {
+                    onComplete(null, this);
+                }
+                catch (err) {
+                    console.error('Error in onComplete callback:', err);
+                }
+            }
+        }
+        catch (err) {
+            if (typeof onComplete === 'function') {
+                try {
+                    onComplete(err, this);
+                }
+                catch (err) {
+                    console.error('Error in onComplete callback:', err);
+                }
+            }
+            else {
+                // throw again
+                throw err;
+            }
+        }
+        return this;
+    }
+    /**
+     * Sets the value a node using a transaction: it runs your callback function with the current value, uses its return value as the new value to store.
+     * The transaction is canceled if your callback returns undefined, or throws an error. If your callback returns null, the target node will be removed.
+     * @param callback - callback function that performs the transaction on the node's current value. It must return the new value to store (or promise with new value), undefined to cancel the transaction, or null to remove the node.
+     * @returns returns a promise that resolves with the DataReference once the transaction has been processed
+     */
+    async transaction(callback) {
+        if (this.isWildcardPath) {
+            throw new Error(`Cannot start a transaction on wildcard path "/${this.path}"`);
+        }
+        if (!this.db.isReady) {
+            await this.db.ready();
+        }
+        let throwError;
+        const cb = (currentValue) => {
+            currentValue = this.db.types.deserialize(this.path, currentValue);
+            const snap = new data_snapshot_1.DataSnapshot(this, currentValue);
+            let newValue;
+            try {
+                newValue = callback(snap);
+            }
+            catch (err) {
+                // callback code threw an error
+                throwError = err; // Remember error
+                return; // cancel transaction by returning undefined
+            }
+            if (newValue instanceof Promise) {
+                return newValue
+                    .then((val) => {
+                    return this.db.types.serialize(this.path, val);
+                })
+                    .catch(err => {
+                    throwError = err; // Remember error
+                    return; // cancel transaction by returning undefined
+                });
+            }
+            else {
+                return this.db.types.serialize(this.path, newValue);
+            }
+        };
+        const { cursor } = await this.db.api.transaction(this.path, cb, { context: this[_private].context });
+        this.cursor = cursor;
+        if (throwError) {
+            // Rethrow error from callback code
+            throw throwError;
+        }
+        return this;
+    }
+    on(event, callback, cancelCallback) {
+        if (this.path === '' && ['value', 'child_changed'].includes(event)) {
+            // Removed 'notify_value' and 'notify_child_changed' events from the list, they do not require additional data loading anymore.
+            console.warn('WARNING: Listening for value and child_changed events on the root node is a bad practice. These events require loading of all data (value event), or potentially lots of data (child_changed event) each time they are fired');
+        }
+        let eventPublisher = null;
+        const eventStream = new subscription_1.EventStream(publisher => { eventPublisher = publisher; });
+        // Map OUR callback to original callback, so .off can remove the right callback(s)
+        const cb = {
+            event,
+            stream: eventStream,
+            userCallback: typeof callback === 'function' && callback,
+            ourCallback: (err, path, newValue, oldValue, eventContext) => {
+                if (err) {
+                    // TODO: Investigate if this ever happens?
+                    this.db.debug.error(`Error getting data for event ${event} on path "${path}"`, err);
+                    return;
+                }
+                const ref = this.db.ref(path);
+                ref[_private].vars = path_info_1.PathInfo.extractVariables(this.path, path);
+                let callbackObject;
+                if (event.startsWith('notify_')) {
+                    // No data event, callback with reference
+                    callbackObject = ref.context(eventContext || {});
+                }
+                else {
+                    const values = {
+                        previous: this.db.types.deserialize(path, oldValue),
+                        current: this.db.types.deserialize(path, newValue),
+                    };
+                    if (event === 'child_removed') {
+                        callbackObject = new data_snapshot_1.DataSnapshot(ref, values.previous, true, values.previous, eventContext);
+                    }
+                    else if (event === 'mutations') {
+                        callbackObject = new data_snapshot_1.MutationsDataSnapshot(ref, values.current, eventContext);
+                    }
+                    else {
+                        const isRemoved = event === 'mutated' && values.current === null;
+                        callbackObject = new data_snapshot_1.DataSnapshot(ref, values.current, isRemoved, values.previous, eventContext);
+                    }
+                }
+                eventPublisher.publish(callbackObject);
+                if (eventContext === null || eventContext === void 0 ? void 0 : eventContext.acebase_cursor) {
+                    this.cursor = eventContext.acebase_cursor;
+                }
+            },
+        };
+        this[_private].callbacks.push(cb);
+        const subscribe = () => {
+            // (NEW) Add callback to event stream
+            // ref.on('value', callback) is now exactly the same as ref.on('value').subscribe(callback)
+            if (typeof callback === 'function') {
+                eventStream.subscribe(callback, (activated, cancelReason) => {
+                    if (!activated) {
+                        cancelCallback && cancelCallback(cancelReason);
+                    }
+                });
+            }
+            const advancedOptions = typeof callback === 'object'
+                ? callback
+                : { newOnly: !callback }; // newOnly: if callback is not 'truthy', could change this to (typeof callback !== 'function' && callback !== true) but that would break client code that uses a truthy argument.
+            if (typeof advancedOptions.newOnly !== 'boolean') {
+                advancedOptions.newOnly = false;
+            }
+            if (this.isWildcardPath) {
+                advancedOptions.newOnly = true;
+            }
+            const cancelSubscription = (err) => {
+                // Access denied?
+                // Cancel subscription
+                const callbacks = this[_private].callbacks;
+                callbacks.splice(callbacks.indexOf(cb), 1);
+                this.db.api.unsubscribe(this.path, event, cb.ourCallback);
+                // Call cancelCallbacks
+                this.db.debug.error(`Subscription "${event}" on path "/${this.path}" canceled because of an error: ${err.message}`);
+                eventPublisher.cancel(err.message);
+            };
+            const authorized = this.db.api.subscribe(this.path, event, cb.ourCallback, { newOnly: advancedOptions.newOnly, cancelCallback: cancelSubscription, syncFallback: advancedOptions.syncFallback });
+            const allSubscriptionsStoppedCallback = () => {
+                const callbacks = this[_private].callbacks;
+                callbacks.splice(callbacks.indexOf(cb), 1);
+                return this.db.api.unsubscribe(this.path, event, cb.ourCallback);
+            };
+            if (authorized instanceof Promise) {
+                // Web API now returns a promise that resolves if the request is allowed
+                // and rejects when access is denied by the set security rules
+                authorized.then(() => {
+                    // Access granted
+                    eventPublisher.start(allSubscriptionsStoppedCallback);
+                }).catch(cancelSubscription);
+            }
+            else {
+                // Local API, always authorized
+                eventPublisher.start(allSubscriptionsStoppedCallback);
+            }
+            if (!advancedOptions.newOnly) {
+                // If callback param is supplied (either a callback function or true or something else truthy),
+                // it will fire events for current values right now.
+                // Otherwise, it expects the .subscribe methode to be used, which will then
+                // only be called for future events
+                if (event === 'value') {
+                    this.get(snap => {
+                        eventPublisher.publish(snap);
+                    });
+                }
+                else if (event === 'child_added') {
+                    this.get(snap => {
+                        const val = snap.val();
+                        if (val === null || typeof val !== 'object') {
+                            return;
+                        }
+                        Object.keys(val).forEach(key => {
+                            const childSnap = new data_snapshot_1.DataSnapshot(this.child(key), val[key]);
+                            eventPublisher.publish(childSnap);
+                        });
+                    });
+                }
+                else if (event === 'notify_child_added') {
+                    // Use the reflect API to get current children.
+                    // NOTE: This does not work with AceBaseServer <= v0.9.7, only when signed in as admin
+                    const step = 100, limit = step;
+                    let skip = 0;
+                    const more = async () => {
+                        const children = await this.db.api.reflect(this.path, 'children', { limit, skip });
+                        children.list.forEach(child => {
+                            const childRef = this.child(child.key);
+                            eventPublisher.publish(childRef);
+                            // typeof callback === 'function' && callback(childRef);
+                        });
+                        if (children.more) {
+                            skip += step;
+                            more();
+                        }
+                    };
+                    more();
+                }
+            }
+        };
+        if (this.db.isReady) {
+            subscribe();
+        }
+        else {
+            this.db.ready(subscribe);
+        }
+        return eventStream;
+    }
+    off(event, callback) {
+        const subscriptions = this[_private].callbacks;
+        const stopSubs = subscriptions.filter(sub => (!event || sub.event === event) && (!callback || sub.userCallback === callback));
+        if (stopSubs.length === 0) {
+            this.db.debug.warn(`Can't find event subscriptions to stop (path: "${this.path}", event: ${event || '(any)'}, callback: ${callback})`);
+        }
+        stopSubs.forEach(sub => {
+            sub.stream.stop();
+        });
+        return this;
+    }
+    get(optionsOrCallback, callback) {
+        if (!this.db.isReady) {
+            const promise = this.db.ready().then(() => this.get(optionsOrCallback, callback));
+            return typeof optionsOrCallback !== 'function' && typeof callback !== 'function' ? promise : undefined; // only return promise if no callback is used
+        }
+        callback =
+            typeof optionsOrCallback === 'function'
+                ? optionsOrCallback
+                : typeof callback === 'function'
+                    ? callback
+                    : undefined;
+        if (this.isWildcardPath) {
+            const error = new Error(`Cannot get value of wildcard path "/${this.path}". Use .query() instead`);
+            if (typeof callback === 'function') {
+                throw error;
+            }
+            return Promise.reject(error);
+        }
+        const options = new DataRetrievalOptions(typeof optionsOrCallback === 'object' ? optionsOrCallback : { cache_mode: 'allow' });
+        const promise = this.db.api.get(this.path, options).then(result => {
+            var _a;
+            const isNewApiResult = ('context' in result && 'value' in result);
+            if (!isNewApiResult) {
+                // acebase-core version package was updated but acebase or acebase-client package was not? Warn, but don't throw an error.
+                console.warn('AceBase api.get method returned an old response value. Update your acebase or acebase-client package');
+                result = { value: result, context: {} };
+            }
+            const value = this.db.types.deserialize(this.path, result.value);
+            const snapshot = new data_snapshot_1.DataSnapshot(this, value, undefined, undefined, result.context);
+            if ((_a = result.context) === null || _a === void 0 ? void 0 : _a.acebase_cursor) {
+                this.cursor = result.context.acebase_cursor;
+            }
+            return snapshot;
+        });
+        if (callback) {
+            promise.then(callback).catch(err => {
+                console.error('Uncaught error:', err);
+            });
+            return;
+        }
+        else {
+            return promise;
+        }
+    }
+    /**
+     * Waits for an event to occur
+     * @param event Name of the event, eg "value", "child_added", "child_changed", "child_removed"
+     * @param options data retrieval options, to include or exclude specific child keys
+     * @returns returns promise that resolves with a snapshot of the data
+     */
+    once(event, options) {
+        if (event === 'value' && !this.isWildcardPath) {
+            // Shortcut, do not start listening for future events
+            return this.get(options);
+        }
+        return new Promise((resolve) => {
+            const callback = (snap) => {
+                this.off(event, callback); // unsubscribe directly
+                resolve(snap);
+            };
+            this.on(event, callback);
+        });
+    }
+    /**
+     * @param value optional value to store into the database right away
+     * @param onComplete optional callback function to run once value has been stored
+     * @returns returns promise that resolves with the reference after the passed value has been stored
+     */
+    push(value, onComplete) {
+        if (this.isWildcardPath) {
+            const error = new Error(`Cannot push to wildcard path "/${this.path}"`);
+            if (typeof value === 'undefined' || typeof onComplete === 'function') {
+                throw error;
+            }
+            return Promise.reject(error);
+        }
+        const id = id_1.ID.generate();
+        const ref = this.child(id);
+        ref[_private].pushed = true;
+        if (typeof value !== 'undefined') {
+            return ref.set(value, onComplete).then(() => ref);
+        }
+        else {
+            return ref;
+        }
+    }
+    /**
+     * Removes this node and all children
+     */
+    async remove() {
+        if (this.isWildcardPath) {
+            throw new Error(`Cannot remove wildcard path "/${this.path}". Use query().remove instead`);
+        }
+        if (this.parent === null) {
+            throw new Error('Cannot remove the root node');
+        }
+        return this.set(null);
+    }
+    /**
+     * Quickly checks if this reference has a value in the database, without returning its data
+     * @returns returns a promise that resolves with a boolean value
+     */
+    async exists() {
+        if (this.isWildcardPath) {
+            throw new Error(`Cannot check wildcard path "/${this.path}" existence`);
+        }
+        if (!this.db.isReady) {
+            await this.db.ready();
+        }
+        return this.db.api.exists(this.path);
+    }
+    get isWildcardPath() {
+        return this.path.indexOf('*') >= 0 || this.path.indexOf('$') >= 0;
+    }
+    /**
+     * Creates a query object for current node
+     */
+    query() {
+        return new DataReferenceQuery(this);
+    }
+    /**
+     * Gets the number of children this node has, uses reflection
+     */
+    async count() {
+        const info = await this.reflect('info', { child_count: true });
+        return info.children.count;
+    }
+    async reflect(type, args) {
+        if (this.isWildcardPath) {
+            throw new Error(`Cannot reflect on wildcard path "/${this.path}"`);
+        }
+        if (!this.db.isReady) {
+            await this.db.ready();
+        }
+        return this.db.api.reflect(this.path, type, args);
+    }
+    async export(write, options = { format: 'json', type_safe: true }) {
+        if (this.isWildcardPath) {
+            throw new Error(`Cannot export wildcard path "/${this.path}"`);
+        }
+        if (!this.db.isReady) {
+            await this.db.ready();
+        }
+        const writeFn = typeof write === 'function' ? write : write.write.bind(write);
+        return this.db.api.export(this.path, writeFn, options);
+    }
+    /**
+     * Imports the value of this node and all children
+     * @param read Function that reads data from your stream
+     * @param options Only supported format currently is json
+     * @returns returns a promise that resolves once all data is imported
+     */
+    async import(read, options = { format: 'json', suppress_events: false }) {
+        if (this.isWildcardPath) {
+            throw new Error(`Cannot import to wildcard path "/${this.path}"`);
+        }
+        if (!this.db.isReady) {
+            await this.db.ready();
+        }
+        return this.db.api.import(this.path, read, options);
+    }
+    proxy(options) {
+        const isOptionsArg = typeof options === 'object' && (typeof options.cursor !== 'undefined' || typeof options.defaultValue !== 'undefined');
+        if (typeof options !== 'undefined' && !isOptionsArg) {
+            this.db.debug.warn('Warning: live data proxy is being initialized with a deprecated method signature. Use ref.proxy(options) instead of ref.proxy(defaultValue)');
+            options = { defaultValue: options };
+        }
+        return data_proxy_1.LiveDataProxy.create(this, options);
+    }
+    /**
+      * @param options optional initial data retrieval options.
+      * Not recommended to use yet - given includes/excludes are not applied to received mutations,
+      * or sync actions when using an AceBaseClient with cache db.
+      */
+    observe(options) {
+        // options should not be used yet - we can't prevent/filter mutation events on excluded paths atm
+        if (options) {
+            throw new Error('observe does not support data retrieval options yet');
+        }
+        if (this.isWildcardPath) {
+            throw new Error(`Cannot observe wildcard path "/${this.path}"`);
+        }
+        const Observable = (0, optional_observable_1.getObservable)();
+        return new Observable((observer => {
+            let cache, resolved = false;
+            let promise = this.get(options).then(snap => {
+                resolved = true;
+                cache = snap.val();
+                observer.next(cache);
+            });
+            const updateCache = (snap) => {
+                if (!resolved) {
+                    promise = promise.then(() => updateCache(snap));
+                    return;
+                }
+                const mutatedPath = snap.ref.path;
+                if (mutatedPath === this.path) {
+                    cache = snap.val();
+                    return observer.next(cache);
+                }
+                const trailKeys = path_info_1.PathInfo.getPathKeys(mutatedPath).slice(path_info_1.PathInfo.getPathKeys(this.path).length);
+                let target = cache;
+                while (trailKeys.length > 1) {
+                    const key = trailKeys.shift();
+                    if (!(key in target)) {
+                        // Happens if initial loaded data did not include / excluded this data,
+                        // or we missed out on an event
+                        target[key] = typeof trailKeys[0] === 'number' ? [] : {};
+                    }
+                    target = target[key];
+                }
+                const prop = trailKeys.shift();
+                const newValue = snap.val();
+                if (newValue === null) {
+                    // Remove it
+                    target instanceof Array && typeof prop === 'number' ? target.splice(prop, 1) : delete target[prop];
+                }
+                else {
+                    // Set or update it
+                    target[prop] = newValue;
+                }
+                observer.next(cache);
+            };
+            this.on('mutated', updateCache); // TODO: Refactor to 'mutations' event instead
+            // Return unsubscribe function
+            return () => {
+                this.off('mutated', updateCache);
+            };
+        }));
+    }
+    async forEach(callbackOrOptions, callback) {
+        let options;
+        if (typeof callbackOrOptions === 'function') {
+            callback = callbackOrOptions;
+        }
+        else {
+            options = callbackOrOptions;
+        }
+        if (typeof callback !== 'function') {
+            throw new TypeError('No callback function given');
+        }
+        // Get all children through reflection. This could be tweaked further using paging
+        const info = await this.reflect('children', { limit: 0, skip: 0 }); // Gets ALL child keys
+        const summary = {
+            canceled: false,
+            total: info.list.length,
+            processed: 0,
+        };
+        // Iterate through all children until callback returns false
+        for (let i = 0; i < info.list.length; i++) {
+            const key = info.list[i].key;
+            // Get child data
+            const snapshot = await this.child(key).get(options);
+            summary.processed++;
+            if (!snapshot.exists()) {
+                // Was removed in the meantime, skip
+                continue;
+            }
+            // Run callback
+            const result = await callback(snapshot);
+            if (result === false) {
+                summary.canceled = true;
+                break; // Stop looping
+            }
+        }
+        return summary;
+    }
+    async getMutations(cursorOrDate) {
+        const cursor = typeof cursorOrDate === 'string' ? cursorOrDate : undefined;
+        const timestamp = cursorOrDate === null || typeof cursorOrDate === 'undefined' ? 0 : cursorOrDate instanceof Date ? cursorOrDate.getTime() : undefined;
+        return this.db.api.getMutations({ path: this.path, cursor, timestamp });
+    }
+    async getChanges(cursorOrDate) {
+        const cursor = typeof cursorOrDate === 'string' ? cursorOrDate : undefined;
+        const timestamp = cursorOrDate === null || typeof cursorOrDate === 'undefined' ? 0 : cursorOrDate instanceof Date ? cursorOrDate.getTime() : undefined;
+        return this.db.api.getChanges({ path: this.path, cursor, timestamp });
+    }
+}
+exports.DataReference = DataReference;
+class DataReferenceQuery {
+    /**
+     * Creates a query on a reference
+     */
+    constructor(ref) {
+        this.ref = ref;
+        this[_private] = {
+            filters: [],
+            skip: 0,
+            take: 0,
+            order: [],
+            events: {},
+        };
+    }
+    /**
+     * Applies a filter to the children of the refence being queried.
+     * If there is an index on the property key being queried, it will be used
+     * to speed up the query
+     * @param key property to test value of
+     * @param op operator to use
+     * @param compare value to compare with
+     */
+    filter(key, op, compare) {
+        if ((op === 'in' || op === '!in') && (!(compare instanceof Array) || compare.length === 0)) {
+            throw new Error(`${op} filter for ${key} must supply an Array compare argument containing at least 1 value`);
+        }
+        if ((op === 'between' || op === '!between') && (!(compare instanceof Array) || compare.length !== 2)) {
+            throw new Error(`${op} filter for ${key} must supply an Array compare argument containing 2 values`);
+        }
+        if ((op === 'matches' || op === '!matches') && !(compare instanceof RegExp)) {
+            throw new Error(`${op} filter for ${key} must supply a RegExp compare argument`);
+        }
+        // DISABLED 2019/10/23 because it is not fully implemented only works locally
+        // if (op === "custom" && typeof compare !== "function") {
+        //     throw `${op} filter for ${key} must supply a Function compare argument`;
+        // }
+        // DISABLED 2022/08/15, implemented by query.ts in acebase
+        // if ((op === 'contains' || op === '!contains') && ((typeof compare === 'object' && !(compare instanceof Array) && !(compare instanceof Date)) || (compare instanceof Array && compare.length === 0))) {
+        //     throw new Error(`${op} filter for ${key} must supply a simple value or (non-zero length) array compare argument`);
+        // }
+        this[_private].filters.push({ key, op, compare });
+        return this;
+    }
+    /**
+     * @deprecated use `.filter` instead
+     */
+    where(key, op, compare) {
+        return this.filter(key, op, compare);
+    }
+    /**
+     * Limits the number of query results
+     */
+    take(n) {
+        this[_private].take = n;
+        return this;
+    }
+    /**
+     * Skips the first n query results
+     */
+    skip(n) {
+        this[_private].skip = n;
+        return this;
+    }
+    sort(key, ascending = true) {
+        if (!['string', 'number'].includes(typeof key)) {
+            throw 'key must be a string or number';
+        }
+        this[_private].order.push({ key, ascending });
+        return this;
+    }
+    /**
+     * @deprecated use `.sort` instead
+     */
+    order(key, ascending = true) {
+        return this.sort(key, ascending);
+    }
+    get(optionsOrCallback, callback) {
+        if (!this.ref.db.isReady) {
+            const promise = this.ref.db.ready().then(() => this.get(optionsOrCallback, callback));
+            return typeof optionsOrCallback !== 'function' && typeof callback !== 'function' ? promise : undefined; // only return promise if no callback is used
+        }
+        callback =
+            typeof optionsOrCallback === 'function'
+                ? optionsOrCallback
+                : typeof callback === 'function'
+                    ? callback
+                    : undefined;
+        const options = new QueryDataRetrievalOptions(typeof optionsOrCallback === 'object' ? optionsOrCallback : { snapshots: true, cache_mode: 'allow' });
+        options.allow_cache = options.cache_mode !== 'bypass'; // Backward compatibility when using older acebase-client
+        options.eventHandler = ev => {
+            // TODO: implement context for query events
+            if (!this[_private].events[ev.name]) {
+                return false;
+            }
+            const listeners = this[_private].events[ev.name];
+            if (typeof listeners !== 'object' || listeners.length === 0) {
+                return false;
+            }
+            if (['add', 'change', 'remove'].includes(ev.name)) {
+                const ref = new DataReference(this.ref.db, ev.path);
+                const eventData = { name: ev.name };
+                if (options.snapshots && ev.name !== 'remove') {
+                    const val = db.types.deserialize(ev.path, ev.value);
+                    eventData.snapshot = new data_snapshot_1.DataSnapshot(ref, val, false);
+                }
+                else {
+                    eventData.ref = ref;
+                }
+                ev = eventData;
+            }
+            listeners.forEach(callback => { try {
+                callback(ev);
+            }
+            catch (e) { } });
+        };
+        // Check if there are event listeners set for realtime changes
+        options.monitor = { add: false, change: false, remove: false };
+        if (this[_private].events) {
+            if (this[_private].events['add'] && this[_private].events['add'].length > 0) {
+                options.monitor.add = true;
+            }
+            if (this[_private].events['change'] && this[_private].events['change'].length > 0) {
+                options.monitor.change = true;
+            }
+            if (this[_private].events['remove'] && this[_private].events['remove'].length > 0) {
+                options.monitor.remove = true;
+            }
+        }
+        // Stop realtime results if they are still enabled on a previous .get on this instance
+        this.stop();
+        // NOTE: returning promise here, regardless of callback argument. Good argument to refactor method to async/await soon
+        const db = this.ref.db;
+        return db.api.query(this.ref.path, this[_private], options)
+            .catch(err => {
+            throw new Error(err);
+        })
+            .then(res => {
+            const { stop } = res;
+            let { results, context } = res;
+            this.stop = async () => {
+                await stop();
+            };
+            if (!('results' in res && 'context' in res)) {
+                console.warn('Query results missing context. Update your acebase and/or acebase-client packages');
+                results = res, context = {};
+            }
+            if (options.snapshots) {
+                const snaps = results.map(result => {
+                    const val = db.types.deserialize(result.path, result.val);
+                    return new data_snapshot_1.DataSnapshot(db.ref(result.path), val, false, undefined, context);
+                });
+                return DataSnapshotsArray.from(snaps);
+            }
+            else {
+                const refs = results.map(path => db.ref(path));
+                return DataReferencesArray.from(refs);
+            }
+        })
+            .then(results => {
+            callback && callback(results);
+            return results;
+        });
+    }
+    /**
+     * Stops a realtime query, no more notifications will be received.
+     */
+    async stop() {
+        // Overridden by .get
+    }
+    /**
+     * Executes the query and returns references. Short for `.get({ snapshots: false })`
+     * @param callback callback to use instead of returning a promise
+     * @returns returns an Promise that resolves with an array of DataReferences, or void when using a callback
+     * @deprecated Use `find` instead
+     */
+    getRefs(callback) {
+        return this.get({ snapshots: false }, callback);
+    }
+    /**
+     * Executes the query and returns an array of references. Short for `.get({ snapshots: false })`
+     */
+    find() {
+        return this.get({ snapshots: false });
+    }
+    /**
+     * Executes the query and returns the number of results
+     */
+    async count() {
+        const refs = await this.find();
+        return refs.length;
+    }
+    /**
+     * Executes the query and returns if there are any results
+     */
+    async exists() {
+        const originalTake = this[_private].take;
+        const p = this.take(1).find();
+        this.take(originalTake);
+        const refs = await p;
+        return refs.length !== 0;
+    }
+    /**
+     * Executes the query, removes all matches from the database
+     * @returns returns a Promise that resolves once all matches have been removed
+     */
+    async remove(callback) {
+        const refs = await this.find();
+        // Perform updates on each distinct parent collection (only 1 parent if this is not a wildcard path)
+        const parentUpdates = refs.reduce((parents, ref) => {
+            const parent = parents[ref.parent.path];
+            if (!parent) {
+                parents[ref.parent.path] = [ref];
+            }
+            else {
+                parent.push(ref);
+            }
+            return parents;
+        }, {});
+        const db = this.ref.db;
+        const promises = Object.keys(parentUpdates).map(async (parentPath) => {
+            const updates = refs.reduce((updates, ref) => {
+                updates[ref.key] = null;
+                return updates;
+            }, {});
+            const ref = db.ref(parentPath);
+            try {
+                await ref.update(updates);
+                return { ref, success: true };
+            }
+            catch (error) {
+                return { ref, success: false, error };
+            }
+        });
+        const results = await Promise.all(promises);
+        callback && callback(results);
+        return results;
+    }
+    on(event, callback) {
+        if (!this[_private].events[event]) {
+            this[_private].events[event] = [];
+        }
+        this[_private].events[event].push(callback);
+        return this;
+    }
+    /**
+     * Unsubscribes from (a) previously added event(s)
+     * @param event Name of the event
+     * @param callback callback function to remove
+     * @returns returns reference to this query
+     */
+    off(event, callback) {
+        if (typeof event === 'undefined') {
+            this[_private].events = {};
+            return this;
+        }
+        if (!this[_private].events[event]) {
+            return this;
+        }
+        if (typeof callback === 'undefined') {
+            delete this[_private].events[event];
+            return this;
+        }
+        const index = this[_private].events[event].indexOf(callback);
+        if (!~index) {
+            return this;
+        }
+        this[_private].events[event].splice(index, 1);
+        return this;
+    }
+    async forEach(callbackOrOptions, callback) {
+        let options;
+        if (typeof callbackOrOptions === 'function') {
+            callback = callbackOrOptions;
+        }
+        else {
+            options = callbackOrOptions;
+        }
+        if (typeof callback !== 'function') {
+            throw new TypeError('No callback function given');
+        }
+        // Get all query results. This could be tweaked further using paging
+        const refs = await this.find();
+        const summary = {
+            canceled: false,
+            total: refs.length,
+            processed: 0,
+        };
+        // Iterate through all children until callback returns false
+        for (let i = 0; i < refs.length; i++) {
+            const ref = refs[i];
+            // Get child data
+            const snapshot = await ref.get(options);
+            summary.processed++;
+            if (!snapshot.exists()) {
+                // Was removed in the meantime, skip
+                continue;
+            }
+            // Run callback
+            const result = await callback(snapshot);
+            if (result === false) {
+                summary.canceled = true;
+                break; // Stop looping
+            }
+        }
+        return summary;
+    }
+}
+exports.DataReferenceQuery = DataReferenceQuery;
+class DataSnapshotsArray extends Array {
+    static from(snaps) {
+        const arr = new DataSnapshotsArray(snaps.length);
+        snaps.forEach((snap, i) => arr[i] = snap);
+        return arr;
+    }
+    getValues() {
+        return this.map(snap => snap.val());
+    }
+}
+exports.DataSnapshotsArray = DataSnapshotsArray;
+class DataReferencesArray extends Array {
+    static from(refs) {
+        const arr = new DataReferencesArray(refs.length);
+        refs.forEach((ref, i) => arr[i] = ref);
+        return arr;
+    }
+    getPaths() {
+        return this.map(ref => ref.path);
+    }
+}
+exports.DataReferencesArray = DataReferencesArray;
+
+},{"./data-proxy":37,"./data-snapshot":39,"./id":41,"./optional-observable":44,"./path-info":46,"./subscription":53}],39:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MutationsDataSnapshot = exports.DataSnapshot = void 0;
+const path_info_1 = require("./path-info");
+function getChild(snapshot, path, previous = false) {
+    if (!snapshot.exists()) {
+        return null;
+    }
+    let child = previous ? snapshot.previous() : snapshot.val();
+    if (typeof path === 'number') {
+        return child[path];
+    }
+    path_info_1.PathInfo.getPathKeys(path).every(key => {
+        child = child[key];
+        return typeof child !== 'undefined';
+    });
+    return child || null;
+}
+function getChildren(snapshot) {
+    if (!snapshot.exists()) {
+        return [];
+    }
+    const value = snapshot.val();
+    if (value instanceof Array) {
+        return new Array(value.length).map((v, i) => i);
+    }
+    if (typeof value === 'object') {
+        return Object.keys(value);
+    }
+    return [];
+}
+class DataSnapshot {
+    /**
+     * Creates a new DataSnapshot instance
+     */
+    constructor(ref, value, isRemoved = false, prevValue, context) {
+        this.ref = ref;
+        this.val = () => { return value; };
+        this.previous = () => { return prevValue; };
+        this.exists = () => {
+            if (isRemoved) {
+                return false;
+            }
+            return value !== null && typeof value !== 'undefined';
+        };
+        this.context = () => { return context || {}; };
+    }
+    /**
+     * Indicates whether the node exists in the database
+     */
+    exists() { return false; }
+    /**
+     * Creates a `DataSnapshot` instance
+     * @internal (for internal use)
+     */
+    static for(ref, value) {
+        return new DataSnapshot(ref, value);
+    }
+    /**
+     * Gets a new snapshot for a child node
+     * @param path child key or path
+     * @returns Returns a `DataSnapshot` of the child
+     */
+    child(path) {
+        // Create new snapshot for child data
+        const val = getChild(this, path, false);
+        const prev = getChild(this, path, true);
+        return new DataSnapshot(this.ref.child(path), val, false, prev);
+    }
+    /**
+     * Checks if the snapshot's value has a child with the given key or path
+     * @param path child key or path
+     */
+    hasChild(path) {
+        return getChild(this, path) !== null;
+    }
+    /**
+     * Indicates whether the the snapshot's value has any child nodes
+     */
+    hasChildren() {
+        return getChildren(this).length > 0;
+    }
+    /**
+     * The number of child nodes in this snapshot
+     */
+    numChildren() {
+        return getChildren(this).length;
+    }
+    /**
+     * Runs a callback function for each child node in this snapshot until the callback returns false
+     * @param callback function that is called with a snapshot of each child node in this snapshot.
+     * Must return a boolean value that indicates whether to continue iterating or not.
+     */
+    forEach(callback) {
+        const value = this.val();
+        const prev = this.previous();
+        return getChildren(this).every((key) => {
+            const snap = new DataSnapshot(this.ref.child(key), value[key], false, prev[key]);
+            return callback(snap);
+        });
+    }
+    /**
+     * The key of the node's path
+     */
+    get key() { return this.ref.key; }
+}
+exports.DataSnapshot = DataSnapshot;
+class MutationsDataSnapshot extends DataSnapshot {
+    constructor(ref, mutations, context) {
+        super(ref, mutations, false, undefined, context);
+        /**
+         * Don't use this to get previous values of mutated nodes.
+         * Use `.previous` properties on the individual child snapshots instead.
+         * @throws Throws an error if you do use it.
+         */
+        this.previous = () => { throw new Error('Iterate values to get previous values for each mutation'); };
+        this.val = (warn = true) => {
+            if (warn) {
+                console.warn('Unless you know what you are doing, it is best not to use the value of a mutations snapshot directly. Use child methods and forEach to iterate the mutations instead');
+            }
+            return mutations;
+        };
+    }
+    /**
+     * Runs a callback function for each mutation in this snapshot until the callback returns false
+     * @param callback function that is called with a snapshot of each mutation in this snapshot. Must return a boolean value that indicates whether to continue iterating or not.
+     * @returns Returns whether every child was interated
+     */
+    forEach(callback) {
+        const mutations = this.val();
+        return mutations.every(mutation => {
+            const ref = mutation.target.reduce((ref, key) => ref.child(key), this.ref);
+            const snap = new DataSnapshot(ref, mutation.val, false, mutation.prev);
+            return callback(snap);
+        });
+    }
+    /**
+     * Gets a snapshot of a mutated node
+     * @param index index of the mutation
+     * @returns Returns a DataSnapshot of the mutated node
+     */
+    child(index) {
+        if (typeof index !== 'number') {
+            throw new Error('child index must be a number');
+        }
+        const mutation = this.val()[index];
+        const ref = mutation.target.reduce((ref, key) => ref.child(key), this.ref);
+        return new DataSnapshot(ref, mutation.val, false, mutation.prev);
+    }
+}
+exports.MutationsDataSnapshot = MutationsDataSnapshot;
+
+},{"./path-info":46}],40:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DebugLogger = void 0;
+const process_1 = require("./process");
+// eslint-disable-next-line @typescript-eslint/no-empty-function
+const noop = () => { };
+class DebugLogger {
+    constructor(level = 'log', prefix = '') {
+        this.level = level;
+        this.prefix = prefix;
+        this.setLevel(level);
+    }
+    setLevel(level) {
+        const prefix = this.prefix ? this.prefix + ' %s' : '';
+        this.verbose = ['verbose'].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : noop;
+        this.log = ['verbose', 'log'].includes(level) ? prefix ? console.log.bind(console, prefix) : console.log.bind(console) : noop;
+        this.warn = ['verbose', 'log', 'warn'].includes(level) ? prefix ? console.warn.bind(console, prefix) : console.warn.bind(console) : noop;
+        this.error = ['verbose', 'log', 'warn', 'error'].includes(level) ? prefix ? console.error.bind(console, prefix) : console.error.bind(console) : noop;
+        this.write = (text) => {
+            const isRunKit = typeof process_1.default !== 'undefined' && process_1.default.env && typeof process_1.default.env.RUNKIT_ENDPOINT_PATH === 'string';
+            if (text && isRunKit) {
+                text.split('\n').forEach(line => console.log(line)); // Logs each line separately
+            }
+            else {
+                console.log(text);
+            }
+        };
+    }
+}
+exports.DebugLogger = DebugLogger;
+
+},{"./process":48}],41:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ID = void 0;
+const cuid_1 = require("./cuid");
+// const uuid62 = require('uuid62');
+let timeBias = 0;
+class ID {
+    /**
+     * (for internal use)
+     * bias in milliseconds to adjust generated cuid timestamps with
+     */
+    static set timeBias(bias) {
+        if (typeof bias !== 'number') {
+            return;
+        }
+        timeBias = bias;
+    }
+    static generate() {
+        // Could also use https://www.npmjs.com/package/pushid for Firebase style 20 char id's
+        return (0, cuid_1.default)(timeBias).slice(1); // Cuts off the always leading 'c'
+        // return uuid62.v1();
+    }
+}
+exports.ID = ID;
+
+},{"./cuid":35}],42:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ObjectCollection = exports.PartialArray = exports.SimpleObservable = exports.SchemaDefinition = exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.OrderedCollectionProxy = exports.proxyAccess = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.DataReferencesArray = exports.DataSnapshotsArray = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
+var acebase_base_1 = require("./acebase-base");
+Object.defineProperty(exports, "AceBaseBase", { enumerable: true, get: function () { return acebase_base_1.AceBaseBase; } });
+Object.defineProperty(exports, "AceBaseBaseSettings", { enumerable: true, get: function () { return acebase_base_1.AceBaseBaseSettings; } });
+var api_1 = require("./api");
+Object.defineProperty(exports, "Api", { enumerable: true, get: function () { return api_1.Api; } });
+var data_reference_1 = require("./data-reference");
+Object.defineProperty(exports, "DataReference", { enumerable: true, get: function () { return data_reference_1.DataReference; } });
+Object.defineProperty(exports, "DataReferenceQuery", { enumerable: true, get: function () { return data_reference_1.DataReferenceQuery; } });
+Object.defineProperty(exports, "DataRetrievalOptions", { enumerable: true, get: function () { return data_reference_1.DataRetrievalOptions; } });
+Object.defineProperty(exports, "QueryDataRetrievalOptions", { enumerable: true, get: function () { return data_reference_1.QueryDataRetrievalOptions; } });
+Object.defineProperty(exports, "DataSnapshotsArray", { enumerable: true, get: function () { return data_reference_1.DataSnapshotsArray; } });
+Object.defineProperty(exports, "DataReferencesArray", { enumerable: true, get: function () { return data_reference_1.DataReferencesArray; } });
+var data_snapshot_1 = require("./data-snapshot");
+Object.defineProperty(exports, "DataSnapshot", { enumerable: true, get: function () { return data_snapshot_1.DataSnapshot; } });
+Object.defineProperty(exports, "MutationsDataSnapshot", { enumerable: true, get: function () { return data_snapshot_1.MutationsDataSnapshot; } });
+var data_proxy_1 = require("./data-proxy");
+Object.defineProperty(exports, "proxyAccess", { enumerable: true, get: function () { return data_proxy_1.proxyAccess; } });
+Object.defineProperty(exports, "OrderedCollectionProxy", { enumerable: true, get: function () { return data_proxy_1.OrderedCollectionProxy; } });
+var debug_1 = require("./debug");
+Object.defineProperty(exports, "DebugLogger", { enumerable: true, get: function () { return debug_1.DebugLogger; } });
+var id_1 = require("./id");
+Object.defineProperty(exports, "ID", { enumerable: true, get: function () { return id_1.ID; } });
+var path_reference_1 = require("./path-reference");
+Object.defineProperty(exports, "PathReference", { enumerable: true, get: function () { return path_reference_1.PathReference; } });
+var subscription_1 = require("./subscription");
+Object.defineProperty(exports, "EventStream", { enumerable: true, get: function () { return subscription_1.EventStream; } });
+Object.defineProperty(exports, "EventPublisher", { enumerable: true, get: function () { return subscription_1.EventPublisher; } });
+Object.defineProperty(exports, "EventSubscription", { enumerable: true, get: function () { return subscription_1.EventSubscription; } });
+exports.Transport = require("./transport");
+var type_mappings_1 = require("./type-mappings");
+Object.defineProperty(exports, "TypeMappings", { enumerable: true, get: function () { return type_mappings_1.TypeMappings; } });
+exports.Utils = require("./utils");
+var path_info_1 = require("./path-info");
+Object.defineProperty(exports, "PathInfo", { enumerable: true, get: function () { return path_info_1.PathInfo; } });
+var ascii85_1 = require("./ascii85");
+Object.defineProperty(exports, "ascii85", { enumerable: true, get: function () { return ascii85_1.ascii85; } });
+var simple_cache_1 = require("./simple-cache");
+Object.defineProperty(exports, "SimpleCache", { enumerable: true, get: function () { return simple_cache_1.SimpleCache; } });
+var simple_event_emitter_1 = require("./simple-event-emitter");
+Object.defineProperty(exports, "SimpleEventEmitter", { enumerable: true, get: function () { return simple_event_emitter_1.SimpleEventEmitter; } });
+var simple_colors_1 = require("./simple-colors");
+Object.defineProperty(exports, "ColorStyle", { enumerable: true, get: function () { return simple_colors_1.ColorStyle; } });
+Object.defineProperty(exports, "Colorize", { enumerable: true, get: function () { return simple_colors_1.Colorize; } });
+var schema_1 = require("./schema");
+Object.defineProperty(exports, "SchemaDefinition", { enumerable: true, get: function () { return schema_1.SchemaDefinition; } });
+var optional_observable_1 = require("./optional-observable");
+Object.defineProperty(exports, "SimpleObservable", { enumerable: true, get: function () { return optional_observable_1.SimpleObservable; } });
+var partial_array_1 = require("./partial-array");
+Object.defineProperty(exports, "PartialArray", { enumerable: true, get: function () { return partial_array_1.PartialArray; } });
+const object_collection_1 = require("./object-collection");
+Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return object_collection_1.ObjectCollection; } });
+
+},{"./acebase-base":31,"./api":32,"./ascii85":33,"./data-proxy":37,"./data-reference":38,"./data-snapshot":39,"./debug":40,"./id":41,"./object-collection":43,"./optional-observable":44,"./partial-array":45,"./path-info":46,"./path-reference":47,"./schema":49,"./simple-cache":50,"./simple-colors":51,"./simple-event-emitter":52,"./subscription":53,"./transport":54,"./type-mappings":55,"./utils":56}],43:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ObjectCollection = void 0;
+const id_1 = require("./id");
+/**
+ * Convenience interface for defining an object collection
+ * @example
+ * type ChatMessage = {
+ *    text: string, uid: string, sent: Date
+ * }
+ * type Chat = {
+ *    title: text
+ *    messages: ObjectCollection<ChatMessage>
+ * }
+ */
+class ObjectCollection {
+    /**
+     * Converts and array of values into an object collection, generating a unique key for each item in the array
+     * @param array
+     * @example
+     * const array = [
+     *  { title: "Don't make me think!", author: "Steve Krug" },
+     *  { title: "The tipping point", author: "Malcolm Gladwell" }
+     * ];
+     *
+     * // Convert:
+     * const collection = ObjectCollection.from(array);
+     * // --> {
+     * //   kh1x3ygb000120r7ipw6biln: {
+     * //       title: "Don't make me think!",
+     * //       author: "Steve Krug"
+     * //   },
+     * //   kh1x3ygb000220r757ybpyec: {
+     * //       title: "The tipping point",
+     * //       author: "Malcolm Gladwell"
+     * //   }
+     * // }
+     *
+     * // Now it's easy to add them to the db:
+     * db.ref('books').update(collection);
+     */
+    static from(array) {
+        const collection = {};
+        array.forEach(child => {
+            collection[id_1.ID.generate()] = child;
+        });
+        return collection;
+    }
+}
+exports.ObjectCollection = ObjectCollection;
+
+},{"./id":41}],44:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SimpleObservable = exports.setObservable = exports.getObservable = void 0;
+const utils_1 = require("./utils");
+let _shimRequested = false;
+let _observable;
+(async () => {
+    // Try pre-loading rxjs Observable
+    // Test availability in global scope first
+    const global = (0, utils_1.getGlobalObject)();
+    if (typeof global.Observable !== 'undefined') {
+        _observable = global.Observable;
+        return;
+    }
+    // Try importing it from dependencies
+    try {
+        _observable = await Promise.resolve().then(() => require('rxjs/internal/Observable'));
+    }
+    catch (_a) {
+        // rxjs Observable not available, setObservable must be used if usage of SimpleObservable is not desired
+        _observable = SimpleObservable;
+    }
+})();
+function getObservable() {
+    if (_observable === SimpleObservable && !_shimRequested) {
+        console.warn('Using AceBase\'s simple Observable implementation because rxjs is not available. ' +
+            'Add it to your project with "npm install rxjs", add it to AceBase using db.setObservable(Observable), ' +
+            'or call db.setObservable("shim") to suppress this warning');
+    }
+    if (_observable) {
+        return _observable;
+    }
+    throw new Error('RxJS Observable could not be loaded. ');
+}
+exports.getObservable = getObservable;
+function setObservable(Observable) {
+    if (Observable === 'shim') {
+        _observable = SimpleObservable;
+        _shimRequested = true;
+    }
+    else {
+        _observable = Observable;
+    }
+}
+exports.setObservable = setObservable;
+/**
+ * rxjs is an optional dependency that only needs installing when any of AceBase's observe methods are used.
+ * If for some reason rxjs is not available (eg in test suite), we can provide a shim. This class is used when
+ * `db.setObservable("shim")` is called
+ */
+class SimpleObservable {
+    constructor(create) {
+        this._active = false;
+        this._subscribers = [];
+        this._create = create;
+    }
+    subscribe(subscriber) {
+        if (!this._active) {
+            const next = (value) => {
+                // emit value to all subscribers
+                this._subscribers.forEach(s => {
+                    try {
+                        s(value);
+                    }
+                    catch (err) {
+                        console.error('Error in subscriber callback:', err);
+                    }
+                });
+            };
+            const observer = { next };
+            this._cleanup = this._create(observer);
+            this._active = true;
+        }
+        this._subscribers.push(subscriber);
+        const unsubscribe = () => {
+            this._subscribers.splice(this._subscribers.indexOf(subscriber), 1);
+            if (this._subscribers.length === 0) {
+                this._active = false;
+                this._cleanup();
+            }
+        };
+        const subscription = {
+            unsubscribe,
+        };
+        return subscription;
+    }
+}
+exports.SimpleObservable = SimpleObservable;
+
+},{"./utils":56,"rxjs/internal/Observable":57}],45:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PartialArray = void 0;
+/**
+ * Sparse/partial array converted to a serializable object. Use `Object.keys(sparseArray)` and `Object.values(sparseArray)` to iterate its indice and/or values
+ */
+class PartialArray {
+    constructor(sparseArray) {
+        if (sparseArray instanceof Array) {
+            for (let i = 0; i < sparseArray.length; i++) {
+                if (typeof sparseArray[i] !== 'undefined') {
+                    this[i] = sparseArray[i];
+                }
+            }
+        }
+        else if (sparseArray) {
+            Object.assign(this, sparseArray);
+        }
+    }
+}
+exports.PartialArray = PartialArray;
+
+},{}],46:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PathInfo = void 0;
+function getPathKeys(path) {
+    path = path.replace(/\[/g, '/[').replace(/^\/+/, '').replace(/\/+$/, ''); // Replace [ with /[, remove leading slashes, remove trailing slashes
+    if (path.length === 0) {
+        return [];
+    }
+    const keys = path.split('/');
+    return keys.map(key => {
+        return key.startsWith('[') ? parseInt(key.slice(1, -1)) : key;
+    });
+}
+class PathInfo {
+    constructor(path) {
+        if (typeof path === 'string') {
+            this.keys = getPathKeys(path);
+        }
+        else if (path instanceof Array) {
+            this.keys = path;
+        }
+        this.path = this.keys.reduce((path, key, i) => i === 0 ? `${key}` : typeof key === 'string' ? `${path}/${key}` : `${path}[${key}]`, '');
+    }
+    static get(path) {
+        return new PathInfo(path);
+    }
+    static getChildPath(path, childKey) {
+        // return getChildPath(path, childKey);
+        return PathInfo.get(path).child(childKey).path;
+    }
+    static getPathKeys(path) {
+        return getPathKeys(path);
+    }
+    get key() {
+        return this.keys.length === 0 ? null : this.keys.slice(-1)[0];
+    }
+    get parent() {
+        if (this.keys.length == 0) {
+            return null;
+        }
+        const parentKeys = this.keys.slice(0, -1);
+        return new PathInfo(parentKeys);
+    }
+    get parentPath() {
+        return this.keys.length === 0 ? null : this.parent.path;
+    }
+    child(childKey) {
+        if (typeof childKey === 'string') {
+            childKey = getPathKeys(childKey);
+        }
+        return new PathInfo(this.keys.concat(childKey));
+    }
+    childPath(childKey) {
+        return this.child(childKey).path;
+    }
+    get pathKeys() {
+        return this.keys;
+    }
+    /**
+     * If varPath contains variables or wildcards, it will return them with the values found in fullPath
+     * @param {string} varPath path containing variables such as * and $name
+     * @param {string} fullPath real path to a node
+     * @returns {{ [index: number]: string|number, [variable: string]: string|number }} returns an array-like object with all variable values. All named variables are also set on the array by their name (eg vars.uid and vars.$uid)
+     * @example
+     * PathInfo.extractVariables('users/$uid/posts/$postid', 'users/ewout/posts/post1/title') === {
+     *  0: 'ewout',
+     *  1: 'post1',
+     *  uid: 'ewout', // or $uid
+     *  postid: 'post1' // or $postid
+     * };
+     *
+     * PathInfo.extractVariables('users/*\/posts/*\/$property', 'users/ewout/posts/post1/title') === {
+     *  0: 'ewout',
+     *  1: 'post1',
+     *  2: 'title',
+     *  property: 'title' // or $property
+     * };
+     *
+     * PathInfo.extractVariables('users/$user/friends[*]/$friend', 'users/dora/friends[4]/diego') === {
+     *  0: 'dora',
+     *  1: 4,
+     *  2: 'diego',
+     *  user: 'dora', // or $user
+     *  friend: 'diego' // or $friend
+     * };
+    */
+    static extractVariables(varPath, fullPath) {
+        if (!varPath.includes('*') && !varPath.includes('$')) {
+            return [];
+        }
+        // if (!this.equals(fullPath)) {
+        //     throw new Error(`path does not match with the path of this PathInfo instance: info.equals(path) === false!`)
+        // }
+        const keys = getPathKeys(varPath);
+        const pathKeys = getPathKeys(fullPath);
+        let count = 0;
+        const variables = {
+            get length() { return count; },
+        };
+        keys.forEach((key, index) => {
+            const pathKey = pathKeys[index];
+            if (key === '*') {
+                variables[count++] = pathKey;
+            }
+            else if (typeof key === 'string' && key[0] === '$') {
+                variables[count++] = pathKey;
+                // Set the $variable property
+                variables[key] = pathKey;
+                // Set friendly property name (without $)
+                const varName = key.slice(1);
+                if (typeof variables[varName] === 'undefined') {
+                    variables[varName] = pathKey;
+                }
+            }
+        });
+        return variables;
+    }
+    /**
+     * If varPath contains variables or wildcards, it will return a path with the variables replaced by the keys found in fullPath.
+     * @example
+     * PathInfo.fillVariables('users/$uid/posts/$postid', 'users/ewout/posts/post1/title') === 'users/ewout/posts/post1'
+     */
+    static fillVariables(varPath, fullPath) {
+        if (varPath.indexOf('*') < 0 && varPath.indexOf('$') < 0) {
+            return varPath;
+        }
+        const keys = getPathKeys(varPath);
+        const pathKeys = getPathKeys(fullPath);
+        const merged = keys.map((key, index) => {
+            if (key === pathKeys[index] || index >= pathKeys.length) {
+                return key;
+            }
+            else if (typeof key === 'string' && (key === '*' || key[0] === '$')) {
+                return pathKeys[index];
+            }
+            else {
+                throw new Error(`Path "${fullPath}" cannot be used to fill variables of path "${varPath}" because they do not match`);
+            }
+        });
+        let mergedPath = '';
+        merged.forEach(key => {
+            if (typeof key === 'number') {
+                mergedPath += `[${key}]`;
+            }
+            else {
+                if (mergedPath.length > 0) {
+                    mergedPath += '/';
+                }
+                mergedPath += key;
+            }
+        });
+        return mergedPath;
+    }
+    /**
+     * Replaces all variables in a path with the values in the vars argument
+     * @param varPath path containing variables
+     * @param vars variables object such as one gotten from PathInfo.extractVariables
+     */
+    static fillVariables2(varPath, vars) {
+        if (typeof vars !== 'object' || Object.keys(vars).length === 0) {
+            return varPath; // Nothing to fill
+        }
+        const pathKeys = getPathKeys(varPath);
+        let n = 0;
+        const targetPath = pathKeys.reduce((path, key) => {
+            if (typeof key === 'string' && (key === '*' || key.startsWith('$'))) {
+                return PathInfo.getChildPath(path, vars[n++]);
+            }
+            else {
+                return PathInfo.getChildPath(path, key);
+            }
+        }, '');
+        return targetPath;
+    }
+    /**
+     * Checks if a given path matches this path, eg "posts/*\/title" matches "posts/12344/title" and "users/123/name" matches "users/$uid/name"
+     */
+    equals(otherPath) {
+        const other = otherPath instanceof PathInfo ? otherPath : new PathInfo(otherPath);
+        if (this.path === other.path) {
+            return true;
+        } // they are identical
+        if (this.keys.length !== other.keys.length) {
+            return false;
+        }
+        return this.keys.every((key, index) => {
+            const otherKey = other.keys[index];
+            return otherKey === key
+                || (typeof otherKey === 'string' && (otherKey === '*' || otherKey[0] === '$'))
+                || (typeof key === 'string' && (key === '*' || key[0] === '$'));
+        });
+    }
+    /**
+     * Checks if a given path is an ancestor, eg "posts" is an ancestor of "posts/12344/title"
+     */
+    isAncestorOf(descendantPath) {
+        const descendant = descendantPath instanceof PathInfo ? descendantPath : new PathInfo(descendantPath);
+        if (descendant.path === '' || this.path === descendant.path) {
+            return false;
+        }
+        if (this.path === '') {
+            return true;
+        }
+        if (this.keys.length >= descendant.keys.length) {
+            return false;
+        }
+        return this.keys.every((key, index) => {
+            const otherKey = descendant.keys[index];
+            return otherKey === key
+                || (typeof otherKey === 'string' && (otherKey === '*' || otherKey[0] === '$'))
+                || (typeof key === 'string' && (key === '*' || key[0] === '$'));
+        });
+    }
+    /**
+     * Checks if a given path is a descendant, eg "posts/1234/title" is a descendant of "posts"
+     */
+    isDescendantOf(ancestorPath) {
+        const ancestor = ancestorPath instanceof PathInfo ? ancestorPath : new PathInfo(ancestorPath);
+        if (this.path === '' || this.path === ancestor.path) {
+            return false;
+        }
+        if (ancestorPath === '') {
+            return true;
+        }
+        if (ancestor.keys.length >= this.keys.length) {
+            return false;
+        }
+        return ancestor.keys.every((key, index) => {
+            const otherKey = this.keys[index];
+            return otherKey === key
+                || (typeof otherKey === 'string' && (otherKey === '*' || otherKey[0] === '$'))
+                || (typeof key === 'string' && (key === '*' || key[0] === '$'));
+        });
+    }
+    /**
+     * Checks if the other path is on the same trail as this path. Paths on the same trail if they share a
+     * common ancestor. Eg: "posts" is on the trail of "posts/1234/title" and vice versa.
+     */
+    isOnTrailOf(otherPath) {
+        const other = otherPath instanceof PathInfo ? otherPath : new PathInfo(otherPath);
+        if (this.path.length === 0 || other.path.length === 0) {
+            return true;
+        }
+        if (this.path === other.path) {
+            return true;
+        }
+        return this.pathKeys.every((key, index) => {
+            if (index >= other.keys.length) {
+                return true;
+            }
+            const otherKey = other.keys[index];
+            return otherKey === key
+                || (typeof otherKey === 'string' && (otherKey === '*' || otherKey[0] === '$'))
+                || (typeof key === 'string' && (key === '*' || key[0] === '$'));
+        });
+    }
+    /**
+     * Checks if a given path is a direct child, eg "posts/1234/title" is a child of "posts/1234"
+     */
+    isChildOf(otherPath) {
+        const other = otherPath instanceof PathInfo ? otherPath : new PathInfo(otherPath);
+        if (this.path === '') {
+            return false;
+        } // If our path is the root, it's nobody's child...
+        return this.parent.equals(other);
+    }
+    /**
+     * Checks if a given path is its parent, eg "posts/1234" is the parent of "posts/1234/title"
+     */
+    isParentOf(otherPath) {
+        const other = otherPath instanceof PathInfo ? otherPath : new PathInfo(otherPath);
+        if (other.path === '') {
+            return false;
+        } // If the other path is the root, this path cannot be its parent
+        return this.equals(other.parent);
+    }
+}
+exports.PathInfo = PathInfo;
+
+},{}],47:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PathReference = void 0;
+class PathReference {
+    /**
+     * Creates a reference to a path that can be stored in the database. Use this to create cross-references to other data in your database
+     * @param path
+     */
+    constructor(path) {
+        this.path = path;
+    }
+}
+exports.PathReference = PathReference;
+
+},{}],48:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = {
+    // eslint-disable-next-line @typescript-eslint/ban-types
+    nextTick(fn) {
+        setTimeout(fn, 0);
+    },
+};
+
+},{}],49:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SchemaDefinition = void 0;
+// parses a typestring, creates checker functions
+function parse(definition) {
+    // tokenize
+    let pos = 0;
+    function consumeSpaces() {
+        let c;
+        while (c = definition[pos], [' ', '\r', '\n', '\t'].includes(c)) {
+            pos++;
+        }
+    }
+    function consumeCharacter(c) {
+        if (definition[pos] !== c) {
+            throw new Error(`Unexpected character at position ${pos}. Expected: '${c}', found '${definition[pos]}'`);
+        }
+        pos++;
+    }
+    function readProperty() {
+        consumeSpaces();
+        const prop = { name: '', optional: false, wildcard: false };
+        let c;
+        while (c = definition[pos], c === '_' || c === '$' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (prop.name.length > 0 && c >= '0' && c <= '9') || (prop.name.length === 0 && c === '*')) {
+            prop.name += c;
+            pos++;
+        }
+        if (prop.name.length === 0) {
+            throw new Error(`Property name expected at position ${pos}, found: ${definition.slice(pos, pos + 10)}..`);
+        }
+        if (definition[pos] === '?') {
+            prop.optional = true;
+            pos++;
+        }
+        if (prop.name === '*' || prop.name[0] === '$') {
+            prop.optional = true;
+            prop.wildcard = true;
+        }
+        consumeSpaces();
+        consumeCharacter(':');
+        return prop;
+    }
+    function readType() {
+        consumeSpaces();
+        let type = { typeOf: 'any' }, c;
+        // try reading simple type first: (string,number,boolean,Date etc)
+        let name = '';
+        while (c = definition[pos], (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+            name += c;
+            pos++;
+        }
+        if (name.length === 0) {
+            if (definition[pos] === '*') {
+                // any value
+                consumeCharacter('*');
+                type.typeOf = 'any';
+            }
+            else if (['\'', '"', '`'].includes(definition[pos])) {
+                // Read string value
+                type.typeOf = 'string';
+                type.value = '';
+                const quote = definition[pos];
+                consumeCharacter(quote);
+                while (c = definition[pos], c && c !== quote) {
+                    type.value += c;
+                    pos++;
+                }
+                consumeCharacter(quote);
+            }
+            else if (definition[pos] >= '0' && definition[pos] <= '9') {
+                // read numeric value
+                type.typeOf = 'number';
+                let nr = '';
+                while (c = definition[pos], c === '.' || c === 'n' || (c >= '0' && c <= '9')) {
+                    nr += c;
+                    pos++;
+                }
+                if (nr.endsWith('n')) {
+                    type.value = BigInt(nr);
+                }
+                else if (nr.includes('.')) {
+                    type.value = parseFloat(nr);
+                }
+                else {
+                    type.value = parseInt(nr);
+                }
+            }
+            else if (definition[pos] === '{') {
+                // Read object (interface) definition
+                consumeCharacter('{');
+                type.typeOf = 'object';
+                type.instanceOf = Object;
+                // Read children:
+                type.children = [];
+                while (true) {
+                    const prop = readProperty();
+                    const types = readTypes();
+                    type.children.push({ name: prop.name, optional: prop.optional, wildcard: prop.wildcard, types });
+                    consumeSpaces();
+                    if (definition[pos] === '}') {
+                        break;
+                    }
+                    consumeCharacter(',');
+                }
+                consumeCharacter('}');
+            }
+            else if (definition[pos] === '/') {
+                // Read regular expression definition
+                consumeCharacter('/');
+                let pattern = '', flags = '';
+                while (c = definition[pos], c !== '/' || pattern.endsWith('\\')) {
+                    pattern += c;
+                    pos++;
+                }
+                consumeCharacter('/');
+                while (c = definition[pos], ['g', 'i', 'm', 's', 'u', 'y', 'd'].includes(c)) {
+                    flags += c;
+                    pos++;
+                }
+                type.typeOf = 'string';
+                type.matches = new RegExp(pattern, flags);
+            }
+            else {
+                throw new Error(`Expected a type definition at position ${pos}, found character '${definition[pos]}'`);
+            }
+        }
+        else if (['string', 'number', 'boolean', 'bigint', 'undefined', 'String', 'Number', 'Boolean', 'BigInt'].includes(name)) {
+            type.typeOf = name.toLowerCase();
+        }
+        else if (name === 'Object' || name === 'object') {
+            type.typeOf = 'object';
+            type.instanceOf = Object;
+        }
+        else if (name === 'Date') {
+            type.typeOf = 'object';
+            type.instanceOf = Date;
+        }
+        else if (name === 'Binary' || name === 'binary') {
+            type.typeOf = 'object';
+            type.instanceOf = ArrayBuffer;
+        }
+        else if (name === 'any') {
+            type.typeOf = 'any';
+        }
+        else if (name === 'null') {
+            // This is ignored, null values are not stored in the db (null indicates deletion)
+            type.typeOf = 'object';
+            type.value = null;
+        }
+        else if (name === 'Array') {
+            // Read generic Array defintion
+            consumeCharacter('<');
+            type.typeOf = 'object';
+            type.instanceOf = Array; //name;
+            type.genericTypes = readTypes();
+            consumeCharacter('>');
+        }
+        else if (['true', 'false'].includes(name)) {
+            type.typeOf = 'boolean';
+            type.value = name === 'true';
+        }
+        else {
+            throw new Error(`Unknown type at position ${pos}: "${type}"`);
+        }
+        // Check if it's an Array of given type (eg: string[] or string[][])
+        // Also converts to generics, string[] becomes Array<string>, string[][] becomes Array<Array<string>>
+        consumeSpaces();
+        while (definition[pos] === '[') {
+            consumeCharacter('[');
+            consumeCharacter(']');
+            type = { typeOf: 'object', instanceOf: Array, genericTypes: [type] };
+        }
+        return type;
+    }
+    function readTypes() {
+        consumeSpaces();
+        const types = [readType()];
+        while (definition[pos] === '|') {
+            consumeCharacter('|');
+            types.push(readType());
+            consumeSpaces();
+        }
+        return types;
+    }
+    return readType();
+}
+function checkObject(path, properties, obj, partial) {
+    // Are there any properties that should not be in there?
+    const invalidProperties = properties.find(prop => prop.name === '*' || prop.name[0] === '$') // Only if no wildcard properties are allowed
+        ? []
+        : Object.keys(obj).filter(key => ![null, undefined].includes(obj[key]) // Ignore null or undefined values
+            && !properties.find(prop => prop.name === key));
+    if (invalidProperties.length > 0) {
+        return { ok: false, reason: `Object at path "${path}" cannot have propert${invalidProperties.length === 1 ? 'y' : 'ies'} ${invalidProperties.map(p => `"${p}"`).join(', ')}` };
+    }
+    // Loop through properties that should be present
+    function checkProperty(property) {
+        const hasValue = ![null, undefined].includes(obj[property.name]);
+        if (!property.optional && (partial ? obj[property.name] === null : !hasValue)) {
+            return { ok: false, reason: `Property at path "${path}/${property.name}" is not optional` };
+        }
+        if (hasValue && property.types.length === 1) {
+            return checkType(`${path}/${property.name}`, property.types[0], obj[property.name], false);
+        }
+        if (hasValue && !property.types.some(type => checkType(`${path}/${property.name}`, type, obj[property.name], false).ok)) {
+            return { ok: false, reason: `Property at path "${path}/${property.name}" does not match any of ${property.types.length} allowed types` };
+        }
+        return { ok: true };
+    }
+    const namedProperties = properties.filter(prop => !prop.wildcard);
+    const failedProperty = namedProperties.find(prop => !checkProperty(prop).ok);
+    if (failedProperty) {
+        const reason = checkProperty(failedProperty).reason;
+        return { ok: false, reason };
+    }
+    const wildcardProperty = properties.find(prop => prop.wildcard);
+    if (!wildcardProperty) {
+        return { ok: true };
+    }
+    const wildcardChildKeys = Object.keys(obj).filter(key => !namedProperties.find(prop => prop.name === key));
+    let result = { ok: true };
+    for (let i = 0; i < wildcardChildKeys.length && result.ok; i++) {
+        const childKey = wildcardChildKeys[i];
+        result = checkProperty({ name: childKey, types: wildcardProperty.types, optional: true, wildcard: true });
+    }
+    return result;
+}
+function checkType(path, type, value, partial, trailKeys) {
+    const ok = { ok: true };
+    if (type.typeOf === 'any') {
+        return ok;
+    }
+    if (trailKeys instanceof Array && trailKeys.length > 0) {
+        // The value to check resides in a descendant path of given type definition.
+        // Recursivly check child type definitions to find a match
+        if (type.typeOf !== 'object') {
+            return { ok: false, reason: `path "${path}" must be typeof ${type.typeOf}` }; // given value resides in a child path, but parent is not allowed be an object.
+        }
+        if (!type.children) {
+            return ok;
+        }
+        const childKey = trailKeys[0];
+        let property = type.children.find(prop => prop.name === childKey);
+        if (!property) {
+            property = type.children.find(prop => prop.name === '*' || prop.name[0] === '$');
+        }
+        if (!property) {
+            return { ok: false, reason: `Object at path "${path}" cannot have property "${childKey}"` };
+        }
+        if (property.optional && value === null && trailKeys.length === 1) {
+            return ok;
+        }
+        let result;
+        property.types.some(type => {
+            const childPath = typeof childKey === 'number' ? `${path}[${childKey}]` : `${path}/${childKey}`;
+            result = checkType(childPath, type, value, partial, trailKeys.slice(1));
+            return result.ok;
+        });
+        return result;
+    }
+    if (value === null) {
+        return ok;
+    }
+    if (type.instanceOf === Object && (typeof value !== 'object' || value instanceof Array || value instanceof Date)) {
+        return { ok: false, reason: `path "${path}" must be an object collection` };
+    }
+    if (type.instanceOf && (typeof value !== 'object' || value.constructor !== type.instanceOf)) { // !(value instanceof type.instanceOf) // value.constructor.name !== type.instanceOf
+        return { ok: false, reason: `path "${path}" must be an instance of ${type.instanceOf.name}` };
+    }
+    if ('value' in type && value !== type.value) {
+        return { ok: false, reason: `path "${path}" must be value: ${type.value}` };
+    }
+    if (typeof value !== type.typeOf) {
+        return { ok: false, reason: `path "${path}" must be typeof ${type.typeOf}` };
+    }
+    if (type.instanceOf === Array && type.genericTypes && !value.every(v => type.genericTypes.some(t => checkType(path, t, v, false).ok))) {
+        return { ok: false, reason: `every array value of path "${path}" must match one of the specified types` };
+    }
+    if (type.typeOf === 'object' && type.children) {
+        return checkObject(path, type.children, value, partial);
+    }
+    if (type.matches && !type.matches.test(value)) {
+        return { ok: false, reason: `path "${path}" must match regular expression /${type.matches.source}/${type.matches.flags}` };
+    }
+    return ok;
+}
+// eslint-disable-next-line @typescript-eslint/ban-types
+function getConstructorType(val) {
+    switch (val) {
+        case String: return 'string';
+        case Number: return 'number';
+        case Boolean: return 'boolean';
+        case Date: return 'Date';
+        case BigInt: return 'bigint';
+        case Array: throw new Error('Schema error: Array cannot be used without a type. Use string[] or Array<string> instead');
+        default: throw new Error(`Schema error: unknown type used: ${val.name}`);
+    }
+}
+class SchemaDefinition {
+    constructor(definition) {
+        this.source = definition;
+        if (typeof definition === 'object') {
+            // Turn object into typescript definitions
+            // eg:
+            // const example = {
+            //     name: String,
+            //     born: Date,
+            //     instrument: "'guitar'|'piano'",
+            //     "address?": {
+            //         street: String
+            //     }
+            // };
+            // Resulting ts: "{name:string,born:Date,instrument:'guitar'|'piano',address?:{street:string}}"
+            const toTS = (obj) => {
+                return '{' + Object.keys(obj)
+                    .map(key => {
+                    let val = obj[key];
+                    if (val === undefined) {
+                        val = 'undefined';
+                    }
+                    else if (val instanceof RegExp) {
+                        val = `/${val.source}/${val.flags}`;
+                    }
+                    else if (typeof val === 'object') {
+                        val = toTS(val);
+                    }
+                    else if (typeof val === 'function') {
+                        val = getConstructorType(val);
+                    }
+                    else if (!['string', 'number', 'boolean', 'bigint'].includes(typeof val)) {
+                        throw new Error(`Type definition for key "${key}" must be a string, number, boolean, bigint, object, regular expression, or one of these classes: String, Number, Boolean, Date, BigInt`);
+                    }
+                    return `${key}:${val}`;
+                })
+                    .join(',') + '}';
+            };
+            this.text = toTS(definition);
+        }
+        else if (typeof definition === 'string') {
+            this.text = definition;
+        }
+        else {
+            throw new Error('Type definiton must be a string or an object');
+        }
+        this.type = parse(this.text);
+    }
+    check(path, value, partial, trailKeys) {
+        return checkType(path, this.type, value, partial, trailKeys);
+    }
+}
+exports.SchemaDefinition = SchemaDefinition;
+
+},{}],50:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SimpleCache = void 0;
+const utils_1 = require("./utils");
+const calculateExpiryTime = (expirySeconds) => expirySeconds > 0 ? Date.now() + (expirySeconds * 1000) : Infinity;
+/**
+ * Simple cache implementation that retains immutable values in memory for a limited time.
+ * Immutability is enforced by cloning the stored and retrieved values. To change a cached value, it will have to be `set` again with the new value.
+ */
+class SimpleCache {
+    constructor(options) {
+        var _a;
+        this.enabled = true;
+        if (typeof options === 'number') {
+            // Old signature: only expirySeconds given
+            options = { expirySeconds: options };
+        }
+        options.cloneValues = options.cloneValues !== false;
+        if (typeof options.expirySeconds !== 'number' && typeof options.maxEntries !== 'number') {
+            throw new Error('Either expirySeconds or maxEntries must be specified');
+        }
+        this.options = options;
+        this.cache = new Map();
+        // Cleanup every minute
+        const interval = setInterval(() => { this.cleanUp(); }, 60 * 1000);
+        (_a = interval.unref) === null || _a === void 0 ? void 0 : _a.call(interval);
+    }
+    get size() { return this.cache.size; }
+    has(key) {
+        if (!this.enabled) {
+            return false;
+        }
+        return this.cache.has(key);
+    }
+    get(key) {
+        if (!this.enabled) {
+            return null;
+        }
+        const entry = this.cache.get(key);
+        if (!entry) {
+            return null;
+        } // if (!entry || entry.expires <= Date.now()) { return null; }
+        entry.expires = calculateExpiryTime(this.options.expirySeconds);
+        entry.accessed = Date.now();
+        return this.options.cloneValues ? (0, utils_1.cloneObject)(entry.value) : entry.value;
+    }
+    set(key, value) {
+        if (this.options.maxEntries > 0 && this.cache.size >= this.options.maxEntries && !this.cache.has(key)) {
+            // console.warn(`* cache limit ${this.options.maxEntries} reached: ${this.cache.size}`);
+            // Remove an expired item or the one that was accessed longest ago
+            let oldest = null;
+            const now = Date.now();
+            for (const [key, entry] of this.cache.entries()) {
+                if (entry.expires <= now) {
+                    // Found an expired item. Remove it now and stop
+                    this.cache.delete(key);
+                    oldest = null;
+                    break;
+                }
+                if (!oldest || entry.accessed < oldest.accessed) {
+                    oldest = { key, accessed: entry.accessed };
+                }
+            }
+            if (oldest !== null) {
+                this.cache.delete(oldest.key);
+            }
+        }
+        this.cache.set(key, { value: this.options.cloneValues ? (0, utils_1.cloneObject)(value) : value, added: Date.now(), accessed: Date.now(), expires: calculateExpiryTime(this.options.expirySeconds) });
+    }
+    remove(key) {
+        this.cache.delete(key);
+    }
+    cleanUp() {
+        const now = Date.now();
+        this.cache.forEach((entry, key) => {
+            if (entry.expires <= now) {
+                this.cache.delete(key);
+            }
+        });
+    }
+}
+exports.SimpleCache = SimpleCache;
+
+},{"./utils":56}],51:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Colorize = exports.SetColorsEnabled = exports.ColorsSupported = exports.ColorStyle = void 0;
+const process_1 = require("./process");
+// See from https://en.wikipedia.org/wiki/ANSI_escape_code
+const FontCode = {
+    bold: 1,
+    dim: 2,
+    italic: 3,
+    underline: 4,
+    inverse: 7,
+    hidden: 8,
+    strikethrough: 94,
+};
+const ColorCode = {
+    black: 30,
+    red: 31,
+    green: 32,
+    yellow: 33,
+    blue: 34,
+    magenta: 35,
+    cyan: 36,
+    white: 37,
+    grey: 90,
+    // Bright colors:
+    brightRed: 91,
+    // TODO, other bright colors
+};
+const BgColorCode = {
+    bgBlack: 40,
+    bgRed: 41,
+    bgGreen: 42,
+    bgYellow: 43,
+    bgBlue: 44,
+    bgMagenta: 45,
+    bgCyan: 46,
+    bgWhite: 47,
+    bgGrey: 100,
+    bgBrightRed: 101,
+    // TODO, other bright colors
+};
+const ResetCode = {
+    all: 0,
+    color: 39,
+    background: 49,
+    bold: 22,
+    dim: 22,
+    italic: 23,
+    underline: 24,
+    inverse: 27,
+    hidden: 28,
+    strikethrough: 29,
+};
+var ColorStyle;
+(function (ColorStyle) {
+    ColorStyle["reset"] = "reset";
+    ColorStyle["bold"] = "bold";
+    ColorStyle["dim"] = "dim";
+    ColorStyle["italic"] = "italic";
+    ColorStyle["underline"] = "underline";
+    ColorStyle["inverse"] = "inverse";
+    ColorStyle["hidden"] = "hidden";
+    ColorStyle["strikethrough"] = "strikethrough";
+    ColorStyle["black"] = "black";
+    ColorStyle["red"] = "red";
+    ColorStyle["green"] = "green";
+    ColorStyle["yellow"] = "yellow";
+    ColorStyle["blue"] = "blue";
+    ColorStyle["magenta"] = "magenta";
+    ColorStyle["cyan"] = "cyan";
+    ColorStyle["grey"] = "grey";
+    ColorStyle["bgBlack"] = "bgBlack";
+    ColorStyle["bgRed"] = "bgRed";
+    ColorStyle["bgGreen"] = "bgGreen";
+    ColorStyle["bgYellow"] = "bgYellow";
+    ColorStyle["bgBlue"] = "bgBlue";
+    ColorStyle["bgMagenta"] = "bgMagenta";
+    ColorStyle["bgCyan"] = "bgCyan";
+    ColorStyle["bgWhite"] = "bgWhite";
+    ColorStyle["bgGrey"] = "bgGrey";
+})(ColorStyle = exports.ColorStyle || (exports.ColorStyle = {}));
+function ColorsSupported() {
+    // Checks for basic color support
+    if (typeof process_1.default === 'undefined' || !process_1.default.stdout || !process_1.default.env || !process_1.default.platform || process_1.default.platform === 'browser') {
+        return false;
+    }
+    if (process_1.default.platform === 'win32') {
+        return true;
+    }
+    const env = process_1.default.env;
+    if (env.COLORTERM) {
+        return true;
+    }
+    if (env.TERM === 'dumb') {
+        return false;
+    }
+    if (env.CI || env.TEAMCITY_VERSION) {
+        return !!env.TRAVIS;
+    }
+    if (['iTerm.app', 'HyperTerm', 'Hyper', 'MacTerm', 'Apple_Terminal', 'vscode'].includes(env.TERM_PROGRAM)) {
+        return true;
+    }
+    if (/^xterm-256|^screen|^xterm|^vt100|color|ansi|cygwin|linux/i.test(env.TERM)) {
+        return true;
+    }
+    return false;
+}
+exports.ColorsSupported = ColorsSupported;
+let _enabled = ColorsSupported();
+function SetColorsEnabled(enabled) {
+    _enabled = ColorsSupported() && enabled;
+}
+exports.SetColorsEnabled = SetColorsEnabled;
+function Colorize(str, style) {
+    if (!_enabled) {
+        return str;
+    }
+    const openCodes = [], closeCodes = [];
+    const addStyle = (style) => {
+        if (style === ColorStyle.reset) {
+            openCodes.push(ResetCode.all);
+        }
+        else if (style in FontCode) {
+            openCodes.push(FontCode[style]);
+            closeCodes.push(ResetCode[style]);
+        }
+        else if (style in ColorCode) {
+            openCodes.push(ColorCode[style]);
+            closeCodes.push(ResetCode.color);
+        }
+        else if (style in BgColorCode) {
+            openCodes.push(BgColorCode[style]);
+            closeCodes.push(ResetCode.background);
+        }
+    };
+    if (style instanceof Array) {
+        style.forEach(addStyle);
+    }
+    else {
+        addStyle(style);
+    }
+    // const open = '\u001b[' + openCodes.join(';') + 'm';
+    // const close = '\u001b[' + closeCodes.join(';') + 'm';
+    const open = openCodes.map(code => '\u001b[' + code + 'm').join('');
+    const close = closeCodes.map(code => '\u001b[' + code + 'm').join('');
+    // return open + str + close;
+    return str.split('\n').map(line => open + line + close).join('\n');
+}
+exports.Colorize = Colorize;
+String.prototype.colorize = function (style) {
+    return Colorize(this, style);
+};
+
+},{"./process":48}],52:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SimpleEventEmitter = void 0;
+function runCallback(callback, data) {
+    try {
+        callback(data);
+    }
+    catch (err) {
+        console.error('Error in subscription callback', err);
+    }
+}
+class SimpleEventEmitter {
+    constructor() {
+        this._subscriptions = [];
+        this._oneTimeEvents = new Map();
+    }
+    on(event, callback) {
+        if (this._oneTimeEvents.has(event)) {
+            return runCallback(callback, this._oneTimeEvents.get(event));
+        }
+        this._subscriptions.push({ event, callback, once: false });
+        return this;
+    }
+    off(event, callback) {
+        this._subscriptions = this._subscriptions.filter(s => s.event !== event || (callback && s.callback !== callback));
+        return this;
+    }
+    once(event, callback) {
+        return new Promise(resolve => {
+            const ourCallback = (data) => {
+                resolve(data);
+                callback === null || callback === void 0 ? void 0 : callback(data);
+            };
+            if (this._oneTimeEvents.has(event)) {
+                runCallback(ourCallback, this._oneTimeEvents.get(event));
+            }
+            else {
+                this._subscriptions.push({ event, callback: ourCallback, once: true });
+            }
+        });
+    }
+    emit(event, data) {
+        if (this._oneTimeEvents.has(event)) {
+            throw new Error(`Event "${event}" was supposed to be emitted only once`);
+        }
+        for (let i = 0; i < this._subscriptions.length; i++) {
+            const s = this._subscriptions[i];
+            if (s.event !== event) {
+                continue;
+            }
+            runCallback(s.callback, data);
+            if (s.once) {
+                this._subscriptions.splice(i, 1);
+                i--;
+            }
+        }
+        return this;
+    }
+    emitOnce(event, data) {
+        if (this._oneTimeEvents.has(event)) {
+            throw new Error(`Event "${event}" was supposed to be emitted only once`);
+        }
+        this.emit(event, data);
+        this._oneTimeEvents.set(event, data); // Mark event as being emitted once for future subscribers
+        this.off(event); // Remove all listeners for this event, they won't fire again
+        return this;
+    }
+}
+exports.SimpleEventEmitter = SimpleEventEmitter;
+
+},{}],53:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.EventStream = exports.EventPublisher = exports.EventSubscription = void 0;
+class EventSubscription {
+    /**
+     * @param stop function that stops the subscription from receiving future events
+     */
+    constructor(stop) {
+        this.stop = stop;
+        this._internal = {
+            state: 'init',
+            activatePromises: [],
+        };
+    }
+    /**
+     * Notifies when subscription is activated or canceled
+     * @param callback optional callback to run each time activation state changes
+     * @returns returns a promise that resolves once activated, or rejects when it is denied (and no callback was supplied)
+     */
+    activated(callback) {
+        if (callback) {
+            this._internal.activatePromises.push({ callback });
+            if (this._internal.state === 'active') {
+                callback(true);
+            }
+            else if (this._internal.state === 'canceled') {
+                callback(false, this._internal.cancelReason);
+            }
+        }
+        // Changed behaviour: now also returns a Promise when the callback is used.
+        // This allows for 1 activated call to both handle: first activation result,
+        // and any future events using the callback
+        return new Promise((resolve, reject) => {
+            if (this._internal.state === 'active') {
+                return resolve();
+            }
+            else if (this._internal.state === 'canceled' && !callback) {
+                return reject(new Error(this._internal.cancelReason));
+            }
+            // eslint-disable-next-line @typescript-eslint/no-empty-function
+            const noop = () => { };
+            this._internal.activatePromises.push({
+                resolve,
+                reject: callback ? noop : reject, // Don't reject when callback is used: let callback handle this (prevents UnhandledPromiseRejection if only callback is used)
+            });
+        });
+    }
+    /** (for internal use) */
+    _setActivationState(activated, cancelReason) {
+        this._internal.cancelReason = cancelReason;
+        this._internal.state = activated ? 'active' : 'canceled';
+        while (this._internal.activatePromises.length > 0) {
+            const p = this._internal.activatePromises.shift();
+            if (activated) {
+                p.callback && p.callback(true);
+                p.resolve && p.resolve();
+            }
+            else {
+                p.callback && p.callback(false, cancelReason);
+                p.reject && p.reject(cancelReason);
+            }
+        }
+    }
+}
+exports.EventSubscription = EventSubscription;
+class EventPublisher {
+    /**
+     *
+     * @param publish function that publishes a new value to subscribers, return if there are any active subscribers
+     * @param start function that notifies subscribers their subscription is activated
+     * @param cancel function that notifies subscribers their subscription has been canceled, removes all subscriptions
+     */
+    constructor(publish, start, cancel) {
+        this.publish = publish;
+        this.start = start;
+        this.cancel = cancel;
+    }
+}
+exports.EventPublisher = EventPublisher;
+class EventStream {
+    constructor(eventPublisherCallback) {
+        const subscribers = [];
+        let noMoreSubscribersCallback;
+        let activationState; // TODO: refactor to string only: STATE_INIT, STATE_STOPPED, STATE_ACTIVATED, STATE_CANCELED
+        const STATE_STOPPED = 'stopped (no more subscribers)';
+        this.subscribe = (callback, activationCallback) => {
+            if (typeof callback !== 'function') {
+                throw new TypeError('callback must be a function');
+            }
+            else if (activationState === STATE_STOPPED) {
+                throw new Error('stream can\'t be used anymore because all subscribers were stopped');
+            }
+            const sub = {
+                callback,
+                activationCallback: function (activated, cancelReason) {
+                    activationCallback === null || activationCallback === void 0 ? void 0 : activationCallback(activated, cancelReason);
+                    this.subscription._setActivationState(activated, cancelReason);
+                },
+                subscription: new EventSubscription(function stop() {
+                    subscribers.splice(subscribers.indexOf(this), 1);
+                    return checkActiveSubscribers();
+                }),
+            };
+            subscribers.push(sub);
+            if (typeof activationState !== 'undefined') {
+                if (activationState === true) {
+                    activationCallback === null || activationCallback === void 0 ? void 0 : activationCallback(true);
+                    sub.subscription._setActivationState(true);
+                }
+                else if (typeof activationState === 'string') {
+                    activationCallback === null || activationCallback === void 0 ? void 0 : activationCallback(false, activationState);
+                    sub.subscription._setActivationState(false, activationState);
+                }
+            }
+            return sub.subscription;
+        };
+        const checkActiveSubscribers = () => {
+            let ret;
+            if (subscribers.length === 0) {
+                ret = noMoreSubscribersCallback === null || noMoreSubscribersCallback === void 0 ? void 0 : noMoreSubscribersCallback();
+                activationState = STATE_STOPPED;
+            }
+            return Promise.resolve(ret);
+        };
+        this.unsubscribe = (callback) => {
+            const remove = callback
+                ? subscribers.filter(sub => sub.callback === callback)
+                : subscribers;
+            remove.forEach(sub => {
+                const i = subscribers.indexOf(sub);
+                subscribers.splice(i, 1);
+            });
+            checkActiveSubscribers();
+        };
+        this.stop = () => {
+            // Stop (remove) all subscriptions
+            subscribers.splice(0);
+            checkActiveSubscribers();
+        };
+        /**
+         * For publishing side: adds a value that will trigger callbacks to all subscribers
+         * @param val
+         * @returns returns whether there are subscribers left
+         */
+        const publish = (val) => {
+            subscribers.forEach(sub => {
+                try {
+                    sub.callback(val);
+                }
+                catch (err) {
+                    console.error(`Error running subscriber callback: ${err.message}`);
+                }
+            });
+            if (subscribers.length === 0) {
+                checkActiveSubscribers();
+            }
+            return subscribers.length > 0;
+        };
+        /**
+         * For publishing side: let subscribers know their subscription is activated. Should be called only once
+         */
+        const start = (allSubscriptionsStoppedCallback) => {
+            activationState = true;
+            noMoreSubscribersCallback = allSubscriptionsStoppedCallback;
+            subscribers.forEach(sub => {
+                var _a;
+                (_a = sub.activationCallback) === null || _a === void 0 ? void 0 : _a.call(sub, true);
+            });
+        };
+        /**
+         * For publishing side: let subscribers know their subscription has been canceled. Should be called only once
+         */
+        const cancel = (reason) => {
+            activationState = reason;
+            subscribers.forEach(sub => {
+                var _a;
+                (_a = sub.activationCallback) === null || _a === void 0 ? void 0 : _a.call(sub, false, reason || new Error('unknown reason'));
+            });
+            subscribers.splice(0); // Clear all
+        };
+        const publisher = new EventPublisher(publish, start, cancel);
+        eventPublisherCallback(publisher);
+    }
+}
+exports.EventStream = EventStream;
+
+},{}],54:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.deserialize2 = exports.serialize2 = exports.serialize = exports.detectSerializeVersion = exports.deserialize = void 0;
+const path_reference_1 = require("./path-reference");
+const utils_1 = require("./utils");
+const ascii85_1 = require("./ascii85");
+const path_info_1 = require("./path-info");
+const partial_array_1 = require("./partial-array");
+/*
+    There are now 2 different serialization methods for transporting values.
+
+    v1:
+    The original version (v1) created an object with "map" and "val" properties.
+    The "map" property was made optional in v1.14.1 so they won't be present for values needing no serializing
+
+    v2:
+    The new version replaces serialized values inline by objects containing ".type" and ".val" properties.
+    This serializing method was introduced by `export` and `import` methods because they use streaming and
+    are unable to prepare type mappings up-front. This format is smaller in transmission (in many cases),
+    and easier to read and process.
+
+    original: { "date": (some date) }
+    v1 serialized: { "map": { "date": "date" }, "val": { date: "2022-04-22T07:49:23Z" } }
+    v2 serialized: { "date": { ".type": "date", ".val": "2022-04-22T07:49:23Z" } }
+
+    original: (some date)
+    v1 serialized: { "map": "date", "val": "2022-04-22T07:49:23Z" }
+    v2 serialized: { ".type": "date", ".val": "2022-04-22T07:49:23Z" }
+    comment: top level value that need serializing is wrapped in an object with ".type" and ".val". v1 is smaller in this case
+
+    original: 'some string'
+    v1 serialized: { "map": {}, "val": "some string" }
+    v2 serialized: "some string"
+    comment: primitive types such as strings don't need serializing and are returned as is in v2
+
+    original: { "date": (some date), "text": "Some string" }
+    v1 serialized: { "map": { "date": "date" }, "val": { date: "2022-04-22T07:49:23Z", "text": "Some string" } }
+    v2 serialized: { "date": { ".type": "date", ".val": "2022-04-22T07:49:23Z" }, "text": "Some string" }
+*/
+/**
+ * Original deserialization method using global `map` and `val` properties
+ * @param data
+ * @returns
+ */
+const deserialize = (data) => {
+    if (data.map === null || typeof data.map === 'undefined') {
+        if (typeof data.val === 'undefined') {
+            throw new Error('serialized value must have a val property');
+        }
+        return data.val;
+    }
+    const deserializeValue = (type, val) => {
+        if (type === 'date') {
+            // Date was serialized as a string (UTC)
+            return new Date(val);
+        }
+        else if (type === 'binary') {
+            // ascii85 encoded binary data
+            return ascii85_1.ascii85.decode(val);
+        }
+        else if (type === 'reference') {
+            return new path_reference_1.PathReference(val);
+        }
+        else if (type === 'regexp') {
+            return new RegExp(val.pattern, val.flags);
+        }
+        else if (type === 'array') {
+            return new partial_array_1.PartialArray(val);
+        }
+        else if (type === 'bigint') {
+            return BigInt(val);
+        }
+        return val;
+    };
+    if (typeof data.map === 'string') {
+        // Single value
+        return deserializeValue(data.map, data.val);
+    }
+    Object.keys(data.map).forEach(path => {
+        const type = data.map[path];
+        const keys = path_info_1.PathInfo.getPathKeys(path);
+        let parent = data;
+        let key = 'val';
+        let val = data.val;
+        keys.forEach(k => {
+            key = k;
+            parent = val;
+            val = val[key]; // If an error occurs here, there's something wrong with the calling code...
+        });
+        parent[key] = deserializeValue(type, val);
+    });
+    return data.val;
+};
+exports.deserialize = deserialize;
+/**
+ * Function to detect the used serialization method with for the given object
+ * @param data
+ * @returns
+ */
+const detectSerializeVersion = (data) => {
+    if (typeof data !== 'object' || data === null) {
+        // This can only be v2, which allows primitive types to bypass serializing
+        return 2;
+    }
+    if ('map' in data && 'val' in data) {
+        return 1;
+    }
+    else if ('val' in data) {
+        // If it's v1, 'val' will be the only key in the object because serialize2 adds ".version": 2 to the object to prevent confusion.
+        if (Object.keys(data).length > 1) {
+            return 2;
+        }
+        return 1;
+    }
+    return 2;
+};
+exports.detectSerializeVersion = detectSerializeVersion;
+/**
+ * Original serialization method using global `map` and `val` properties
+ * @param data
+ * @returns
+ */
+const serialize = (obj) => {
+    var _a;
+    // Recursively find dates and binary data
+    if (obj === null || typeof obj !== 'object' || obj instanceof Date || obj instanceof ArrayBuffer || obj instanceof path_reference_1.PathReference || obj instanceof RegExp) {
+        // Single value
+        const ser = (0, exports.serialize)({ value: obj });
+        return {
+            map: (_a = ser.map) === null || _a === void 0 ? void 0 : _a.value,
+            val: ser.val.value,
+        };
+    }
+    obj = (0, utils_1.cloneObject)(obj); // Make sure we don't alter the original object
+    const process = (obj, mappings, prefix) => {
+        if (obj instanceof partial_array_1.PartialArray) {
+            mappings[prefix] = 'array';
+        }
+        Object.keys(obj).forEach(key => {
+            const val = obj[key];
+            const path = prefix.length === 0 ? key : `${prefix}/${key}`;
+            if (typeof val === 'bigint') {
+                obj[key] = val.toString();
+                mappings[path] = 'bigint';
+            }
+            else if (val instanceof Date) {
+                // serialize date to UTC string
+                obj[key] = val.toISOString();
+                mappings[path] = 'date';
+            }
+            else if (val instanceof ArrayBuffer) {
+                // Serialize binary data with ascii85
+                obj[key] = ascii85_1.ascii85.encode(val); //ascii85.encode(Buffer.from(val)).toString();
+                mappings[path] = 'binary';
+            }
+            else if (val instanceof path_reference_1.PathReference) {
+                obj[key] = val.path;
+                mappings[path] = 'reference';
+            }
+            else if (val instanceof RegExp) {
+                // Queries using the 'matches' filter with a regular expression can now also be used on remote db's
+                obj[key] = { pattern: val.source, flags: val.flags };
+                mappings[path] = 'regexp';
+            }
+            else if (typeof val === 'object' && val !== null) {
+                process(val, mappings, path);
+            }
+        });
+    };
+    const mappings = {};
+    process(obj, mappings, '');
+    const serialized = { val: obj };
+    if (Object.keys(mappings).length > 0) {
+        serialized.map = mappings;
+    }
+    return serialized;
+};
+exports.serialize = serialize;
+/**
+ * New serialization method using inline `.type` and `.val` properties
+ * @param obj
+ * @returns
+ */
+const serialize2 = (obj) => {
+    // Recursively find data that needs serializing
+    const getSerializedValue = (val) => {
+        if (typeof val === 'bigint') {
+            // serialize bigint to string
+            return {
+                '.type': 'bigint',
+                '.val': val.toString(),
+            };
+        }
+        else if (val instanceof Date) {
+            // serialize date to UTC string
+            return {
+                '.type': 'date',
+                '.val': val.toISOString(),
+            };
+        }
+        else if (val instanceof ArrayBuffer) {
+            // Serialize binary data with ascii85
+            return {
+                '.type': 'binary',
+                '.val': ascii85_1.ascii85.encode(val),
+            };
+        }
+        else if (val instanceof path_reference_1.PathReference) {
+            return {
+                '.type': 'reference',
+                '.val': val.path,
+            };
+        }
+        else if (val instanceof RegExp) {
+            // Queries using the 'matches' filter with a regular expression can now also be used on remote db's
+            return {
+                '.type': 'regexp',
+                '.val': `/${val.source}/${val.flags}`, // new: shorter
+                // '.val': {
+                //     pattern: val.source,
+                //     flags: val.flags
+                // }
+            };
+        }
+        else if (typeof val === 'object' && val !== null) {
+            if (val instanceof Array) {
+                const copy = [];
+                for (let i = 0; i < val.length; i++) {
+                    copy[i] = getSerializedValue(val[i]);
+                }
+                return copy;
+            }
+            else {
+                const copy = {}; //val instanceof Array ? [] : {} as SerializedValueV2;
+                if (val instanceof partial_array_1.PartialArray) {
+                    // Mark the object as partial ("sparse") array
+                    copy['.type'] = 'array';
+                }
+                for (const prop in val) {
+                    copy[prop] = getSerializedValue(val[prop]);
+                }
+                return copy;
+            }
+        }
+        else {
+            // Primitive value. Don't serialize
+            return val;
+        }
+    };
+    const serialized = getSerializedValue(obj);
+    if (serialized !== null && typeof serialized === 'object' && 'val' in serialized && Object.keys(serialized).length === 1) {
+        // acebase-core v1.14.1 made the 'map' property optional.
+        // This v2 serialized object might be confused with a v1 without mappings, because it only has a "val" property
+        // To prevent this, mark the serialized object with version 2
+        serialized['.version'] = 2;
+    }
+    return serialized;
+};
+exports.serialize2 = serialize2;
+/**
+ * New deserialization method using inline `.type` and `.val` properties
+ * @param obj
+ * @returns
+ */
+const deserialize2 = (data) => {
+    if (typeof data !== 'object' || data === null) {
+        // primitive value, not serialized
+        return data;
+    }
+    if (typeof data['.type'] === 'undefined') {
+        // No type given: this is a plain object or array
+        if (data instanceof Array) {
+            // Plain array, deserialize items into a copy
+            const copy = [];
+            const arr = data;
+            for (let i = 0; i < arr.length; i++) {
+                copy.push((0, exports.deserialize2)(arr[i]));
+            }
+            return copy;
+        }
+        else {
+            // Plain object, deserialize properties into a copy
+            const copy = {};
+            const obj = data;
+            for (const prop in obj) {
+                copy[prop] = (0, exports.deserialize2)(obj[prop]);
+            }
+            return copy;
+        }
+    }
+    else if (typeof data['.type'] === 'string') {
+        const dataType = data['.type'].toLowerCase();
+        if (dataType === 'bigint') {
+            const val = data['.val'];
+            return BigInt(val);
+        }
+        else if (dataType === 'array') {
+            // partial ("sparse") array, deserialize children into a copy
+            const arr = data;
+            const copy = {};
+            for (const index in arr) {
+                copy[index] = (0, exports.deserialize2)(arr[index]);
+            }
+            delete copy['.type'];
+            return new partial_array_1.PartialArray(copy);
+        }
+        else if (dataType === 'date') {
+            // Date was serialized as a string (UTC)
+            const val = data['.val'];
+            return new Date(val);
+        }
+        else if (dataType === 'binary') {
+            // ascii85 encoded binary data
+            const val = data['.val'];
+            return ascii85_1.ascii85.decode(val);
+        }
+        else if (dataType === 'reference') {
+            const val = data['.val'];
+            return new path_reference_1.PathReference(val);
+        }
+        else if (dataType === 'regexp') {
+            const val = data['.val'];
+            if (typeof val === 'string') {
+                // serialized as '/(pattern)/flags'
+                const match = /^\/(.*)\/([a-z]+)$/.exec(val);
+                return new RegExp(match[1], match[2]);
+            }
+            // serialized as object with pattern & flags properties
+            return new RegExp(val.pattern, val.flags);
+        }
+    }
+    throw new Error(`Unknown data type "${data['.type']}" in serialized value`);
+};
+exports.deserialize2 = deserialize2;
+
+},{"./ascii85":33,"./partial-array":45,"./path-info":46,"./path-reference":47,"./utils":56}],55:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TypeMappings = void 0;
+const utils_1 = require("./utils");
+const path_info_1 = require("./path-info");
+const data_reference_1 = require("./data-reference");
+const data_snapshot_1 = require("./data-snapshot");
+/**
+ * (for internal use) - gets the mapping set for a specific path
+ */
+function get(mappings, path) {
+    // path points to the mapped (object container) location
+    path = path.replace(/^\/|\/$/g, ''); // trim slashes
+    const keys = path_info_1.PathInfo.getPathKeys(path);
+    const mappedPath = Object.keys(mappings).find(mpath => {
+        const mkeys = path_info_1.PathInfo.getPathKeys(mpath);
+        if (mkeys.length !== keys.length) {
+            return false; // Can't be a match
+        }
+        return mkeys.every((mkey, index) => {
+            if (mkey === '*' || (typeof mkey === 'string' && mkey[0] === '$')) {
+                return true; // wildcard
+            }
+            return mkey === keys[index];
+        });
+    });
+    const mapping = mappings[mappedPath];
+    return mapping;
+}
+/**
+ * (for internal use) - gets the mapping set for a specific path's parent
+ */
+function map(mappings, path) {
+    // path points to the object location, its parent should have the mapping
+    const targetPath = path_info_1.PathInfo.get(path).parentPath;
+    if (targetPath === null) {
+        return;
+    }
+    return get(mappings, targetPath);
+}
+/**
+ * (for internal use) - gets all mappings set for a specific path and all subnodes
+ * @returns returns array of all matched mappings in path
+ */
+function mapDeep(mappings, entryPath) {
+    // returns mapping for this node, and all mappings for nested nodes
+    // entryPath: "users/ewout"
+    // mappingPath: "users"
+    // mappingPath: "users/*/posts"
+    entryPath = entryPath.replace(/^\/|\/$/g, ''); // trim slashes
+    // Start with current path's parent node
+    const pathInfo = path_info_1.PathInfo.get(entryPath);
+    const startPath = pathInfo.parentPath;
+    const keys = startPath ? path_info_1.PathInfo.getPathKeys(startPath) : [];
+    // Every path that starts with startPath, is a match
+    // TODO: refactor to return Object.keys(mappings),filter(...)
+    const matches = Object.keys(mappings).reduce((m, mpath) => {
+        //const mkeys = mpath.length > 0 ? mpath.split("/") : [];
+        const mkeys = path_info_1.PathInfo.getPathKeys(mpath);
+        if (mkeys.length < keys.length) {
+            return m; // Can't be a match
+        }
+        let isMatch = true;
+        if (keys.length === 0 && startPath !== null) {
+            // Only match first node's children if mapping pattern is "*" or "$variable"
+            isMatch = mkeys.length === 1 && (mkeys[0] === '*' || (typeof mkeys[0] === 'string' && mkeys[0][0] === '$'));
+        }
+        else {
+            mkeys.every((mkey, index) => {
+                if (index >= keys.length) {
+                    return false; // stop .every loop
+                }
+                else if ((mkey === '*' || (typeof mkey === 'string' && mkey[0] === '$')) || mkey === keys[index]) {
+                    return true; // continue .every loop
+                }
+                else {
+                    isMatch = false;
+                    return false; // stop .every loop
+                }
+            });
+        }
+        if (isMatch) {
+            const mapping = mappings[mpath];
+            m.push({ path: mpath, type: mapping });
+        }
+        return m;
+    }, []);
+    return matches;
+}
+/**
+ * (for internal use) - serializes or deserializes an object using type mappings
+ * @returns returns the (de)serialized value
+ */
+function process(db, mappings, path, obj, action) {
+    if (obj === null || typeof obj !== 'object') {
+        return obj;
+    }
+    const keys = path_info_1.PathInfo.getPathKeys(path); // path.length > 0 ? path.split("/") : [];
+    const m = mapDeep(mappings, path);
+    const changes = [];
+    m.sort((a, b) => path_info_1.PathInfo.getPathKeys(a.path).length > path_info_1.PathInfo.getPathKeys(b.path).length ? -1 : 1); // Deepest paths first
+    m.forEach(mapping => {
+        const mkeys = path_info_1.PathInfo.getPathKeys(mapping.path); //mapping.path.length > 0 ? mapping.path.split("/") : [];
+        mkeys.push('*');
+        const mTrailKeys = mkeys.slice(keys.length);
+        if (mTrailKeys.length === 0) {
+            const vars = path_info_1.PathInfo.extractVariables(mapping.path, path);
+            const ref = new data_reference_1.DataReference(db, path, vars);
+            if (action === 'serialize') {
+                // serialize this object
+                obj = mapping.type.serialize(obj, ref);
+            }
+            else if (action === 'deserialize') {
+                // deserialize this object
+                const snap = new data_snapshot_1.DataSnapshot(ref, obj);
+                obj = mapping.type.deserialize(snap);
+            }
+            return;
+        }
+        // Find all nested objects at this trail path
+        const process = (parentPath, parent, keys) => {
+            if (obj === null || typeof obj !== 'object') {
+                return obj;
+            }
+            const key = keys[0];
+            let children = [];
+            if (key === '*' || (typeof key === 'string' && key[0] === '$')) {
+                // Include all children
+                if (parent instanceof Array) {
+                    children = parent.map((val, index) => ({ key: index, val }));
+                }
+                else {
+                    children = Object.keys(parent).map(k => ({ key: k, val: parent[k] }));
+                }
+            }
+            else {
+                // Get the 1 child
+                const child = parent[key];
+                if (typeof child === 'object') {
+                    children.push({ key, val: child });
+                }
+            }
+            children.forEach(child => {
+                const childPath = path_info_1.PathInfo.getChildPath(parentPath, child.key);
+                const vars = path_info_1.PathInfo.extractVariables(mapping.path, childPath);
+                const ref = new data_reference_1.DataReference(db, childPath, vars);
+                if (keys.length === 1) {
+                    // TODO: this alters the existing object, we must build our own copy!
+                    if (action === 'serialize') {
+                        // serialize this object
+                        changes.push({ parent, key: child.key, original: parent[child.key] });
+                        parent[child.key] = mapping.type.serialize(child.val, ref);
+                    }
+                    else if (action === 'deserialize') {
+                        // deserialize this object
+                        const snap = new data_snapshot_1.DataSnapshot(ref, child.val);
+                        parent[child.key] = mapping.type.deserialize(snap);
+                    }
+                }
+                else {
+                    // Dig deeper
+                    process(childPath, child.val, keys.slice(1));
+                }
+            });
+        };
+        process(path, obj, mTrailKeys);
+    });
+    if (action === 'serialize') {
+        // Clone this serialized object so any types that remained
+        // will become plain objects without functions, and we can restore
+        // the original object's values if any mappings were processed.
+        // This will also prevent circular references
+        obj = (0, utils_1.cloneObject)(obj);
+        if (changes.length > 0) {
+            // Restore the changes made to the original object
+            changes.forEach(change => {
+                change.parent[change.key] = change.original;
+            });
+        }
+    }
+    return obj;
+}
+const _mappings = Symbol('mappings');
+class TypeMappings {
+    constructor(db) {
+        this.db = db;
+        this[_mappings] = {};
+    }
+    /** (for internal use) */
+    get mappings() { return this[_mappings]; }
+    /** (for internal use) */
+    map(path) {
+        return map(this[_mappings], path);
+    }
+    /**
+     * Maps objects that are stored in a specific path to a class, so they can automatically be
+     * serialized when stored to, and deserialized (instantiated) when loaded from the database.
+     * @param path path to an object container, eg "users" or "users/*\/posts"
+     * @param type class to bind all child objects of path to
+     * Best practice is to implement 2 methods for instantiation and serializing of your objects:
+     * 1) `static create(snap: DataSnapshot)` and 2) `serialize(ref: DataReference)`. See example
+     * @param options (optional) You can specify the functions to use to
+     * serialize and/or instantiate your class. If you do not specificy a creator (constructor) method,
+     * AceBase will call `YourClass.create(snapshot)` method if it exists, or create an instance of
+     * YourClass with `new YourClass(snapshot)`.
+     * If you do not specifiy a serializer method, AceBase will call `YourClass.prototype.serialize(ref)`
+     * if it exists, or tries storing your object's fields unaltered. NOTE: `this` in your creator
+     * function will point to `YourClass`, and `this` in your serializer function will point to the
+     * `instance` of `YourClass`.
+     * @example
+     * class User {
+     *    static create(snap: DataSnapshot): User {
+     *        // Deserialize (instantiate) User from plain database object
+     *        let user = new User();
+     *        Object.assign(user, snap.val()); // Copy all properties to user
+     *        user.id = snap.ref.key; // Add the key as id
+     *        return user;
+     *    }
+     *    serialize(ref: DataReference) {
+     *        // Serialize user for database storage
+     *        return {
+     *            name: this.name
+     *            email: this.email
+     *        };
+     *    }
+     * }
+     * db.types.bind('users', User); // Automatically uses serialize and static create methods
+     */
+    bind(path, type, options = {}) {
+        // Maps objects that are stored in a specific path to a constructor method,
+        // so they are automatically deserialized
+        if (typeof path !== 'string') {
+            throw new TypeError('path must be a string');
+        }
+        if (typeof type !== 'function') {
+            throw new TypeError('constructor must be a function');
+        }
+        if (typeof options.serializer === 'undefined') {
+            // if (typeof type.prototype.serialize === 'function') {
+            //     // Use .serialize instance method
+            //     options.serializer = type.prototype.serialize;
+            // }
+            // Use object's serialize method upon serialization (if available)
+        }
+        else if (typeof options.serializer === 'string') {
+            if (typeof type.prototype[options.serializer] === 'function') {
+                options.serializer = type.prototype[options.serializer];
+            }
+            else {
+                throw new TypeError(`${type.name}.prototype.${options.serializer} is not a function, cannot use it as serializer`);
+            }
+        }
+        else if (typeof options.serializer !== 'function') {
+            throw new TypeError(`serializer for class ${type.name} must be a function, or the name of a prototype method`);
+        }
+        if (typeof options.creator === 'undefined') {
+            if (typeof type.create === 'function') {
+                // Use static .create as creator method
+                options.creator = type.create;
+            }
+        }
+        else if (typeof options.creator === 'string') {
+            if (typeof type[options.creator] === 'function') {
+                options.creator = type[options.creator];
+            }
+            else {
+                throw new TypeError(`${type.name}.${options.creator} is not a function, cannot use it as creator`);
+            }
+        }
+        else if (typeof options.creator !== 'function') {
+            throw new TypeError(`creator for class ${type.name} must be a function, or the name of a static method`);
+        }
+        path = path.replace(/^\/|\/$/g, ''); // trim slashes
+        this[_mappings][path] = {
+            db: this.db,
+            type,
+            creator: options.creator,
+            serializer: options.serializer,
+            deserialize(snap) {
+                // run constructor method
+                let obj;
+                if (this.creator) {
+                    obj = this.creator.call(this.type, snap);
+                }
+                else {
+                    obj = new this.type(snap);
+                }
+                return obj;
+            },
+            serialize(obj, ref) {
+                if (this.serializer) {
+                    obj = this.serializer.call(obj, ref, obj);
+                }
+                else if (obj && typeof obj.serialize === 'function') {
+                    obj = obj.serialize(ref, obj);
+                }
+                return obj;
+            },
+        };
+    }
+    /**
+     * @internal (for internal use)
+     * Serializes any child in given object that has a type mapping
+     * @param path | path to the object's location
+     * @param obj object to serialize
+     */
+    serialize(path, obj) {
+        return process(this.db, this[_mappings], path, obj, 'serialize');
+    }
+    /**
+     * @internal (for internal use)
+     * Deserialzes any child in given object that has a type mapping
+     * @param path path to the object's location
+     * @param obj object to deserialize
+     */
+    deserialize(path, obj) {
+        return process(this.db, this[_mappings], path, obj, 'deserialize');
+    }
+}
+exports.TypeMappings = TypeMappings;
+
+},{"./data-reference":38,"./data-snapshot":39,"./path-info":46,"./utils":56}],56:[function(require,module,exports){
+(function (global,Buffer){(function (){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getGlobalObject = exports.defer = exports.getChildValues = exports.getMutations = exports.compareValues = exports.ObjectDifferences = exports.valuesAreEqual = exports.cloneObject = exports.concatTypedArrays = exports.decodeString = exports.encodeString = exports.bytesToBigint = exports.bigintToBytes = exports.bytesToNumber = exports.numberToBytes = void 0;
+const path_reference_1 = require("./path-reference");
+const process_1 = require("./process");
+const partial_array_1 = require("./partial-array");
+function numberToBytes(number) {
+    const bytes = new Uint8Array(8);
+    const view = new DataView(bytes.buffer);
+    view.setFloat64(0, number);
+    return new Array(...bytes);
+}
+exports.numberToBytes = numberToBytes;
+function bytesToNumber(bytes) {
+    const length = Array.isArray(bytes) ? bytes.length : bytes.byteLength;
+    if (length !== 8) {
+        throw new TypeError('must be 8 bytes');
+    }
+    const bin = new Uint8Array(bytes);
+    const view = new DataView(bin.buffer);
+    const nr = view.getFloat64(0);
+    return nr;
+}
+exports.bytesToNumber = bytesToNumber;
+const big = {
+    zero: BigInt(0),
+    one: BigInt(1),
+    two: BigInt(2),
+    eight: BigInt(8),
+    ff: BigInt(0xff),
+};
+function bigintToBytes(number) {
+    if (typeof number !== 'bigint') {
+        throw new Error('number must be a bigint');
+    }
+    const bytes = [];
+    const negative = number < big.zero;
+    do {
+        const byte = Number(number & big.ff); // NOTE: bits are inverted on negative numbers
+        bytes.push(byte);
+        number = number >> big.eight;
+    } while (number !== (negative ? -big.one : big.zero));
+    bytes.reverse(); // little-endian
+    if (negative ? bytes[0] < 128 : bytes[0] >= 128) {
+        bytes.unshift(negative ? 255 : 0); // extra sign byte needed
+    }
+    return bytes;
+}
+exports.bigintToBytes = bigintToBytes;
+function bytesToBigint(bytes) {
+    const negative = bytes[0] >= 128;
+    let number = big.zero;
+    for (let b of bytes) {
+        if (negative) {
+            b = ~b & 0xff;
+        } // Invert the bits
+        number = (number << big.eight) + BigInt(b);
+    }
+    if (negative) {
+        number = -(number + big.one);
+    }
+    return number;
+}
+exports.bytesToBigint = bytesToBigint;
+/**
+ * Converts a string to a utf-8 encoded Uint8Array
+ */
+function encodeString(str) {
+    if (typeof TextEncoder !== 'undefined') {
+        // Modern browsers, Node.js v11.0.0+ (or v8.3.0+ with util.TextEncoder)
+        const encoder = new TextEncoder();
+        return encoder.encode(str);
+    }
+    else if (typeof Buffer === 'function') {
+        // Node.js
+        const buf = Buffer.from(str, 'utf-8');
+        return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    }
+    else {
+        // Older browsers. Manually encode
+        const arr = [];
+        for (let i = 0; i < str.length; i++) {
+            let code = str.charCodeAt(i);
+            if (code > 128) {
+                // Attempt simple UTF-8 conversion. See https://en.wikipedia.org/wiki/UTF-8
+                if ((code & 0xd800) === 0xd800) {
+                    // code starts with 1101 10...: this is a 2-part utf-16 char code
+                    const nextCode = str.charCodeAt(i + 1);
+                    if ((nextCode & 0xdc00) !== 0xdc00) {
+                        // next code must start with 1101 11...
+                        throw new Error('follow-up utf-16 character does not start with 0xDC00');
+                    }
+                    i++;
+                    const p1 = code & 0x3ff; // Only use last 10 bits
+                    const p2 = nextCode & 0x3ff;
+                    // Create code point from these 2: (see https://en.wikipedia.org/wiki/UTF-16)
+                    code = 0x10000 | (p1 << 10) | p2;
+                }
+                if (code < 2048) {
+                    // Use 2 bytes for 11 bit value, first byte starts with 110xxxxx (0xc0), 2nd byte with 10xxxxxx (0x80)
+                    const b1 = 0xc0 | ((code >> 6) & 0x1f); // 0xc0 = 11000000, 0x1f = 11111
+                    const b2 = 0x80 | (code & 0x3f); // 0x80 = 10000000, 0x3f = 111111
+                    arr.push(b1, b2);
+                }
+                else if (code < 65536) {
+                    // Use 3 bytes for 16-bit value, bits per byte: 4, 6, 6
+                    const b1 = 0xe0 | ((code >> 12) & 0xf); // 0xe0 = 11100000, 0xf = 1111
+                    const b2 = 0x80 | ((code >> 6) & 0x3f); // 0x80 = 10000000, 0x3f = 111111
+                    const b3 = 0x80 | (code & 0x3f);
+                    arr.push(b1, b2, b3);
+                }
+                else if (code < 2097152) {
+                    // Use 4 bytes for 21-bit value, bits per byte: 3, 6, 6, 6
+                    const b1 = 0xf0 | ((code >> 18) & 0x7); // 0xf0 = 11110000, 0x7 = 111
+                    const b2 = 0x80 | ((code >> 12) & 0x3f); // 0x80 = 10000000, 0x3f = 111111
+                    const b3 = 0x80 | ((code >> 6) & 0x3f); // 0x80 = 10000000, 0x3f = 111111
+                    const b4 = 0x80 | (code & 0x3f);
+                    arr.push(b1, b2, b3, b4);
+                }
+                else {
+                    throw new Error(`Cannot convert character ${str.charAt(i)} (code ${code}) to utf-8`);
+                }
+            }
+            else {
+                arr.push(code < 128 ? code : 63); // 63 = ?
+            }
+        }
+        return new Uint8Array(arr);
+    }
+}
+exports.encodeString = encodeString;
+/**
+ * Converts a utf-8 encoded buffer to string
+ */
+function decodeString(buffer) {
+    if (typeof TextDecoder !== 'undefined') {
+        // Modern browsers, Node.js v11.0.0+ (or v8.3.0+ with util.TextDecoder)
+        const decoder = new TextDecoder();
+        if (buffer instanceof Uint8Array) {
+            return decoder.decode(buffer);
+        }
+        const buf = Uint8Array.from(buffer);
+        return decoder.decode(buf);
+    }
+    else if (typeof Buffer === 'function') {
+        // Node.js (v10 and below)
+        if (buffer instanceof Array) {
+            buffer = Uint8Array.from(buffer); // convert to typed array
+        }
+        if (!(buffer instanceof Buffer) && 'buffer' in buffer && buffer.buffer instanceof ArrayBuffer) {
+            const typedArray = buffer;
+            buffer = Buffer.from(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength); // Convert typed array to node.js Buffer
+        }
+        if (!(buffer instanceof Buffer)) {
+            throw new Error('Unsupported buffer argument');
+        }
+        return buffer.toString('utf-8');
+    }
+    else {
+        // Older browsers. Manually decode!
+        if (!(buffer instanceof Uint8Array) && 'buffer' in buffer && buffer['buffer'] instanceof ArrayBuffer) {
+            // Convert TypedArray to Uint8Array
+            const typedArray = buffer;
+            buffer = new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength);
+        }
+        if (buffer instanceof Buffer || buffer instanceof Array || buffer instanceof Uint8Array) {
+            let str = '';
+            for (let i = 0; i < buffer.length; i++) {
+                let code = buffer[i];
+                if (code > 128) {
+                    // Decode Unicode character
+                    if ((code & 0xf0) === 0xf0) {
+                        // 4 byte char
+                        const b1 = code, b2 = buffer[i + 1], b3 = buffer[i + 2], b4 = buffer[i + 3];
+                        code = ((b1 & 0x7) << 18) | ((b2 & 0x3f) << 12) | ((b3 & 0x3f) << 6) | (b4 & 0x3f);
+                        i += 3;
+                    }
+                    else if ((code & 0xe0) === 0xe0) {
+                        // 3 byte char
+                        const b1 = code, b2 = buffer[i + 1], b3 = buffer[i + 2];
+                        code = ((b1 & 0xf) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
+                        i += 2;
+                    }
+                    else if ((code & 0xc0) === 0xc0) {
+                        // 2 byte char
+                        const b1 = code, b2 = buffer[i + 1];
+                        code = ((b1 & 0x1f) << 6) | (b2 & 0x3f);
+                        i++;
+                    }
+                    else {
+                        throw new Error('invalid utf-8 data');
+                    }
+                }
+                if (code >= 65536) {
+                    // Split into 2-part utf-16 char codes
+                    code ^= 0x10000;
+                    const p1 = 0xd800 | (code >> 10);
+                    const p2 = 0xdc00 | (code & 0x3ff);
+                    str += String.fromCharCode(p1);
+                    str += String.fromCharCode(p2);
+                }
+                else {
+                    str += String.fromCharCode(code);
+                }
+            }
+            return str;
+        }
+        else {
+            throw new Error('Unsupported buffer argument');
+        }
+    }
+}
+exports.decodeString = decodeString;
+function concatTypedArrays(a, b) {
+    const c = new a.constructor(a.length + b.length);
+    c.set(a);
+    c.set(b, a.length);
+    return c;
+}
+exports.concatTypedArrays = concatTypedArrays;
+function cloneObject(original, stack) {
+    var _a;
+    if (((_a = original === null || original === void 0 ? void 0 : original.constructor) === null || _a === void 0 ? void 0 : _a.name) === 'DataSnapshot') {
+        throw new TypeError(`Object to clone is a DataSnapshot (path "${original.ref.path}")`);
+    }
+    const checkAndFixTypedArray = (obj) => {
+        if (obj !== null && typeof obj === 'object'
+            && typeof obj.constructor === 'function' && typeof obj.constructor.name === 'string'
+            && ['Buffer', 'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array', 'BigUint64Array', 'BigInt64Array'].includes(obj.constructor.name)) {
+            // FIX for typed array being converted to objects with numeric properties:
+            // Convert Buffer or TypedArray to ArrayBuffer
+            obj = obj.buffer.slice(obj.byteOffset, obj.byteOffset + obj.byteLength);
+        }
+        return obj;
+    };
+    original = checkAndFixTypedArray(original);
+    if (typeof original !== 'object' || original === null || original instanceof Date || original instanceof ArrayBuffer || original instanceof path_reference_1.PathReference || original instanceof RegExp) {
+        return original;
+    }
+    const cloneValue = (val) => {
+        if (stack.indexOf(val) >= 0) {
+            throw new ReferenceError('object contains a circular reference');
+        }
+        val = checkAndFixTypedArray(val);
+        if (val === null || val instanceof Date || val instanceof ArrayBuffer || val instanceof path_reference_1.PathReference || val instanceof RegExp) { // || val instanceof ID
+            return val;
+        }
+        else if (typeof val === 'object') {
+            stack.push(val);
+            val = cloneObject(val, stack);
+            stack.pop();
+            return val;
+        }
+        else {
+            return val; // Anything other can just be copied
+        }
+    };
+    if (typeof stack === 'undefined') {
+        stack = [original];
+    }
+    const clone = original instanceof Array ? [] : original instanceof partial_array_1.PartialArray ? new partial_array_1.PartialArray() : {};
+    Object.keys(original).forEach(key => {
+        const val = original[key];
+        if (typeof val === 'function') {
+            return; // skip functions
+        }
+        clone[key] = cloneValue(val);
+    });
+    return clone;
+}
+exports.cloneObject = cloneObject;
+const isTypedArray = (val) => typeof val === 'object' && ['ArrayBuffer', 'Buffer', 'Uint8Array', 'Uint16Array', 'Uint32Array', 'Int8Array', 'Int16Array', 'Int32Array'].includes(val.constructor.name);
+// CONSIDER: updating isTypedArray to: const isTypedArray = val => typeof val === 'object' && 'buffer' in val && 'byteOffset' in val && 'byteLength' in val;
+function valuesAreEqual(val1, val2) {
+    if (val1 === val2) {
+        return true;
+    }
+    if (typeof val1 !== typeof val2) {
+        return false;
+    }
+    if (typeof val1 === 'object' || typeof val2 === 'object') {
+        if (val1 === null || val2 === null) {
+            return false;
+        }
+        if (val1 instanceof path_reference_1.PathReference || val2 instanceof path_reference_1.PathReference) {
+            return val1 instanceof path_reference_1.PathReference && val2 instanceof path_reference_1.PathReference && val1.path === val2.path;
+        }
+        if (val1 instanceof Date || val2 instanceof Date) {
+            return val1 instanceof Date && val2 instanceof Date && val1.getTime() === val2.getTime();
+        }
+        if (val1 instanceof Array || val2 instanceof Array) {
+            return val1 instanceof Array && val2 instanceof Array && val1.length === val2.length && val1.every((item, i) => valuesAreEqual(val1[i], val2[i]));
+        }
+        if (isTypedArray(val1) || isTypedArray(val2)) {
+            if (!isTypedArray(val1) || !isTypedArray(val2) || val1.byteLength === val2.byteLength) {
+                return false;
+            }
+            const typed1 = val1 instanceof ArrayBuffer ? new Uint8Array(val1) : new Uint8Array(val1.buffer, val1.byteOffset, val1.byteLength), typed2 = val2 instanceof ArrayBuffer ? new Uint8Array(val2) : new Uint8Array(val2.buffer, val2.byteOffset, val2.byteLength);
+            return typed1.every((val, i) => typed2[i] === val);
+        }
+        const keys1 = Object.keys(val1), keys2 = Object.keys(val2);
+        return keys1.length === keys2.length && keys1.every(key => keys2.includes(key)) && keys1.every(key => valuesAreEqual(val1[key], val2[key]));
+    }
+    return false;
+}
+exports.valuesAreEqual = valuesAreEqual;
+class ObjectDifferences {
+    constructor(added, removed, changed) {
+        this.added = added;
+        this.removed = removed;
+        this.changed = changed;
+    }
+    forChild(key) {
+        if (this.added.includes(key)) {
+            return 'added';
+        }
+        if (this.removed.includes(key)) {
+            return 'removed';
+        }
+        const changed = this.changed.find(ch => ch.key === key);
+        return changed ? changed.change : 'identical';
+    }
+}
+exports.ObjectDifferences = ObjectDifferences;
+function compareValues(oldVal, newVal, sortedResults = false) {
+    const voids = [undefined, null];
+    if (oldVal === newVal) {
+        return 'identical';
+    }
+    else if (voids.indexOf(oldVal) >= 0 && voids.indexOf(newVal) < 0) {
+        return 'added';
+    }
+    else if (voids.indexOf(oldVal) < 0 && voids.indexOf(newVal) >= 0) {
+        return 'removed';
+    }
+    else if (typeof oldVal !== typeof newVal) {
+        return 'changed';
+    }
+    else if (isTypedArray(oldVal) || isTypedArray(newVal)) {
+        // One or both values are typed arrays.
+        if (!isTypedArray(oldVal) || !isTypedArray(newVal)) {
+            return 'changed';
+        }
+        // Both are typed. Compare lengths and byte content of typed arrays
+        const typed1 = oldVal instanceof Uint8Array ? oldVal : oldVal instanceof ArrayBuffer ? new Uint8Array(oldVal) : new Uint8Array(oldVal.buffer, oldVal.byteOffset, oldVal.byteLength);
+        const typed2 = newVal instanceof Uint8Array ? newVal : newVal instanceof ArrayBuffer ? new Uint8Array(newVal) : new Uint8Array(newVal.buffer, newVal.byteOffset, newVal.byteLength);
+        return typed1.byteLength === typed2.byteLength && typed1.every((val, i) => typed2[i] === val) ? 'identical' : 'changed';
+    }
+    else if (oldVal instanceof Date || newVal instanceof Date) {
+        return oldVal instanceof Date && newVal instanceof Date && oldVal.getTime() === newVal.getTime() ? 'identical' : 'changed';
+    }
+    else if (oldVal instanceof path_reference_1.PathReference || newVal instanceof path_reference_1.PathReference) {
+        return oldVal instanceof path_reference_1.PathReference && newVal instanceof path_reference_1.PathReference && oldVal.path === newVal.path ? 'identical' : 'changed';
+    }
+    else if (typeof oldVal === 'object') {
+        // Do key-by-key comparison of objects
+        const isArray = oldVal instanceof Array;
+        const getKeys = (obj) => {
+            let keys = Object.keys(obj).filter(key => !voids.includes(obj[key]));
+            if (isArray) {
+                keys = keys.map((v) => parseInt(v));
+            }
+            return keys;
+        };
+        const oldKeys = getKeys(oldVal);
+        const newKeys = getKeys(newVal);
+        const removedKeys = oldKeys.filter(key => !newKeys.includes(key));
+        const addedKeys = newKeys.filter(key => !oldKeys.includes(key));
+        const changedKeys = newKeys.reduce((changed, key) => {
+            if (oldKeys.includes(key)) {
+                const val1 = oldVal[key];
+                const val2 = newVal[key];
+                const c = compareValues(val1, val2);
+                if (c !== 'identical') {
+                    changed.push({ key, change: c });
+                }
+            }
+            return changed;
+        }, []);
+        if (addedKeys.length === 0 && removedKeys.length === 0 && changedKeys.length === 0) {
+            return 'identical';
+        }
+        else {
+            return new ObjectDifferences(addedKeys, removedKeys, sortedResults ? changedKeys.sort((a, b) => a.key < b.key ? -1 : 1) : changedKeys);
+        }
+    }
+    return 'changed';
+}
+exports.compareValues = compareValues;
+function getMutations(oldVal, newVal, sortedResults = false) {
+    const process = (target, compareResult, prev, val) => {
+        switch (compareResult) {
+            case 'identical': return [];
+            case 'changed': return [{ target, prev, val }];
+            case 'added': return [{ target, prev: null, val }];
+            case 'removed': return [{ target, prev, val: null }];
+            default: {
+                let changes = [];
+                compareResult.added.forEach(key => changes.push({ target: target.concat(key), prev: null, val: val[key] }));
+                compareResult.removed.forEach(key => changes.push({ target: target.concat(key), prev: prev[key], val: null }));
+                compareResult.changed.forEach(item => {
+                    const childChanges = process(target.concat(item.key), item.change, prev[item.key], val[item.key]);
+                    changes = changes.concat(childChanges);
+                });
+                return changes;
+            }
+        }
+    };
+    const compareResult = compareValues(oldVal, newVal, sortedResults);
+    return process([], compareResult, oldVal, newVal);
+}
+exports.getMutations = getMutations;
+function getChildValues(childKey, oldValue, newValue) {
+    oldValue = oldValue === null ? null : oldValue[childKey];
+    if (typeof oldValue === 'undefined') {
+        oldValue = null;
+    }
+    newValue = newValue === null ? null : newValue[childKey];
+    if (typeof newValue === 'undefined') {
+        newValue = null;
+    }
+    return { oldValue, newValue };
+}
+exports.getChildValues = getChildValues;
+function defer(fn) {
+    process_1.default.nextTick(fn);
+}
+exports.defer = defer;
+function getGlobalObject() {
+    var _a;
+    if (typeof globalThis !== 'undefined') {
+        return globalThis;
+    }
+    if (typeof global !== 'undefined') {
+        return global;
+    }
+    if (typeof window !== 'undefined') {
+        return window;
+    }
+    if (typeof self !== 'undefined') {
+        return self;
+    }
+    return (_a = (function () { return this; }())) !== null && _a !== void 0 ? _a : Function('return this')();
+}
+exports.getGlobalObject = getGlobalObject;
+
+}).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {},require("buffer").Buffer)
+},{"./partial-array":45,"./path-reference":47,"./process":48,"buffer":57}],57:[function(require,module,exports){
+
+},{}]},{},[5])(5)
 });

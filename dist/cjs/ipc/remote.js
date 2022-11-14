@@ -4,14 +4,6 @@ exports.RemoteIPCPeer = void 0;
 const acebase_core_1 = require("acebase-core");
 const ipc_1 = require("./ipc");
 const http = require("http");
-const ws = (() => {
-    try {
-        return require('ws');
-    }
-    catch (err) {
-        // Remote IPC will not work because ws package is not installed, this will be an error if app attempts to use it.
-    }
-})();
 const masterPeerId = '[master]';
 const WS_CLOSE_PING_TIMEOUT = 1;
 const WS_CLOSE_PROCESS_EXIT = 2;
@@ -101,16 +93,21 @@ class RemoteIPCPeer extends ipc_1.AceBaseIPCPeer {
         this.pending = { in: [], out: [] };
         this.maxPayload = 100; // Initial setting, will be overridden by server config once connected
         this.masterPeerId = masterPeerId;
-        if (typeof ws === 'undefined') {
-            throw new Error('ws package is not installed. To fix this, run: npm install ws');
-        }
         this.connect().catch(err => {
             storage.debug.error(err.message);
             this.exit();
         });
     }
     get version() { return '1.0.0'; }
-    connect(options) {
+    async connect(options) {
+        const ws = await (async () => {
+            try {
+                return Promise.resolve().then(() => require('ws'));
+            }
+            catch (_a) {
+                throw new Error(`ws package is not installed. To fix this, run: npm install ws`);
+            }
+        })();
         return new Promise((resolve, reject) => {
             var _a;
             let connected = false;
