@@ -1,17 +1,9 @@
-import { ID } from 'acebase-core';
+import { ID, Utils } from 'acebase-core';
 import { AceBaseIPCPeer, IMessage } from './ipc';
 import { Storage } from '../storage';
 import * as http from 'http';
 
 import type * as wsTypes from 'ws'; // @types/ws must always available
-const ws = (() => {
-    try {
-        return require('ws');
-    }
-    catch (err) {
-        // Remote IPC will not work because ws package is not installed, this will be an error if app attempts to use it.
-    }
-})();
 
 // type MessageEventCallback = (event: MessageEvent) => any;
 
@@ -121,17 +113,21 @@ export class RemoteIPCPeer extends AceBaseIPCPeer {
         super(storage, config.role === 'master' ? masterPeerId : ID.generate(), config.dbname);
         this.masterPeerId = masterPeerId;
 
-        if (typeof ws === 'undefined') {
-            throw new Error('ws package is not installed. To fix this, run: npm install ws');
-        }
-
         this.connect().catch(err => {
             storage.debug.error(err.message);
             this.exit();
         });
     }
 
-    private connect(options?: { maxRetries?: number }) {
+    private async connect(options?: { maxRetries?: number }) {
+        const ws = await (async () => {
+            try {
+                return import('ws');
+            }
+            catch {
+                throw new Error(`ws package is not installed. To fix this, run: npm install ws`);
+            }
+        })();
         return new Promise<void>((resolve, reject) => {
             let connected = false;
             this.ws = new ws.WebSocket(`ws${this.config.ssl ? 's' : ''}://${this.config.host || 'localhost'}:${this.config.port}/${this.config.dbname}/connect?v=${this.version}&id=${this.id}&t=${this.config.token}`); // &role=${this.config.role}

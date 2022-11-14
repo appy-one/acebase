@@ -1,6 +1,7 @@
 import { AceBaseIPCPeer, IHelloMessage, IMessage } from './ipc';
 import { Storage } from '../storage';
-import * as cluster from 'cluster';
+import * as Cluster from 'cluster';
+const cluster: typeof Cluster = (Cluster as any).default ?? Cluster; // ESM and CJS compatible approach
 export { RemoteIPCPeer, RemoteIPCServerConfig } from './remote';
 
 const masterPeerId = '[master]';
@@ -50,7 +51,7 @@ export class IPCPeer extends AceBaseIPCPeer {
         });
 
         if (cluster.isMaster) {
-            bindEventHandler(cluster, 'online', (worker: cluster.Worker) => {
+            bindEventHandler(cluster, 'online', (worker: Cluster.Worker) => {
                 // A new worker is started
                 // Do not add yet, wait for "hello" message - a forked process might not use the same db
                 bindEventHandler(worker, 'error', err => {
@@ -58,7 +59,7 @@ export class IPCPeer extends AceBaseIPCPeer {
                 });
             });
 
-            bindEventHandler(cluster, 'exit', (worker: cluster.Worker) => {
+            bindEventHandler(cluster, 'exit', (worker: Cluster.Worker) => {
                 // A worker has shut down
                 if (this.peers.find(peer => peer.id === worker.id.toString())) {
                     // Worker apparently did not have time to say goodbye,
@@ -93,7 +94,7 @@ export class IPCPeer extends AceBaseIPCPeer {
         };
 
         if (cluster.isMaster) {
-            bindEventHandler(cluster, 'message', (worker: cluster.Worker, message: INodeIPCMessage) => handleMessage(message));
+            bindEventHandler(cluster, 'message', (worker: Cluster.Worker, message: INodeIPCMessage) => handleMessage(message));
         }
         else {
             bindEventHandler(cluster.worker, 'message', handleMessage);
