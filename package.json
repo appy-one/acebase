@@ -10,7 +10,7 @@
   "module": "./dist/esm/index.js",
   "exports": {
     ".": {
-      "import": "./dist/cjs/index.js",
+      "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.js",
       "types": "./dist/types/index.d.ts"
     }
@@ -44,7 +44,7 @@
     "build:esm": "tsc -p tsconfig.json && npx tsc-esm-fix ---target='dist/esm'",
     "build:cjs": "tsc -p tsconfig-cjs.json",
     "build:packages": "bash ./create-package-files",
-    "browserify": "browserify ./dist/cjs/browser.js -o ./dist/browser.js --standalone acebase --ignore buffer --ignore rxjs && terser ./dist/browser.js -o ./dist/browser.min.js",
+    "browserify": "browserify ./dist/cjs/browser.js -o ./dist/browser.js --standalone acebase --ignore buffer --ignore rxjs/internal/Observable && terser ./dist/browser.js -o ./dist/browser.min.js",
     "test": "jasmine"
   },
   "keywords": [
@@ -91,7 +91,7 @@
   "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
   "license": "MIT",
   "dependencies": {
-    "acebase-core": "^1.24.0",
+    "acebase-core": "github:appy-one/acebase-core#improvement/optional-rxjs-observable",
     "unidecode": "^0.1.8"
   },
   "devDependencies": {
