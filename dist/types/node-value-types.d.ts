@@ -9,7 +9,7 @@ export declare const VALUE_TYPES: Readonly<{
     BINARY: 8;
     REFERENCE: 9;
 }>;
-export declare function getValueTypeName(valueType: number): "object" | "string" | "number" | "array" | "boolean" | "date" | "bigint" | "binary" | "reference";
+export declare function getValueTypeName(valueType: number): "object" | "binary" | "array" | "boolean" | "date" | "number" | "reference" | "string" | "bigint";
 export declare function getNodeValueType(value: unknown): 1 | 2 | 5 | 7 | 8 | 9;
-export declare function getValueType(value: unknown): 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+export declare function getValueType(value: unknown): 1 | 2 | 3 | 4 | 5 | 7 | 6 | 8 | 9;
 //# sourceMappingURL=node-value-types.d.ts.map

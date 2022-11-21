@@ -11,7 +11,7 @@ export declare class NodeInfo {
     childCount?: number;
     constructor(info: Partial<NodeInfo>);
     get valueType(): number;
-    get valueTypeName(): "object" | "string" | "number" | "array" | "boolean" | "date" | "bigint" | "binary" | "reference";
+    get valueTypeName(): "object" | "binary" | "array" | "boolean" | "date" | "number" | "reference" | "string" | "bigint";
     toString(): string;
 }
 //# sourceMappingURL=node-info.d.ts.map
