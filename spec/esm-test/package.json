@@ -1,0 +1,7 @@
+{
+    "type": "module",
+    "module": "index.js",
+    "scripts": {
+        "test": "node index.js"
+    }
+}

@@ -45,7 +45,8 @@
     "build:cjs": "tsc -p tsconfig-cjs.json",
     "build:packages": "bash ./create-package-files",
     "browserify": "browserify ./dist/cjs/browser.js -o ./dist/browser.js --standalone acebase --ignore buffer --ignore rxjs && terser ./dist/browser.js -o ./dist/browser.min.js",
-    "test": "jasmine"
+    "test": "jasmine",
+    "test:esm": "node spec/esm-test"
   },
   "keywords": [
     "binary",
