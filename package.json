@@ -122,5 +122,6 @@
       "type": "PayPal",
       "url": "https://paypal.me/theappyone"
     }
-  ]
+  ],
+  "runkitExampleFilename": "dist/runkit.js"
 }
