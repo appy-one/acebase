@@ -1,5 +1,6 @@
 import { AceBaseIPCPeer } from './ipc.js';
-import * as cluster from 'cluster';
+import * as Cluster from 'cluster';
+const cluster = Cluster.default ?? Cluster; // ESM and CJS compatible approach
 export { RemoteIPCPeer } from './remote.js';
 const masterPeerId = '[master]';
 /**
