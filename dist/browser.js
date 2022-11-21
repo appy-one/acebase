@@ -8011,8 +8011,14 @@ class OrderedCollectionProxy {
         // };
         return arr;
     }
-    add(newItem, index, from) {
-        const item = newItem;
+    /**
+     * Adds or moves an item to/within the object collection and takes care of the proper sorting order.
+     * @param item Item to add or move
+     * @param index Optional target index in the sorted representation, appends if not specified.
+     * @param from If the item is being moved
+     * @returns
+     */
+    add(item, index, from) {
         const arr = this.getArray();
         let minOrder = Number.POSITIVE_INFINITY, maxOrder = Number.NEGATIVE_INFINITY;
         for (let i = 0; i < arr.length; i++) {
@@ -8046,25 +8052,25 @@ class OrderedCollectionProxy {
         if (typeof index !== 'number' || index >= arr.length) {
             // append at the end
             index = arr.length;
-            item[this.orderProperty] = arr.length == 0 ? 0 : maxOrder + this.orderIncrement;
+            item[this.orderProperty] = (arr.length == 0 ? 0 : maxOrder + this.orderIncrement);
         }
         else if (index === 0) {
             // insert before all others
-            item[this.orderProperty] = arr.length == 0 ? 0 : minOrder - this.orderIncrement;
+            item[this.orderProperty] = (arr.length == 0 ? 0 : minOrder - this.orderIncrement);
         }
         else {
             // insert between 2 others
             const orders = arr.map(item => item[this.orderProperty]);
             const gap = orders[index] - orders[index - 1];
             if (gap > 1) {
-                item[this.orderProperty] = orders[index] - Math.floor(gap / 2);
+                item[this.orderProperty] = (orders[index] - Math.floor(gap / 2));
             }
             else {
                 // TODO: Can this gap be enlarged by moving one of both orders?
                 // For now, change all other orders
                 arr.splice(index, 0, item);
                 for (let i = 0; i < arr.length; i++) {
-                    arr[i][this.orderProperty] = i * this.orderIncrement;
+                    arr[i][this.orderProperty] = (i * this.orderIncrement);
                 }
             }
         }
@@ -8958,14 +8964,13 @@ class DataReferenceQuery {
                 return false;
             }
             if (['add', 'change', 'remove'].includes(ev.name)) {
-                const ref = new DataReference(this.ref.db, ev.path);
-                const eventData = { name: ev.name };
+                const eventData = {
+                    name: ev.name,
+                    ref: new DataReference(this.ref.db, ev.path),
+                };
                 if (options.snapshots && ev.name !== 'remove') {
                     const val = db.types.deserialize(ev.path, ev.value);
-                    eventData.snapshot = new data_snapshot_1.DataSnapshot(ref, val, false);
-                }
-                else {
-                    eventData.ref = ref;
+                    eventData.snapshot = new data_snapshot_1.DataSnapshot(eventData.ref, val, false);
                 }
                 ev = eventData;
             }
@@ -9526,7 +9531,8 @@ let _observable;
     }
     // Try importing it from dependencies
     try {
-        _observable = await Promise.resolve().then(() => require('rxjs/internal/Observable'));
+        const { Observable } = await Promise.resolve().then(() => require('rxjs'));
+        _observable = Observable;
     }
     catch (_a) {
         // rxjs Observable not available, setObservable must be used if usage of SimpleObservable is not desired
@@ -9599,7 +9605,7 @@ class SimpleObservable {
 }
 exports.SimpleObservable = SimpleObservable;
 
-},{"./utils":56,"rxjs/internal/Observable":57}],45:[function(require,module,exports){
+},{"./utils":56,"rxjs":57}],45:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PartialArray = void 0;
