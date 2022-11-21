@@ -1,14 +1,6 @@
 import { ID } from 'acebase-core';
 import { AceBaseIPCPeer } from './ipc.js';
 import * as http from 'http';
-const ws = (() => {
-    try {
-        return require('ws');
-    }
-    catch (err) {
-        // Remote IPC will not work because ws package is not installed, this will be an error if app attempts to use it.
-    }
-})();
 const masterPeerId = '[master]';
 const WS_CLOSE_PING_TIMEOUT = 1;
 const WS_CLOSE_PROCESS_EXIT = 2;
@@ -98,16 +90,21 @@ export class RemoteIPCPeer extends AceBaseIPCPeer {
         this.pending = { in: [], out: [] };
         this.maxPayload = 100; // Initial setting, will be overridden by server config once connected
         this.masterPeerId = masterPeerId;
-        if (typeof ws === 'undefined') {
-            throw new Error('ws package is not installed. To fix this, run: npm install ws');
-        }
         this.connect().catch(err => {
             storage.debug.error(err.message);
             this.exit();
         });
     }
     get version() { return '1.0.0'; }
-    connect(options) {
+    async connect(options) {
+        const ws = await (async () => {
+            try {
+                return import('ws');
+            }
+            catch {
+                throw new Error(`ws package is not installed. To fix this, run: npm install ws`);
+            }
+        })();
         return new Promise((resolve, reject) => {
             let connected = false;
             this.ws = new ws.WebSocket(`ws${this.config.ssl ? 's' : ''}://${this.config.host || 'localhost'}:${this.config.port}/${this.config.dbname}/connect?v=${this.version}&id=${this.id}&t=${this.config.token}`); // &role=${this.config.role}

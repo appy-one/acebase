@@ -10,7 +10,7 @@
   "module": "./dist/esm/index.js",
   "exports": {
     ".": {
-      "import": "./dist/cjs/index.js",
+      "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.js",
       "types": "./dist/types/index.d.ts"
     }
@@ -91,7 +91,7 @@
   "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
   "license": "MIT",
   "dependencies": {
-    "acebase-core": "^1.24.0",
+    "acebase-core": "github:appy-one/acebase-core",
     "unidecode": "^0.1.8"
   },
   "devDependencies": {
