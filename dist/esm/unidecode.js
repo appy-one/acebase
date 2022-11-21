@@ -1,4 +1,4 @@
-// Ugly workaround to import an untyped commonjs module for usage in typescript
-import * as unidecode from 'unidecode'; // declared in unidecode-module.ts
+import * as Unidecode from 'unidecode';
+const unidecode = (Unidecode.default ?? Unidecode);
 export default unidecode;
 //# sourceMappingURL=unidecode.js.map

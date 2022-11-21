@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const tempdb_1 = require("./tempdb");
 const acebase_core_1 = require("acebase-core");
+const dataset_1 = require("./dataset");
 describe('database recovery', () => {
     let db;
     let removeDB;
@@ -15,7 +16,7 @@ describe('database recovery', () => {
         var _a;
         expect(typeof ((_a = db.recovery) === null || _a === void 0 ? void 0 : _a.repairNode)).toBe('function');
         // Create some records
-        const movies = await Promise.resolve().then(() => require('./dataset/movies.json'));
+        const movies = await (0, dataset_1.readDataSet)('movies');
         const ref = db.ref('movies');
         await ref.set(acebase_core_1.ObjectCollection.from(movies));
         // Pick a random child

@@ -1,5 +1,6 @@
 import { createTempDB } from './tempdb.js';
 import { ObjectCollection } from 'acebase-core';
+import { readDataSet } from './dataset.js';
 describe('database recovery', () => {
     let db;
     let removeDB;
@@ -12,7 +13,7 @@ describe('database recovery', () => {
     it('test', async () => {
         expect(typeof db.recovery?.repairNode).toBe('function');
         // Create some records
-        const movies = await import('./dataset/movies.json');
+        const movies = await readDataSet('movies');
         const ref = db.ref('movies');
         await ref.set(ObjectCollection.from(movies));
         // Pick a random child

@@ -1,6 +1,7 @@
 "use strict";
+var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
-// Ugly workaround to import an untyped commonjs module for usage in typescript
-const unidecode = require("unidecode"); // declared in unidecode-module.ts
+const Unidecode = require("unidecode");
+const unidecode = ((_a = Unidecode.default) !== null && _a !== void 0 ? _a : Unidecode);
 exports.default = unidecode;
 //# sourceMappingURL=unidecode.js.map

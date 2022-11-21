@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const tempdb_1 = require("./tempdb");
 const fs_1 = require("fs");
 const acebase_core_1 = require("acebase-core");
+const dataset_1 = require("./dataset");
 describe('export/import', () => {
     let db, removeDB;
     beforeAll(async () => {
@@ -49,8 +50,9 @@ describe('export/import', () => {
         expect(obj2).toEqual(obj);
     });
     it('import local datasets', async () => {
-        const importFile = async (filename, path) => {
-            const fd = (0, fs_1.openSync)(filename, 'r');
+        const importFile = async (name) => {
+            const filePath = (0, dataset_1.getDataSetPath)(name);
+            const fd = (0, fs_1.openSync)(filePath, 'r');
             const readBytes = (length) => {
                 return new Promise((resolve, reject) => {
                     const buffer = new Uint8Array(length);
@@ -64,7 +66,7 @@ describe('export/import', () => {
                     });
                 });
             };
-            await db.ref(path).import(readBytes);
+            await db.ref(name).import(readBytes);
             (0, fs_1.closeSync)(fd);
             // Alternative: use read stream (ignores size argument because if too large, read returns null)
             // const stream = fs.createReadStream(filename, { encoding: 'utf-8' });
@@ -84,9 +86,9 @@ describe('export/import', () => {
             // stream.close();
         };
         // Import movies dataset. TODO: use larger dataset from https://raw.githubusercontent.com/prust/wikipedia-movie-data/master/movies.json
-        await importFile(__dirname + '/dataset/movies.json', 'movies');
+        await importFile('movies');
         // Import meteorites dataset
-        await importFile(__dirname + '/dataset/meteorites.json', 'meteorites');
+        await importFile('meteorites');
         // TODO: Check data now
     }, 1000e3);
 });
