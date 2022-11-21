@@ -18,7 +18,7 @@ To DEBUG unit tests in VSCode:
 
 Because AceBase now exports both CommonJS and ESM modules, all code must be tested twice too. 
 Because Jasmine uses CommonJS, we have to jump through some hoops to test the ESM modules build.
-* `cd ./spec/esm-test`, then `npm run test`
+* `npm run test:esm`
 * or: `node ./spec/esm-test ./dist/esm/some.spec.js`
 * or" `node ./spec/esm-test ./dist/esm/some.spec.js --filter="[spec filter]"`
 
