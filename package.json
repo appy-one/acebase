@@ -91,7 +91,7 @@
   "author": "Ewout Stortenbeker <me@appy.one> (http://appy.one)",
   "license": "MIT",
   "dependencies": {
-    "acebase-core": "github:appy-one/acebase-core#improvement/optional-rxjs-observable",
+    "acebase-core": "github:appy-one/acebase-core",
     "unidecode": "^0.1.8"
   },
   "devDependencies": {
