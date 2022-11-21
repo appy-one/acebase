@@ -1,11 +1,12 @@
-/// <reference types="@types/jasmine" />
-const { createTempDB } = require('./tempdb');
-const util = require('util');
-const fs = require('fs');
-const { PathReference, ID } = require('acebase-core');
+import { AceBase } from '..';
+import { createTempDB } from './tempdb';
+import { ID } from 'acebase-core';
+
+// This test takes at least an hour on a fast system, enable only if you have time
+const LONG_RUNNING_TEST_ENABLED = false;
 
 describe('bulk import', () => {
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
 
     beforeAll(async ()=> {
         ({ db, removeDB } = await createTempDB({ config(options) {
@@ -21,15 +22,17 @@ describe('bulk import', () => {
 
     it('batched performance', async () => {
         // Test based on https://github.com/appy-one/acebase/issues/65
-        return; // This test takes at least an hour on a fast system
+        if (!LONG_RUNNING_TEST_ENABLED) {
+            return;
+        }
 
         // Generate 4GB of data in 3 million records - that's an average of 1432 bytes per record
         // We'll use a generated ID for each record (24 bytes), and an array of 50 strings of 28 bytes (14 utf-8 characters) each (28 * 50 = 1400 bytes)
         const path = '';
         const log = console.log.bind(console);
-        const frac = (n, total) => `${n} of ${total}`;
+        const frac = (n: number, total: number) => `${n} of ${total}`;
         const numStargazerRows = 3 * 1000 * 1000;
-        const processLines = async (path, callback) => {
+        const processLines = async (path: string, callback: (line: string, number: number) => Promise<void>) => {
             // Generate 1 CSV line item
             const data = new Array(50).fill('12345678901234').join('\t');
             for (let n = 0; n < numStargazerRows; n++) {
@@ -39,7 +42,7 @@ describe('bulk import', () => {
             }
         };
 
-        let giantObj = {};
+        let giantObj = {} as any;
         await processLines(path + '/data.tsv', async (line, num) => {
             if (num % 10000 === 0) {
                 log('on line', frac(num, numStargazerRows));

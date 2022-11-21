@@ -1,7 +1,7 @@
-/// <reference types="@types/jasmine" />
-const { BPlusTree } = require('../dist/cjs/btree');
-const { ID } = require('acebase-core');
-// require('jasmine');
+import { BPlusTree } from '.';
+import { ID } from 'acebase-core';
+import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value';
+import { BPlusTreeLeafEntry } from './tree-leaf-entry';
 
 describe('Unique B+Tree', () => {
     // Tests basic operations of the (append only) BPlusTree implementation
@@ -19,7 +19,7 @@ describe('Unique B+Tree', () => {
         tree.add('key', testRecordPointer);
 
         // Lookup the entry & check its value
-        const value = tree.find('key');
+        const value = tree.find('key') as BPlusTreeLeafEntryValue;
         expect(value).not.toBeNull();
         for (let i = 0; i < testRecordPointer.length; i++) {
             expect(value.recordPointer[i]).toEqual(testRecordPointer[i]);
@@ -30,7 +30,7 @@ describe('Unique B+Tree', () => {
         const tree = new BPlusTree(10, true);
 
         // Add 10000 random keys
-        const keys = [];
+        const keys = [] as string[];
         for (let i = 0; i < 10000; i++) {
             const key = ID.generate();
             keys.push(key);
@@ -56,7 +56,7 @@ describe('Unique B+Tree', () => {
                     const entry = leaf.entries[i];
                     if (i > 0) {
                         // key > last
-                        expect(entry.key).toBeGreaterThan(lastEntry.key);
+                        expect(entry.key > lastEntry.key).toBeTrue();
                     }
                     lastEntry = entry;
                 }
@@ -70,13 +70,14 @@ describe('Unique B+Tree', () => {
             let leaf = tree.lastLeaf();
             expect(leaf).not.toBeNull();
             let count = 0;
+            let lastEntry: BPlusTreeLeafEntry;
             while (leaf) {
                 for (let i = leaf.entries.length - 1; i >= 0 ; i--) {
                     count++;
                     const entry = leaf.entries[i];
                     if (i < leaf.entries.length - 1) {
                         // key < last
-                        expect(entry.key).toBeLessThan(lastEntry.key);
+                        expect(entry.key < lastEntry.key).toBeTrue();
                     }
                     lastEntry = entry;
                 }

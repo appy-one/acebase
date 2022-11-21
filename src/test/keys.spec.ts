@@ -1,8 +1,8 @@
-/// <reference types="@types/jasmine" />
-const { createTempDB } = require('./tempdb');
+import { AceBase } from '..';
+import { createTempDB } from './tempdb';
 
 describe('Keys', () => {
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
     beforeAll(async () => {
         const tmp = await createTempDB();
         db = tmp.db;
@@ -16,7 +16,7 @@ describe('Keys', () => {
             'AceBaseはクールです': 'AceBase is cool (in Japanese)',
             'I💗AceBase': 'I (heart) AceBase',
         };
-        let p = db.ref('unicode').set(unicodeKeys);
+        const p = db.ref('unicode').set(unicodeKeys);
         await expectAsync(p).toBeResolved();
 
         // Load Unicode keys
@@ -48,7 +48,7 @@ describe('Keys', () => {
         for (let i = 0; i < 128; i++) {
             max += i % 10;
         }
-        let tooLong = max + 'x';
+        const tooLong = max + 'x';
 
         let p = db.ref('key_length').set({ [max]: 'This is the maximum length for a key' });
         await expectAsync(p).toBeResolved();
@@ -61,10 +61,10 @@ describe('Keys', () => {
     describe('control character', () => {
         for (let cc = 0; cc < 32; cc++) {
             const prop = `control${String.fromCharCode(cc)}`;
-            let allow = [9,10,13].includes(cc); // allow tab (9, \t), line feed (10, \n), carriage return (13, \r)
+            const allow = [9,10,13].includes(cc); // allow tab (9, \t), line feed (10, \n), carriage return (13, \r)
 
             it(`${cc} must ${!allow && 'NOT'} be allowed`, async () => {
-                let p = db.ref('control').set({ [prop]: 'Using control characters would be weird' });
+                const p = db.ref('control').set({ [prop]: 'Using control characters would be weird' });
                 if (allow) {
                     await expectAsync(p).toBeResolved();
                 }
@@ -77,7 +77,7 @@ describe('Keys', () => {
 
     it('should allow .', async () => {
 
-        let p = db.ref('dots').set({ 'dot.dot': 'Using dots would be confusing, but should be allowed' });
+        const p = db.ref('dots').set({ 'dot.dot': 'Using dots would be confusing, but should be allowed' });
         await expectAsync(p).toBeResolved();
 
     });

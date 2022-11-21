@@ -1,11 +1,7 @@
-const { AceBase, ID } = require('..');
-const { pfs } = require('../dist/cjs/promise-fs');
+import { AceBase, ID } from '..';
+import { readdir, rm, rmdir } from 'fs/promises';
 
-/**
- *
- * @param {AceBase} db
- */
-const removeDB = async (db) => {
+const removeDB = async (db: AceBase) => {
     // Make sure it was ready
     await db.ready();
 
@@ -14,9 +10,9 @@ const removeDB = async (db) => {
 
     // Remove database
     const dbdir = `${db.api.storage.settings.path}/${db.name}.acebase`;
-    const files = await pfs.readdir(dbdir);
-    await Promise.all(files.map(file => pfs.rm(dbdir + '/' + file)));
-    await pfs.rmdir(dbdir);
+    const files = await readdir(dbdir);
+    await Promise.all(files.map(file => rm(dbdir + '/' + file)));
+    await rmdir(dbdir);
 };
 
 describe('constructor', () => {

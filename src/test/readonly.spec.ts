@@ -1,12 +1,11 @@
-/// <reference types="@types/jasmine" />
-const { createTempDB } = require('./tempdb');
-const { AceBase } = require('..');
+import { createTempDB } from './tempdb';
+import { AceBase } from '..';
 
 describe('readonly databases', () => {
 
     it('cannot be created', async () => {
         try {
-            const { db, removeDB } = await createTempDB({ config(options) { options.storage = { readOnly: true }; } });
+            const { removeDB } = await createTempDB({ config(options) { options.storage = { readOnly: true }; } });
             await removeDB();
             fail('readOnly database cannot be created');
         }
@@ -16,6 +15,7 @@ describe('readonly databases', () => {
     });
 
     it('cannot be written to', async () => {
+        // eslint-disable-next-line prefer-const
         let { db, removeDB } = await createTempDB();
         await db.ref('test').set({ text: 'This is a test' });
         await db.close();
@@ -37,6 +37,7 @@ describe('readonly databases', () => {
     });
 
     it('can be read from', async () => {
+        // eslint-disable-next-line prefer-const
         let { db, removeDB } = await createTempDB();
         await db.ref('test').set({ text: 'This is a test' });
         await db.close();

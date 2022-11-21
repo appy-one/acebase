@@ -1,9 +1,9 @@
-/// <reference types="@types/jasmine" />
-const { PathReference } = require('acebase-core');
-const { createTempDB } = require('./tempdb');
+import { PathReference } from 'acebase-core';
+import { AceBase } from '..';
+import { createTempDB } from './tempdb';
 
 describe('Data type', () => {
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
     beforeAll(async () => {
         const tmp = await createTempDB();
         db = tmp.db;
@@ -134,7 +134,7 @@ describe('Data type', () => {
         expect(snap.val()).toEqual(new Date(0));
 
         // Store current date/time
-        let now = new Date();
+        const now = new Date();
         await db.ref('datatypes').update({ date: now });
         snap = await db.ref('datatypes/date').get();
         expect(snap.val()).toEqual(now);
@@ -188,29 +188,29 @@ describe('Data type', () => {
         // Test path reference - which is undocumented and currently has no benefits over using plain strings
         const refPath = 'path/to/somehwere/else';
         await db.ref('datatypes').update({ ref: new PathReference(refPath) });
-        let snap = await db.ref('datatypes/ref').get();
+        const snap = await db.ref('datatypes/ref').get();
         expect(snap.val()).toBeInstanceOf(PathReference);
         expect(snap.val().path).toEqual(refPath);
     });
 
     it('bigint', async () => {
         // Test bigint (new in v1.22.0)
-        let val = 5000n;
+        let val = BigInt(5000);
         await db.ref('datatypes').update({ bigint: val });
         let snap = await db.ref('datatypes/bigint').get();
         expect(snap.val()).toBe(val);
 
-        val = 1n; // Test "tiny" value
+        val = BigInt(1); // Test "tiny" value
         await db.ref('datatypes').update({ bigint: val });
         snap = await db.ref('datatypes/bigint').get();
         expect(snap.val()).toBe(val);
 
-        val = (2n ** 63n) - 1n; // Max (signed) bigint to store in 64 bits: 1st bit is for the sign
+        val = (BigInt(2) ** BigInt(63)) - BigInt(1); // Max (signed) bigint to store in 64 bits: 1st bit is for the sign
         await db.ref('datatypes').update({ bigint: val });
         snap = await db.ref('datatypes/bigint').get();
         expect(snap.val()).toBe(val);
 
-        val = -(2n ** 63n); // Max (negative) bigint to store in 64 bits
+        val = -(BigInt(2) ** BigInt(63)); // Max (negative) bigint to store in 64 bits
         await db.ref('datatypes').update({ bigint: val });
         snap = await db.ref('datatypes/bigint').get();
         expect(snap.val()).toBe(val);

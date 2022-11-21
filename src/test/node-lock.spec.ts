@@ -1,5 +1,4 @@
-/// <reference types="@types/jasmine" />
-const { createTempDB } = require('./tempdb');
+import { createTempDB } from './tempdb';
 
 describe('node locking', () => {
     it('should not cause deadlocks', async () => {
@@ -52,7 +51,7 @@ describe('node locking', () => {
         // Simulate high load
 
         const { db, removeDB } = await createTempDB({ logLevel: 'verbose' });
-        const mem = {};
+        const mem = {} as any;
         const actions = [
             async () => {
                 const product = { name: 'My product', added: new Date() };
@@ -107,10 +106,10 @@ describe('node locking', () => {
                 const randomUser = () => {
                     return users[Math.floor(Math.random() * users.length)];
                 };
-                const randomText = (nrWords) => {
-                    const arr = [];
+                const randomText = (nrWords: number) => {
+                    const arr = [] as string[];
                     for (let i = 0; i < nrWords; i++) {
-                        let word = words[Math.floor(Math.random() * words.length)];
+                        const word = words[Math.floor(Math.random() * words.length)];
                         arr.push(word);
                     }
                     return arr.join(' ');
@@ -185,16 +184,16 @@ describe('node locking', () => {
 
         const replay = {
             enabled: false,
-            actions: [],
-            delays: [],
+            actions: [] as number[],
+            delays: [] as number[],
         };
-        const handleError = err => {
+        const handleError = (err: any) => {
             console.error(err.message);
             console.log(`To replay, use following actions and delays`);
             console.log(replay);
             throw err;
         };
-        const promises = [];
+        const promises = [] as Promise<any>[];
         for (let i = 0; i < 10000; i++) {
             if (i % 100 === 0) {
                 await testEquality().catch(handleError);

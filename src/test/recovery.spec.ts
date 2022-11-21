@@ -1,12 +1,10 @@
-const { createTempDB } = require('./tempdb');
-const { AceBase } = require('..');
-const { ObjectCollection } = require('acebase-core');
+import { createTempDB } from './tempdb';
+import { AceBase } from '..';
+import { ObjectCollection } from 'acebase-core';
 
 describe('database recovery', () => {
-    /** @type {AceBase} */
-    let db;
-    /** @type {{(): Promise<void>}} */
-    let removeDB;
+    let db: AceBase;
+    let removeDB: () => Promise<void>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
@@ -21,7 +19,7 @@ describe('database recovery', () => {
         expect(typeof db.recovery?.repairNode).toBe('function');
 
         // Create some records
-        const movies = require('./dataset/movies.json');
+        const movies = await import('./dataset/movies.json');
 
         const ref = db.ref('movies');
         await ref.set(ObjectCollection.from(movies));

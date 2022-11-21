@@ -1,5 +1,5 @@
-/// <reference types="@types/jasmine" />
-const { createTempDB } = require('./tempdb');
+import { DataSnapshot } from 'acebase-core';
+import { createTempDB } from './tempdb';
 
 describe('transactions', () => {
 
@@ -105,7 +105,7 @@ describe('transactions', () => {
 
         // Perform transaction on "account" node
         await ref.transaction(snap => {
-            let account = snap.val();
+            const account = snap.val();
             expect(account.balance).toEqual(50);
             account.balance -= 15;
             return account;
@@ -124,7 +124,7 @@ describe('transactions', () => {
 
         // Get "account" value through childRef.parent
         const snap = await childRef.parent.get();
-        let balance = snap.val().balance;
+        const balance = snap.val().balance;
         expect(balance).toEqual(25);
 
         // console.log(`Account balance was succesfully decreased to ${balance}`);
@@ -140,9 +140,9 @@ describe('transactions', () => {
 
         const startBalance = 500;
         let expectedEndBalance = startBalance;
-        const withdraw = (snapshot, amount) => {
-            let account = snapshot.val();
-            let currentBalance = account.balance;
+        const withdraw = (snapshot: DataSnapshot, amount: number) => {
+            const account = snapshot.val();
+            const currentBalance = account.balance;
             account.balance -= amount;
             if (account.balance < 0) {
                 console.error(`Insufficient funds to withdraw ${amount} from ${ref.key}, balance = ${currentBalance}`);
@@ -163,17 +163,17 @@ describe('transactions', () => {
         });
 
         // First transaction:
-        let t1 = ref.transaction(snap => {
+        const t1 = ref.transaction(snap => {
             return withdraw(snap, 100);
         });
 
         // Second transaction:
-        let t2 = ref.transaction(snap => {
+        const t2 = ref.transaction(snap => {
             return withdraw(snap, 275);
         });
 
         // Third transaction:
-        let t3 = ref.transaction(snap => {
+        const t3 = ref.transaction(snap => {
             return withdraw(snap, 450);
         });
 
@@ -220,7 +220,7 @@ describe('transactions', () => {
 
         // Nothing should have changed, check that
         const snap = await ref.get();
-        let balance = snap.val().balance;
+        const balance = snap.val().balance;
         expect(balance).toEqual(50);
 
         await removeDB();
@@ -232,9 +232,9 @@ describe('transactions', () => {
         const { db, removeDB } = await createTempDB();
 
         const ref = await db.ref('value').set(0);
-        const promises = [];
+        const promises = [] as Promise<any>[];
         for (let i = 0; i < 100; i++) {
-            let p = ref.transaction(snap => {
+            const p = ref.transaction(snap => {
                 return snap.val() + 1;
             });
             promises.push(p);

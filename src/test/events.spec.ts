@@ -1,10 +1,8 @@
-/// <reference types="@types/jasmine" />
-const { AceBase } = require('..');
-const { createTempDB } = require('./tempdb');
+import { AceBase, DataSnapshot } from '..';
+import { createTempDB } from './tempdb';
 
 describe('Event', () => {
-    /** @type {AceBase} */
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
     beforeAll(async () => {
         const tmp = await createTempDB();
         db = tmp.db;
@@ -31,8 +29,8 @@ describe('Event', () => {
 
         // Test with callback
         let expectKeys = Object.keys(items);
-        let resolve, promise = new Promise(r => resolve = r);
-        let childAddedCallback = (snap) => {
+        let resolve: () => any, promise = new Promise<void>(r => resolve = r);
+        let childAddedCallback = (snap: DataSnapshot) => {
             expect(expectKeys.includes(snap.key)).toBeTrue();
             expectKeys.splice(expectKeys.indexOf(snap.key), 1);
             if (expectKeys.length === 0) { resolve(); }
@@ -110,7 +108,7 @@ describe('Event', () => {
 
         // Test subscription with 'truthy' fireForCurrentValue argument
         expectKeys = Object.keys(items).concat('item11'), promise = new Promise(r => resolve = r);
-        subscription = collectionRef.on('child_added', 'truthy argument').subscribe(childAddedCallback);
+        subscription = collectionRef.on('child_added', 'truthy argument' as unknown as boolean).subscribe(childAddedCallback);
         collectionRef.child('item11').set({ text: 'Item 11' });
         await promise;
         subscription.stop();

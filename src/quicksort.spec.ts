@@ -1,10 +1,10 @@
-const quickSort = require('../dist/cjs/quicksort').default;
-const { performance } = require('perf_hooks');
+import quickSort from './quicksort';
+import { performance } from 'perf_hooks';
 
 describe('quicksort', () => {
 
-    const sortAscending = (a, b) => a - b;
-    const sortDescending = (a, b) => b - a;
+    const sortAscending = (a: number, b: number) => a - b;
+    const sortDescending = (a: number, b: number) => b - a;
 
     it('sorts in place', () => {
         const input = [5, 2, 7, 1, 0, -5, 3, 2];
@@ -49,7 +49,7 @@ describe('quicksort', () => {
         const run = () => {
             // prepare
             const arr = [];
-            for (var i = 0; i < 1000; i++) {
+            for (let i = 0; i < 1000; i++) {
                 arr[i] = Math.round(Math.random() * 1000000);
             }
             const copy = arr.slice();

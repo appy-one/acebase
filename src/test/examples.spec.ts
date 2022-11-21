@@ -1,10 +1,8 @@
-/// <reference types="@types/jasmine" />
-const { AceBase } = require('..');
-const { createTempDB } = require('./tempdb');
+import { AceBase } from '..';
+import { createTempDB } from './tempdb';
 
 describe('Examples', () => {
-    /** @type {AceBase} */
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
     beforeAll(async () => {
         const tmp = await createTempDB();
         db = tmp.db;
@@ -64,7 +62,7 @@ describe('Examples', () => {
 
         // Adding an upvote to my answer using a transaction:
         await answerRef.child('upvotes').transaction(snapshot => {
-            let upvotes = snapshot.val();
+            const upvotes = snapshot.val();
             return upvotes + 1; // Return new value to store
         });
 
@@ -94,7 +92,7 @@ describe('Examples', () => {
         // ... db value of tags is updated in the background ...
 
         // And changes to the database will update the liveQuestion object:
-        let now = new Date();
+        const now = new Date();
         await questionRef.update({ edited: now });
 
         // In the next tick, the live proxy value will have updated:

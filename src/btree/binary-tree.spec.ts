@@ -1,7 +1,6 @@
-/// <reference types="@types/jasmine" />
-const { BPlusTree, BinaryWriter, BinaryBPlusTree, BlacklistingSearchOperator } = require('../dist/cjs/btree');
-const { ID } = require('acebase-core');
-// require('jasmine');
+import { BPlusTree, BinaryWriter, BinaryBPlusTree, BlacklistingSearchOperator, BinaryBPlusTreeLeafEntry } from '.';
+import { ID } from 'acebase-core';
+import { BinaryBPlusTreeLeafEntryValue } from './binary-tree-leaf-entry-value';
 
 describe('Unique Binary B+Tree', () => {
     // Tests basic operations of the BinaryBPlusTree implementation
@@ -11,7 +10,7 @@ describe('Unique Binary B+Tree', () => {
     const createBinaryTree = async () => {
         const tree = new BPlusTree(100, true);
 
-        const bytes = [];
+        const bytes = [] as number[];
         await tree.toBinary(true, BinaryWriter.forArray(bytes));
         const binaryTree = new BinaryBPlusTree(bytes);
         binaryTree.id = ID.generate(); // Assign an id to allow edits (is enforced by tree to make sure multiple concurrent edits to the same source are sync locked)
@@ -19,8 +18,8 @@ describe('Unique Binary B+Tree', () => {
         return binaryTree;
     };
 
-    const rebuildTree = async (tree) => {
-        const bytes = [];
+    const rebuildTree = async (tree: BinaryBPlusTree) => {
+        const bytes = [] as number[];
         const id = tree.id;
         await tree.rebuild(BinaryWriter.forArray(bytes), { fillFactor: FILL_FACTOR, keepFreeSpace: true, increaseMaxEntries: true });
         tree = new BinaryBPlusTree(bytes);
@@ -42,7 +41,7 @@ describe('Unique Binary B+Tree', () => {
         await tree.add('key', testRecordPointer);
 
         // Lookup the entry & check its value
-        const value = await tree.find('key');
+        const value = await tree.find('key') as BinaryBPlusTreeLeafEntryValue;
         expect(value).not.toBeNull();
         for (let i = 0; i < testRecordPointer.length; i++) {
             expect(value.recordPointer[i]).toEqual(testRecordPointer[i]);
@@ -52,14 +51,13 @@ describe('Unique Binary B+Tree', () => {
     describe('entries', () => {
 
         const TEST_KEYS = 1000; // This simulates the amount of children to be added to an AceBase node
-        const keys = [];
+        const keys = [] as string[];
         // Create random keys
         for (let i = 0; i < TEST_KEYS; i++) {
             keys.push(ID.generate());
         }
 
-        /** @type {BinaryBPlusTree} */
-        let tree;
+        let tree: BinaryBPlusTree;
         beforeAll(async () => {
             // Create tree
             tree = await createBinaryTree();
@@ -104,7 +102,7 @@ describe('Unique Binary B+Tree', () => {
                     const entry = leaf.entries[i];
                     if (i > 0) {
                         // key > last
-                        expect(entry.key).toBeGreaterThan(lastEntry.key);
+                        expect(entry.key > lastEntry.key).toBeTrue();
                     }
                     lastEntry = entry;
                 }
@@ -118,13 +116,14 @@ describe('Unique Binary B+Tree', () => {
             let leaf = await tree.getLastLeaf();
             expect(leaf).not.toBeNull();
             let count = 0;
+            let lastEntry: BinaryBPlusTreeLeafEntry;
             while (leaf) {
                 for (let i = leaf.entries.length - 1; i >= 0 ; i--) {
                     count++;
                     const entry = leaf.entries[i];
                     if (i < leaf.entries.length - 1) {
                         // key < last
-                        expect(entry.key).toBeLessThan(lastEntry.key);
+                        expect(entry.key < lastEntry.key).toBeTrue();
                     }
                     lastEntry = entry;
                 }
@@ -137,7 +136,11 @@ describe('Unique Binary B+Tree', () => {
 
             const options = { entries: true, keys: true, values: true, count: true };
 
-            const checkResults = (result, expectedKeys, log) => {
+            const checkResults = (
+                result: Awaited<ReturnType<BinaryBPlusTree['search']>>,
+                expectedKeys: string[],
+                log: string
+            ) => {
                 log && console.log(log);
                 expect(result.keyCount).toEqual(expectedKeys.length);
                 expect(result.valueCount).toEqual(expectedKeys.length); // unique tree, 1 value per key
@@ -154,48 +157,48 @@ describe('Unique Binary B+Tree', () => {
                 checkResults(result, [keys[0]], `== "${keys[0]}": expecting 1 result`);
 
                 // Find a random entry
-                let randomKey = keys[Math.floor(Math.random() * keys.length)];
+                const randomKey = keys[Math.floor(Math.random() * keys.length)];
                 result = await tree.search('==', randomKey, options);
                 checkResults(result, [randomKey], `== "${randomKey}": expecting 1 result`);
             });
 
             it('with "!=" operator', async () => {
                 // Find all except 1 random entry
-                let excludeIndex = Math.floor(Math.random() * keys.length);
-                let excludeKey = keys[excludeIndex];
-                let expectedKeys = keys.slice(0, excludeIndex).concat(keys.slice(excludeIndex+1));
-                let result = await tree.search('!=', excludeKey, options);
+                const excludeIndex = Math.floor(Math.random() * keys.length);
+                const excludeKey = keys[excludeIndex];
+                const expectedKeys = keys.slice(0, excludeIndex).concat(keys.slice(excludeIndex+1));
+                const result = await tree.search('!=', excludeKey, options);
                 checkResults(result, expectedKeys, `!= "${excludeKey}": expecting ${expectedKeys.length} results`);
             });
 
             it('with "<" operator', async () => {
                 // Find first 10 keys
-                let expectedKeys = keys.slice(0, 11); // Take 11, use last as <
-                let lessThanKey = expectedKeys.pop();
-                let result = await tree.search('<', lessThanKey, options);
+                const expectedKeys = keys.slice(0, 11); // Take 11, use last as <
+                const lessThanKey = expectedKeys.pop();
+                const result = await tree.search('<', lessThanKey, options);
                 checkResults(result, expectedKeys, `< "${lessThanKey}": expecting ${expectedKeys.length} results`);
             });
 
             it('with "<=" operator', async () => {
                 // Find first 10 keys
-                let expectedKeys = keys.slice(0, 10);
-                let key = expectedKeys.slice(-1)[0];
-                let result = await tree.search('<=', key, options);
+                const expectedKeys = keys.slice(0, 10);
+                const key = expectedKeys.slice(-1)[0];
+                const result = await tree.search('<=', key, options);
                 checkResults(result, expectedKeys, `<= "${key}": expecting ${expectedKeys.length} results`);
             });
 
             it('with ">" operator', async () => {
                 // Find last 10 keys
-                let expectedKeys = keys.slice(-11); // Take 11, use first as >
-                let greaterThanKey = expectedKeys.shift();
-                let result = await tree.search('>', greaterThanKey, options);
+                const expectedKeys = keys.slice(-11); // Take 11, use first as >
+                const greaterThanKey = expectedKeys.shift();
+                const result = await tree.search('>', greaterThanKey, options);
                 checkResults(result, expectedKeys, `> "${greaterThanKey}": expecting ${expectedKeys.length} results`);
             });
 
             it('with ">=" operator', async () => {
                 // Find last 10 keys
-                let expectedKeys = keys.slice(-10);
-                let result = await tree.search('>=', expectedKeys[0], options);
+                const expectedKeys = keys.slice(-10);
+                const result = await tree.search('>=', expectedKeys[0], options);
                 checkResults(result, expectedKeys, `>= "${expectedKeys[0]}": expecting ${expectedKeys.length} results`);
             });
 
@@ -221,9 +224,9 @@ describe('Unique Binary B+Tree', () => {
 
             it('with "between" operator', async () => {
                 // Find custom range of keys
-                let [startIndex, endIndex] = [Math.floor(Math.random() * (keys.length-1)), Math.floor(Math.random() * (keys.length-1))].sort((a,b) => a < b ? -1 : 1);
-                let expectedKeys = startIndex === endIndex ? [keys[startIndex]] : keys.slice(startIndex, endIndex);
-                let firstKey = expectedKeys[0], lastKey = expectedKeys.slice(-1)[0];
+                const [startIndex, endIndex] = [Math.floor(Math.random() * (keys.length-1)), Math.floor(Math.random() * (keys.length-1))].sort((a,b) => a < b ? -1 : 1);
+                const expectedKeys = startIndex === endIndex ? [keys[startIndex]] : keys.slice(startIndex, endIndex);
+                const firstKey = expectedKeys[0], lastKey = expectedKeys.slice(-1)[0];
 
                 let result = await tree.search('between', [firstKey, lastKey], options);
                 checkResults(result, expectedKeys, `between "${firstKey}" and "${lastKey}": expecting ${expectedKeys.length} results`);
@@ -234,9 +237,9 @@ describe('Unique Binary B+Tree', () => {
 
             it('with "!between" operator', async () => {
                 // Find custom range of keys (before and after given indexes)
-                let [startIndex, endIndex] = [Math.floor(Math.random() * keys.length), Math.floor(Math.random() * keys.length)].sort((a,b) => a-b); // eg: [2,6]
-                let expectedKeys = keys.filter((key, index) => index < startIndex || index > endIndex); // eg: expect [1,2, 7,8,9] for indexes 2 and 6 of keys [1,2,3,4,5,6,7,8,9]
-                let firstKey = keys[startIndex], lastKey = keys[endIndex];                // eg: 3 and 6
+                const [startIndex, endIndex] = [Math.floor(Math.random() * keys.length), Math.floor(Math.random() * keys.length)].sort((a,b) => a-b); // eg: [2,6]
+                const expectedKeys = keys.filter((key, index) => index < startIndex || index > endIndex); // eg: expect [1,2, 7,8,9] for indexes 2 and 6 of keys [1,2,3,4,5,6,7,8,9]
+                const firstKey = keys[startIndex], lastKey = keys[endIndex];                // eg: 3 and 6
 
                 let result = await tree.search('!between', [firstKey, lastKey], options);
                 checkResults(result, expectedKeys, `!between "${firstKey}" and "${lastKey}": expecting ${expectedKeys.length} results`);
@@ -247,44 +250,44 @@ describe('Unique Binary B+Tree', () => {
 
             it('with "in" operator', async () => {
                 // Find 5 random keys
-                let r = () => Math.floor(Math.random() * keys.length);
-                let randomIndexes = [r(), r(), r(), r(), r()].reduce((indexes, index) => ((!indexes.includes(index) ? indexes.push(index) : 1), indexes), []);
-                let expectedKeys = randomIndexes.map(index => keys[index]);
-                let result = await tree.search('in', expectedKeys, options);
+                const r = () => Math.floor(Math.random() * keys.length);
+                const randomIndexes = [r(), r(), r(), r(), r()].reduce((indexes, index) => ((!indexes.includes(index) ? indexes.push(index) : 1), indexes), []);
+                const expectedKeys = randomIndexes.map(index => keys[index]);
+                const result = await tree.search('in', expectedKeys, options);
                 checkResults(result, expectedKeys, `in [${expectedKeys.map(key => `"${key}"`).join(',')}]: expecting ${expectedKeys.length} results`);
             });
 
             it('with "!in" operator', async () => {
                 // Find 5 random keys
-                let r = () => Math.floor(Math.random() * keys.length);
-                let randomIndexes = [r(), r(), r(), r(), r()].reduce((indexes, index) => ((!indexes.includes(index) ? indexes.push(index) : 1), indexes), []);
-                let blacklistedKeys = randomIndexes.map(index => keys[index]);
-                let expectedKeys = keys.reduce((allowed, key) => (!blacklistedKeys.includes(key) ? allowed.push(key) : 1) && allowed, []);
-                let result = await tree.search('!in', blacklistedKeys, options);
+                const r = () => Math.floor(Math.random() * keys.length);
+                const randomIndexes = [r(), r(), r(), r(), r()].reduce((indexes, index) => ((!indexes.includes(index) ? indexes.push(index) : 1), indexes), []);
+                const blacklistedKeys = randomIndexes.map(index => keys[index]);
+                const expectedKeys = keys.reduce((allowed, key) => (!blacklistedKeys.includes(key) ? allowed.push(key) : 1) && allowed, []);
+                const result = await tree.search('!in', blacklistedKeys, options);
                 checkResults(result, expectedKeys, `!in [${blacklistedKeys.map(key => `"${key}"`).join(',')}]: expecting ${expectedKeys.length} results`);
             });
 
             it('with "exists" operator', async () => {
                 // Finds all keys with a defined value, same as search("!=", undefined)
                 // --> all keys in our test
-                let result = await tree.search('exists', undefined, options);
+                const result = await tree.search('exists', undefined, options);
                 checkResults(result, keys, `exists: expecting ${keys.length} (all) results`);
             });
 
             it('with "!exists" operator', async () => {
                 // Finds results for key with undefined value, same as search("==", undefined)
                 // --> no keys in our test
-                let result = await tree.search('!exists', undefined, options);
+                const result = await tree.search('!exists', undefined, options);
                 checkResults(result, [], `!exists: expecting NO results`);
             });
 
             it('with BlacklistingSearchOperator', async () => {
-                let keysToBlacklist = keys.filter(key => Math.random() > 0.25); // blacklist ~75%
-                let expectedKeys = keys.filter(key => !keysToBlacklist.includes(key));
+                const keysToBlacklist = keys.filter(key => Math.random() > 0.25); // blacklist ~75%
+                const expectedKeys = keys.filter(key => !keysToBlacklist.includes(key));
 
-                let blacklisted = [];
+                const blacklisted = [] as BinaryBPlusTreeLeafEntry[];
                 const op = new BlacklistingSearchOperator(entry => {
-                    if (keysToBlacklist.includes(entry.key)) {
+                    if (keysToBlacklist.includes(entry.key as string)) {
                         blacklisted.push(entry);
                         return entry.values; // Return all values (1) as array to be blacklisted
                     }
@@ -296,7 +299,7 @@ describe('Unique Binary B+Tree', () => {
 
                 // Run again, using the previous results as filter. This should yield the same results
                 // No additional entries should have been blacklisted (blacklisted.length should remain the same!)
-                let filteredOptions = { filter: result.entries };
+                const filteredOptions = { filter: result.entries };
                 Object.assign(filteredOptions, options);
                 result = await tree.search(op, undefined, filteredOptions);
                 expect(blacklisted.length).toEqual(keysToBlacklist.length);
@@ -310,16 +313,16 @@ describe('Unique Binary B+Tree', () => {
             });
 
             it('with "matches" operator', async () => {
-                let regex = /[a-z]{6}/;
-                let expectedKeys = keys.filter(key => regex.test(key));
-                let result = await tree.search('matches', regex, options);
+                const regex = /[a-z]{6}/;
+                const expectedKeys = keys.filter(key => regex.test(key));
+                const result = await tree.search('matches', regex, options);
                 checkResults(result, expectedKeys, `matches /${regex.source}/${regex.flags}: expecting ${expectedKeys.length} results`);
             });
 
             it('with "!matches" operator', async () => {
-                let regex = /[a-z]{6}/;
-                let expectedKeys = keys.filter(key => !regex.test(key));
-                let result = await tree.search('!matches', regex, options);
+                const regex = /[a-z]{6}/;
+                const expectedKeys = keys.filter(key => !regex.test(key));
+                const result = await tree.search('!matches', regex, options);
                 checkResults(result, expectedKeys, `!matches /${regex.source}/${regex.flags}: expecting ${expectedKeys.length} results`);
             });
 

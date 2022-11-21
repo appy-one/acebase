@@ -1,8 +1,8 @@
-/// <reference types="@types/jasmine" />
-const { createTempDB } = require('./tempdb');
+import { AceBase } from '..';
+import { createTempDB } from './tempdb';
 
 describe('Include/exclude filters', () => {
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
     beforeAll(async () => {
         const tmp = await createTempDB();
         db = tmp.db;
@@ -14,7 +14,7 @@ describe('Include/exclude filters', () => {
     });
 
     it('test', async () => {
-        const testData = require('./dataset/users.json');
+        const testData = await import('./dataset/users.json');
         await db.ref('users').set(testData);
 
         let snap = await db.ref('users/someuser').get({ exclude: ['posts', 'instruments'] });
@@ -25,7 +25,7 @@ describe('Include/exclude filters', () => {
         expect(user.posts).toBeUndefined();
 
         snap = await db.ref('users/someuser/posts').get({ include: ['*/title', '*/posted'] });
-        let posts = snap.val();
+        const posts = snap.val();
         expect(typeof posts.post1).toBe('object');
         expect(typeof posts.post1.title).toBe('string');
         expect(posts.post1.text).toBeUndefined();

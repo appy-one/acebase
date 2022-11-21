@@ -1,13 +1,10 @@
-/// <reference types='@types/jasmine' />
-const { AceBase } = require('..');
-const { createTempDB } = require('./tempdb');
+import { AceBase } from '..';
+import { createTempDB } from './tempdb';
 const ok = { ok: true };
 
 describe('schema', () => {
-    /** @type {AceBase} */
-    let db;
-    /** @type {{(): Promise<void>}} */
-    let removeDB;
+    let db: AceBase;
+    let removeDB: () => Promise<void>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
@@ -100,7 +97,7 @@ describe('schema', () => {
         expect(result).toEqual({ ok: true });
 
         // Try using classnames & regular expressions
-        let emailRegex = /[a-z.\-_]+@(?:[a-z\-_]+\.){1,}[a-z]{2,}$/i;
+        const emailRegex = /[a-z.\-_]+@(?:[a-z\-_]+\.){1,}[a-z]{2,}$/i;
         const clientSchema2 = {
             name: String,
             url: /^https:\/\//,

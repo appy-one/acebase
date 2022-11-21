@@ -1,4 +1,4 @@
-const { encode, decode, neighbours, adjacent, bounds } = require('../dist/cjs/geohash');
+import { encode, decode, neighbours, adjacent, bounds } from './geohash';
 
 describe('Geohash', () => {
     it('encode', () => {

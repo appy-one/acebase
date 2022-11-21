@@ -1,8 +1,9 @@
-const { AsyncTaskBatch } = require('../dist/cjs/async-task-batch');
+import { AsyncTaskBatch } from './async-task-batch';
 
 describe('Async task batches', () => {
     it('works', async () => {
-        let currentIndex = 0, expectedResults = [];
+        let currentIndex = 0;
+        const expectedResults = [] as number[];
         const batch = new AsyncTaskBatch(10);
         for (let i = 0; i < 1000; i++) {
             batch.add(() => {

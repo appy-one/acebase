@@ -1,8 +1,8 @@
-/// <reference types="@types/jasmine" />
-const { createTempDB } = require('./tempdb');
+import { AceBase } from '..';
+import { createTempDB } from './tempdb';
 
 describe('JSON data export', () => {
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
@@ -18,10 +18,10 @@ describe('JSON data export', () => {
         await db.ref('object').set(obj);
 
         let json = '';
-        await db.ref('object').export({ write: str => json += str }, { format: 'json', type_safe: true });
+        await db.ref('object').export((str) => { json += str; }, { format: 'json', type_safe: true });
         expect(typeof json).toBe('string');
 
-        let serialized;
+        let serialized: any;
         expect(() => { serialized = JSON.parse(json); }).not.toThrow();
         expect(typeof serialized).toBe('object');
         expect(serialized.name).toEqual(obj.name);
@@ -40,10 +40,10 @@ describe('JSON data export', () => {
         await db.ref('object2').set(obj);
 
         let json = '';
-        await db.ref('object2').export({ write: str => json += str }, { format: 'json', type_safe: false });
+        await db.ref('object2').export((str) => { json += str; }, { format: 'json', type_safe: false });
         expect(typeof json).toBe('string');
 
-        let serialized;
+        let serialized: any;
         expect(() => { serialized = JSON.parse(json); }).not.toThrow();
         expect(typeof serialized).toBe('object');
         expect(serialized.name).toEqual(obj.name);

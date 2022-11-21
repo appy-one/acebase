@@ -1,10 +1,9 @@
-/// <reference types="@types/jasmine" />
-const { AceBase } = require('..');
-const { createTempDB } = require('./tempdb');
+import { AceBase } from '..';
+import type { AceBaseStorage } from '../storage/binary';
+import { createTempDB } from './tempdb';
 
 describe('BETA - Transaction logging', () => {
-    /** @type {AceBase} */
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB({ transactionLogging: true }));
@@ -29,7 +28,8 @@ describe('BETA - Transaction logging', () => {
         const video4Cursor = lastCursor;
         await db.ref('library/videos').push({ title: 'Video 5', author: 'Kenny', published: new Date() });
 
-        let result = await db.api.storage.getMutations({ path: 'library' });
+        const storage = db.api.storage as AceBaseStorage;
+        let result = await storage.getMutations({ path: 'library' });
         // --> Creation of root record (library: null)
         // --> 5x adding books
         // --> 5x adding videos
@@ -37,79 +37,79 @@ describe('BETA - Transaction logging', () => {
         expect(typeof result.new_cursor).toEqual('string');
         expect(result.mutations.length).toEqual(10);
 
-        result = await db.api.storage.getMutations({ path: 'library/books' });
+        result = await storage.getMutations({ path: 'library/books' });
         // --> Creation of root record (library: null)
         // --> 5x adding books
         expect(result.mutations.length).toEqual(5);
 
-        result = await db.api.storage.getMutations({ path: 'library/videos' });
+        result = await storage.getMutations({ path: 'library/videos' });
         // --> Creation of root record (library: null)
         // --> 5x adding videos
         expect(result.mutations.length).toEqual(5);
 
-        result = await db.api.storage.getMutations({ path: `library/books/${book1Ref.key}` });
+        result = await storage.getMutations({ path: `library/books/${book1Ref.key}` });
         // --> Creation of root record (library: null)
         // --> 1x adding book 1
         expect(result.mutations.length).toEqual(1);
 
         // Try again using a cursor to skip the root record creation
-        result = await db.api.storage.getMutations({ path: 'library/videos', cursor: video1Cursor});
+        result = await storage.getMutations({ path: 'library/videos', cursor: video1Cursor});
         // --> 4x adding videos
         expect(result.used_cursor).toEqual(video1Cursor);
         expect(result.mutations.length).toEqual(4);
 
         // Try the same as above, using video 1's key (will be < its cursor so it'll be included)
-        result = await db.api.storage.getMutations({ path: 'library/videos', cursor: video1Ref.key});
+        result = await storage.getMutations({ path: 'library/videos', cursor: video1Ref.key});
         // --> 5x adding videos
         expect(result.used_cursor).toEqual(video1Ref.key);
         expect(result.mutations.length).toEqual(5);
 
         // Try with wildcard path, using cursor
-        result = await db.api.storage.getMutations({ path: 'library/videos/*/title', cursor: video1Cursor });
+        result = await storage.getMutations({ path: 'library/videos/*/title', cursor: video1Cursor });
         // --> 4x adding videos
         expect(result.mutations.length).toEqual(4);
 
         // Get compressed results
-        result = await db.api.storage.getChanges({ path: 'library'});
+        let result2 = await storage.getChanges({ path: 'library'});
         // --> NOT: Creation of root record (library: null) --> compressed checks the previous value and sees it wasn't there in the first place, so there is no mutation
         // --> 1x adding 5 books
         // --> 1x adding 5 videos
-        expect(result.changes.length).toEqual(2);
+        expect(result2.changes.length).toEqual(2);
 
         // Get compressed results with cursor (from video 1)
-        result = await db.api.storage.getChanges({ path: 'library', cursor: video1Ref.key });
+        result2 = await storage.getChanges({ path: 'library', cursor: video1Ref.key });
         // --> 1x adding 5 videos
-        expect(result.changes.length).toEqual(1);
+        expect(result2.changes.length).toEqual(1);
 
         // Get compressed results with cursor (from video 1 cursor)
-        result = await db.api.storage.getChanges({ path: 'library', cursor: video1Cursor });
+        result2 = await storage.getChanges({ path: 'library', cursor: video1Cursor });
         // --> 1x adding 4 videos
-        expect(result.changes.length).toEqual(1);
+        expect(result2.changes.length).toEqual(1);
 
         // Get compressed results with cursor (from video 4)
-        result = await db.api.storage.getChanges({ path: 'library', cursor: video4Ref.key });
+        result2 = await storage.getChanges({ path: 'library', cursor: video4Ref.key });
         // --> 1x adding 2 videos
-        expect(result.changes.length).toEqual(1);
+        expect(result2.changes.length).toEqual(1);
 
         // Get compressed results with cursor (from video 4 cursor)
-        result = await db.api.storage.getChanges({ path: 'library', cursor: video4Cursor });
+        result2 = await storage.getChanges({ path: 'library', cursor: video4Cursor });
         // --> 1x adding 1 videos
-        expect(result.changes.length).toEqual(1);
+        expect(result2.changes.length).toEqual(1);
 
         // Get relevant mutations for child_added event on books
-        result = await db.api.storage.getMutations({ for: [{ path: 'library/books', events: ['child_added'] }] });
+        result = await storage.getMutations({ for: [{ path: 'library/books', events: ['child_added'] }] });
         // --> 5x adding 1 books
         console.log(result);
         expect(result.mutations.length).toEqual(5);
 
         // Get relevant changes for child_added event on books
-        result = await db.api.storage.getChanges({ for: [{ path: 'library/books', events: ['child_added'] }] });
+        result2 = await storage.getChanges({ for: [{ path: 'library/books', events: ['child_added'] }] });
         // --> 1x adding 5 books
         console.log(result);
-        expect(result.changes.length).toEqual(1);
+        expect(result2.changes.length).toEqual(1);
 
         // Get relevant mutations for child_removed event on books
-        result = await db.api.storage.getMutations({ for: [{ path: 'library/books', events: ['child_removed'] }] });
+        result = await storage.getMutations({ for: [{ path: 'library/books', events: ['child_removed'] }] });
         // --> 0x removed
         expect(result.mutations.length).toEqual(0);
 
@@ -118,11 +118,11 @@ describe('BETA - Transaction logging', () => {
         await video4Ref.remove();
 
         // Get changes with cursor (from video 4 creation)
-        result = await db.api.storage.getChanges({ path: 'library', cursor: video4Ref.key });
-        console.log(result);
-        expect(result.changes.length).toEqual(1);
-        expect(result.changes[0].path).toEqual('library/videos');
-        const prevValue = result.changes[0].previous, newValue = result.changes[0].value;
+        result2 = await storage.getChanges({ path: 'library', cursor: video4Ref.key });
+        console.log(result2);
+        expect(result2.changes.length).toEqual(1);
+        expect(result2.changes[0].path).toEqual('library/videos');
+        const prevValue = result2.changes[0].previous, newValue = result2.changes[0].value;
         expect(Object.keys(prevValue).filter(key => prevValue[key] !== null).length).toEqual(2); // video 1 and 4
         expect(Object.keys(prevValue).filter(key => prevValue[key] === null).length).toEqual(1); // video 5 wasn't there yet
         expect(Object.keys(newValue).filter(key => newValue[key] === null).length).toEqual(2); // video 1 and 4 now gone

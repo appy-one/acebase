@@ -1,4 +1,4 @@
-const { createTempDB } = require('./tempdb');
+import { createTempDB } from './tempdb';
 
 describe('arrays', () => {
     it('test array updates', async () => {

@@ -1,25 +1,18 @@
-/// <reference types='@types/jasmine' />
-const { DataReference, DataSnapshotsArray, DataReferencesArray, DataReferenceQuery, ObjectCollection } = require('acebase-core');
-const { AceBase, ID } = require('..');
-const { createTempDB } = require('./tempdb');
+import { DataReference, DataSnapshotsArray, DataReferencesArray, DataReferenceQuery, ObjectCollection, DataSnapshot } from 'acebase-core';
+import { RealtimeQueryEvent } from 'acebase-core/dist/types/data-reference';
+import { AceBase, ID } from '..';
+import { createTempDB } from './tempdb';
 
 describe('Query', () => {
-    /** @type {AceBase} */
-    let db;
-    /** @type {{(): Promise<void>}} */
-    let removeDB;
-
-    /** @type {DataReference} */
-    let moviesRef;
-
-    /** @type {Array<{ query: DataReferenceQuery, expect: object[] }>} */
-    let tests = [];
+    let db: AceBase, removeDB: () => Promise<void>;
+    let moviesRef: DataReference;
+    const tests = [] as Array<{ query: DataReferenceQuery, expect: any[] }>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
         moviesRef = db.ref('movies');
 
-        const movies = require('./dataset/movies.json');
+        const movies = await import('./dataset/movies.json');
         await moviesRef.set(ObjectCollection.from(movies));
 
         tests.push({
@@ -35,13 +28,13 @@ describe('Query', () => {
     });
 
     it('snapshots', async () => {
-        for (let test of tests) {
+        for (const test of tests) {
             const snaps = await test.query.get();
             expect(snaps instanceof DataSnapshotsArray).toBeTrue();
             expect(snaps.length).toBe(test.expect.length);
 
             // Check if all expected movies are in the result
-            for (let movie of snaps.getValues()) {
+            for (const movie of snaps.getValues()) {
                 const expectedMovie = test.expect.find(m => m.id === movie.id);
                 expect(typeof expectedMovie === 'object');
             }
@@ -49,13 +42,13 @@ describe('Query', () => {
     });
 
     it('snapshots with include option', async () => {
-        for (let test of tests) {
-            const snaps = await test.query.get({ include: ['id','title'] });
+        for (const test of tests) {
+            const snaps = await test.query.get({ include: ['id','title'] }) as DataSnapshotsArray;
             expect(snaps instanceof DataSnapshotsArray).toBeTrue();
             expect(snaps.length).toBe(test.expect.length);
 
             // Check if all expected movies are in the result
-            for (let movie of snaps.getValues()) {
+            for (const movie of snaps.getValues()) {
                 const expectedMovie = test.expect.find(m => m.id === movie.id);
                 expect(typeof expectedMovie === 'object');
 
@@ -69,13 +62,13 @@ describe('Query', () => {
     });
 
     it('snapshots with exclude option', async () => {
-        for (let test of tests) {
-            const snaps = await test.query.get({ exclude: ['description'] });
+        for (const test of tests) {
+            const snaps = await test.query.get({ exclude: ['description'] }) as DataSnapshotsArray;
             expect(snaps instanceof DataSnapshotsArray).toBeTrue();
             expect(snaps.length).toBe(test.expect.length);
 
             // Check if all expected movies are in the result
-            for (let movie of snaps.getValues()) {
+            for (const movie of snaps.getValues()) {
                 const expectedMovie = test.expect.find(m => m.id === movie.id);
                 expect(typeof expectedMovie === 'object');
 
@@ -86,7 +79,7 @@ describe('Query', () => {
     });
 
     it('references', async () => {
-        for (let test of tests) {
+        for (const test of tests) {
             const refs = await test.query.find();
             expect(refs instanceof DataReferencesArray).toBeTrue();
             expect(refs.length).toBe(test.expect.length);
@@ -94,14 +87,14 @@ describe('Query', () => {
     });
 
     it('count', async () => {
-        for (let test of tests) {
+        for (const test of tests) {
             const count = await test.query.count();
             expect(count).toBe(test.expect.length);
         }
     });
 
     it('exists', async () => {
-        for (let test of tests) {
+        for (const test of tests) {
             const exists = await test.query.exists();
             expect(exists).toBe(test.expect.length > 0);
         }
@@ -109,22 +102,25 @@ describe('Query', () => {
 
     it('is live', async () => {
         // Code based on realtime query example in README.md
-        const wait = async (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        const wait = async (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-        const fiveStarBooks = {}; // local query result set
+        const fiveStarBooks = {} as any; // local query result set
         const query = db.query('books')
             .filter('rating', '==', 5)
-            .on('add', match => {
+            .on('add', (match) => {
                 // add book to results
-                fiveStarBooks[match.snapshot.key] = match.snapshot.val();
+                const snapshot = match.snapshot as DataSnapshot;
+                fiveStarBooks[snapshot.key] = snapshot.val();
             })
             .on('change', match => {
                 // update book details
-                fiveStarBooks[match.snapshot.key] = match.snapshot.val();
+                const snapshot = match.snapshot as DataSnapshot;
+                fiveStarBooks[snapshot.key] = snapshot.val();
             })
             .on('remove', match => {
                 // remove book from results
-                delete fiveStarBooks[match.ref.key];
+                const ref = match.ref as DataReference;
+                delete fiveStarBooks[ref.key];
             });
         const snaps = await query.get();
 
@@ -148,7 +144,7 @@ describe('Query', () => {
         expect(countBooks()).toBe(0);
 
         // Add a matching book
-        let matchRef1 = await db.ref('books').push({ title: 'A very good novel', rating: 5 });
+        const matchRef1 = await db.ref('books').push({ title: 'A very good novel', rating: 5 });
 
         // Wait few ms to make sure results are being updated
         await wait(10);
@@ -183,15 +179,13 @@ describe('Query', () => {
 describe('Query with take/skip', () => {
     // Based on https://github.com/appy-one/acebase/issues/75
 
-    /** @type {AceBase} */
-    let db;
-    /** @type {{(): Promise<void>}} */
-    let removeDB;
+    let db: AceBase;
+    let removeDB: () => Promise<void>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
 
-        const updates = {};
+        const updates = {} as any;
         for (let i = 0; i < 2000; i++) {
             updates[ID.generate()] = { letter: String.fromCharCode(97 + Math.floor(Math.random() * 26)) };
         }
@@ -286,12 +280,9 @@ describe('Query with take/skip multiple sorts', () => {
     // This test performs an index take/skip with a sort on multiple fields (included in the index),
     // which is a new feature added in v1.24.0
 
-    /** @type {AceBase} */
-    let db;
-    /** @type {{(): Promise<void>}} */
-    let removeDB;
-    /** @type Array<{ id: string; title: string; year: number }> */
-    let movies;
+    let db: AceBase;
+    let removeDB: () => Promise<void>;
+    let movies: Array<{ id: string; title: string; year: number }>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
@@ -345,12 +336,9 @@ describe('Query with take/skip #120', () => {
     // sort order. This test now uses the 'votes' field, which is unique in the currently
     // used (movies) dataset
 
-    /** @type {AceBase} */
-    let db;
-    /** @type {{(): Promise<void>}} */
-    let removeDB;
-    /** @type Array<{ id: string; title: string; votes: number }> */
-    let movies;
+    let db: AceBase;
+    let removeDB: () => Promise<void>;
+    let movies: Array<{ id: string; title: string; votes: number }>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
@@ -389,12 +377,9 @@ describe('Query with take/skip #120', () => {
 });
 
 describe('Query with take/sort/indexes #124', () => {
-    /** @type {AceBase} */
-    let db;
-    /** @type {{(): Promise<void>}} */
-    let removeDB;
-    /** @type Array<{ id: string; title: string; year: number }> */
-    let movies;
+    let db: AceBase;
+    let removeDB: () => Promise<void>;
+    let movies: Array<{ id: string; title: string; year: number }>;
 
     afterAll(async () => {
         await removeDB();
@@ -431,10 +416,8 @@ describe('Query with take/sort/indexes #124', () => {
 });
 
 describe('Wildcard query', () => {
-    /** @type {AceBase} */
-    let db;
-    /** @type {{(): Promise<void>}} */
-    let removeDB;
+    let db: AceBase;
+    let removeDB: () => Promise<void>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
@@ -476,7 +459,7 @@ describe('Wildcard query', () => {
             const snaps = await db.query('users/$username/messages').filter('{key}', '!=', '').get();
             expect(snaps.length).toBe(3);
 
-            let msgcount = await db.query('users/$username/messages').filter('{key}', '!=', '').count();
+            const msgcount = await db.query('users/$username/messages').filter('{key}', '!=', '').count();
             expect(msgcount).toBe(3);
         }
         catch(err) {
@@ -488,7 +471,7 @@ describe('Wildcard query', () => {
             const snaps = await db.query('users/$username/messages').get();
             expect(snaps.length).toBe(3);
 
-            let msgcount = await db.query('users/$username/messages').count();
+            const msgcount = await db.query('users/$username/messages').count();
             expect(msgcount).toBe(3);
         }
         catch(err) {
@@ -499,12 +482,9 @@ describe('Wildcard query', () => {
 });
 
 describe('Wildcard query with delete', () => {
-    /** @type {AceBase} */
-    let db;
-    /** @type {{(): Promise<void>}} */
-    let removeDB;
-    /** @type {Array<{ votes: number }>} */
-    let movies;
+    let db: AceBase;
+    let removeDB: () => Promise<void>;
+    let movies: Array<{ votes: number }>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
@@ -554,10 +534,8 @@ describe('Wildcard query with delete', () => {
 });
 
 describe('Query with array/contains #135', () => {
-    /** @type {AceBase} */
-    let db;
-    /** @type {{(): Promise<void>}} */
-    let removeDB;
+    let db: AceBase;
+    let removeDB: () => Promise<void>;
 
     afterAll(async () => {
         await removeDB();
@@ -635,19 +613,15 @@ describe('Query with array/contains #135', () => {
 describe('Query on indexed BigInts #141', () => {
     // Created for https://github.com/appy-one/acebase/issues/141
 
-    /** @type {AceBase} */
-    let db;
-    /** @type {{(): Promise<void>}} */
-    let removeDB;
-
-    /** @type {DataReference} */
-    let moviesRef;
+    let db: AceBase;
+    let removeDB: () => Promise<void>;
+    let moviesRef: DataReference;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
         moviesRef = db.ref('movies');
 
-        const movies = require('./dataset/movies.json').map(movie => {
+        const movies = (await import('./dataset/movies.json')).map(movie => {
             return {
                 title: movie.title,
                 rating: movie.rating,
@@ -664,7 +638,7 @@ describe('Query on indexed BigInts #141', () => {
     });
 
     it('filter on BigInt', async () => {
-        let query = moviesRef.query().filter('votes', '>', BigInt(1_500_000));
+        const query = moviesRef.query().filter('votes', '>', BigInt(1_500_000));
         let snaps = await query.get();
         expect(snaps.length).toEqual(5);
 
@@ -674,7 +648,7 @@ describe('Query on indexed BigInts #141', () => {
     }, 60e3);
 
     it('filter on number', async () => {
-        let query = moviesRef.query().filter('year', '>', BigInt(1995));
+        const query = moviesRef.query().filter('year', '>', BigInt(1995));
         let snaps = await query.get();
         expect(snaps.length).toEqual(8);
 
@@ -687,19 +661,16 @@ describe('Query on indexed BigInts #141', () => {
 describe('Query on indexed BigInts #152', () => {
     // Created for https://github.com/appy-one/acebase/issues/152, with adjustments of https://github.com/appy-one/acebase/pull/159/files
 
-    /** @type {AceBase} */
-    let db;
-    /** @type {{(): Promise<void>}} */
-    let removeDB;
+    let db: AceBase;
+    let removeDB: () => Promise<void>;
 
-    /** @type {DataReference} */
-    let moviesRef;
+    let moviesRef: DataReference;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
         moviesRef = db.ref('movies');
 
-        const movies = require('./dataset/movies.json').map(movie => {
+        const movies = (await import('./dataset/movies.json')).map(movie => {
             return {
                 title: movie.title,
                 rating: movie.rating,
@@ -721,7 +692,7 @@ describe('Query on indexed BigInts #152', () => {
     });
 
     it('filter on BigInt', async () => {
-        let query = moviesRef.query().filter('votes', '>', BigInt(1_500_000));
+        const query = moviesRef.query().filter('votes', '>', BigInt(1_500_000));
         let snaps = await query.get();
         expect(snaps.length).toEqual(5);
 

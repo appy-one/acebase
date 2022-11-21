@@ -1,13 +1,11 @@
-/// <reference types="@types/jasmine" />
-const { createTempDB } = require('./tempdb');
-const { AceBase, ID } = require('..');
-const { ObjectCollection } = require('acebase-core');
+import { createTempDB } from './tempdb';
+import { AceBase, ID } from '..';
+import { ObjectCollection } from 'acebase-core';
 
 // TODO: MANY MORE index options to spec
 
 describe('index', () => {
-    /** @type {AceBase} */
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
@@ -26,15 +24,14 @@ describe('index', () => {
 });
 
 describe('string index', () => {
-    /** @type {AceBase} */
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
 
         // Insert sample data from meteorites json
-        const m = require('./dataset/meteorites.json');
-        const meteorites = {};
+        const m = await import('./dataset/meteorites.json');
+        const meteorites = {} as any;
         m.forEach(m => {
             const id = ID.generate();
             meteorites[id] = {
@@ -113,7 +110,7 @@ describe('string index', () => {
         await db.indexes.create('meteorites', 'name');
 
         // Query with '=='
-        let stats = [], hints = [];
+        let stats = [] as any[], hints = [] as any[];
         let snaps = await db.ref('meteorites').query()
             .filter('name', '==', 'Louisville')
             .on('stats', ev => stats.push(ev))
@@ -162,8 +159,7 @@ describe('string index', () => {
 });
 
 describe('Date index', () => {
-    /** @type {AceBase} */
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB({ config: (options) => { options.logLevel = 'warn'; }}));
@@ -176,7 +172,7 @@ describe('Date index', () => {
 
         // Generate 10K dates
         const MS_PER_DAY = 24 * 60 * 60 * 1000;
-        const collection = {};
+        const collection = {} as any;
         for (let i = 0; i < 10000; i++) {
             collection[ID.generate()] = { date: new Date(i * MS_PER_DAY) };
         }
@@ -239,15 +235,14 @@ describe('Date index', () => {
 });
 
 describe('Geo index', () => {
-    /** @type {AceBase} */
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
 
         // Insert sample data from meteorites json
-        const m = require('./dataset/meteorites.json');
-        const meteorites = {};
+        const m = await import('./dataset/meteorites.json');
+        const meteorites = {} as any;
         m.forEach(m => {
             const id = ID.generate();
             meteorites[id] = {
@@ -282,21 +277,20 @@ describe('Geo index', () => {
 });
 
 describe('Fulltext index', () => {
-    /** @type {AceBase} */
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
 
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
 
         // Insert sample data from movies json
-        const movies = require('./dataset/movies.json');
+        const movies = await import('./dataset/movies.json');
         await db.ref('movies').set(ObjectCollection.from(movies));
 
         await db.indexes.create('movies', 'description', { type: 'fulltext' });
     }, 30000);
 
     it('fulltext:contains query', async () => {
-        let snaps = await db.query('movies').filter('description', 'fulltext:contains', 'while').get();
+        const snaps = await db.query('movies').filter('description', 'fulltext:contains', 'while').get();
         expect(snaps.length).toBe(3);
 
         // // Match "crime", "cri"

@@ -1,6 +1,7 @@
-const { createTempDB } = require('./tempdb');
-const { proxyAccess, ObjectCollection } = require('acebase-core');
-const util = require('util');
+import { createTempDB } from './tempdb';
+import { proxyAccess, ObjectCollection, ILiveDataProxyValue } from 'acebase-core';
+import * as Util from 'util';
+const util: typeof Util = (Util as any).default ?? Util;
 
 describe('DataProxy', () => {
 
@@ -22,13 +23,14 @@ describe('DataProxy', () => {
                     updated: new Date(),
                 },
                 created: new Date(),
-                participants: [],
-                messages: {},
-                removeMe: true,
+                participants: [] as string[],
+                messages: {} as Record<string, { from: string; text: string; read?: Date }> | undefined,
+                removeMe: true as boolean | undefined,
             },
         });
+        type ProxiedChat = ILiveDataProxyValue<typeof proxy1.value> & typeof proxy1.value;
 
-        let proxy1Mutations = [];
+        const proxy1Mutations = [] as any[];
         proxy1.on('mutation', (event) => {
             const { snapshot: snap, isRemote: remote } = event;
             // console.log(`[proxy1] chat was updated ${remote ? 'outside proxy' : 'by us'} at ${snap.ref.path}: `, { current: snap.val(), previous: snap.previous() });
@@ -36,21 +38,23 @@ describe('DataProxy', () => {
             // console.log(JSON.stringify(chat));
         });
 
-        const proxy2 = await ref.proxy();
-        proxy2.value.getObservable().subscribe(chat => {
+        const proxy2 = await ref.proxy<typeof proxy1.value>();
+        (proxy2.value as ProxiedChat).getObservable().subscribe((chat: any) => {
             console.log(`[proxy2] Got new observer value`, chat);
         });
-        let proxy2Mutations = [];
+        const proxy2Mutations = [] as any[];
         proxy2.on('mutation', (event) => {
             const { snapshot: snap, isRemote: remote } = event;
             // console.log(`[proxy2] chat was updated ${remote ? 'remotely' : 'by us'} at ${snap.ref.path}: `, { current: snap.val(), previous: snap.previous() });
             proxy2Mutations.push({ remote, path: snap.ref.path, val: snap.val(), prev: snap.previous(), context: snap.context() });
         });
-        proxy2.value.onChanged((value, previous, isRemote, context) => {
+        (proxy2.value as ProxiedChat).onChanged((value, previous, isRemote, context) => {
             console.log(`[proxy2] chat changed ${isRemote ? 'remotely' : 'by us'}`);
         });
 
-        const chat = proxy1.value;
+        const chat = proxy1.value as ProxiedChat;
+        type ProxiedParticipants = typeof proxy1.value.participants & ILiveDataProxyValue<typeof proxy1.value.participants>;
+        type ProxiedMessages = typeof proxy1.value.messages & ILiveDataProxyValue<typeof proxy1.value.messages>;
         chat.messages = {};
         chat.title.text = 'Cool app chat';
 
@@ -71,10 +75,10 @@ describe('DataProxy', () => {
         chat.onChanged((value, previous, isRemote, context) => {
             console.log(`[proxy1] chat changed ${isRemote ? 'outside proxy' : 'by us'}`);
         });
-        chat.participants.onChanged((value, previous, isRemote, context) => {
+        (chat.participants as ProxiedParticipants).onChanged((value, previous, isRemote, context) => {
             console.log(`[proxy1] participants changed`);
         });
-        chat.messages.onChanged((value, previous, isRemote, context) => {
+        (chat.messages as ProxiedMessages).onChanged((value, previous, isRemote, context) => {
             console.log(`[proxy1] messages changed`);
         });
 
@@ -94,9 +98,9 @@ describe('DataProxy', () => {
         chat.participants.splice(2, 0, 'True');
 
         // chat.messages = {};
-        chat.messages.push({ from: 'Ewout', text: 'Hello world' });
-        chat.messages.push({ from: 'World', text: 'Hello Ewout, how are you?' });
-        chat.messages.push({ from: 'Ewout', text: 'Great! 🔥' });
+        (chat.messages as ProxiedMessages).push({ from: 'Ewout', text: 'Hello world' });
+        (chat.messages as ProxiedMessages).push({ from: 'World', text: 'Hello Ewout, how are you?' });
+        (chat.messages as ProxiedMessages).push({ from: 'Ewout', text: 'Great! 🔥' });
         // chat.participants.push('Annet');
 
         delete chat.removeMe;
@@ -108,26 +112,26 @@ describe('DataProxy', () => {
         expect(chat.participants[3]).toBe('Blue');
 
         // Check array size
-        expect(chat.messages.toArray().length).toBe(3);
+        expect((chat.messages as ProxiedMessages).toArray().length).toBe(3);
 
         // All messages must be a proxied values
-        chat.messages.forEach(message => {
+        (chat.messages as ProxiedMessages).forEach(message => {
             expect(util.types.isProxy(message)).toBeTrue(); // Test with util.types
-            expect(message[Symbol('isProxy')]).toBeTrue(); // Test with isProxy Symbol
+            expect((message as any)[Symbol('isProxy')]).toBeTrue(); // Test with isProxy Symbol
         });
 
-        for (let p of chat.participants) {
+        for (const p of chat.participants) {
             console.log(p);
         }
-        for (let m of chat.messages) {
+        for (const m of (chat.messages as ProxiedMessages) as unknown as Iterable<ProxiedMessages[string]>) {
             console.log(m.valueOf());
             m.read = new Date();
         }
 
         await delay();
 
-        console.log(chat.messages.getTarget());
-        console.log(chat.messages.getTarget(false));
+        console.log((chat.messages as ProxiedMessages).getTarget());
+        console.log((chat.messages as ProxiedMessages).getTarget(false));
         console.log(chat.messages.valueOf());
         console.log(chat.messages.toString());
 
@@ -151,9 +155,14 @@ describe('DataProxy', () => {
         const delay = () => new Promise(resolve => setTimeout(resolve, 1000));
 
         const ref = db.ref('proxy2');
-        const proxy = await ref.proxy({ defaultValue: { books: {} } });
+        const proxy = await ref.proxy({
+            defaultValue: {
+                books: {} as ObjectCollection<{ title: string; description: string }>,
+            },
+        });
+        type ProxiedBooks = typeof proxy.value.books & ILiveDataProxyValue<typeof proxy.value.books>;
 
-        let mutations = [];
+        const mutations = [] as any[];
         proxy.on('mutation', (event) => {
             const { snapshot: snap, isRemote: remote } = event;
             mutations.push({ snap, remote, val: snap.val(), context: snap.context() });
@@ -166,13 +175,13 @@ describe('DataProxy', () => {
             book3 = { title: 'New book 3', description: 'This is my third book' };
 
         // Add book through the proxy, considered a local mutation
-        await obj.books.push(book1);
+        await (obj.books as ProxiedBooks).push(book1);
 
         // Add another book through a reference, considered a remote mutation
         await ref.child('books').push(book2);
 
         // Add another book through a reference achieved through proxy, also considered a remote mutation
-        await obj.books.getRef().push(book3);
+        await (obj.books as ProxiedBooks).getRef().push(book3);
 
         await delay();
 
@@ -194,7 +203,7 @@ describe('DataProxy', () => {
         // Use AceBase's own basic Observable shim because rxjs is not installed
         db.setObservable('shim');
 
-        const movies = ObjectCollection.from(require('./dataset/movies.json'));
+        const movies = ObjectCollection.from(await import('./dataset/movies.json'));
         const proxy = await db.ref('movies').proxy({ defaultValue: movies });
 
         // Compare proxied value with original
@@ -213,7 +222,8 @@ describe('DataProxy', () => {
         // Use AceBase's own basic Observable shim because rxjs is not installed
         db.setObservable('shim');
 
-        const proxy = await db.ref('todo').proxy({ defaultValue: {} });
+        type TodoItem = { text: string; order?: number };
+        const proxy = await db.ref('todo').proxy({ defaultValue: {} as ObjectCollection<TodoItem> });
         const todo = proxyAccess(proxy.value);
 
         // Create transaction so we can monitor when changes have been persisted
@@ -226,8 +236,8 @@ describe('DataProxy', () => {
         todo.push({ text: 'Release' });
 
         // Create object collection proxy with defaults
-        let collection = proxyAccess(todo).getOrderedCollection();
-        let subscription = collection.getArrayObservable().subscribe(newArray => {
+        const collection = todo.getOrderedCollection();
+        const subscription = collection.getArrayObservable().subscribe(newArray => {
             console.log(`Got new array:`, newArray.map(item => `${item.order}: ${item.text}`));
         });
 
@@ -344,27 +354,32 @@ describe('DataProxy', () => {
         const delay = () => new Promise(resolve => setTimeout(resolve, 1000));
 
         const ref = db.ref('proxy');
-        const proxy = await ref.proxy({ defaultValue: { books: {} } });
+        const proxy = await ref.proxy({
+            defaultValue: {
+                books: {} as ObjectCollection<{ title: string; description: string }>,
+            },
+        });
 
-        let cursors = [];
+        const cursors = [] as string[];
         proxy.on('cursor', (cursor) => {
             console.log(`Got cursor ${cursor}`);
             cursors.push(cursor);
         });
         const obj = proxy.value;
 
+        type ProxiedBooks = typeof proxy.value.books & ILiveDataProxyValue<typeof proxy.value.books>;
         const book1 = { title: 'New book 1!', description: 'This is my first book' },
             book2 = { title: 'New book 2', description: 'This is my second book' },
             book3 = { title: 'New book 3', description: 'This is my third book' };
 
         // Add book through the proxy, considered a local mutation
-        await obj.books.push(book1);
+        await (obj.books as ProxiedBooks).push(book1);
 
         // Add another book through a reference, considered a remote mutation
         await ref.child('books').push(book2);
 
         // Add another book through a reference achieved through proxy, also considered a remote mutation
-        await obj.books.getRef().push(book3);
+        await (obj.books as ProxiedBooks).getRef().push(book3);
 
         await delay();
 

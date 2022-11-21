@@ -1,6 +1,5 @@
 // Test the new NodeTransaction class being developed
-/// <reference types="@types/jasmine" />
-const { TransactionManager, NodeLockIntention } = require('../dist/cjs/node-transaction');
+import { TransactionManager, NodeLockIntention } from './node-transaction';
 
 describe('NodeTransaction (beta)', () => {
 
@@ -36,7 +35,12 @@ describe('NodeTransaction (beta)', () => {
         // |    |    |- address
 
         // Test read/read: should never conflict
-        const readValue = (path, filter) => ({ path, intention: NodeLockIntention.ReadValue(filter) });
+        type NodeLockFilter = {
+            include?: (string | number)[];
+            exclude?: (string | number)[];
+            child_objects?: boolean;
+        };
+        const readValue = (path: string, filter?: NodeLockFilter) => ({ path, intention: NodeLockIntention.ReadValue(filter) });
         const readRootValue = readValue('');
         const readUsersValue = readValue('users');
         expect(manager.testConflict(readRootValue, readRootValue)).toEqual([false, false]);
@@ -46,8 +50,8 @@ describe('NodeTransaction (beta)', () => {
 
         // ReadInfo lock on node ""
         // Deny overwriting nodes "" and "users"
-        const readInfo = (path) => ({ path, intention: NodeLockIntention.ReadInfo() });
-        const setValue = (path) => ({ path, intention: NodeLockIntention.OverwriteNode() });
+        const readInfo = (path: string) => ({ path, intention: NodeLockIntention.ReadInfo() });
+        const setValue = (path: string) => ({ path, intention: NodeLockIntention.OverwriteNode() });
         const readRootInfo = readInfo('');
         expect(manager.testConflict(readRootInfo, setValue(''))).toEqual([true, true]);
         expect(manager.testConflict(readRootInfo, setValue('users'))).toEqual([true, true]);
@@ -58,7 +62,7 @@ describe('NodeTransaction (beta)', () => {
 
         // ReadInfo lock on node ""
         // Deny updating node ""
-        const updateValue = (path, keys) => ({ path, intention: NodeLockIntention.UpdateNode(keys) });
+        const updateValue = (path: string, keys: (number|string)[]) => ({ path, intention: NodeLockIntention.UpdateNode(keys) });
         expect(manager.testConflict(readRootInfo, updateValue('', ['users']))).toEqual([true, true]);
         // Allow updating nodes "users/*" ("users/ewout", "users/ewout/address" etc)
         expect(manager.testConflict(readRootInfo, updateValue('users', ['ewout']))).toEqual([false, false]);

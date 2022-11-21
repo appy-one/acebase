@@ -1,11 +1,10 @@
-/// <reference types="@types/jasmine" />
-const { createTempDB } = require('./tempdb');
-const util = require('util');
-const fs = require('fs');
-const { PathReference } = require('acebase-core');
+import { createTempDB } from './tempdb';
+import { openSync, closeSync, read } from 'fs';
+import { PathReference } from 'acebase-core';
+import { AceBase } from '..';
 
 describe('export/import', () => {
-    let db, removeDB;
+    let db: AceBase, removeDB: () => Promise<void>;
 
     beforeAll(async ()=> {
         ({ db, removeDB } = await createTempDB());
@@ -19,7 +18,7 @@ describe('export/import', () => {
         const ref = db.ref('backslashes');
         await ref.set({ text: 'Strings with multiple \\ backslashes \\ are \\ exported ok' });
         let json = '';
-        await ref.export(str => json += str);
+        await ref.export(str => { json += str; });
         expect(json).toEqual(`{"text":"Strings with multiple \\\\ backslashes \\\\ are \\\\ exported ok"}`);
         const obj = JSON.parse(json);
         expect(obj.text).toEqual('Strings with multiple \\ backslashes \\ are \\ exported ok');
@@ -37,7 +36,7 @@ describe('export/import', () => {
         await ref.set(obj);
 
         let json = '';
-        await ref.export(str => json += str);
+        await ref.export(str => { json += str; });
         expect(json).toEqual(`{"text":"Checking typesafety","date":{".type":"date",".val":"${obj.date.toISOString()}"},"binary":{".type":"binary",".val":"<~@VK^gEd8d<@<>o~>"},"reference":{".type":"reference",".val":"some/other/data"}}`);
 
         // Now import again
@@ -58,19 +57,19 @@ describe('export/import', () => {
     });
 
     it('import local datasets', async () => {
-        const importFile = async (filename, path) => {
-            const fd = fs.openSync(filename, 'r');
-            const read = length => {
-                return new Promise((resolve, reject) => {
+        const importFile = async (filename: string, path: string) => {
+            const fd = openSync(filename, 'r');
+            const readBytes = (length: number) => {
+                return new Promise<Uint8Array>((resolve, reject) => {
                     const buffer = new Uint8Array(length);
-                    fs.read(fd, buffer, 0, length, null, err => {
+                    read(fd, buffer, 0, length, null, err => {
                         if (err) { reject(err); }
                         else { resolve(buffer); }
                     });
                 });
             };
-            await db.ref(path).import(read);
-            fs.closeSync(fd);
+            await db.ref(path).import(readBytes);
+            closeSync(fd);
 
             // Alternative: use read stream (ignores size argument because if too large, read returns null)
             // const stream = fs.createReadStream(filename, { encoding: 'utf-8' });
