@@ -1,4 +1,5 @@
 import { AceBase } from '..';
+import { readDataSet } from './dataset';
 import { createTempDB } from './tempdb';
 
 describe('Include/exclude filters', () => {
@@ -14,7 +15,7 @@ describe('Include/exclude filters', () => {
     });
 
     it('test', async () => {
-        const testData = await import('./dataset/users.json');
+        const testData = await readDataSet('users');
         await db.ref('users').set(testData);
 
         let snap = await db.ref('users/someuser').get({ exclude: ['posts', 'instruments'] });

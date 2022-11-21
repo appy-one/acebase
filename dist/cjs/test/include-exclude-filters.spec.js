@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+const dataset_1 = require("./dataset");
 const tempdb_1 = require("./tempdb");
 describe('Include/exclude filters', () => {
     let db, removeDB;
@@ -12,7 +13,7 @@ describe('Include/exclude filters', () => {
         await removeDB();
     });
     it('test', async () => {
-        const testData = await Promise.resolve().then(() => require('./dataset/users.json'));
+        const testData = await (0, dataset_1.readDataSet)('users');
         await db.ref('users').set(testData);
         let snap = await db.ref('users/someuser').get({ exclude: ['posts', 'instruments'] });
         let user = snap.val();

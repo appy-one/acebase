@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const tempdb_1 = require("./tempdb");
 const __1 = require("..");
 const acebase_core_1 = require("acebase-core");
+const dataset_1 = require("./dataset");
 // TODO: MANY MORE index options to spec
 describe('index', () => {
     let db, removeDB;
@@ -23,7 +24,7 @@ describe('string index', () => {
     beforeAll(async () => {
         ({ db, removeDB } = await (0, tempdb_1.createTempDB)());
         // Insert sample data from meteorites json
-        const m = await Promise.resolve().then(() => require('./dataset/meteorites.json'));
+        const m = await (0, dataset_1.readDataSet)('meteorites');
         const meteorites = {};
         m.forEach(m => {
             const id = __1.ID.generate();
@@ -189,7 +190,7 @@ describe('Geo index', () => {
     beforeAll(async () => {
         ({ db, removeDB } = await (0, tempdb_1.createTempDB)());
         // Insert sample data from meteorites json
-        const m = await Promise.resolve().then(() => require('./dataset/meteorites.json'));
+        const m = await (0, dataset_1.readDataSet)('meteorites');
         const meteorites = {};
         m.forEach(m => {
             const id = __1.ID.generate();
@@ -225,7 +226,7 @@ describe('Fulltext index', () => {
     beforeAll(async () => {
         ({ db, removeDB } = await (0, tempdb_1.createTempDB)());
         // Insert sample data from movies json
-        const movies = await Promise.resolve().then(() => require('./dataset/movies.json'));
+        const movies = await (0, dataset_1.readDataSet)('movies');
         await db.ref('movies').set(acebase_core_1.ObjectCollection.from(movies));
         await db.indexes.create('movies', 'description', { type: 'fulltext' });
     }, 30000);

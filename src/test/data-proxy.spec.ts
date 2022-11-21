@@ -1,6 +1,7 @@
 import { createTempDB } from './tempdb';
 import { proxyAccess, ObjectCollection, ILiveDataProxyValue } from 'acebase-core';
 import * as Util from 'util';
+import { readDataSet } from './dataset';
 const util: typeof Util = (Util as any).default ?? Util;
 
 describe('DataProxy', () => {
@@ -203,7 +204,7 @@ describe('DataProxy', () => {
         // Use AceBase's own basic Observable shim because rxjs is not installed
         db.setObservable('shim');
 
-        const movies = ObjectCollection.from(await import('./dataset/movies.json'));
+        const movies = ObjectCollection.from(await readDataSet('movies'));
         const proxy = await db.ref('movies').proxy({ defaultValue: movies });
 
         // Compare proxied value with original

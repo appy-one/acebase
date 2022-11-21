@@ -1,6 +1,7 @@
 import { createTempDB } from './tempdb.js';
 import { ID } from '../index.js';
 import { ObjectCollection } from 'acebase-core';
+import { readDataSet } from './dataset.js';
 // TODO: MANY MORE index options to spec
 describe('index', () => {
     let db, removeDB;
@@ -21,7 +22,7 @@ describe('string index', () => {
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
         // Insert sample data from meteorites json
-        const m = await import('./dataset/meteorites.json');
+        const m = await readDataSet('meteorites');
         const meteorites = {};
         m.forEach(m => {
             const id = ID.generate();
@@ -187,7 +188,7 @@ describe('Geo index', () => {
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
         // Insert sample data from meteorites json
-        const m = await import('./dataset/meteorites.json');
+        const m = await readDataSet('meteorites');
         const meteorites = {};
         m.forEach(m => {
             const id = ID.generate();
@@ -223,7 +224,7 @@ describe('Fulltext index', () => {
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
         // Insert sample data from movies json
-        const movies = await import('./dataset/movies.json');
+        const movies = await readDataSet('movies');
         await db.ref('movies').set(ObjectCollection.from(movies));
         await db.indexes.create('movies', 'description', { type: 'fulltext' });
     }, 30000);

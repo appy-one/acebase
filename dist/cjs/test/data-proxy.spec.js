@@ -4,6 +4,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const tempdb_1 = require("./tempdb");
 const acebase_core_1 = require("acebase-core");
 const Util = require("util");
+const dataset_1 = require("./dataset");
 const util = (_a = Util.default) !== null && _a !== void 0 ? _a : Util;
 describe('DataProxy', () => {
     it('Proxy1', async () => {
@@ -157,7 +158,7 @@ describe('DataProxy', () => {
         const { db, removeDB } = await (0, tempdb_1.createTempDB)();
         // Use AceBase's own basic Observable shim because rxjs is not installed
         db.setObservable('shim');
-        const movies = acebase_core_1.ObjectCollection.from(await Promise.resolve().then(() => require('./dataset/movies.json')));
+        const movies = acebase_core_1.ObjectCollection.from(await (0, dataset_1.readDataSet)('movies'));
         const proxy = await db.ref('movies').proxy({ defaultValue: movies });
         // Compare proxied value with original
         expect(proxy.value.valueOf()).toEqual(movies);

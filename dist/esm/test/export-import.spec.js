@@ -1,6 +1,7 @@
 import { createTempDB } from './tempdb.js';
 import { openSync, closeSync, read } from 'fs';
 import { PathReference } from 'acebase-core';
+import { getDataSetPath } from './dataset.js';
 describe('export/import', () => {
     let db, removeDB;
     beforeAll(async () => {
@@ -47,8 +48,9 @@ describe('export/import', () => {
         expect(obj2).toEqual(obj);
     });
     it('import local datasets', async () => {
-        const importFile = async (filename, path) => {
-            const fd = openSync(filename, 'r');
+        const importFile = async (name) => {
+            const filePath = getDataSetPath(name);
+            const fd = openSync(filePath, 'r');
             const readBytes = (length) => {
                 return new Promise((resolve, reject) => {
                     const buffer = new Uint8Array(length);
@@ -62,7 +64,7 @@ describe('export/import', () => {
                     });
                 });
             };
-            await db.ref(path).import(readBytes);
+            await db.ref(name).import(readBytes);
             closeSync(fd);
             // Alternative: use read stream (ignores size argument because if too large, read returns null)
             // const stream = fs.createReadStream(filename, { encoding: 'utf-8' });
@@ -82,9 +84,9 @@ describe('export/import', () => {
             // stream.close();
         };
         // Import movies dataset. TODO: use larger dataset from https://raw.githubusercontent.com/prust/wikipedia-movie-data/master/movies.json
-        await importFile(/file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1] + '/dataset/movies.json', 'movies');
+        await importFile('movies');
         // Import meteorites dataset
-        await importFile(/file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1] + '/dataset/meteorites.json', 'meteorites');
+        await importFile('meteorites');
         // TODO: Check data now
     }, 1000e3);
 });

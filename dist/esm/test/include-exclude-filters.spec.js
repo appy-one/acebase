@@ -1,3 +1,4 @@
+import { readDataSet } from './dataset.js';
 import { createTempDB } from './tempdb.js';
 describe('Include/exclude filters', () => {
     let db, removeDB;
@@ -10,7 +11,7 @@ describe('Include/exclude filters', () => {
         await removeDB();
     });
     it('test', async () => {
-        const testData = await import('./dataset/users.json');
+        const testData = await readDataSet('users');
         await db.ref('users').set(testData);
         let snap = await db.ref('users/someuser').get({ exclude: ['posts', 'instruments'] });
         let user = snap.val();
