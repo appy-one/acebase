@@ -1,3 +1,3 @@
-// Ugly workaround to import an untyped commonjs module for usage in typescript
-import * as unidecode from 'unidecode'; // declared in unidecode-module.ts
-export default unidecode as unknown as (input: string) => string;
+import * as Unidecode from 'unidecode';
+const unidecode = ((Unidecode as any).default ?? Unidecode) as (input: string) => string;
+export default unidecode;
