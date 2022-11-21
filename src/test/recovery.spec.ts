@@ -1,6 +1,7 @@
 import { createTempDB } from './tempdb';
 import { AceBase } from '..';
 import { ObjectCollection } from 'acebase-core';
+import { readDataSet } from './dataset';
 
 describe('database recovery', () => {
     let db: AceBase;
@@ -19,7 +20,7 @@ describe('database recovery', () => {
         expect(typeof db.recovery?.repairNode).toBe('function');
 
         // Create some records
-        const movies = await import('./dataset/movies.json');
+        const movies = await readDataSet('movies') as any[];
 
         const ref = db.ref('movies');
         await ref.set(ObjectCollection.from(movies));

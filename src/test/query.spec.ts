@@ -1,6 +1,6 @@
 import { DataReference, DataSnapshotsArray, DataReferencesArray, DataReferenceQuery, ObjectCollection, DataSnapshot } from 'acebase-core';
-import { RealtimeQueryEvent } from 'acebase-core/dist/types/data-reference';
 import { AceBase, ID } from '..';
+import { readDataSet } from './dataset';
 import { createTempDB } from './tempdb';
 
 describe('Query', () => {
@@ -12,7 +12,7 @@ describe('Query', () => {
         ({ db, removeDB } = await createTempDB());
         moviesRef = db.ref('movies');
 
-        const movies = await import('./dataset/movies.json');
+        const movies = await readDataSet('movies') as { year: number; rating: number; genres: string[] }[];
         await moviesRef.set(ObjectCollection.from(movies));
 
         tests.push({
@@ -287,7 +287,7 @@ describe('Query with take/skip multiple sorts', () => {
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
 
-        movies = require('./dataset/movies.json');
+        movies = await readDataSet('movies') as any[];
         const collection = ObjectCollection.from(movies);
 
         // Create unindexed collection
@@ -343,7 +343,7 @@ describe('Query with take/skip #120', () => {
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
 
-        movies = require('./dataset/movies.json');
+        movies = await readDataSet('movies') as any[];
         const collection = ObjectCollection.from(movies);
 
         // Create unindexed collection
@@ -388,7 +388,7 @@ describe('Query with take/sort/indexes #124', () => {
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
 
-        movies = require('./dataset/movies.json');
+        movies = await readDataSet('movies') as any[];
         const collection = ObjectCollection.from(movies);
 
         // Create collection
@@ -489,7 +489,7 @@ describe('Wildcard query with delete', () => {
     beforeAll(async () => {
         ({ db, removeDB } = await createTempDB());
 
-        movies = require('./dataset/movies.json');
+        movies = await readDataSet('movies') as any[];
         const collection = ObjectCollection.from(movies);
         await db.ref('movies/collection1').set(collection);
         await db.ref('movies/collection2').set(collection);
@@ -621,7 +621,7 @@ describe('Query on indexed BigInts #141', () => {
         ({ db, removeDB } = await createTempDB());
         moviesRef = db.ref('movies');
 
-        const movies = (await import('./dataset/movies.json')).map(movie => {
+        const movies = (await readDataSet('movies') as any[]).map(movie => {
             return {
                 title: movie.title,
                 rating: movie.rating,
@@ -670,7 +670,7 @@ describe('Query on indexed BigInts #152', () => {
         ({ db, removeDB } = await createTempDB());
         moviesRef = db.ref('movies');
 
-        const movies = (await import('./dataset/movies.json')).map(movie => {
+        const movies = (await readDataSet('movies') as any[]).map(movie => {
             return {
                 title: movie.title,
                 rating: movie.rating,
