@@ -3346,7 +3346,11 @@ class NodeReader {
         };
         const readRecords = this.recordInfo.allocation.addresses.slice(startRecord.nr, endRecord.nr + 1);
         if (readRecords.length === 0) {
-            throw new Error('Attempt to read non-existing records');
+            throw new Error(
+                `Attempt to read non-existing records of path "/${this.recordInfo.path}": ${startRecord.nr} to ${endRecord.nr + 1} ` +
+                `for index ${index} + ${length} bytes. Node has ${this.recordInfo.allocation.addresses.length} allocated records ` +
+                `in the following ranges: ` + this.recordInfo.allocation.ranges.toString()
+            );
         }
         const readRanges = NodeAllocation.fromAdresses(readRecords).ranges;
         const reads = [];
