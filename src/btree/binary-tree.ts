@@ -1,4 +1,4 @@
-import { Utils } from 'acebase-core';
+import { DebugLogger, Utils } from 'acebase-core';
 import { readByteLength, readSignedOffset, Uint8ArrayBuilder, writeByteLength, writeSignedOffset } from '../binary';
 import { DetailedError } from '../detailed-error';
 import { ThreadSafe, ThreadSafeLock } from '../thread-safe';
@@ -77,6 +77,9 @@ export class BinaryBPlusTree {
     private _originalByteLength?: number;
     private _fst: Array<{ index: number; length: number }>;
 
+    public id: string;
+    private debug: DebugLogger;
+
     public info: {
         headerLength: number;
         byteLength: number;
@@ -95,17 +98,36 @@ export class BinaryBPlusTree {
 
     /**
      * Provides functionality to read and search in a B+tree from a binary data source
-     * @param readFn byte array, or function that reads from your data source, must return a promise that resolves with a byte array (the bytes read from file/memory)
-     * @param chunkSize numbers of bytes per chunk to read at once
-     * @param writeFn function that writes to your data source, must return a promise that resolves once write has completed
-     * @param id to edit the tree, pass a unique id to enable "thread-safe" locking
      */
-    constructor(readFn: number[] | ReadFunction, chunkSize = 1024, writeFn?: WriteFunction, public id?: string) {
-        this._chunkSize = chunkSize;
+    constructor(init: {
+        /**
+         * byte array, or function that reads from your data source, must return a promise that resolves with a byte array (the bytes read from file/memory)
+         */
+        readFn: number[] | ReadFunction;
+        /**
+         * numbers of bytes per chunk to read at once
+         * @default 1024
+         */
+        chunkSize?: number;
+        /**
+         * function that writes to your data source, must return a promise that resolves once write has completed
+         */
+        writeFn?: WriteFunction;
+        /**
+         * to edit the tree, pass a unique id to enable concurrency-safe locking
+         */
+        id?: string;
+        /**
+         * logger instance
+         */
+        debug: DebugLogger;
+    }) {
+        this._chunkSize = init.chunkSize ?? 1024;
         this._autoGrow = false;
-        this.id = id;
-        if (readFn instanceof Array) {
-            let data = readFn;
+        this.id = init.id;
+        this.debug = init.debug;
+        if (init.readFn instanceof Array) {
+            let data = init.readFn;
             if (BPlusTree.debugBinary) {
                 this.debugData = data as any as [string, number][];
                 data = this.debugData.map(entry => entry instanceof Array ? entry[1] : entry);
@@ -115,18 +137,18 @@ export class BinaryBPlusTree {
                 return Buffer.from(slice);
             };
         }
-        else if (typeof readFn === 'function') {
-            this._readFn = readFn;
+        else if (typeof init.readFn === 'function') {
+            this._readFn = init.readFn;
         }
         else {
             throw new TypeError('readFn must be a byte array or function that reads from a data source');
         }
 
-        if (typeof writeFn === 'function') {
-            this._writeFn = writeFn;
+        if (typeof init.writeFn === 'function') {
+            this._writeFn = init.writeFn;
         }
-        else if (typeof writeFn === 'undefined' && readFn instanceof Array) {
-            const sourceData = readFn;
+        else if (typeof init.writeFn === 'undefined' && init.readFn instanceof Array) {
+            const sourceData = init.readFn;
             this._writeFn = (data, index) => {
                 for (let i = 0; i < data.length; i++) {
                     sourceData[index + i] = data[i];
@@ -140,8 +162,8 @@ export class BinaryBPlusTree {
         }
     }
 
-    static async test(data: number[]) {
-        const tree = new BinaryBPlusTree(data);
+    static async test(data: number[], debug: DebugLogger) {
+        const tree = new BinaryBPlusTree({ readFn: data, debug });
 
         let leaf = await tree.getFirstLeaf();
         while (leaf) {
@@ -756,10 +778,105 @@ export class BinaryBPlusTree {
             };
         }
         if (nextLeafOffset !== 0) {
-            leaf.getNext = async () => {
+            leaf.getNext = async (repairMode = false) => {
                 const freshReader = reader.clone();
                 await freshReader.go(leaf.nextLeafIndex);
-                const childInfo = await this._readChild(freshReader);
+                let childInfo;
+                try {
+                    childInfo = await this._readChild(freshReader);
+                }
+                catch (err) {
+                    if (repairMode) {
+                        // Could not read next leaf using current leaf's next pointer. In repair mode, try getting it using the tree pointers.
+                        // If that fails too, move on to the next leaf until we get a succesful read. Using this strategy, data referenced from
+                        // broken leaf(s) will be skipped, following data will be able to be read again.
+                        const lastKey = leaf.entries.slice(-1)[0].key;
+                        this.debug.warn(`B+Tree repair caught error: ${err.message}`);
+                        this.debug.warn(`B+Tree repair starting at key >= "${lastKey}"`);
+                        const currentLeaf = await (async () => {
+                            if (leaf.parentNode) { return leaf; }
+                            try {
+                                return await this._findLeaf(lastKey);
+                            }
+                            catch (err) {
+                                throw new DetailedError('tree-repair', `Cannot repair B+Tree: unable to find current leaf using its last key`, err);
+                            }
+                        })();
+
+                        if (currentLeaf.index !== leaf.index) {
+                            // This is a different leaf.
+                            throw new DetailedError('tree-repair', `Cannot repair B+Tree: loaded current leaf at index ${currentLeaf.index} is not the same as start leaf @${leaf.index}`, err);
+                        }
+
+                        // Try getting next leaf using parent node's next entry
+                        const currentEntryIndex = currentLeaf.parentNode.entries.indexOf(currentLeaf.parentEntry);
+                        if (currentEntryIndex === -1) {
+                            // current leaf is the gtChild of parent node, there is no next entry.
+                            if (currentLeaf.parentNode.gtChildIndex !== currentLeaf.index) {
+                                throw new DetailedError('tree-repair', `Cannot repair B+Tree: leaf's parent node entry points to the wrong index ${currentLeaf.parentNode.gtChildIndex} of current leaf ${currentLeaf.index}`);
+                            }
+                            if (!currentLeaf.parentNode.parentNode) {
+                                // parent node has no parent itself, there is no next leaf
+                                this.debug.warn(`B+Tree repair: no more leafs in tree`);
+                                return null;
+                            }
+                        }
+
+                        const getNextNode = async (currentNode: BinaryBPlusTreeNode): Promise<BinaryBPlusTreeNode> => {
+                            const entryIndex = currentNode.parentNode.entries.indexOf(currentNode.parentEntry);
+                            if (entryIndex === -1) {
+                                // currentNode is gtChild of parent node
+                                if (currentNode.parentNode) {
+                                    // TODO: assert gtChildIndex
+                                    const nextParent = await getNextNode(currentNode.parentNode);
+                                    const nextNodeInfo = await nextParent.entries[0].getLtChild();
+                                    const nextNode = new BinaryBPlusTreeNode(nextNodeInfo);
+                                    return nextNode;
+                                }
+                                return null;
+                            }
+                            const nextEntry = currentNode.parentNode.entries[entryIndex + 1];
+                            const nextNodeInfo = nextEntry ? await nextEntry.getLtChild() : await currentNode.parentNode.getGtChild();
+                            const nextNode = new BinaryBPlusTreeNode(nextNodeInfo);
+                            return nextNode;
+                        };
+
+                        const getNextNodeEntry = async (currentNode: BinaryBPlusTreeNode, currentIndex: number) => {
+                            if (currentIndex > currentNode.entries.length) {
+                                const nextNode = await getNextNode(currentNode.parentNode);
+                                if (!nextNode) { return null; }
+                                return { node: nextNode, entry: nextNode.entries[0], index: 0 };
+                            }
+                            return { node: currentNode, entry: currentNode.entries[currentIndex + 1] ?? null, index: currentIndex + 1 };
+                        };
+
+                        // Iterate the tree's node entries on the deepest level until we get a first succesful leaf read
+                        let { node: currentNode, entry: currentNodeEntry, index: currentNodeEntryIndex } = await getNextNodeEntry(currentLeaf.parentNode, currentEntryIndex);
+                        while (currentNode) {
+                            // try loading leaf in this entry
+                            const entryKey = `${currentNodeEntry ? '<' : '>=' } "${currentNodeEntry?.key ?? currentNode.entries.slice(-1)[0].key}"`;
+                            try {
+                                const nodeInfo = currentNodeEntry ? await currentNodeEntry.getLtChild() : await currentNode.getGtChild();
+                                assert(nodeInfo.isLeaf, 'not a leaf!');
+                                const nextLeaf = new BinaryBPlusTreeLeaf(nodeInfo);
+                                this.debug.warn(`B+Tree repair: using leaf for key ${entryKey} at index ${nextLeaf.index}`);
+                                return nextLeaf;
+                            }
+                            catch (err) {
+                                this.debug.warn(
+                                    `B+Tree repair: failed to load leaf for key ${entryKey} at index ${currentNodeEntry?.ltChildIndex ?? currentNode.gtChildIndex}: ${err.message}. ` +
+                                    `Proceeding with next node entry.`
+                                );
+                                // proceed with next node entry
+                                ({ node: currentNode, entry: currentNodeEntry, index: currentNodeEntryIndex } = await getNextNodeEntry(currentNode, currentNodeEntryIndex));
+                            }
+                        }
+                        // no more nodes
+                        this.debug.warn(`B+Tree repair: there are no more leafs to load`);
+                        return null;
+                    }
+                    throw err;
+                }
                 assert(childInfo.isLeaf, `next leaf is *not* a leaf. Current leaf index: ${leaf.sourceIndex}, next leaf offset: ${nextLeafOffset}, target index: ${leaf.dataIndex + 4 + nextLeafOffset}`);
                 const nextLeaf = await this._getLeaf(childInfo, freshReader, options);
                 assert(nextLeaf.entries.length === 0 || leaf.entries.length === 0 || _isMore(nextLeaf.entries[0].key, leaf.entries[leaf.entries.length-1].key), 'next leaf has lower keys than previous leaf?!');
@@ -1741,6 +1858,19 @@ export class BinaryBPlusTree {
             // free_byte_length:
             this._writeFn(writeByteLength([], 0, this.info.freeSpace), this.info.freeSpaceIndex),
         ]);
+    }
+
+    /**
+     * Sets allocation bytes in provided buffer, useful when growing the tree while rewriting
+     * @param buffer target buffer
+     * @param byteLength new tree byte length
+     * @param freeSpace new free space length
+     */
+    async setAllocationBytes(buffer: Uint8Array, byteLength: number, freeSpace: number) {
+        // byte_length:
+        buffer.set(writeByteLength([], 0, byteLength), 0);
+        // free_byte_length:
+        buffer.set(writeByteLength([], 0, freeSpace), this.info.freeSpaceIndex);
     }
 
     async _registerFreeSpace(index: number, length: number) {
@@ -3119,29 +3249,26 @@ export class BinaryBPlusTree {
         reserveSpaceForNewEntries?: number;
         /** object that will be updated with statistics as the tree is written */
         treeStatistics?: Partial<{ byteLength: number, totalEntries: number, totalValues: number, totalLeafs: number, depth: number, entriesPerNode: number }>;
+        repairMode?: boolean;
     }) {
         return this._threadSafe('exclusive', () => this._rebuild(writer, options));
     }
 
     async _rebuild(writer: BinaryWriter, options: {
-        /** bytes that have been pre-allocated, enforces a max writable byte length */
         allocatedBytes?: number;
-        /** number between 0-100 indicating the percentage of node and leaf filling, leaves room for later adds to the tree. Default is `95` */
         fillFactor?: number;
-        /** whether free space for later node/leaf creation is kept or added. If `allocatedBytes` is not given (or 0), 10% free space will be used. Default is `true` */
         keepFreeSpace?: boolean;
-        /** whether to increase the max amount of node/leaf entries (usually rebuilding is needed because of growth, so this might be a good idea). Default is true, will increase max entries with 10% (until the max of 255 is reached) */
         increaseMaxEntries?: boolean;
-        /** optionally reserves free space for specified amount of new leaf entries (overrides the default of 10% growth, only applies if `allocatedBytes` is not specified or 0). Default is `0` */
         reserveSpaceForNewEntries?: number;
-        /** object that will be updated with statistics as the tree is written */
         treeStatistics?: Partial<{ byteLength: number, totalEntries: number, totalValues: number, totalLeafs: number, depth: number, entriesPerNode: number }>;
+        repairMode?: boolean;
     } = {
         allocatedBytes: 0,
         fillFactor: 95,
         keepFreeSpace: true,
         increaseMaxEntries: true,
         reserveSpaceForNewEntries: 0,
+        repairMode: false,
     }) {
         const perf: PerformanceMeasureObject = {};
         const mark = (name: string) => {
@@ -3228,6 +3355,7 @@ export class BinaryBPlusTree {
                 const leafStartKeys = [];
                 let entriesFromLastLeafStart = 0;
 
+                // TODO: add repairMode to _getFirstLeaf
                 let leaf = await this._getFirstLeaf();
                 let loop = 1;
                 while (leaf) {
@@ -3238,7 +3366,7 @@ export class BinaryBPlusTree {
 
                     if (leaf.entries.length === 0) {
                         // For leafs that were previously left empty (are now removed, see issue #5)
-                        leaf = leaf.getNext ? await leaf.getNext() : null;
+                        leaf = leaf.getNext ? await leaf.getNext(options.repairMode) : null;
                         continue;
                     }
 
@@ -3274,8 +3402,8 @@ export class BinaryBPlusTree {
                         }
                     }
 
-                    // console.log(`Processed ${leafsSeen} leafs in source tree`);
-                    leaf = leaf.getNext ? await leaf.getNext() : null;
+                    // this.debug.log(`Processed ${leafsSeen} leafs in source tree`);
+                    leaf = leaf.getNext ? await leaf.getNext(options.repairMode) : null;
                 }
                 mark('getLeafStartKeys.end');
                 return leafStartKeys;
@@ -3288,13 +3416,14 @@ export class BinaryBPlusTree {
              * @param n unused
              */
             const getEntries = async (n: number): Promise<BinaryBPlusTreeLeafEntry[]> => {
+                // TODO: refactor to while(leaf) loop instead of recursive
                 if (getEntryCalls === 1) {
                     mark('getEntries.first');
                 }
                 mark(`getEntries.start${getEntryCalls}`);
                 try {
                     const leaf = lastLeaf
-                        ? lastLeaf.getNext ? await lastLeaf.getNext() : null
+                        ? lastLeaf.getNext ? await lastLeaf.getNext(options.repairMode) : null
                         : await this._getFirstLeaf();
 
                     if (leaf) {
@@ -3334,6 +3463,7 @@ export class BinaryBPlusTree {
                 allocatedBytes: options.allocatedBytes,
                 keepFreeSpace: options.keepFreeSpace,
                 reserveSpaceForNewEntries: options.reserveSpaceForNewEntries,
+                debug: this.debug,
             });
             mark('tree.createEnd');
 
@@ -3383,8 +3513,9 @@ export class BinaryBPlusTree {
         keepFreeSpace?: boolean;
         /** @default 0 */
         reserveSpaceForNewEntries?: number;
+        debug: DebugLogger;
     }) {
-        const writer = options.writer;
+        const { writer, debug } = options;
 
         if (typeof options.maxEntriesPerNode !== 'number') { options.maxEntriesPerNode = 255; }
         if (typeof options.fillFactor !== 'number') { options.fillFactor = 100; }
@@ -3743,6 +3874,7 @@ export class BinaryBPlusTree {
         allocatedBytes?: number;
         /** @default true */
         keepFreeSpace?: boolean;
+        debug: DebugLogger;
     }) {
         // Steps:
         // 1 - loop through all entries to calculate leaf start keys
@@ -3750,6 +3882,7 @@ export class BinaryBPlusTree {
         // 3 - create leafs
         // const entriesPerLeaf = Math.round(options.maxEntriesPerNode * (options.fillFactor / 100));
 
+        const { debug } = options;
         const getLeafStartKeys = async (entriesPerLeaf: number) => {
             options.treeStatistics.totalEntries = 0;
 
@@ -3849,6 +3982,7 @@ export class BinaryBPlusTree {
             keepFreeSpace: options.keepFreeSpace,
             maxEntriesPerNode: options.maxEntriesPerNode,
             metadataKeys: options.metadataKeys,
+            debug,
         });
     }
 
