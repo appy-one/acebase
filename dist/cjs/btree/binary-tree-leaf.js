@@ -1,12 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BinaryBPlusTreeLeaf = void 0;
+const assert_1 = require("../assert");
 const detailed_error_1 = require("../detailed-error");
 const binary_tree_node_info_1 = require("./binary-tree-node-info");
 const typesafe_compare_1 = require("./typesafe-compare");
 class BinaryBPlusTreeLeaf extends binary_tree_node_info_1.BinaryBPlusTreeNodeInfo {
     constructor(nodeInfo) {
-        console.assert(typeof nodeInfo.hasExtData === 'boolean', 'nodeInfo.hasExtData must be specified');
+        (0, assert_1.assert)(typeof nodeInfo.hasExtData === 'boolean', 'nodeInfo.hasExtData must be specified');
         super(nodeInfo);
         this.prevLeafOffset = 0;
         this.nextLeafOffset = 0;

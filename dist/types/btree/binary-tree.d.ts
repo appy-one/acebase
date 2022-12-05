@@ -1,3 +1,4 @@
+import { DebugLogger } from 'acebase-core';
 import { BinaryReader, ReadFunction } from './binary-reader';
 import { BinaryBPlusTreeLeaf } from './binary-tree-leaf';
 import { BinaryBPlusTreeLeafEntry } from './binary-tree-leaf-entry';
@@ -20,7 +21,6 @@ export declare class BlacklistingSearchOperator {
     constructor(callback: BlacklistingSearchOperator['check']);
 }
 export declare class BinaryBPlusTree {
-    id?: string;
     static EntryValue: typeof BinaryBPlusTreeLeafEntryValue;
     static TransactionOperation: typeof BinaryBPlusTreeTransactionOperation;
     private _chunkSize;
@@ -30,6 +30,8 @@ export declare class BinaryBPlusTree {
     private _readFn;
     private _originalByteLength?;
     private _fst;
+    id: string;
+    private debug;
     info: {
         headerLength: number;
         byteLength: number;
@@ -47,13 +49,31 @@ export declare class BinaryBPlusTree {
     };
     /**
      * Provides functionality to read and search in a B+tree from a binary data source
-     * @param readFn byte array, or function that reads from your data source, must return a promise that resolves with a byte array (the bytes read from file/memory)
-     * @param chunkSize numbers of bytes per chunk to read at once
-     * @param writeFn function that writes to your data source, must return a promise that resolves once write has completed
-     * @param id to edit the tree, pass a unique id to enable "thread-safe" locking
      */
-    constructor(readFn: number[] | ReadFunction, chunkSize?: number, writeFn?: WriteFunction, id?: string);
-    static test(data: number[]): Promise<void>;
+    constructor(init: {
+        /**
+         * byte array, or function that reads from your data source, must return a promise that resolves with a byte array (the bytes read from file/memory)
+         */
+        readFn: number[] | ReadFunction;
+        /**
+         * numbers of bytes per chunk to read at once
+         * @default 1024
+         */
+        chunkSize?: number;
+        /**
+         * function that writes to your data source, must return a promise that resolves once write has completed
+         */
+        writeFn?: WriteFunction;
+        /**
+         * to edit the tree, pass a unique id to enable concurrency-safe locking
+         */
+        id?: string;
+        /**
+         * logger instance
+         */
+        debug: DebugLogger;
+    });
+    static test(data: number[], debug: DebugLogger): Promise<void>;
     get autoGrow(): boolean;
     set autoGrow(grow: boolean);
     private _loadInfo;
@@ -149,6 +169,13 @@ export declare class BinaryBPlusTree {
     _growTree(bytesNeeded: number): Promise<void>;
     writeAllocationBytes(): Promise<void>;
     _writeAllocationBytes(): Promise<void>;
+    /**
+     * Sets allocation bytes in provided buffer, useful when growing the tree while rewriting
+     * @param buffer target buffer
+     * @param byteLength new tree byte length
+     * @param freeSpace new free space length
+     */
+    setAllocationBytes(buffer: Uint8Array, byteLength: number, freeSpace: number): Promise<void>;
     _registerFreeSpace(index: number, length: number): Promise<void>;
     _claimFreeSpace(bytesRequired: number): Promise<void>;
     _requestFreeSpace(bytesRequired: number): Promise<{
@@ -229,19 +256,14 @@ export declare class BinaryBPlusTree {
             depth: number;
             entriesPerNode: number;
         }>;
+        repairMode?: boolean;
     }): Promise<void>;
     _rebuild(writer: BinaryWriter, options?: {
-        /** bytes that have been pre-allocated, enforces a max writable byte length */
         allocatedBytes?: number;
-        /** number between 0-100 indicating the percentage of node and leaf filling, leaves room for later adds to the tree. Default is `95` */
         fillFactor?: number;
-        /** whether free space for later node/leaf creation is kept or added. If `allocatedBytes` is not given (or 0), 10% free space will be used. Default is `true` */
         keepFreeSpace?: boolean;
-        /** whether to increase the max amount of node/leaf entries (usually rebuilding is needed because of growth, so this might be a good idea). Default is true, will increase max entries with 10% (until the max of 255 is reached) */
         increaseMaxEntries?: boolean;
-        /** optionally reserves free space for specified amount of new leaf entries (overrides the default of 10% growth, only applies if `allocatedBytes` is not specified or 0). Default is `0` */
         reserveSpaceForNewEntries?: number;
-        /** object that will be updated with statistics as the tree is written */
         treeStatistics?: Partial<{
             byteLength: number;
             totalEntries: number;
@@ -250,6 +272,7 @@ export declare class BinaryBPlusTree {
             depth: number;
             entriesPerNode: number;
         }>;
+        repairMode?: boolean;
     }): Promise<void>;
     static create(options: {
         getLeafStartKeys: (entriesPerLeaf: number) => Promise<NodeEntryKeyType[]>;
@@ -274,6 +297,7 @@ export declare class BinaryBPlusTree {
         keepFreeSpace?: boolean;
         /** @default 0 */
         reserveSpaceForNewEntries?: number;
+        debug: DebugLogger;
     }): Promise<void>;
     /**
      * Creates a binary tree from a stream of entries.
@@ -299,6 +323,7 @@ export declare class BinaryBPlusTree {
         allocatedBytes?: number;
         /** @default true */
         keepFreeSpace?: boolean;
+        debug: DebugLogger;
     }): Promise<void>;
 }
 export {};

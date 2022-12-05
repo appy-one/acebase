@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BPlusTree = void 0;
 const acebase_core_1 = require("acebase-core");
+const assert_1 = require("../assert");
 const binary_1 = require("../binary");
 const detailed_error_1 = require("../detailed-error");
 const binary_tree_builder_1 = require("./binary-tree-builder");
@@ -80,7 +81,7 @@ class BPlusTree {
                 }
             }
             // Still here? key must be >= last entry
-            console.assert((0, typesafe_compare_1._isMoreOrEqual)(key, node.entries[node.entries.length - 1].key));
+            (0, assert_1.assert)((0, typesafe_compare_1._isMoreOrEqual)(key, node.entries[node.entries.length - 1].key));
             return findLeaf(node.gtChild);
         };
         return findLeaf(this.root);
@@ -486,7 +487,7 @@ class BPlusTree {
         const headerLength = bytes.length;
         await writer.append(bytes);
         const { references } = await this.root.toBinary(keepFreeSpace, writer);
-        console.assert(references.length === 0, 'All references must be resolved now');
+        (0, assert_1.assert)(references.length === 0, 'All references must be resolved now');
         let freeBytesLength = 0;
         if (keepFreeSpace) {
             // Add 10% free space

@@ -8,6 +8,7 @@ const btree_1 = require("../btree");
 const query_stats_1 = require("./query-stats");
 const fulltext_index_query_hint_1 = require("./fulltext-index-query-hint");
 const unidecode_1 = require("../unidecode");
+const assert_1 = require("../assert");
 class WordInfo {
     constructor(word, indexes, sourceIndexes) {
         this.word = word;
@@ -33,7 +34,7 @@ class TextInfo {
             pattern = options.pattern;
         }
         if (options.includeChars) {
-            console.assert(pattern.indexOf('[') >= 0, 'pattern does not contain []');
+            (0, assert_1.assert)(pattern.indexOf('[') >= 0, 'pattern does not contain []');
             let insert = '';
             for (let i = 0; i < options.includeChars.length; i++) {
                 insert += '\\' + options.includeChars[i];

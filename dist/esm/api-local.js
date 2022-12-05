@@ -5,6 +5,7 @@ import { MSSQLStorage, MSSQLStorageSettings } from './storage/mssql/index.js';
 import { CustomStorage, CustomStorageSettings } from './storage/custom/index.js';
 import { VALUE_TYPES } from './node-value-types.js';
 import { query as executeQuery } from './query.js';
+import { NodeNotFoundError } from './node-errors.js';
 export class LocalApi extends Api {
     constructor(dbname = 'default', init, readyCallback) {
         super();
@@ -190,6 +191,9 @@ export class LocalApi extends Api {
             })
                 .catch(err => {
                 // Node doesn't exist? No children..
+                if (!(err instanceof NodeNotFoundError)) {
+                    throw err;
+                }
             });
             return {
                 more,

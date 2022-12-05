@@ -31,7 +31,10 @@ export declare class AceBase extends AceBaseBase {
      */
     constructor(dbname: string, init?: Partial<AceBaseLocalSettings>);
     recovery: {
-        repairNode(path: string, options?: {
+        /**
+         * Repairs a node that cannot be loaded by removing the reference from its parent, or marking it as removed
+         */
+        repairNode: (path: string, options?: {
             /**
              * Included for testing purposes: whether to proceed if the target node does not appear broken.
              * @default false
@@ -42,7 +45,13 @@ export declare class AceBase extends AceBaseBase {
              * @default true
              */
             markAsRemoved?: boolean;
-        }): Promise<void>;
+        }) => Promise<void>;
+        /**
+         * Repairs a node that uses a B+Tree for its keys (100+ children).
+         * See https://github.com/appy-one/acebase/issues/183
+         * @param path Target path to fix
+         */
+        repairNodeTree: (path: string) => Promise<void>;
     };
     close(): Promise<void>;
     get settings(): {

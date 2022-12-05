@@ -1,3 +1,4 @@
+import { assert } from '../assert.js';
 import { writeByteLength } from '../binary.js';
 import { DetailedError } from '../detailed-error.js';
 import { FLAGS } from './binary-tree-builder.js';
@@ -117,7 +118,7 @@ export class BPlusTreeLeaf {
     }
     async toBinary(keepFreeSpace = false, writer) {
         // See BPlusTreeNode.toBinary() for data layout
-        console.assert(this.entries.every((entry, index, arr) => index === 0 || _isMore(entry.key, arr[index - 1].key)), 'Leaf entries are not sorted ok');
+        assert(this.entries.every((entry, index, arr) => index === 0 || _isMore(entry.key, arr[index - 1].key)), 'Leaf entries are not sorted ok');
         const bytes = [];
         const startIndex = writer.length;
         // byte_length:
@@ -143,7 +144,7 @@ export class BPlusTreeLeaf {
         const entriesStartIndex = bytes.length;
         const moreDataBlocks = [];
         this.entries.forEach(entry => {
-            console.assert(entry.values.length <= MAX_LEAF_ENTRY_VALUES, 'too many leaf entry values to store in binary');
+            assert(entry.values.length <= MAX_LEAF_ENTRY_VALUES, 'too many leaf entry values to store in binary');
             const keyBytes = BPlusTree.getBinaryKeyData(entry.key);
             bytes.push(...keyBytes);
             // val_length:

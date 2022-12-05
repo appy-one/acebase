@@ -176,6 +176,11 @@ export declare class AceBaseStorage extends Storage {
          */
         markAsRemoved?: boolean;
     }): Promise<void>;
+    /**
+     * Repairs a broken B+Tree key index of an object collection. Use this if you are unable to load every child of an object collection.
+     * @param path
+     */
+    repairNodeTree(path: string): Promise<void>;
     get transactionLoggingEnabled(): boolean;
     logMutation(type: 'set' | 'update', path: string, value: any, context: {
         acebase_cursor: string;

@@ -1,3 +1,4 @@
+import { assert } from '../assert.js';
 import { DetailedError } from '../detailed-error.js';
 import { BPlusTree } from './tree.js';
 import { BPlusTreeLeaf } from './tree-leaf.js';
@@ -290,7 +291,7 @@ export class BPlusTreeBuilder {
             .split('\n')
             .map(str => str.length > 0 ? JSON.parse(str) : '');
         const last = entries.pop(); // Remove last empty one (because split \n)
-        console.assert(last === '');
+        assert(last === '');
         const uniqueKeys = entries.shift() === 'true';
         const fillFactor = parseInt(entries.shift());
         const builder = new BPlusTreeBuilder(uniqueKeys, fillFactor);

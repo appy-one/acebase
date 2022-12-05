@@ -1,9 +1,10 @@
+import { assert } from '../assert.js';
 import { DetailedError } from '../detailed-error.js';
 import { BinaryBPlusTreeNodeInfo } from './binary-tree-node-info.js';
 import { _isEqual } from './typesafe-compare.js';
 export class BinaryBPlusTreeLeaf extends BinaryBPlusTreeNodeInfo {
     constructor(nodeInfo) {
-        console.assert(typeof nodeInfo.hasExtData === 'boolean', 'nodeInfo.hasExtData must be specified');
+        assert(typeof nodeInfo.hasExtData === 'boolean', 'nodeInfo.hasExtData must be specified');
         super(nodeInfo);
         this.prevLeafOffset = 0;
         this.nextLeafOffset = 0;

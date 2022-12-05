@@ -7,6 +7,7 @@ import { NodeNotFoundError, NodeRevisionError } from '../../node-errors.js';
 import { Storage, StorageSettings } from '../index.js';
 import { CustomStorageHelpers } from './helpers.js';
 import { NodeAddress } from '../../node-address.js';
+import { assert } from '../../assert.js';
 export { CustomStorageHelpers } from './helpers.js';
 /** Interface for metadata being stored for nodes */
 export class ICustomStorageNodeMetaData {
@@ -146,7 +147,7 @@ export class CustomStorageSettings extends StorageSettings {
         this.getTransaction = async ({ path, write }) => {
             // console.log(`${write ? 'WRITE' : 'READ'} transaction requested for path "${path}"`)
             const transaction = await settings.getTransaction({ path, write });
-            console.assert(typeof transaction.id === 'string', `transaction id not set`);
+            assert(typeof transaction.id === 'string', `transaction id not set`);
             // console.log(`Got transaction ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
             // Hijack rollback and commit
             const rollback = transaction.rollback;
@@ -239,7 +240,7 @@ export class CustomStorage extends Storage {
                 return { type: VALUE_TYPES.BINARY, value: ascii85.encode(val) };
             }
             else if (typeof val === 'object') {
-                console.assert(Object.keys(val).length === 0, 'child object stored in parent can only be empty');
+                assert(Object.keys(val).length === 0, 'child object stored in parent can only be empty');
                 return val;
             }
         };
@@ -785,7 +786,7 @@ export class CustomStorage extends Storage {
                         return { value: null };
                     } // path is root. There is no parent.
                     const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                    console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                    assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                     const parentNode = await this._readNode(pathInfo.parentPath, { transaction });
                     if (parentNode && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode.value) {
                         const childValueInfo = this._getTypeFromStoredValue(parentNode.value[pathInfo.key]);
@@ -938,7 +939,7 @@ export class CustomStorage extends Storage {
                         const trailKeys = pathKeys.slice(targetPathKeys.length);
                         let parent = value;
                         for (let j = 0; j < trailKeys.length; j++) {
-                            console.assert(typeof parent === 'object', 'parent must be an object/array to have children!!');
+                            assert(typeof parent === 'object', 'parent must be an object/array to have children!!');
                             const key = trailKeys[j];
                             const isLast = j === trailKeys.length - 1;
                             const nodeType = isLast
@@ -994,7 +995,7 @@ export class CustomStorage extends Storage {
                     Object.keys(result.value).forEach(key => {
                         if (typeof result.value[key] === 'object' && result.value[key].constructor === Object) {
                             // This can only happen if the object was empty
-                            console.assert(Object.keys(result.value[key]).length === 0);
+                            assert(Object.keys(result.value[key]).length === 0);
                             delete result.value[key];
                         }
                     });
@@ -1062,7 +1063,7 @@ export class CustomStorage extends Storage {
             if (!node && path !== '') {
                 // Try parent node
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                 const parent = await this._readNode(pathInfo.parentPath, { transaction });
                 if (parent && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parent.type) && pathInfo.key in parent.value) {
                     // Stored in parent node
@@ -1128,14 +1129,14 @@ export class CustomStorage extends Storage {
                 else {
                     // Update parent node
                     const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                    console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                    assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                     await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, transaction, suppress_events: options.suppress_events, context: options.context });
                 }
             }
             else {
                 // Delegate operation to update on parent node
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                 await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction, suppress_events: options.suppress_events, context: options.context });
             }
             if (!options.transaction) {
@@ -1176,13 +1177,13 @@ export class CustomStorage extends Storage {
                 // Node exists, but is stored in its parent node.
                 const pathInfo = PathInfo.get(path);
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                 await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, merge: true, suppress_events: options.suppress_events, context: options.context });
             }
             else {
                 // The node does not exist, it's parent doesn't have it either. Update the parent instead
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                 await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, suppress_events: options.suppress_events, context: options.context });
             }
             if (!options.transaction) {

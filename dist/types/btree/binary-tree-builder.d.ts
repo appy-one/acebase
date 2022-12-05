@@ -63,12 +63,6 @@ export declare class BinaryBPlusTreeBuilder {
     constructor(options?: Partial<BinaryBPlusTreeBuilder>);
     getHeader(): number[];
     createNode(info: CreateNodeInfo, options?: CreateNodeOptions): number[];
-    /**
-     *
-     * @param {} info
-     * @param {} options
-     * @returns {Uint8Array} bytes
-     */
     createLeaf(info: CreateLeafInfo, options?: CreateLeafOptions): Uint8Array;
     getLeafEntryValueBytes(recordPointer: LeafEntryRecordPointer, metadata: LeafEntryMetaData): number[];
     static getKeyBytes(key: NodeEntryKeyType): number[];

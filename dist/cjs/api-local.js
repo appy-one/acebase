@@ -8,6 +8,7 @@ const mssql_1 = require("./storage/mssql");
 const custom_1 = require("./storage/custom");
 const node_value_types_1 = require("./node-value-types");
 const query_1 = require("./query");
+const node_errors_1 = require("./node-errors");
 class LocalApi extends acebase_core_1.Api {
     constructor(dbname = 'default', init, readyCallback) {
         super();
@@ -187,6 +188,9 @@ class LocalApi extends acebase_core_1.Api {
             })
                 .catch(err => {
                 // Node doesn't exist? No children..
+                if (!(err instanceof node_errors_1.NodeNotFoundError)) {
+                    throw err;
+                }
             });
             return {
                 more,

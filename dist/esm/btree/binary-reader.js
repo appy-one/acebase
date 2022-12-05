@@ -2,6 +2,7 @@ import { Utils } from 'acebase-core';
 import { readByteLength, readSignedNumber } from '../binary.js';
 import { DetailedError } from '../detailed-error.js';
 import { pfs } from '../promise-fs/index.js';
+import { assert } from '../assert.js';
 import { BPlusTree } from './tree.js';
 const { bytesToNumber } = Utils;
 export class BinaryReader {
@@ -59,7 +60,7 @@ export class BinaryReader {
     }
     async init() {
         const chunk = await this.read(0, this.chunkSize);
-        console.assert(chunk instanceof Buffer, 'read function must return a Buffer');
+        assert(chunk instanceof Buffer, 'read function must return a Buffer');
         this.data = chunk;
         this.offset = 0;
         this.index = 0;
@@ -105,7 +106,7 @@ export class BinaryReader {
     async more(chunks = 1) {
         const length = chunks * this.chunkSize;
         const nextChunk = await this.read(this.offset + this.data.length, length);
-        console.assert(nextChunk instanceof Buffer, 'read function must return a Buffer');
+        assert(nextChunk instanceof Buffer, 'read function must return a Buffer');
         // Let go of old data before current index:
         this.data = this.data.slice(this.index);
         this.offset += this.index;

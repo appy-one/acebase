@@ -5,6 +5,7 @@ const acebase_core_1 = require("acebase-core");
 const binary_1 = require("../binary");
 const detailed_error_1 = require("../detailed-error");
 const promise_fs_1 = require("../promise-fs");
+const assert_1 = require("../assert");
 const tree_1 = require("./tree");
 const { bytesToNumber } = acebase_core_1.Utils;
 class BinaryReader {
@@ -62,7 +63,7 @@ class BinaryReader {
     }
     async init() {
         const chunk = await this.read(0, this.chunkSize);
-        console.assert(chunk instanceof Buffer, 'read function must return a Buffer');
+        (0, assert_1.assert)(chunk instanceof Buffer, 'read function must return a Buffer');
         this.data = chunk;
         this.offset = 0;
         this.index = 0;
@@ -108,7 +109,7 @@ class BinaryReader {
     async more(chunks = 1) {
         const length = chunks * this.chunkSize;
         const nextChunk = await this.read(this.offset + this.data.length, length);
-        console.assert(nextChunk instanceof Buffer, 'read function must return a Buffer');
+        (0, assert_1.assert)(nextChunk instanceof Buffer, 'read function must return a Buffer');
         // Let go of old data before current index:
         this.data = this.data.slice(this.index);
         this.offset += this.index;

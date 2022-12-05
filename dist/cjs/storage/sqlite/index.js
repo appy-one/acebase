@@ -9,6 +9,7 @@ const node_errors_1 = require("../../node-errors");
 const promise_fs_1 = require("../../promise-fs");
 const thread_safe_1 = require("../../thread-safe");
 const node_address_1 = require("../../node-address");
+const assert_1 = require("../../assert");
 class SQLiteNodeAddress extends node_address_1.NodeAddress {
     constructor(containerPath) {
         super(containerPath);
@@ -808,7 +809,7 @@ class SQLiteStorage extends __1.Storage {
                     const trailKeys = pathKeys.slice(targetPathKeys.length);
                     let parent = value;
                     for (let j = 0; j < trailKeys.length; j++) {
-                        console.assert(typeof parent === 'object', 'parent must be an object/array to have children!!');
+                        (0, assert_1.assert)(typeof parent === 'object', 'parent must be an object/array to have children!!');
                         const key = trailKeys[j];
                         const isLast = j === trailKeys.length - 1;
                         const nodeType = isLast
@@ -834,9 +835,9 @@ class SQLiteStorage extends __1.Storage {
                         }
                         if (key in parent) {
                             // Merge with parent
-                            console.assert(typeof parent[key] === typeof nodeValue && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(nodeType), 'Merging child values can only be done if existing and current values are both an array or object');
+                            (0, assert_1.assert)(typeof parent[key] === typeof nodeValue && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(nodeType), 'Merging child values can only be done if existing and current values are both an array or object');
                             Object.keys(nodeValue).forEach(childKey => {
-                                console.assert(!(childKey in parent[key]), 'child key is in parent value already?! HOW?!');
+                                (0, assert_1.assert)(!(childKey in parent[key]), 'child key is in parent value already?! HOW?!');
                                 parent[key][childKey] = nodeValue[childKey];
                             });
                         }
@@ -874,7 +875,7 @@ class SQLiteStorage extends __1.Storage {
                 Object.keys(result.value).forEach(key => {
                     if (typeof result.value[key] === 'object' && result.value[key].constructor === Object) {
                         // This can only happen if the object was empty
-                        console.assert(Object.keys(result.value[key]).length === 0);
+                        (0, assert_1.assert)(Object.keys(result.value[key]).length === 0);
                         delete result.value[key];
                     }
                 });

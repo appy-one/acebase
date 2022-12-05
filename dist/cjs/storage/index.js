@@ -10,6 +10,7 @@ const promise_fs_1 = require("../promise-fs");
 // const { IPCTransactionManager } = require('./node-transaction');
 const data_index_1 = require("../data-index"); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
 const indexes_1 = require("./indexes");
+const assert_1 = require("../assert");
 const { compareValues, getChildValues, encodeString, defer } = acebase_core_1.Utils;
 const DEBUG_MODE = false;
 const SUPPORTED_EVENTS = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
@@ -692,7 +693,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 modifiedData[key] = value[key];
             });
         }
-        // console.assert(topEventData !== newTopEventData, 'shallow copy must have been made!');
+        // assert(topEventData !== newTopEventData, 'shallow copy must have been made!');
         const dataChanges = compareValues(topEventData, newTopEventData);
         if (dataChanges === 'identical') {
             result.mutations = [];
@@ -746,7 +747,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             const oldValue = topEventData;
             const newValue = newTopEventData;
             if (trailKeys.length === 0) {
-                console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
+                (0, assert_1.assert)(pathKeys.length === indexPathKeys.length, 'check logic');
                 // Index is on updated path
                 const p = this.ipc.isMaster
                     ? index.handleRecordUpdate(topEventPath, oldValue, newValue)
@@ -762,7 +763,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 const indexPathKeys = acebase_core_1.PathInfo.getPathKeys(index.path + '/*');
                 const trailKeys = indexPathKeys.slice(pathKeys.length);
                 if (trailKeys.length === 0) {
-                    console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
+                    (0, assert_1.assert)(pathKeys.length === indexPathKeys.length, 'check logic');
                     return [{ path, oldValue, newValue }];
                 }
                 let results = [];
@@ -832,7 +833,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             variables.forEach(variable => {
                 // only replaces first occurrence (so multiple *'s will be processed 1 by 1)
                 const index = pathKeys.indexOf(variable.name);
-                console.assert(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
+                (0, assert_1.assert)(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
                 pathKeys[index] = variable.value;
             });
             const dataPath = pathKeys.reduce((path, key) => acebase_core_1.PathInfo.getChildPath(path, key), '');

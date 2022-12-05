@@ -1,6 +1,7 @@
 import { writeByteLength, writeSignedNumber } from '../binary.js';
 import { BinaryBPlusTreeBuilder } from './binary-tree-builder.js';
 import { Utils } from 'acebase-core';
+import { assert } from '../assert.js';
 const { numberToBytes, bytesToNumber } = Utils;
 export class BinaryWriter {
     constructor(stream, writeFn) {
@@ -84,11 +85,11 @@ export class BinaryWriter {
                 return bytesWritten;
             },
             write(data) {
-                console.assert(!ended, 'streaming was ended already!');
+                assert(!ended, 'streaming was ended already!');
                 if (pendingWrites === maxSimultaniousWrites) {
                     console.warn('Warning: you should wait for "drain" event before writing new data!');
                 }
-                // console.assert(_pendingWrites < _maxSimultaniousWrites, 'Wait for "drain" event before writing new data!');
+                // assert(_pendingWrites < _maxSimultaniousWrites, 'Wait for "drain" event before writing new data!');
                 pendingWrites++;
                 const success = () => {
                     bytesWritten += data.byteLength;
@@ -122,7 +123,7 @@ export class BinaryWriter {
                 return this;
             },
             once(event, callback) {
-                console.assert(event === 'drain', 'Custom stream can only handle "drain" event');
+                assert(event === 'drain', 'Custom stream can only handle "drain" event');
                 drainCallbacks.push(callback);
                 return this;
             },

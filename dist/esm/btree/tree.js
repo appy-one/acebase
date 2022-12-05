@@ -1,4 +1,5 @@
 import { Utils } from 'acebase-core';
+import { assert } from '../assert.js';
 import { writeByteLength } from '../binary.js';
 import { DetailedError } from '../detailed-error.js';
 import { FLAGS, KEY_TYPE } from './binary-tree-builder.js';
@@ -77,7 +78,7 @@ export class BPlusTree {
                 }
             }
             // Still here? key must be >= last entry
-            console.assert(_isMoreOrEqual(key, node.entries[node.entries.length - 1].key));
+            assert(_isMoreOrEqual(key, node.entries[node.entries.length - 1].key));
             return findLeaf(node.gtChild);
         };
         return findLeaf(this.root);
@@ -483,7 +484,7 @@ export class BPlusTree {
         const headerLength = bytes.length;
         await writer.append(bytes);
         const { references } = await this.root.toBinary(keepFreeSpace, writer);
-        console.assert(references.length === 0, 'All references must be resolved now');
+        assert(references.length === 0, 'All references must be resolved now');
         let freeBytesLength = 0;
         if (keepFreeSpace) {
             // Add 10% free space

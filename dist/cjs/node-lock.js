@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeLock = exports.NodeLocker = exports.LOCK_STATE = void 0;
 const acebase_core_1 = require("acebase-core");
+const assert_1 = require("./assert");
 const DEBUG_MODE = false;
 const DEFAULT_LOCK_TIMEOUT = 120; // in seconds
 exports.LOCK_STATE = {
@@ -187,7 +188,7 @@ class NodeLocker {
         else {
             // Keep pending until clashing lock(s) is/are removed
             //debug.warn(`lock :: QUEUED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
-            console.assert(lock.state === exports.LOCK_STATE.PENDING);
+            (0, assert_1.assert)(lock.state === exports.LOCK_STATE.PENDING);
             return new Promise((resolve, reject) => {
                 lock.resolve = resolve;
                 lock.reject = reject;

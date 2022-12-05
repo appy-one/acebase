@@ -7,6 +7,7 @@ import { pfs } from '../promise-fs/index.js';
 // const { IPCTransactionManager } = require('./node-transaction');
 import { DataIndex } from '../data-index/index.js'; // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
 import { createIndex } from './indexes.js';
+import { assert } from '../assert.js';
 const { compareValues, getChildValues, encodeString, defer } = Utils;
 const DEBUG_MODE = false;
 const SUPPORTED_EVENTS = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
@@ -687,7 +688,7 @@ export class Storage extends SimpleEventEmitter {
                 modifiedData[key] = value[key];
             });
         }
-        // console.assert(topEventData !== newTopEventData, 'shallow copy must have been made!');
+        // assert(topEventData !== newTopEventData, 'shallow copy must have been made!');
         const dataChanges = compareValues(topEventData, newTopEventData);
         if (dataChanges === 'identical') {
             result.mutations = [];
@@ -741,7 +742,7 @@ export class Storage extends SimpleEventEmitter {
             const oldValue = topEventData;
             const newValue = newTopEventData;
             if (trailKeys.length === 0) {
-                console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
+                assert(pathKeys.length === indexPathKeys.length, 'check logic');
                 // Index is on updated path
                 const p = this.ipc.isMaster
                     ? index.handleRecordUpdate(topEventPath, oldValue, newValue)
@@ -757,7 +758,7 @@ export class Storage extends SimpleEventEmitter {
                 const indexPathKeys = PathInfo.getPathKeys(index.path + '/*');
                 const trailKeys = indexPathKeys.slice(pathKeys.length);
                 if (trailKeys.length === 0) {
-                    console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
+                    assert(pathKeys.length === indexPathKeys.length, 'check logic');
                     return [{ path, oldValue, newValue }];
                 }
                 let results = [];
@@ -827,7 +828,7 @@ export class Storage extends SimpleEventEmitter {
             variables.forEach(variable => {
                 // only replaces first occurrence (so multiple *'s will be processed 1 by 1)
                 const index = pathKeys.indexOf(variable.name);
-                console.assert(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
+                assert(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
                 pathKeys[index] = variable.value;
             });
             const dataPath = pathKeys.reduce((path, key) => PathInfo.getChildPath(path, key), '');

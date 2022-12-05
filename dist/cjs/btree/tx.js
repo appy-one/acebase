@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TX = exports.TxDetailedError = void 0;
+const assert_1 = require("../assert");
 const detailed_error_1 = require("../detailed-error");
 class TxDetailedError extends detailed_error_1.DetailedError {
     constructor(code, msg, originalError) {
@@ -17,7 +18,7 @@ class TX {
     }
     // TODO: refactor to async
     run(action, rollback) {
-        console.assert(this._queue.length === 0, 'queue must be empty');
+        (0, assert_1.assert)(this._queue.length === 0, 'queue must be empty');
         typeof rollback === 'function' && this._rollbackSteps.push(rollback);
         const p = action instanceof Promise ? action : action();
         return p.catch((err) => {

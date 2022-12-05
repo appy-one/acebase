@@ -45,7 +45,7 @@ class BrowserAceBase extends acebase_local_1.AceBase {
 }
 exports.BrowserAceBase = BrowserAceBase;
 
-},{"./acebase-local":2,"./storage/custom/indexed-db":21}],2:[function(require,module,exports){
+},{"./acebase-local":2,"./storage/custom/indexed-db":22}],2:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBase = exports.AceBaseLocalSettings = exports.IndexedDBStorageSettings = exports.LocalStorageSettings = void 0;
@@ -79,15 +79,12 @@ class AceBase extends acebase_core_1.AceBaseBase {
     constructor(dbname, init = {}) {
         const settings = new AceBaseLocalSettings(init);
         super(dbname, settings);
-        const apiSettings = {
-            db: this,
-            settings,
-        };
-        this.api = new api_local_1.LocalApi(dbname, apiSettings, () => {
-            this.emit('ready');
-        });
         this.recovery = {
+            /**
+             * Repairs a node that cannot be loaded by removing the reference from its parent, or marking it as removed
+             */
             repairNode: async (path, options) => {
+                await this.ready();
                 if (this.api.storage instanceof binary_1.AceBaseStorage) {
                     await this.api.storage.repairNode(path, options);
                 }
@@ -95,7 +92,24 @@ class AceBase extends acebase_core_1.AceBaseBase {
                     throw new Error(`repairNode is not supported with chosen storage engine`);
                 }
             },
+            /**
+             * Repairs a node that uses a B+Tree for its keys (100+ children).
+             * See https://github.com/appy-one/acebase/issues/183
+             * @param path Target path to fix
+             */
+            repairNodeTree: async (path) => {
+                await this.ready();
+                const storage = this.api.storage;
+                await storage.repairNodeTree(path);
+            },
         };
+        const apiSettings = {
+            db: this,
+            settings,
+        };
+        this.api = new api_local_1.LocalApi(dbname, apiSettings, () => {
+            this.emit('ready');
+        });
     }
     async close() {
         // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.
@@ -131,7 +145,7 @@ class AceBase extends acebase_core_1.AceBaseBase {
 }
 exports.AceBase = AceBase;
 
-},{"./api-local":3,"./storage/binary":17,"./storage/custom/indexed-db/settings":22,"./storage/custom/local-storage":24,"acebase-core":42}],3:[function(require,module,exports){
+},{"./api-local":3,"./storage/binary":18,"./storage/custom/indexed-db/settings":23,"./storage/custom/local-storage":25,"acebase-core":43}],3:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalApi = void 0;
@@ -142,6 +156,7 @@ const mssql_1 = require("./storage/mssql");
 const custom_1 = require("./storage/custom");
 const node_value_types_1 = require("./node-value-types");
 const query_1 = require("./query");
+const node_errors_1 = require("./node-errors");
 class LocalApi extends acebase_core_1.Api {
     constructor(dbname = 'default', init, readyCallback) {
         super();
@@ -321,6 +336,9 @@ class LocalApi extends acebase_core_1.Api {
             })
                 .catch(err => {
                 // Node doesn't exist? No children..
+                if (!(err instanceof node_errors_1.NodeNotFoundError)) {
+                    throw err;
+                }
             });
             return {
                 more,
@@ -428,7 +446,23 @@ class LocalApi extends acebase_core_1.Api {
 }
 exports.LocalApi = LocalApi;
 
-},{"./node-value-types":13,"./query":16,"./storage/binary":17,"./storage/custom":20,"./storage/mssql":29,"./storage/sqlite":30,"acebase-core":42}],4:[function(require,module,exports){
+},{"./node-errors":11,"./node-value-types":14,"./query":17,"./storage/binary":18,"./storage/custom":21,"./storage/mssql":30,"./storage/sqlite":31,"acebase-core":43}],4:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.assert = void 0;
+/**
+* Replacement for console.assert, throws an error if condition is not met.
+* @param condition 'truthy' condition
+* @param error
+*/
+function assert(condition, error) {
+    if (!condition) {
+        throw new Error(`Assertion failed: ${error !== null && error !== void 0 ? error : 'check your code'}`);
+    }
+}
+exports.assert = assert;
+
+},{}],5:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AsyncTaskBatch = void 0;
@@ -508,7 +542,7 @@ class AsyncTaskBatch {
 }
 exports.AsyncTaskBatch = AsyncTaskBatch;
 
-},{}],5:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
 "use strict";
 /**
    ________________________________________________________________________________
@@ -588,7 +622,7 @@ var storage_1 = require("./storage");
 Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return storage_1.StorageSettings; } });
 Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return storage_1.SchemaValidationError; } });
 
-},{"./acebase-browser":1,"./acebase-local":2,"./storage":27,"./storage/binary":17,"./storage/custom":20,"./storage/mssql":29,"./storage/sqlite":30,"acebase-core":42}],6:[function(require,module,exports){
+},{"./acebase-browser":1,"./acebase-local":2,"./storage":28,"./storage/binary":18,"./storage/custom":21,"./storage/mssql":30,"./storage/sqlite":31,"acebase-core":43}],7:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ArrayIndex = exports.GeoIndex = exports.FullTextIndex = exports.DataIndex = void 0;
@@ -618,7 +652,7 @@ class ArrayIndex extends not_supported_1.NotSupported {
 }
 exports.ArrayIndex = ArrayIndex;
 
-},{"../not-supported":14}],7:[function(require,module,exports){
+},{"../not-supported":15}],8:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RemoteIPCPeer = exports.IPCPeer = void 0;
@@ -761,7 +795,7 @@ class RemoteIPCPeer extends not_supported_1.NotSupported {
 }
 exports.RemoteIPCPeer = RemoteIPCPeer;
 
-},{"../not-supported":14,"./ipc":8,"acebase-core":42}],8:[function(require,module,exports){
+},{"../not-supported":15,"./ipc":9,"acebase-core":43}],9:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
@@ -1260,7 +1294,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock":12,"acebase-core":42}],9:[function(require,module,exports){
+},{"../node-lock":13,"acebase-core":43}],10:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RemovedNodeAddress = exports.NodeAddress = void 0;
@@ -1295,7 +1329,7 @@ class RemovedNodeAddress extends NodeAddress {
 }
 exports.RemovedNodeAddress = RemovedNodeAddress;
 
-},{}],10:[function(require,module,exports){
+},{}],11:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeRevisionError = exports.NodeNotFoundError = void 0;
@@ -1306,7 +1340,7 @@ class NodeRevisionError extends Error {
 }
 exports.NodeRevisionError = NodeRevisionError;
 
-},{}],11:[function(require,module,exports){
+},{}],12:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeInfo = void 0;
@@ -1355,11 +1389,12 @@ class NodeInfo {
 }
 exports.NodeInfo = NodeInfo;
 
-},{"./node-value-types":13,"acebase-core":42}],12:[function(require,module,exports){
+},{"./node-value-types":14,"acebase-core":43}],13:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeLock = exports.NodeLocker = exports.LOCK_STATE = void 0;
 const acebase_core_1 = require("acebase-core");
+const assert_1 = require("./assert");
 const DEBUG_MODE = false;
 const DEFAULT_LOCK_TIMEOUT = 120; // in seconds
 exports.LOCK_STATE = {
@@ -1545,7 +1580,7 @@ class NodeLocker {
         else {
             // Keep pending until clashing lock(s) is/are removed
             //debug.warn(`lock :: QUEUED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
-            console.assert(lock.state === exports.LOCK_STATE.PENDING);
+            (0, assert_1.assert)(lock.state === exports.LOCK_STATE.PENDING);
             return new Promise((resolve, reject) => {
                 lock.resolve = resolve;
                 lock.reject = reject;
@@ -1639,7 +1674,7 @@ class NodeLock {
 }
 exports.NodeLock = NodeLock;
 
-},{"acebase-core":42}],13:[function(require,module,exports){
+},{"./assert":4,"acebase-core":43}],14:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getValueType = exports.getNodeValueType = exports.getValueTypeName = exports.VALUE_TYPES = void 0;
@@ -1731,7 +1766,7 @@ function getValueType(value) {
 }
 exports.getValueType = getValueType;
 
-},{"acebase-core":42}],14:[function(require,module,exports){
+},{"acebase-core":43}],15:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotSupported = void 0;
@@ -1740,7 +1775,7 @@ class NotSupported {
 }
 exports.NotSupported = NotSupported;
 
-},{}],15:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pfs = void 0;
@@ -1750,7 +1785,7 @@ class pfs {
 }
 exports.pfs = pfs;
 
-},{}],16:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.query = void 0;
@@ -2480,7 +2515,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
 }
 exports.query = query;
 
-},{"./async-task-batch":4,"./data-index":6,"./node-errors":10,"./node-value-types":13,"acebase-core":42}],17:[function(require,module,exports){
+},{"./async-task-batch":5,"./data-index":7,"./node-errors":11,"./node-value-types":14,"acebase-core":43}],18:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseStorage = exports.AceBaseStorageSettings = void 0;
@@ -2498,7 +2533,7 @@ class AceBaseStorage extends not_supported_1.NotSupported {
 }
 exports.AceBaseStorage = AceBaseStorage;
 
-},{"../../not-supported":14}],18:[function(require,module,exports){
+},{"../../not-supported":15}],19:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
@@ -2575,7 +2610,7 @@ async function createIndex(context, path, key, options) {
 }
 exports.createIndex = createIndex;
 
-},{"../data-index":6,"../promise-fs":15,"acebase-core":42}],19:[function(require,module,exports){
+},{"../data-index":7,"../promise-fs":16,"acebase-core":43}],20:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorageHelpers = void 0;
@@ -2644,7 +2679,7 @@ class CustomStorageHelpers {
 }
 exports.CustomStorageHelpers = CustomStorageHelpers;
 
-},{"acebase-core":42}],20:[function(require,module,exports){
+},{"acebase-core":43}],21:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorage = exports.CustomStorageNodeInfo = exports.CustomStorageNodeAddress = exports.CustomStorageSettings = exports.CustomStorageTransaction = exports.ICustomStorageNode = exports.ICustomStorageNodeMetaData = exports.CustomStorageHelpers = void 0;
@@ -2657,6 +2692,7 @@ const node_errors_1 = require("../../node-errors");
 const index_1 = require("../index");
 const helpers_1 = require("./helpers");
 const node_address_1 = require("../../node-address");
+const assert_1 = require("../../assert");
 var helpers_2 = require("./helpers");
 Object.defineProperty(exports, "CustomStorageHelpers", { enumerable: true, get: function () { return helpers_2.CustomStorageHelpers; } });
 /** Interface for metadata being stored for nodes */
@@ -2800,7 +2836,7 @@ class CustomStorageSettings extends index_1.StorageSettings {
         this.getTransaction = async ({ path, write }) => {
             // console.log(`${write ? 'WRITE' : 'READ'} transaction requested for path "${path}"`)
             const transaction = await settings.getTransaction({ path, write });
-            console.assert(typeof transaction.id === 'string', `transaction id not set`);
+            (0, assert_1.assert)(typeof transaction.id === 'string', `transaction id not set`);
             // console.log(`Got transaction ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
             // Hijack rollback and commit
             const rollback = transaction.rollback;
@@ -2896,7 +2932,7 @@ class CustomStorage extends index_1.Storage {
                 return { type: node_value_types_1.VALUE_TYPES.BINARY, value: acebase_core_1.ascii85.encode(val) };
             }
             else if (typeof val === 'object') {
-                console.assert(Object.keys(val).length === 0, 'child object stored in parent can only be empty');
+                (0, assert_1.assert)(Object.keys(val).length === 0, 'child object stored in parent can only be empty');
                 return val;
             }
         };
@@ -3442,7 +3478,7 @@ class CustomStorage extends index_1.Storage {
                         return { value: null };
                     } // path is root. There is no parent.
                     const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                    console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                    (0, assert_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                     const parentNode = await this._readNode(pathInfo.parentPath, { transaction });
                     if (parentNode && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode.value) {
                         const childValueInfo = this._getTypeFromStoredValue(parentNode.value[pathInfo.key]);
@@ -3595,7 +3631,7 @@ class CustomStorage extends index_1.Storage {
                         const trailKeys = pathKeys.slice(targetPathKeys.length);
                         let parent = value;
                         for (let j = 0; j < trailKeys.length; j++) {
-                            console.assert(typeof parent === 'object', 'parent must be an object/array to have children!!');
+                            (0, assert_1.assert)(typeof parent === 'object', 'parent must be an object/array to have children!!');
                             const key = trailKeys[j];
                             const isLast = j === trailKeys.length - 1;
                             const nodeType = isLast
@@ -3651,7 +3687,7 @@ class CustomStorage extends index_1.Storage {
                     Object.keys(result.value).forEach(key => {
                         if (typeof result.value[key] === 'object' && result.value[key].constructor === Object) {
                             // This can only happen if the object was empty
-                            console.assert(Object.keys(result.value[key]).length === 0);
+                            (0, assert_1.assert)(Object.keys(result.value[key]).length === 0);
                             delete result.value[key];
                         }
                     });
@@ -3719,7 +3755,7 @@ class CustomStorage extends index_1.Storage {
             if (!node && path !== '') {
                 // Try parent node
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                (0, assert_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                 const parent = await this._readNode(pathInfo.parentPath, { transaction });
                 if (parent && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(parent.type) && pathInfo.key in parent.value) {
                     // Stored in parent node
@@ -3785,14 +3821,14 @@ class CustomStorage extends index_1.Storage {
                 else {
                     // Update parent node
                     const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                    console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                    (0, assert_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                     await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, transaction, suppress_events: options.suppress_events, context: options.context });
                 }
             }
             else {
                 // Delegate operation to update on parent node
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                (0, assert_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                 await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction, suppress_events: options.suppress_events, context: options.context });
             }
             if (!options.transaction) {
@@ -3833,13 +3869,13 @@ class CustomStorage extends index_1.Storage {
                 // Node exists, but is stored in its parent node.
                 const pathInfo = acebase_core_1.PathInfo.get(path);
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                (0, assert_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                 await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, merge: true, suppress_events: options.suppress_events, context: options.context });
             }
             else {
                 // The node does not exist, it's parent doesn't have it either. Update the parent instead
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                console.assert(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                (0, assert_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                 await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, suppress_events: options.suppress_events, context: options.context });
             }
             if (!options.transaction) {
@@ -3858,7 +3894,7 @@ class CustomStorage extends index_1.Storage {
 }
 exports.CustomStorage = CustomStorage;
 
-},{"../../node-address":9,"../../node-errors":10,"../../node-info":11,"../../node-lock":12,"../../node-value-types":13,"../index":27,"./helpers":19,"acebase-core":42}],21:[function(require,module,exports){
+},{"../../assert":4,"../../node-address":10,"../../node-errors":11,"../../node-info":12,"../../node-lock":13,"../../node-value-types":14,"../index":28,"./helpers":20,"acebase-core":43}],22:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndexedDBInstance = void 0;
@@ -3936,7 +3972,7 @@ function createIndexedDBInstance(dbname, init = {}) {
 }
 exports.createIndexedDBInstance = createIndexedDBInstance;
 
-},{"..":20,"../../..":5,"./settings":22,"./transaction":23,"acebase-core":42}],22:[function(require,module,exports){
+},{"..":21,"../../..":6,"./settings":23,"./transaction":24,"acebase-core":43}],23:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageSettings = void 0;
@@ -3980,7 +4016,7 @@ class IndexedDBStorageSettings extends __1.StorageSettings {
 }
 exports.IndexedDBStorageSettings = IndexedDBStorageSettings;
 
-},{"../..":27}],23:[function(require,module,exports){
+},{"../..":28}],24:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageTransaction = void 0;
@@ -4207,7 +4243,7 @@ class IndexedDBStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.IndexedDBStorageTransaction = IndexedDBStorageTransaction;
 
-},{"..":20}],24:[function(require,module,exports){
+},{"..":21}],25:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createLocalStorageInstance = exports.LocalStorageTransaction = exports.LocalStorageSettings = void 0;
@@ -4248,7 +4284,7 @@ function createLocalStorageInstance(dbname, init = {}) {
 }
 exports.createLocalStorageInstance = createLocalStorageInstance;
 
-},{"..":20,"../../..":5,"./settings":25,"./transaction":26}],25:[function(require,module,exports){
+},{"..":21,"../../..":6,"./settings":26,"./transaction":27}],26:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageSettings = void 0;
@@ -4290,7 +4326,7 @@ class LocalStorageSettings extends __1.StorageSettings {
 }
 exports.LocalStorageSettings = LocalStorageSettings;
 
-},{"../..":27}],26:[function(require,module,exports){
+},{"../..":28}],27:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageTransaction = void 0;
@@ -4384,7 +4420,7 @@ class LocalStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.LocalStorageTransaction = LocalStorageTransaction;
 
-},{"..":20}],27:[function(require,module,exports){
+},{"..":21}],28:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Storage = exports.StorageSettings = exports.SchemaValidationError = void 0;
@@ -4397,6 +4433,7 @@ const promise_fs_1 = require("../promise-fs");
 // const { IPCTransactionManager } = require('./node-transaction');
 const data_index_1 = require("../data-index"); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
 const indexes_1 = require("./indexes");
+const assert_1 = require("../assert");
 const { compareValues, getChildValues, encodeString, defer } = acebase_core_1.Utils;
 const DEBUG_MODE = false;
 const SUPPORTED_EVENTS = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
@@ -5079,7 +5116,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 modifiedData[key] = value[key];
             });
         }
-        // console.assert(topEventData !== newTopEventData, 'shallow copy must have been made!');
+        // assert(topEventData !== newTopEventData, 'shallow copy must have been made!');
         const dataChanges = compareValues(topEventData, newTopEventData);
         if (dataChanges === 'identical') {
             result.mutations = [];
@@ -5133,7 +5170,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             const oldValue = topEventData;
             const newValue = newTopEventData;
             if (trailKeys.length === 0) {
-                console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
+                (0, assert_1.assert)(pathKeys.length === indexPathKeys.length, 'check logic');
                 // Index is on updated path
                 const p = this.ipc.isMaster
                     ? index.handleRecordUpdate(topEventPath, oldValue, newValue)
@@ -5149,7 +5186,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 const indexPathKeys = acebase_core_1.PathInfo.getPathKeys(index.path + '/*');
                 const trailKeys = indexPathKeys.slice(pathKeys.length);
                 if (trailKeys.length === 0) {
-                    console.assert(pathKeys.length === indexPathKeys.length, 'check logic');
+                    (0, assert_1.assert)(pathKeys.length === indexPathKeys.length, 'check logic');
                     return [{ path, oldValue, newValue }];
                 }
                 let results = [];
@@ -5219,7 +5256,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             variables.forEach(variable => {
                 // only replaces first occurrence (so multiple *'s will be processed 1 by 1)
                 const index = pathKeys.indexOf(variable.name);
-                console.assert(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
+                (0, assert_1.assert)(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
                 pathKeys[index] = variable.value;
             });
             const dataPath = pathKeys.reduce((path, key) => acebase_core_1.PathInfo.getChildPath(path, key), '');
@@ -6455,14 +6492,14 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
 }
 exports.Storage = Storage;
 
-},{"../data-index":6,"../ipc":7,"../node-errors":10,"../node-info":11,"../node-value-types":13,"../promise-fs":15,"./indexes":28,"acebase-core":42}],28:[function(require,module,exports){
+},{"../assert":4,"../data-index":7,"../ipc":8,"../node-errors":11,"../node-info":12,"../node-value-types":14,"../promise-fs":16,"./indexes":29,"acebase-core":43}],29:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
 var create_index_1 = require("./create-index");
 Object.defineProperty(exports, "createIndex", { enumerable: true, get: function () { return create_index_1.createIndex; } });
 
-},{"./create-index":18}],29:[function(require,module,exports){
+},{"./create-index":19}],30:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MSSQLStorage = exports.MSSQLStorageSettings = void 0;
@@ -6480,7 +6517,7 @@ class MSSQLStorage extends not_supported_1.NotSupported {
 }
 exports.MSSQLStorage = MSSQLStorage;
 
-},{"../../not-supported":14}],30:[function(require,module,exports){
+},{"../../not-supported":15}],31:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SQLiteStorage = exports.SQLiteStorageSettings = void 0;
@@ -6498,7 +6535,7 @@ class SQLiteStorage extends not_supported_1.NotSupported {
 }
 exports.SQLiteStorage = SQLiteStorage;
 
-},{"../../not-supported":14}],31:[function(require,module,exports){
+},{"../../not-supported":15}],32:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseBase = exports.AceBaseBaseSettings = void 0;
@@ -6692,7 +6729,7 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
 }
 exports.AceBaseBase = AceBaseBase;
 
-},{"./data-reference":38,"./debug":40,"./optional-observable":44,"./simple-colors":51,"./simple-event-emitter":52,"./type-mappings":55}],32:[function(require,module,exports){
+},{"./data-reference":39,"./debug":41,"./optional-observable":45,"./simple-colors":52,"./simple-event-emitter":53,"./type-mappings":56}],33:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Api = void 0;
@@ -6739,7 +6776,7 @@ class Api {
 }
 exports.Api = Api;
 
-},{}],33:[function(require,module,exports){
+},{}],34:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ascii85 = void 0;
@@ -6821,7 +6858,7 @@ exports.ascii85 = {
     },
 };
 
-},{}],34:[function(require,module,exports){
+},{}],35:[function(require,module,exports){
 "use strict";
 var _a, _b;
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -6834,7 +6871,7 @@ function fingerprint() {
 }
 exports.default = fingerprint;
 
-},{"../pad":36}],35:[function(require,module,exports){
+},{"../pad":37}],36:[function(require,module,exports){
 "use strict";
 /**
  * cuid.js
@@ -6886,7 +6923,7 @@ function cuid(timebias = 0) {
 exports.default = cuid;
 // Not using slugs, removed code
 
-},{"./fingerprint":34,"./pad":36}],36:[function(require,module,exports){
+},{"./fingerprint":35,"./pad":37}],37:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 function pad(num, size) {
@@ -6895,7 +6932,7 @@ function pad(num, size) {
 }
 exports.default = pad;
 
-},{}],37:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OrderedCollectionProxy = exports.proxyAccess = exports.LiveDataProxy = void 0;
@@ -8121,7 +8158,7 @@ class OrderedCollectionProxy {
 }
 exports.OrderedCollectionProxy = OrderedCollectionProxy;
 
-},{"./data-reference":38,"./data-snapshot":39,"./id":41,"./optional-observable":44,"./path-info":46,"./path-reference":47,"./process":48,"./simple-event-emitter":52,"./utils":56}],38:[function(require,module,exports){
+},{"./data-reference":39,"./data-snapshot":40,"./id":42,"./optional-observable":45,"./path-info":47,"./path-reference":48,"./process":49,"./simple-event-emitter":53,"./utils":57}],39:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DataReferencesArray = exports.DataSnapshotsArray = exports.DataReferenceQuery = exports.DataReference = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = void 0;
@@ -9195,7 +9232,7 @@ class DataReferencesArray extends Array {
 }
 exports.DataReferencesArray = DataReferencesArray;
 
-},{"./data-proxy":37,"./data-snapshot":39,"./id":41,"./optional-observable":44,"./path-info":46,"./subscription":53}],39:[function(require,module,exports){
+},{"./data-proxy":38,"./data-snapshot":40,"./id":42,"./optional-observable":45,"./path-info":47,"./subscription":54}],40:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MutationsDataSnapshot = exports.DataSnapshot = void 0;
@@ -9348,7 +9385,7 @@ class MutationsDataSnapshot extends DataSnapshot {
 }
 exports.MutationsDataSnapshot = MutationsDataSnapshot;
 
-},{"./path-info":46}],40:[function(require,module,exports){
+},{"./path-info":47}],41:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DebugLogger = void 0;
@@ -9380,7 +9417,7 @@ class DebugLogger {
 }
 exports.DebugLogger = DebugLogger;
 
-},{"./process":48}],41:[function(require,module,exports){
+},{"./process":49}],42:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ID = void 0;
@@ -9406,7 +9443,7 @@ class ID {
 }
 exports.ID = ID;
 
-},{"./cuid":35}],42:[function(require,module,exports){
+},{"./cuid":36}],43:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ObjectCollection = exports.PartialArray = exports.SimpleObservable = exports.SchemaDefinition = exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.OrderedCollectionProxy = exports.proxyAccess = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.DataReferencesArray = exports.DataSnapshotsArray = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
@@ -9462,7 +9499,7 @@ Object.defineProperty(exports, "PartialArray", { enumerable: true, get: function
 const object_collection_1 = require("./object-collection");
 Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return object_collection_1.ObjectCollection; } });
 
-},{"./acebase-base":31,"./api":32,"./ascii85":33,"./data-proxy":37,"./data-reference":38,"./data-snapshot":39,"./debug":40,"./id":41,"./object-collection":43,"./optional-observable":44,"./partial-array":45,"./path-info":46,"./path-reference":47,"./schema":49,"./simple-cache":50,"./simple-colors":51,"./simple-event-emitter":52,"./subscription":53,"./transport":54,"./type-mappings":55,"./utils":56}],43:[function(require,module,exports){
+},{"./acebase-base":32,"./api":33,"./ascii85":34,"./data-proxy":38,"./data-reference":39,"./data-snapshot":40,"./debug":41,"./id":42,"./object-collection":44,"./optional-observable":45,"./partial-array":46,"./path-info":47,"./path-reference":48,"./schema":50,"./simple-cache":51,"./simple-colors":52,"./simple-event-emitter":53,"./subscription":54,"./transport":55,"./type-mappings":56,"./utils":57}],44:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ObjectCollection = void 0;
@@ -9514,7 +9551,7 @@ class ObjectCollection {
 }
 exports.ObjectCollection = ObjectCollection;
 
-},{"./id":41}],44:[function(require,module,exports){
+},{"./id":42}],45:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleObservable = exports.setObservable = exports.getObservable = void 0;
@@ -9605,7 +9642,7 @@ class SimpleObservable {
 }
 exports.SimpleObservable = SimpleObservable;
 
-},{"./utils":56,"rxjs":57}],45:[function(require,module,exports){
+},{"./utils":57,"rxjs":58}],46:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PartialArray = void 0;
@@ -9628,7 +9665,7 @@ class PartialArray {
 }
 exports.PartialArray = PartialArray;
 
-},{}],46:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathInfo = void 0;
@@ -9908,7 +9945,7 @@ class PathInfo {
 }
 exports.PathInfo = PathInfo;
 
-},{}],47:[function(require,module,exports){
+},{}],48:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathReference = void 0;
@@ -9923,7 +9960,7 @@ class PathReference {
 }
 exports.PathReference = PathReference;
 
-},{}],48:[function(require,module,exports){
+},{}],49:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = {
@@ -9933,7 +9970,7 @@ exports.default = {
     },
 };
 
-},{}],49:[function(require,module,exports){
+},{}],50:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SchemaDefinition = void 0;
@@ -10286,7 +10323,7 @@ class SchemaDefinition {
 }
 exports.SchemaDefinition = SchemaDefinition;
 
-},{}],50:[function(require,module,exports){
+},{}],51:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleCache = void 0;
@@ -10370,7 +10407,7 @@ class SimpleCache {
 }
 exports.SimpleCache = SimpleCache;
 
-},{"./utils":56}],51:[function(require,module,exports){
+},{"./utils":57}],52:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Colorize = exports.SetColorsEnabled = exports.ColorsSupported = exports.ColorStyle = void 0;
@@ -10524,7 +10561,7 @@ String.prototype.colorize = function (style) {
     return Colorize(this, style);
 };
 
-},{"./process":48}],52:[function(require,module,exports){
+},{"./process":49}],53:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleEventEmitter = void 0;
@@ -10595,7 +10632,7 @@ class SimpleEventEmitter {
 }
 exports.SimpleEventEmitter = SimpleEventEmitter;
 
-},{}],53:[function(require,module,exports){
+},{}],54:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EventStream = exports.EventPublisher = exports.EventSubscription = void 0;
@@ -10782,7 +10819,7 @@ class EventStream {
 }
 exports.EventStream = EventStream;
 
-},{}],54:[function(require,module,exports){
+},{}],55:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deserialize2 = exports.serialize2 = exports.serialize = exports.detectSerializeVersion = exports.deserialize = void 0;
@@ -11118,7 +11155,7 @@ const deserialize2 = (data) => {
 };
 exports.deserialize2 = deserialize2;
 
-},{"./ascii85":33,"./partial-array":45,"./path-info":46,"./path-reference":47,"./utils":56}],55:[function(require,module,exports){
+},{"./ascii85":34,"./partial-array":46,"./path-info":47,"./path-reference":48,"./utils":57}],56:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TypeMappings = void 0;
@@ -11440,7 +11477,7 @@ class TypeMappings {
 }
 exports.TypeMappings = TypeMappings;
 
-},{"./data-reference":38,"./data-snapshot":39,"./path-info":46,"./utils":56}],56:[function(require,module,exports){
+},{"./data-reference":39,"./data-snapshot":40,"./path-info":47,"./utils":57}],57:[function(require,module,exports){
 (function (global,Buffer){(function (){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -11889,7 +11926,7 @@ function getGlobalObject() {
 exports.getGlobalObject = getGlobalObject;
 
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {},require("buffer").Buffer)
-},{"./partial-array":45,"./path-reference":47,"./process":48,"buffer":57}],57:[function(require,module,exports){
+},{"./partial-array":46,"./path-reference":48,"./process":49,"buffer":58}],58:[function(require,module,exports){
 
-},{}]},{},[5])(5)
+},{}]},{},[6])(6)
 });

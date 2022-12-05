@@ -9,6 +9,7 @@ const node_value_types_1 = require("../node-value-types");
 const quicksort_1 = require("../quicksort");
 const query_stats_1 = require("./query-stats");
 const query_results_1 = require("./query-results");
+const assert_1 = require("../assert");
 const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = acebase_core_1.Utils;
 const DISK_BLOCK_SIZE = 4096; // use 512 for older disks
 const FILL_FACTOR = 50; // leave room for inserts
@@ -942,17 +943,17 @@ class DataIndex {
                     // Write!
                     streamState.chunks = [];
                     streamState.wait = !buildWriteStream.write(buffer, err => {
-                        console.assert(!err, `Failed to write to stream: ${err && err.message}`);
+                        (0, assert_1.assert)(!err, `Failed to write to stream: ${err && err.message}`);
                     });
                 });
                 const writeToStream = (bytes) => {
                     if (streamState.wait) {
                         streamState.chunks.push(bytes);
-                        console.assert(streamState.chunks.length < 100000, 'Something going wrong here');
+                        (0, assert_1.assert)(streamState.chunks.length < 100000, 'Something going wrong here');
                     }
                     else {
                         streamState.wait = !buildWriteStream.write(Buffer.from(bytes), err => {
-                            console.assert(!err, `Failed to write to stream: ${err && err.message}`);
+                            (0, assert_1.assert)(!err, `Failed to write to stream: ${err && err.message}`);
                         });
                     }
                 };
@@ -1442,7 +1443,7 @@ class DataIndex {
                             // No more entries in batch file, set this batch's entry to null
                             entriesPerBatch[batchIndex] = null;
                             // remove from sortedEntryIndexes
-                            console.assert(sortedEntryIndexes.length > 0);
+                            (0, assert_1.assert)(sortedEntryIndexes.length > 0);
                             const sortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => sortEntry.index === batchIndex);
                             sortedEntryIndexes.splice(sortEntryIndex, 1);
                         }
@@ -1493,7 +1494,7 @@ class DataIndex {
                     // })
                     // .then(writeSmallestEntry);
                     const ok = outputStream.write(buffer, err => {
-                        console.assert(!err, 'Error while writing?');
+                        (0, assert_1.assert)(!err, 'Error while writing?');
                     });
                     if (!ok) {
                         await new Promise(resolve => {
@@ -1588,6 +1589,7 @@ class DataIndex {
                 isUnique: false,
                 keepFreeSpace: true,
                 metadataKeys: this.allMetadataKeys,
+                debug: this.storage.debug,
             });
             await Promise.all([
                 promise_fs_1.pfs.fsync(writeFD).then(() => promise_fs_1.pfs.close(writeFD)),
@@ -1896,8 +1898,13 @@ class DataIndex {
                 const result = await promise_fs_1.pfs.write(fd, buffer, 0, data.length, this.trees.default.fileIndex + index);
                 return result;
             };
-            const tree = new btree_1.BinaryBPlusTree(reader, DISK_BLOCK_SIZE, writer);
-            tree.id = acebase_core_1.ID.generate(); // this.fileName; // For tree locking
+            const tree = new btree_1.BinaryBPlusTree({
+                readFn: reader,
+                chunkSize: DISK_BLOCK_SIZE,
+                writeFn: writer,
+                debug: this.storage.debug,
+                id: acebase_core_1.ID.generate(), // For tree locking
+            });
             tree.autoGrow = true; // Allow the tree to grow. DISABLE THIS IF THERE ARE MULTIPLE TREES IN THE INDEX FILE LATER! (which is not implemented yet)
             this._idx = { fd, tree };
         }

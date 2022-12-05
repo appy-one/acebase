@@ -1,4 +1,5 @@
 import { PathInfo, ID } from 'acebase-core';
+import { assert } from './assert.js';
 const DEBUG_MODE = false;
 const DEFAULT_LOCK_TIMEOUT = 120; // in seconds
 export const LOCK_STATE = {
@@ -184,7 +185,7 @@ export class NodeLocker {
         else {
             // Keep pending until clashing lock(s) is/are removed
             //debug.warn(`lock :: QUEUED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
-            console.assert(lock.state === LOCK_STATE.PENDING);
+            assert(lock.state === LOCK_STATE.PENDING);
             return new Promise((resolve, reject) => {
                 lock.resolve = resolve;
                 lock.reject = reject;

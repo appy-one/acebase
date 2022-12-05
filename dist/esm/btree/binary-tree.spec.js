@@ -1,14 +1,15 @@
 import { BPlusTree, BinaryWriter, BinaryBPlusTree, BlacklistingSearchOperator } from './index.js';
-import { ID } from 'acebase-core';
+import { DebugLogger, ID } from 'acebase-core';
 describe('Unique Binary B+Tree', () => {
     // Tests basic operations of the BinaryBPlusTree implementation
     const FILL_FACTOR = 95; // AceBase uses 95% fill factor for key indexes
     const AUTO_GROW = false; // autoGrow is not used by AceBase atm
+    const debug = new DebugLogger('log', 'B+Tree');
     const createBinaryTree = async () => {
         const tree = new BPlusTree(100, true);
         const bytes = [];
         await tree.toBinary(true, BinaryWriter.forArray(bytes));
-        const binaryTree = new BinaryBPlusTree(bytes);
+        const binaryTree = new BinaryBPlusTree({ readFn: bytes, debug });
         binaryTree.id = ID.generate(); // Assign an id to allow edits (is enforced by tree to make sure multiple concurrent edits to the same source are sync locked)
         binaryTree.autoGrow = AUTO_GROW;
         return binaryTree;
@@ -17,7 +18,7 @@ describe('Unique Binary B+Tree', () => {
         const bytes = [];
         const id = tree.id;
         await tree.rebuild(BinaryWriter.forArray(bytes), { fillFactor: FILL_FACTOR, keepFreeSpace: true, increaseMaxEntries: true });
-        tree = new BinaryBPlusTree(bytes);
+        tree = new BinaryBPlusTree({ readFn: bytes, debug });
         tree.id = id;
         tree.autoGrow = AUTO_GROW;
         return tree;

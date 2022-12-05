@@ -6,11 +6,12 @@ describe('Unique Binary B+Tree', () => {
     // Tests basic operations of the BinaryBPlusTree implementation
     const FILL_FACTOR = 95; // AceBase uses 95% fill factor for key indexes
     const AUTO_GROW = false; // autoGrow is not used by AceBase atm
+    const debug = new acebase_core_1.DebugLogger('log', 'B+Tree');
     const createBinaryTree = async () => {
         const tree = new _1.BPlusTree(100, true);
         const bytes = [];
         await tree.toBinary(true, _1.BinaryWriter.forArray(bytes));
-        const binaryTree = new _1.BinaryBPlusTree(bytes);
+        const binaryTree = new _1.BinaryBPlusTree({ readFn: bytes, debug });
         binaryTree.id = acebase_core_1.ID.generate(); // Assign an id to allow edits (is enforced by tree to make sure multiple concurrent edits to the same source are sync locked)
         binaryTree.autoGrow = AUTO_GROW;
         return binaryTree;
@@ -19,7 +20,7 @@ describe('Unique Binary B+Tree', () => {
         const bytes = [];
         const id = tree.id;
         await tree.rebuild(_1.BinaryWriter.forArray(bytes), { fillFactor: FILL_FACTOR, keepFreeSpace: true, increaseMaxEntries: true });
-        tree = new _1.BinaryBPlusTree(bytes);
+        tree = new _1.BinaryBPlusTree({ readFn: bytes, debug });
         tree.id = id;
         tree.autoGrow = AUTO_GROW;
         return tree;

@@ -6,6 +6,7 @@ import { getValueType, VALUE_TYPES } from '../node-value-types.js';
 import quickSort from '../quicksort.js';
 import { IndexQueryStats } from './query-stats.js';
 import { IndexQueryResult, IndexQueryResults } from './query-results.js';
+import { assert } from '../assert.js';
 const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
 const DISK_BLOCK_SIZE = 4096; // use 512 for older disks
 const FILL_FACTOR = 50; // leave room for inserts
@@ -937,17 +938,17 @@ export class DataIndex {
                     // Write!
                     streamState.chunks = [];
                     streamState.wait = !buildWriteStream.write(buffer, err => {
-                        console.assert(!err, `Failed to write to stream: ${err && err.message}`);
+                        assert(!err, `Failed to write to stream: ${err && err.message}`);
                     });
                 });
                 const writeToStream = (bytes) => {
                     if (streamState.wait) {
                         streamState.chunks.push(bytes);
-                        console.assert(streamState.chunks.length < 100000, 'Something going wrong here');
+                        assert(streamState.chunks.length < 100000, 'Something going wrong here');
                     }
                     else {
                         streamState.wait = !buildWriteStream.write(Buffer.from(bytes), err => {
-                            console.assert(!err, `Failed to write to stream: ${err && err.message}`);
+                            assert(!err, `Failed to write to stream: ${err && err.message}`);
                         });
                     }
                 };
@@ -1437,7 +1438,7 @@ export class DataIndex {
                             // No more entries in batch file, set this batch's entry to null
                             entriesPerBatch[batchIndex] = null;
                             // remove from sortedEntryIndexes
-                            console.assert(sortedEntryIndexes.length > 0);
+                            assert(sortedEntryIndexes.length > 0);
                             const sortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => sortEntry.index === batchIndex);
                             sortedEntryIndexes.splice(sortEntryIndex, 1);
                         }
@@ -1488,7 +1489,7 @@ export class DataIndex {
                     // })
                     // .then(writeSmallestEntry);
                     const ok = outputStream.write(buffer, err => {
-                        console.assert(!err, 'Error while writing?');
+                        assert(!err, 'Error while writing?');
                     });
                     if (!ok) {
                         await new Promise(resolve => {
@@ -1583,6 +1584,7 @@ export class DataIndex {
                 isUnique: false,
                 keepFreeSpace: true,
                 metadataKeys: this.allMetadataKeys,
+                debug: this.storage.debug,
             });
             await Promise.all([
                 pfs.fsync(writeFD).then(() => pfs.close(writeFD)),
@@ -1891,8 +1893,13 @@ export class DataIndex {
                 const result = await pfs.write(fd, buffer, 0, data.length, this.trees.default.fileIndex + index);
                 return result;
             };
-            const tree = new BinaryBPlusTree(reader, DISK_BLOCK_SIZE, writer);
-            tree.id = ID.generate(); // this.fileName; // For tree locking
+            const tree = new BinaryBPlusTree({
+                readFn: reader,
+                chunkSize: DISK_BLOCK_SIZE,
+                writeFn: writer,
+                debug: this.storage.debug,
+                id: ID.generate(), // For tree locking
+            });
             tree.autoGrow = true; // Allow the tree to grow. DISABLE THIS IF THERE ARE MULTIPLE TREES IN THE INDEX FILE LATER! (which is not implemented yet)
             this._idx = { fd, tree };
         }

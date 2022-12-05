@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BPlusTreeLeaf = void 0;
+const assert_1 = require("../assert");
 const binary_1 = require("../binary");
 const detailed_error_1 = require("../detailed-error");
 const binary_tree_builder_1 = require("./binary-tree-builder");
@@ -120,7 +121,7 @@ class BPlusTreeLeaf {
     }
     async toBinary(keepFreeSpace = false, writer) {
         // See BPlusTreeNode.toBinary() for data layout
-        console.assert(this.entries.every((entry, index, arr) => index === 0 || (0, typesafe_compare_1._isMore)(entry.key, arr[index - 1].key)), 'Leaf entries are not sorted ok');
+        (0, assert_1.assert)(this.entries.every((entry, index, arr) => index === 0 || (0, typesafe_compare_1._isMore)(entry.key, arr[index - 1].key)), 'Leaf entries are not sorted ok');
         const bytes = [];
         const startIndex = writer.length;
         // byte_length:
@@ -146,7 +147,7 @@ class BPlusTreeLeaf {
         const entriesStartIndex = bytes.length;
         const moreDataBlocks = [];
         this.entries.forEach(entry => {
-            console.assert(entry.values.length <= config_1.MAX_LEAF_ENTRY_VALUES, 'too many leaf entry values to store in binary');
+            (0, assert_1.assert)(entry.values.length <= config_1.MAX_LEAF_ENTRY_VALUES, 'too many leaf entry values to store in binary');
             const keyBytes = tree_1.BPlusTree.getBinaryKeyData(entry.key);
             bytes.push(...keyBytes);
             // val_length:

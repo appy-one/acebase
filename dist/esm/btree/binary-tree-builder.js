@@ -3,6 +3,7 @@ import { DetailedError } from '../detailed-error.js';
 import { MAX_SMALL_LEAF_VALUE_LENGTH, WRITE_SMALL_LEAFS } from './config.js';
 import { BPlusTree } from './tree.js';
 import { Utils } from 'acebase-core';
+import { assert } from '../assert.js';
 const { bigintToBytes, encodeString, numberToBytes } = Utils;
 export const KEY_TYPE = {
     UNDEFINED: 0,
@@ -79,7 +80,7 @@ export class BinaryBPlusTreeBuilder {
         return bytes;
     }
     createNode(info, options = { addFreeSpace: true, maxLength: 0 }) {
-        console.assert(info.entries.length > 0, 'node has no entries!');
+        assert(info.entries.length > 0, 'node has no entries!');
         const bytes = [
             // byte_length:
             0, 0, 0, 0,
@@ -94,14 +95,14 @@ export class BinaryBPlusTreeBuilder {
             const keyBytes = BinaryBPlusTreeBuilder.getKeyBytes(entry.key);
             bytes.push(...keyBytes);
             // lt_child_ptr: recalculate offset
-            console.assert(entry.ltIndex >= 0, `node entry "${entry.key}" has ltIndex < 0: ${entry.ltIndex}`);
+            assert(entry.ltIndex >= 0, `node entry "${entry.key}" has ltIndex < 0: ${entry.ltIndex}`);
             const ltChildOffset = entry.ltIndex === 0 ? 0 : entry.ltIndex - 5 - (info.index + bytes.length);
-            console.assert(options.allowMissingChildIndexes || ltChildOffset !== 0, 'A node entry\'s ltChildOffset must ALWAYS be set!');
+            assert(options.allowMissingChildIndexes || ltChildOffset !== 0, 'A node entry\'s ltChildOffset must ALWAYS be set!');
             writeSignedOffset(bytes, bytes.length, ltChildOffset, true);
         });
         // gt_child_ptr: calculate offset
         const gtChildOffset = info.gtIndex === 0 ? 0 : info.gtIndex - 5 - (info.index + bytes.length);
-        console.assert(options.allowMissingChildIndexes || gtChildOffset !== 0, 'A node\'s gtChildOffset must ALWAYS be set!');
+        assert(options.allowMissingChildIndexes || gtChildOffset !== 0, 'A node\'s gtChildOffset must ALWAYS be set!');
         writeSignedOffset(bytes, bytes.length, gtChildOffset, true);
         let byteLength = bytes.length;
         if (options.maxLength > 0 && byteLength > options.maxLength) {
@@ -131,12 +132,6 @@ export class BinaryBPlusTreeBuilder {
         writeByteLength(bytes, 0, byteLength);
         return bytes;
     }
-    /**
-     *
-     * @param {} info
-     * @param {} options
-     * @returns {Uint8Array} bytes
-     */
     createLeaf(info, options = { addFreeSpace: true }) {
         // console.log(`Creating leaf for entries "${info.entries[0].key}" to "${info.entries.slice(-1)[0].key}" (${info.entries.length} entries, ${info.entries.reduce((total, entry) => total + entry.values.length, 0)} values)`);
         // const tree = new BPlusTree(this.maxEntriesPerNode, this.uniqueKeys, this.metadataKeys);
@@ -237,7 +232,7 @@ export class BinaryBPlusTreeBuilder {
                     // adding ext_data_block to existing leaf is impossible here,
                     // because we don't have existing ext_data
                     // addExtData function must be supplied to handle writing
-                    console.assert(typeof options.addExtData === 'function', 'to add ext_data to existing leaf, provide addExtData function to options');
+                    assert(typeof options.addExtData === 'function', 'to add ext_data to existing leaf, provide addExtData function to options');
                     const { extIndex } = options.addExtData(extPointerIndex, valueBytes.data);
                     bytes.writeUint32(extIndex, extPointerIndex);
                 }
@@ -409,8 +404,8 @@ export class BinaryBPlusTreeBuilder {
                 // addedExtBytes += bytes.length - debugStartIndex;
             } //);
             const extByteLength = bytes.length - leafEndIndex;
-            // console.assert(extByteLength === extDataSize.minimum, 'These must be equal by now!');
-            // console.assert(addedExtBytes === extByteLength, 'Why are these not the same?');
+            // assert(extByteLength === extDataSize.minimum, 'These must be equal by now!');
+            // assert(addedExtBytes === extByteLength, 'Why are these not the same?');
             const extFreeByteLength = info.extData // && info.extData.rebuild
                 ? info.extData.length - extByteLength
                 : options.addFreeSpace
@@ -483,7 +478,7 @@ export class BinaryBPlusTreeBuilder {
             case 'string': {
                 keyType = KEY_TYPE.STRING;
                 keyBytes = Array.from(encodeString(key)); // textEncoder.encode(key)
-                console.assert(keyBytes.length < 256, `key byte size for "${key}" is too large, max is 255`);
+                assert(keyBytes.length < 256, `key byte size for "${key}" is too large, max is 255`);
                 break;
             }
             case 'number': {

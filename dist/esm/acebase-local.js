@@ -26,15 +26,12 @@ export class AceBase extends AceBaseBase {
     constructor(dbname, init = {}) {
         const settings = new AceBaseLocalSettings(init);
         super(dbname, settings);
-        const apiSettings = {
-            db: this,
-            settings,
-        };
-        this.api = new LocalApi(dbname, apiSettings, () => {
-            this.emit('ready');
-        });
         this.recovery = {
+            /**
+             * Repairs a node that cannot be loaded by removing the reference from its parent, or marking it as removed
+             */
             repairNode: async (path, options) => {
+                await this.ready();
                 if (this.api.storage instanceof AceBaseStorage) {
                     await this.api.storage.repairNode(path, options);
                 }
@@ -42,7 +39,24 @@ export class AceBase extends AceBaseBase {
                     throw new Error(`repairNode is not supported with chosen storage engine`);
                 }
             },
+            /**
+             * Repairs a node that uses a B+Tree for its keys (100+ children).
+             * See https://github.com/appy-one/acebase/issues/183
+             * @param path Target path to fix
+             */
+            repairNodeTree: async (path) => {
+                await this.ready();
+                const storage = this.api.storage;
+                await storage.repairNodeTree(path);
+            },
         };
+        const apiSettings = {
+            db: this,
+            settings,
+        };
+        this.api = new LocalApi(dbname, apiSettings, () => {
+            this.emit('ready');
+        });
     }
     async close() {
         // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.

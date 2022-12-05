@@ -5,6 +5,7 @@ import { BlacklistingSearchOperator } from '../btree/index.js';
 import { IndexQueryStats } from './query-stats.js';
 import { FullTextIndexQueryHint } from './fulltext-index-query-hint.js';
 import unidecode from '../unidecode.js';
+import { assert } from '../assert.js';
 class WordInfo {
     constructor(word, indexes, sourceIndexes) {
         this.word = word;
@@ -29,7 +30,7 @@ class TextInfo {
             pattern = options.pattern;
         }
         if (options.includeChars) {
-            console.assert(pattern.indexOf('[') >= 0, 'pattern does not contain []');
+            assert(pattern.indexOf('[') >= 0, 'pattern does not contain []');
             let insert = '';
             for (let i = 0; i < options.includeChars.length; i++) {
                 insert += '\\' + options.includeChars[i];

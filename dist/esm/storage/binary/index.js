@@ -1063,6 +1063,67 @@ export class AceBaseStorage extends Storage {
             await lock.release();
         }
     }
+    /**
+     * Repairs a broken B+Tree key index of an object collection. Use this if you are unable to load every child of an object collection.
+     * @param path
+     */
+    async repairNodeTree(path) {
+        this.debug.warn(`Starting node tree repair for path "/${path}"`);
+        const tid = this.createTid();
+        let lock = await this.nodeLocker.lock(path, tid.toString(), true, 'repairNodeTree');
+        try {
+            // Make sure cache for parent and all children is removed
+            this.invalidateCache(false, path, true);
+            const nodeInfo = await (async () => {
+                try {
+                    return await this.getNodeInfo(path, { tid });
+                }
+                catch (err) {
+                    throw new Error(`Can't read parent node ${path}: ${err}`);
+                }
+            })();
+            if (!nodeInfo.exists) {
+                throw new Error(`Node at path ${path} does not exist`);
+            }
+            else if (!nodeInfo.address) {
+                throw new Error(`Node at ${path} is not stored in its own record`);
+            }
+            // Get the tree
+            const nodeReader = new NodeReader(this, nodeInfo.address, lock, false);
+            const recordInfo = await nodeReader.readHeader();
+            if (!recordInfo.hasKeyIndex) {
+                throw new Error(`Node at ${path} does not have a B+Tree key index`);
+            }
+            const tree = new BinaryBPlusTree({
+                readFn: nodeReader._treeDataReader.bind(nodeReader),
+                debug: this.debug,
+                id: `path:${path}`,
+            });
+            const newRecordInfo = await _rebuildKeyTree(tree, nodeReader, { repairMode: true });
+            if (newRecordInfo !== recordInfo) {
+                // deallocate old storage space & update parent address
+                const deallocate = new NodeAllocation(recordInfo.allocation.ranges);
+                const pathInfo = PathInfo.get(path);
+                if (pathInfo.parentPath !== null) {
+                    lock = await lock.moveToParent();
+                    await this._updateNode(pathInfo.parentPath, { [pathInfo.key]: new InternalNodeReference(newRecordInfo.valueType, newRecordInfo.address) }, { merge: true, tid, _internal: true, context: { acebase_repair: { path, method: 'node-tree' } } });
+                }
+                if (deallocate.totalAddresses > 0) {
+                    // Release record allocation marked for deallocation
+                    deallocate.normalize();
+                    this.debug.verbose(`Releasing ${deallocate.totalAddresses} addresses (${deallocate.ranges.length} ranges) previously used by node "/${path}" and/or descendants: ${deallocate}`.colorize(ColorStyle.grey));
+                    await this.FST.release(deallocate.ranges);
+                }
+            }
+            this.debug.warn(`Successfully repaired node tree for path "/${path}"`);
+        }
+        catch (err) {
+            this.debug.error(`Failed to repair node tree for path "/${path}": ${err.stack}`);
+        }
+        finally {
+            lock.release();
+        }
+    }
     get transactionLoggingEnabled() {
         return this.settings.transactions && this.settings.transactions.log === true;
     }
@@ -2559,8 +2620,11 @@ class NodeReader {
         };
         // Gets children from a indexed binary tree of key/value data
         const createStreamFromBinaryTree = async () => {
-            const tree = new BinaryBPlusTree(this._treeDataReader.bind(this));
-            tree.id = `path:${this.address.path}`; // Prefix to fix #168
+            const tree = new BinaryBPlusTree({
+                readFn: this._treeDataReader.bind(this),
+                debug: this.storage.debug,
+                id: `path:${this.address.path}`, // Prefix to fix #168
+            });
             let canceled = false;
             if (options.keyFilter) {
                 // Only get children for requested keys
@@ -2932,7 +2996,7 @@ class NodeReader {
         if (readRecords.length === 0) {
             throw new Error(`Attempt to read non-existing records of path "/${this.recordInfo.path}": ${startRecord.nr} to ${endRecord.nr + 1} ` +
                 `for index ${index} + ${length} bytes. Node has ${this.recordInfo.allocation.addresses.length} allocated records ` +
-                `in the following ranges: ` + this.recordInfo.allocation.ranges.toString());
+                `in the following ranges: ` + this.recordInfo.allocation.toString());
         }
         const readRanges = NodeAllocation.fromAdresses(readRecords).ranges;
         const reads = [];
@@ -3036,8 +3100,13 @@ class NodeReader {
         if (!this.recordInfo.hasKeyIndex) {
             throw new Error('record has no key index tree');
         }
-        return new BinaryBPlusTree(this._treeDataReader.bind(this), 1024 * 100, // 100KB reads/writes
-        this._treeDataWriter.bind(this), 'record@' + this.recordInfo.address.toString());
+        return new BinaryBPlusTree({
+            readFn: this._treeDataReader.bind(this),
+            chunkSize: 1024 * 100,
+            writeFn: this._treeDataWriter.bind(this),
+            debug: this.storage.debug,
+            id: 'record@' + this.recordInfo.address.toString(),
+        });
     }
 }
 /**
@@ -3282,47 +3351,21 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
                                 data = data.slice(0, length);
                             }
                         }
+                        if (sourceIndex === 0) {
+                            // Overwrite allocation bytes with new sizes.
+                            // Doing this in-memory helps prevent issue #183, if writing the new tree fails because of a storage issue
+                            tree.setAllocationBytes(data, bytesRequired, tree.info.freeSpace + growBytes);
+                        }
                         sourceIndex += data.byteLength;
                         return data;
                     };
-                    tree.info.byteLength = bytesRequired;
-                    tree.info.freeSpace += growBytes;
-                    await tree.writeAllocationBytes();
                     recordInfo = await _write(storage, nodeInfo.path, nodeReader.recordInfo.valueType, bytesRequired, true, reader, nodeReader.recordInfo);
                 }
                 else {
-                    // Failed to update the binary data, we need to recreate the whole tree
-                    // console.log(err);
-                    storage.debug.verbose('Tree needs rebuild');
+                    // Failed to update the binary data, we need to rebuild the tree
+                    storage.debug.verbose(`B+Tree for path ${nodeInfo.path} needs rebuild`);
                     fixHistory.push({ err, fix: 'rebuild' });
-                    // NEW: Rebuild tree to a temp file
-                    const tempFilepath = `${storage.settings.path}/${storage.name}.acebase/tree-${ID.generate()}.tmp`;
-                    let bytesWritten = 0;
-                    const fd = await pfs.open(tempFilepath, pfs.flags.readAndWriteAndCreate);
-                    const writer = BinaryWriter.forFunction(async (data, index) => {
-                        await pfs.write(fd, data, 0, data.length, index);
-                        bytesWritten += data.length;
-                    });
-                    await tree.rebuild(writer, { reserveSpaceForNewEntries: changes.inserts.length - changes.deletes.length }); // TODO: update changes with already processed!
-                    // Now write the record with data read from the temp file
-                    let readOffset = 0;
-                    const reader = async (length) => {
-                        const buffer = new Uint8Array(length);
-                        const { bytesRead } = await pfs.read(fd, buffer, 0, buffer.length, readOffset);
-                        readOffset += bytesRead;
-                        if (bytesRead < length) {
-                            return buffer.slice(0, bytesRead); // throw new Error(`Failed to read ${length} bytes from file, only got ${bytesRead}`);
-                        }
-                        return buffer;
-                    };
-                    recordInfo = await _write(storage, nodeInfo.path, nodeReader.recordInfo.valueType, bytesWritten, true, reader, nodeReader.recordInfo);
-                    // Close and remove the tmp file, don't wait for this
-                    pfs.close(fd)
-                        .then(() => pfs.rm(tempFilepath))
-                        .catch(err => {
-                        // Error removing the file?
-                        storage.debug.error(`Can't remove temp rebuild file ${tempFilepath}: `, err);
-                    });
+                    recordInfo = await _rebuildKeyTree(tree, nodeReader, { reserveSpaceForNewEntries: changes.inserts.length - changes.deletes.length });
                 }
                 if (recordInfo !== nodeReader.recordInfo) {
                     // release previous allocation
@@ -3332,8 +3375,13 @@ async function _mergeNode(storage, nodeInfo, updates, lock) {
                 // Create new node reader and new tree
                 nodeReader = new NodeReader(storage, recordInfo.address, lock, false);
                 recordInfo = await nodeReader.readHeader();
-                tree = new BinaryBPlusTree(nodeReader._treeDataReader.bind(nodeReader), 1024 * 100, // 100KB reads/writes
-                nodeReader._treeDataWriter.bind(nodeReader), 'record@' + nodeReader.recordInfo.address.toString());
+                tree = new BinaryBPlusTree({
+                    readFn: nodeReader._treeDataReader.bind(nodeReader),
+                    chunkSize: 1024 * 100,
+                    writeFn: nodeReader._treeDataWriter.bind(nodeReader),
+                    debug: storage.debug,
+                    id: 'record@' + nodeReader.recordInfo.address.toString(),
+                });
                 // // Retry remaining operations
                 return processOperations(retry + 1);
             }
@@ -3503,9 +3551,8 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo) {
     await Promise.all(childPromises);
     // Append all serialized data into 1 binary array
     let result;
-    const minKeysPerNode = 25;
     const minKeysForTreeCreation = 100;
-    if (true && serialized.length > minKeysForTreeCreation) {
+    if (serialized.length > minKeysForTreeCreation) {
         // Create a B+tree
         const fillFactor = isArray || serialized.every(kvp => typeof kvp.key === 'string' && /^[0-9]+$/.test(kvp.key))
             ? BINARY_TREE_FILL_FACTOR_50
@@ -3951,6 +3998,39 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
         storage.debug.error(`Failed to write node "/${path}": ${reason}`);
         throw reason;
     }
+}
+async function _rebuildKeyTree(tree, nodeReader, options) {
+    const storage = nodeReader.storage;
+    const path = nodeReader.address.path;
+    const tempFilepath = `${storage.settings.path}/${storage.name}.acebase/tree-${ID.generate()}.tmp`;
+    let bytesWritten = 0;
+    const fd = await pfs.open(tempFilepath, pfs.flags.readAndWriteAndCreate);
+    const writer = BinaryWriter.forFunction(async (data, index) => {
+        await pfs.write(fd, data, 0, data.length, index);
+        bytesWritten += data.length;
+    });
+    await tree.rebuild(writer, options);
+    // Now write the record with data read from the temp file
+    let readOffset = 0;
+    const reader = async (length) => {
+        const buffer = new Uint8Array(length);
+        const { bytesRead } = await pfs.read(fd, buffer, 0, buffer.length, readOffset);
+        readOffset += bytesRead;
+        if (bytesRead < length) {
+            return buffer.slice(0, bytesRead); // throw new Error(`Failed to read ${length} bytes from file, only got ${bytesRead}`);
+        }
+        return buffer;
+    };
+    const newRecordInfo = await _write(storage, path, nodeReader.recordInfo.valueType, bytesWritten, true, reader, nodeReader.recordInfo);
+    console.assert(newRecordInfo.allocation.totalAddresses * newRecordInfo.bytesPerRecord >= bytesWritten, `insufficient space allocated for tree of path ${path}: ${newRecordInfo.allocation.totalAddresses} records for ${bytesWritten} bytes`);
+    // Close and remove the tmp file, don't wait for this
+    pfs.close(fd)
+        .then(() => pfs.rm(tempFilepath))
+        .catch(err => {
+        // Error removing the file?
+        storage.debug.error(`Can't remove temp rebuild file ${tempFilepath}: `, err);
+    });
+    return newRecordInfo;
 }
 class InternalNodeReference {
     constructor(type, address) {

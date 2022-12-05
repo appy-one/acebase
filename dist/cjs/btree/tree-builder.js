@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BPlusTreeBuilder = void 0;
+const assert_1 = require("../assert");
 const detailed_error_1 = require("../detailed-error");
 const tree_1 = require("./tree");
 const tree_leaf_1 = require("./tree-leaf");
@@ -293,7 +294,7 @@ class BPlusTreeBuilder {
             .split('\n')
             .map(str => str.length > 0 ? JSON.parse(str) : '');
         const last = entries.pop(); // Remove last empty one (because split \n)
-        console.assert(last === '');
+        (0, assert_1.assert)(last === '');
         const uniqueKeys = entries.shift() === 'true';
         const fillFactor = parseInt(entries.shift());
         const builder = new BPlusTreeBuilder(uniqueKeys, fillFactor);
