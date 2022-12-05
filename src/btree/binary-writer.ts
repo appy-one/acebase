@@ -3,6 +3,7 @@ import { Uint8ArrayBuilder, writeByteLength, writeSignedNumber, BufferLike } fro
 import { BinaryBPlusTreeBuilder } from './binary-tree-builder';
 import { Utils } from 'acebase-core';
 import { NodeEntryKeyType } from './entry-key-type';
+import { assert } from '../assert';
 const { numberToBytes, bytesToNumber } = Utils;
 
 type WriteStreamLike = Pick<WriteStream, 'write' | 'end' | 'once' | 'bytesWritten'>;
@@ -95,11 +96,11 @@ export class BinaryWriter {
                 return bytesWritten;
             },
             write(data: Uint8Array) {
-                console.assert(!ended, 'streaming was ended already!');
+                assert(!ended, 'streaming was ended already!');
                 if (pendingWrites === maxSimultaniousWrites) {
                     console.warn('Warning: you should wait for "drain" event before writing new data!');
                 }
-                // console.assert(_pendingWrites < _maxSimultaniousWrites, 'Wait for "drain" event before writing new data!');
+                // assert(_pendingWrites < _maxSimultaniousWrites, 'Wait for "drain" event before writing new data!');
                 pendingWrites++;
                 const success = () => {
                     bytesWritten += data.byteLength;
@@ -133,7 +134,7 @@ export class BinaryWriter {
                 return this;
             },
             once(event: string, callback: (...args: any[]) => void) {
-                console.assert(event === 'drain', 'Custom stream can only handle "drain" event');
+                assert(event === 'drain', 'Custom stream can only handle "drain" event');
                 drainCallbacks.push(callback);
                 return this;
             },

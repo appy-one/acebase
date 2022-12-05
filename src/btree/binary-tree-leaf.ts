@@ -1,3 +1,4 @@
+import { assert } from '../assert';
 import { DetailedError } from '../detailed-error';
 import { BinaryBPlusTreeLeafEntry } from './binary-tree-leaf-entry';
 import { BinaryBPlusTreeNodeInfo } from './binary-tree-node-info';
@@ -37,7 +38,7 @@ export class BinaryBPlusTreeLeaf extends BinaryBPlusTreeNodeInfo {
     public entries: BinaryBPlusTreeLeafEntry[] = [];
 
     constructor(nodeInfo: Partial<BinaryBPlusTreeNodeInfo>) {
-        console.assert(typeof nodeInfo.hasExtData === 'boolean', 'nodeInfo.hasExtData must be specified');
+        assert(typeof nodeInfo.hasExtData === 'boolean', 'nodeInfo.hasExtData must be specified');
         super(nodeInfo);
     }
 

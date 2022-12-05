@@ -11,6 +11,7 @@ import { BinaryBPlusTreeTransactionOperation } from '../btree/binary-tree-transa
 import { IndexQueryStats } from './query-stats';
 import { IndexQueryResult, IndexQueryResults } from './query-results';
 import { BPlusTreeLeafEntryValue } from '../btree/tree-leaf-entry-value';
+import { assert } from '../assert';
 const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
 
 const DISK_BLOCK_SIZE = 4096; // use 512 for older disks
@@ -1095,17 +1096,17 @@ export class DataIndex {
                     // Write!
                     streamState.chunks = [];
                     streamState.wait = !buildWriteStream.write(buffer, err => {
-                        console.assert(!err, `Failed to write to stream: ${err && err.message}`);
+                        assert(!err, `Failed to write to stream: ${err && err.message}`);
                     });
                 });
                 const writeToStream = (bytes: number[]) => {
                     if (streamState.wait) {
                         streamState.chunks.push(bytes);
-                        console.assert(streamState.chunks.length < 100000, 'Something going wrong here');
+                        assert(streamState.chunks.length < 100000, 'Something going wrong here');
                     }
                     else {
                         streamState.wait = !buildWriteStream.write(Buffer.from(bytes), err => {
-                            console.assert(!err, `Failed to write to stream: ${err && err.message}`);
+                            assert(!err, `Failed to write to stream: ${err && err.message}`);
                         });
                     }
                 };
@@ -1643,7 +1644,7 @@ export class DataIndex {
                             // No more entries in batch file, set this batch's entry to null
                             entriesPerBatch[batchIndex] = null;
                             // remove from sortedEntryIndexes
-                            console.assert(sortedEntryIndexes.length > 0);
+                            assert(sortedEntryIndexes.length > 0);
                             const sortEntryIndex = sortedEntryIndexes.findIndex(sortEntry => sortEntry.index === batchIndex);
                             sortedEntryIndexes.splice(sortEntryIndex, 1);
                         }
@@ -1699,7 +1700,7 @@ export class DataIndex {
                     // .then(writeSmallestEntry);
 
                     const ok = outputStream.write(buffer, err => {
-                        console.assert(!err, 'Error while writing?');
+                        assert(!err, 'Error while writing?');
                     });
                     if (!ok) {
                         await new Promise(resolve => {

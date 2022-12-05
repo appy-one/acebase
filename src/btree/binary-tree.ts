@@ -2,6 +2,7 @@ import { Utils } from 'acebase-core';
 import { readByteLength, readSignedOffset, Uint8ArrayBuilder, writeByteLength, writeSignedOffset } from '../binary';
 import { DetailedError } from '../detailed-error';
 import { ThreadSafe, ThreadSafeLock } from '../thread-safe';
+import { assert } from '../assert';
 import { BinaryReader, ReadFunction } from './binary-reader';
 import { BinaryBPlusTreeBuilder, FLAGS } from './binary-tree-builder';
 import { BinaryBPlusTreeLeaf } from './binary-tree-leaf';
@@ -53,17 +54,6 @@ type PerformanceMeasureObject = { [key: string]: number | PerformanceMeasureObje
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 async function noop() {}
-
-/**
- * Replacement for console.assert, throws an error if condition is not met.
- * @param condition 'truthy' condition
- * @param error
- */
-function assert(condition: any, error: string) {
-    if (!condition) {
-        throw new Error(`Assertion failed: ${error}`);
-    }
-}
 
 export class BinaryBPlusTree {
     static EntryValue = BinaryBPlusTreeLeafEntryValue;

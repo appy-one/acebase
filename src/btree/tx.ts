@@ -1,3 +1,4 @@
+import { assert } from '../assert';
 import { DetailedError } from '../detailed-error';
 
 export class TxDetailedError extends DetailedError {
@@ -21,7 +22,7 @@ export class TX {
 
     // TODO: refactor to async
     run(action: () => any, rollback: () => any) {
-        console.assert(this._queue.length === 0, 'queue must be empty');
+        assert(this._queue.length === 0, 'queue must be empty');
         typeof rollback === 'function' && this._rollbackSteps.push(rollback);
         const p = action instanceof Promise ? action : action();
         return p.catch((err: any) => {

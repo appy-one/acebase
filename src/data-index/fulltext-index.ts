@@ -8,6 +8,7 @@ import { BlacklistingSearchOperator } from '../btree';
 import { IndexQueryStats } from './query-stats';
 import { FullTextIndexQueryHint } from './fulltext-index-query-hint';
 import unidecode from '../unidecode';
+import { assert } from '../assert';
 
 class WordInfo {
     constructor(public word: string, public indexes: number[], public sourceIndexes: number[]) { }
@@ -164,7 +165,7 @@ class TextInfo {
             pattern = options.pattern;
         }
         if (options.includeChars) {
-            console.assert(pattern.indexOf('[') >= 0, 'pattern does not contain []');
+            assert(pattern.indexOf('[') >= 0, 'pattern does not contain []');
             let insert = '';
             for (let i = 0; i < options.includeChars.length; i++) {
                 insert += '\\' + options.includeChars[i];
