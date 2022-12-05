@@ -1803,6 +1803,7 @@ export class DataIndex {
                     isUnique: false,
                     keepFreeSpace: true,
                     metadataKeys: this.allMetadataKeys,
+                    debug: this.storage.debug,
                 },
             );
 
