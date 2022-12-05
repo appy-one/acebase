@@ -1916,7 +1916,7 @@ export class BinaryBPlusTree {
         if (!this._fst) { this._fst = []; }
         const available = this._fst.filter(block => block.length >= bytesRequired);
         if (available.length > 0) {
-            const best = available.sort((a, b) => a.length < b.length ? -1 : 1)[0];
+            const best = available.sort((a, b) => a.length - b.length)[0];
             this._fst.splice(this._fst.indexOf(best), 1);
             return best;
         }
