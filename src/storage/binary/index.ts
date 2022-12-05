@@ -4036,9 +4036,8 @@ async function _writeNode(storage: AceBaseStorage, path: string, value: any, loc
 
     // Append all serialized data into 1 binary array
     let result: { keyTree: boolean, data: Uint8Array };
-    const minKeysPerNode = 25;
     const minKeysForTreeCreation = 100;
-    if (true && serialized.length > minKeysForTreeCreation) {
+    if (serialized.length > minKeysForTreeCreation) {
         // Create a B+tree
         const fillFactor =
             isArray || serialized.every(kvp => typeof kvp.key === 'string' && /^[0-9]+$/.test(kvp.key))
