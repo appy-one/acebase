@@ -12,6 +12,7 @@ import { Storage, StorageEnv } from './storage';
 import { CreateIndexOptions } from './storage/indexes';
 import type { BinaryNodeAddress } from './storage/binary/node-address';
 import { AceBaseLocalSettings } from '.';
+import { NodeNotFoundError } from './node-errors';
 
 export class LocalApi extends Api {
     // All api methods for local database instance
@@ -264,6 +265,9 @@ export class LocalApi extends Api {
                 })
                 .catch(err => {
                     // Node doesn't exist? No children..
+                    if (!(err instanceof NodeNotFoundError)) {
+                        throw err;
+                    }
                 });
             return {
                 more,
