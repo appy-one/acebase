@@ -1,10 +1,13 @@
 # Exclude dev files from npm package
-# src/ts
-# src/**/*.js.map
-# src/**/*.d.ts
-# spec
-# .eslintrc*.*
-# tsconfig*.*
+src
+dist/**/*.map
+dist/**/*.spec.js
+dist/types/**/*.spec.d.ts
+dist/{cjs,esm}/test
+spec
+.eslintrc*.*
+tsconfig*.*
+create-package-files
 img
 .github
 .vscode
