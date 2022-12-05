@@ -59,34 +59,43 @@ export class AceBase extends AceBaseBase {
         this.api = new LocalApi(dbname, apiSettings, () => {
             this.emit('ready');
         });
-        this.recovery = {
-            repairNode: async (path, options) => {
-                if (this.api.storage instanceof AceBaseStorage) {
-                    await (this.api.storage as AceBaseStorage).repairNode(path, options);
-                }
-                else if (!(this.api.storage as any).repairNode) {
-                    throw new Error(`repairNode is not supported with chosen storage engine`);
-                }
-            },
-        };
     }
 
-    public recovery: {
-        repairNode(
-            path: string,
-            options?: {
-                /**
-                 * Included for testing purposes: whether to proceed if the target node does not appear broken.
-                 * @default false
-                 */
-                ignoreIntact?: boolean;
-                /**
-                 * Whether to mark the target as removed (getting its value will yield `"[[removed]]"`). Set to `false` to completely remove it.
-                 * @default true
-                 */
-                markAsRemoved?: boolean;
+    public recovery = {
+        /**
+         * Repairs a node that cannot be loaded by removing the reference from its parent, or marking it as removed
+         */
+        repairNode: async (path: string, options?: {
+            /**
+             * Included for testing purposes: whether to proceed if the target node does not appear broken.
+             * @default false
+             */
+            ignoreIntact?: boolean;
+            /**
+             * Whether to mark the target as removed (getting its value will yield `"[[removed]]"`). Set to `false` to completely remove it.
+             * @default true
+             */
+            markAsRemoved?: boolean;
+        }) => {
+            await this.ready();
+            if (this.api.storage instanceof AceBaseStorage) {
+                await (this.api.storage as AceBaseStorage).repairNode(path, options);
             }
-        ): Promise<void>;
+            else if (!(this.api.storage as any).repairNode) {
+                throw new Error(`repairNode is not supported with chosen storage engine`);
+            }
+        },
+
+        /**
+         * Repairs a node that uses a B+Tree for its keys (100+ children).
+         * See https://github.com/appy-one/acebase/issues/183
+         * @param path Target path to fix
+         */
+        repairNodeTree: async (path: string) => {
+            await this.ready();
+            const storage = this.api.storage as AceBaseStorage;
+            await storage.repairNodeTree(path);
+        },
     };
 
     async close() {

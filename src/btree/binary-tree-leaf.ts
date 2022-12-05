@@ -51,7 +51,7 @@ export class BinaryBPlusTreeLeaf extends BinaryBPlusTreeNodeInfo {
     /**
       * only present if there is a next leaf. Make sure to use ONLY while the tree is locked
       */
-    getNext?: () => Promise<BinaryBPlusTreeLeaf>;
+    getNext?: (repairMode?: boolean) => Promise<BinaryBPlusTreeLeaf>;
 
     get hasPrevious() { return typeof this.getPrevious === 'function'; }
     get hasNext() { return typeof this.getNext === 'function'; }

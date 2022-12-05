@@ -1804,6 +1804,7 @@ export class DataIndex {
                     isUnique: false,
                     keepFreeSpace: true,
                     metadataKeys: this.allMetadataKeys,
+                    debug: this.storage.debug,
                 },
             );
 
@@ -2142,8 +2143,13 @@ export class DataIndex {
                 const result = await pfs.write(fd, buffer, 0, data.length, this.trees.default.fileIndex + index);
                 return result;
             };
-            const tree = new BinaryBPlusTree(reader, DISK_BLOCK_SIZE, writer);
-            tree.id = ID.generate(); // this.fileName; // For tree locking
+            const tree = new BinaryBPlusTree({
+                readFn: reader,
+                chunkSize: DISK_BLOCK_SIZE,
+                writeFn: writer,
+                debug: this.storage.debug,
+                id: ID.generate(), // For tree locking
+            });
             tree.autoGrow = true; // Allow the tree to grow. DISABLE THIS IF THERE ARE MULTIPLE TREES IN THE INDEX FILE LATER! (which is not implemented yet)
 
             this._idx = { fd, tree };

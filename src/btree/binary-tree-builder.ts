@@ -2,11 +2,9 @@ import { Uint8ArrayBuilder, writeByteLength, writeSignedOffset } from '../binary
 import { DetailedError } from '../detailed-error';
 import { MAX_SMALL_LEAF_VALUE_LENGTH, WRITE_SMALL_LEAFS } from './config';
 import { BPlusTree } from './tree';
-import { BPlusTreeLeaf } from './tree-leaf';
 import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value';
 import { BinaryBPlusTreeLeafEntry } from './binary-tree-leaf-entry';
 import { Utils } from 'acebase-core';
-import { BPlusTreeLeafEntry } from './tree-leaf-entry';
 import { LeafEntryRecordPointer } from './leaf-entry-recordpointer';
 import { LeafEntryMetaData } from './leaf-entry-metadata';
 import { NodeEntryKeyType } from './entry-key-type';
@@ -179,12 +177,6 @@ export class BinaryBPlusTreeBuilder {
         return bytes;
     }
 
-    /**
-     *
-     * @param {} info
-     * @param {} options
-     * @returns {Uint8Array} bytes
-     */
     createLeaf(info: CreateLeafInfo, options: CreateLeafOptions = { addFreeSpace: true }) {
 
         // console.log(`Creating leaf for entries "${info.entries[0].key}" to "${info.entries.slice(-1)[0].key}" (${info.entries.length} entries, ${info.entries.reduce((total, entry) => total + entry.values.length, 0)} values)`);
