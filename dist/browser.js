@@ -4263,11 +4263,10 @@ function createLocalStorageInstance(dbname, init = {}) {
         locking: true,
         removeVoidProperties: settings.removeVoidProperties,
         maxInlineValueSize: settings.maxInlineValueSize,
-        ready() {
+        async ready() {
             // LocalStorage is always ready
-            return Promise.resolve();
         },
-        getTransaction(target) {
+        async getTransaction(target) {
             // Create an instance of our transaction class
             const context = {
                 debug: true,
@@ -4275,7 +4274,7 @@ function createLocalStorageInstance(dbname, init = {}) {
                 localStorage,
             };
             const transaction = new transaction_1.LocalStorageTransaction(context, target);
-            return Promise.resolve(transaction);
+            return transaction;
         },
     });
     const db = new __2.AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
@@ -4921,10 +4920,12 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             const eventPaths = valueSubscribers
                 .map(sub => { return { path: sub.dataPath, keys: acebase_core_1.PathInfo.getPathKeys(sub.dataPath) }; })
                 .sort((a, b) => {
-                if (a.keys.length < b.keys.length)
+                if (a.keys.length < b.keys.length) {
                     return -1;
-                else if (a.keys.length > b.keys.length)
+                }
+                else if (a.keys.length > b.keys.length) {
                     return 1;
+                }
                 return 0;
             });
             const first = eventPaths[0];
@@ -4956,10 +4957,12 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 if (typeof b._pathKeys === 'undefined') {
                     b._pathKeys = acebase_core_1.PathInfo.getPathKeys(b.path);
                 }
-                if (a._pathKeys.length < b._pathKeys.length)
+                if (a._pathKeys.length < b._pathKeys.length) {
                     return -1;
-                else if (a._pathKeys.length > b._pathKeys.length)
+                }
+                else if (a._pathKeys.length > b._pathKeys.length) {
                     return 1;
+                }
                 return 0;
             });
             const topIndex = indexes[0];
@@ -6788,8 +6791,7 @@ function c(input, length, result) {
             result.push('z');
         }
         else {
-            for (let j = 0; j < 5; b[j++] = n % 85 + 33, n = Math.floor(n / 85))
-                ;
+            for (let j = 0; j < 5; b[j++] = n % 85 + 33, n = Math.floor(n / 85)) { }
             result.push(String.fromCharCode(b[4], b[3], b[2], b[1], b[0]));
         }
     }
@@ -6839,8 +6841,7 @@ exports.ascii85 = {
             }
             d = n - i;
             if (d < 5) {
-                for (let j = d; j < 4; b[++j] = 0)
-                    ;
+                for (let j = d; j < 4; b[++j] = 0) { }
                 b[d] = 85;
             }
             t = (((b[0] * 85 + b[1]) * 85 + b[2]) * 85 + b[3]) * 85 + b[4];
@@ -6849,8 +6850,7 @@ exports.ascii85 = {
             y = t & 255;
             t >>>= 8;
             r.push(t >>> 8, t & 255, y, x);
-            for (let j = d; j < 5; ++j, r.pop())
-                ;
+            for (let j = d; j < 5; ++j, r.pop()) { }
             i += 4;
         }
         const data = new Uint8Array(r);
@@ -9714,7 +9714,29 @@ class PathInfo {
     }
     child(childKey) {
         if (typeof childKey === 'string') {
-            childKey = getPathKeys(childKey);
+            if (childKey.length === 0) {
+                throw new Error(`child key for path "${this.path}" cannot be empty`);
+            }
+            // Allow expansion of a child path (eg "user/name") into equivalent `child('user').child('name')`
+            const keys = getPathKeys(childKey);
+            keys.forEach(key => {
+                // Check AceBase key rules here so they will be enforced regardless of storage target.
+                // This prevents specific keys to be allowed in one environment (eg browser), but then
+                // refused upon syncing to a binary AceBase db. Fixes https://github.com/appy-one/acebase/issues/172
+                if (typeof key !== 'string') {
+                    return;
+                }
+                if (/[\x00-\x08\x0b\x0c\x0e-\x1f/[\]\\]/.test(key)) {
+                    throw new Error(`Invalid child key "${key}" for path "${this.path}". Keys cannot contain control characters or any of the following characters: \\ / [ ]`);
+                }
+                if (key.length > 128) {
+                    throw new Error(`child key "${key}" for path "${this.path}" is too long. Max key length is 128`);
+                }
+                if (key.length === 0) {
+                    throw new Error(`child key for path "${this.path}" cannot be empty`);
+                }
+            });
+            childKey = keys;
         }
         return new PathInfo(this.keys.concat(childKey));
     }

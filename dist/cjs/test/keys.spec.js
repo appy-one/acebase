@@ -23,6 +23,23 @@ describe('Keys', () => {
         snap = await db.ref('unicode/I💗AceBase').get();
         expect(snap.val()).toEqual(unicodeKeys['I💗AceBase']);
     });
+    it('should not allow empty keys', async () => {
+        // Created for issue #172 (https://github.com/appy-one/acebase/issues/172)
+        // Test what happens with child ''
+        try {
+            db.ref('empty-keys').child('');
+            fail('ref.child should not allow empty keys');
+        }
+        catch (err) {
+            // ok
+        }
+        // Test 'set' operation
+        let p = db.ref('empty-keys').set({ '': 'Empty key name must not be allowed' });
+        await expectAsync(p).toBeRejected();
+        // Test 'update' operation
+        p = db.ref('empty-keys').update({ '': 'Empty key name must not be allowed' });
+        await expectAsync(p).toBeRejected();
+    });
     it('should not allow special characters \\ / [ ] ', async () => {
         let p = db.ref('invalid').set({ 'forward/slash': 'Forward slashes are used to access nested objects' });
         await expectAsync(p).toBeRejected();

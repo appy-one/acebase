@@ -79,8 +79,9 @@ function insertionSort(arr, compareFn) {
         const value = arr[i];
         let j;
         for (j = i - 1; j >= 0; j--) {
-            if (compareFn(arr[j], value) <= 0) // arr[j] <= value
+            if (compareFn(arr[j], value) <= 0) {
                 break;
+            }
             arr[j + 1] = arr[j];
         }
         arr[j + 1] = value;

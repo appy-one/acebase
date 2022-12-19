@@ -23,16 +23,18 @@ export const encode = function (lat, lon, precision) {
         for (let p = 1; p <= 12; p++) {
             const hash = encode(lat, lon, p);
             const posn = decode(hash);
-            if (posn.lat == lat && posn.lon == lon)
+            if (posn.lat == lat && posn.lon == lon) {
                 return hash;
+            }
         }
         precision = 12; // set to maximum
     }
     lat = Number(lat);
     lon = Number(lon);
     precision = Number(precision);
-    if (isNaN(lat) || isNaN(lon) || isNaN(precision))
+    if (isNaN(lat) || isNaN(lon) || isNaN(precision)) {
         throw new Error('Invalid geohash');
+    }
     let idx = 0; // index into base32 map
     let bit = 0; // each char holds 5 bits
     let evenBit = true;
@@ -101,8 +103,9 @@ export const decode = function (geohash) {
  * @param geohash Cell that bounds are required of.
  */
 export const bounds = function (geohash) {
-    if (geohash.length === 0)
+    if (geohash.length === 0) {
         throw new Error('Invalid geohash');
+    }
     geohash = geohash.toLowerCase();
     let evenBit = true;
     let latMin = -90, latMax = 90;
@@ -110,8 +113,9 @@ export const bounds = function (geohash) {
     for (let i = 0; i < geohash.length; i++) {
         const chr = geohash.charAt(i);
         const idx = base32.indexOf(chr);
-        if (idx == -1)
+        if (idx == -1) {
             throw new Error('Invalid geohash');
+        }
         for (let n = 4; n >= 0; n--) {
             const bitN = idx >> n & 1;
             if (evenBit) {
@@ -154,10 +158,12 @@ export const adjacent = function (geohash, direction) {
     // based on github.com/davetroy/geohash-js
     geohash = geohash.toLowerCase();
     direction = direction.toLowerCase();
-    if (length === 0)
+    if (length === 0) {
         throw new Error('Invalid geohash');
-    if ('nsew'.indexOf(direction) == -1)
+    }
+    if ('nsew'.indexOf(direction) == -1) {
         throw new Error('Invalid direction');
+    }
     const neighbour = {
         n: ['p0r21436x8zb9dcf5h7kjnmqesgutwvy', 'bc01fg45238967deuvhjyznpkmstqrwx'],
         s: ['14365h7k9dcfesgujnmqp0r2twvyx8zb', '238967debc01fg45kmstqrwxuvhjyznp'],

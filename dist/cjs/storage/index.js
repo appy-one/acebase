@@ -498,10 +498,12 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             const eventPaths = valueSubscribers
                 .map(sub => { return { path: sub.dataPath, keys: acebase_core_1.PathInfo.getPathKeys(sub.dataPath) }; })
                 .sort((a, b) => {
-                if (a.keys.length < b.keys.length)
+                if (a.keys.length < b.keys.length) {
                     return -1;
-                else if (a.keys.length > b.keys.length)
+                }
+                else if (a.keys.length > b.keys.length) {
                     return 1;
+                }
                 return 0;
             });
             const first = eventPaths[0];
@@ -533,10 +535,12 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 if (typeof b._pathKeys === 'undefined') {
                     b._pathKeys = acebase_core_1.PathInfo.getPathKeys(b.path);
                 }
-                if (a._pathKeys.length < b._pathKeys.length)
+                if (a._pathKeys.length < b._pathKeys.length) {
                     return -1;
-                else if (a._pathKeys.length > b._pathKeys.length)
+                }
+                else if (a._pathKeys.length > b._pathKeys.length) {
                     return 1;
+                }
                 return 0;
             });
             const topIndex = indexes[0];

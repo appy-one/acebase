@@ -501,14 +501,18 @@ class AceBaseStorage extends index_1.Storage {
             },
             sort: () => {
                 FST.ranges.sort((a, b) => {
-                    if (a.page < b.page)
+                    if (a.page < b.page) {
                         return -1;
-                    if (a.page > b.page)
+                    }
+                    if (a.page > b.page) {
                         return 1;
-                    if (a.start < b.start)
+                    }
+                    if (a.start < b.start) {
                         return -1;
-                    if (a.start > b.start)
+                    }
+                    if (a.start > b.start) {
                         return 1;
+                    }
                     return 0; // Impossible!
                 });
             },
@@ -3513,12 +3517,14 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo) {
     else {
         // Store object
         Object.keys(value).forEach(key => {
-            // eslint-disable-next-line no-control-regex
             if (/[\x00-\x08\x0b\x0c\x0e-\x1f/[\]\\]/.test(key)) {
                 throw new Error(`Invalid key "${key}" for object to store at path "${path}". Keys cannot contain control characters or any of the following characters: \\ / [ ]`);
             }
             if (key.length > 128) {
                 throw new Error(`Key "${key}" is too long to store for object at path "${path}". Max key length is 128`);
+            }
+            if (key.length === 0) {
+                throw new Error(`Child key for path "${path}" is not allowed be empty`);
             }
             const childPath = acebase_core_1.PathInfo.getChildPath(path, key); // `${path}/${key}`;
             const val = value[key];
@@ -3964,7 +3970,7 @@ async function _write(storage, path, type, length, hasKeyTree, reader, currentRe
             }
             let bytesWritten = promise ? await promise : 0;
             const data = await readChunk(range.length * bytesPerRecord);
-            bytesWritten += 'byteLength' in data ? data.byteLength : data.length;
+            bytesWritten += data.byteLength;
             await storage.writeData(fileIndex, data);
             return bytesWritten;
         }, null);

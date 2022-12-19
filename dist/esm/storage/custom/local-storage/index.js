@@ -13,11 +13,10 @@ export function createLocalStorageInstance(dbname, init = {}) {
         locking: true,
         removeVoidProperties: settings.removeVoidProperties,
         maxInlineValueSize: settings.maxInlineValueSize,
-        ready() {
+        async ready() {
             // LocalStorage is always ready
-            return Promise.resolve();
         },
-        getTransaction(target) {
+        async getTransaction(target) {
             // Create an instance of our transaction class
             const context = {
                 debug: true,
@@ -25,7 +24,7 @@ export function createLocalStorageInstance(dbname, init = {}) {
                 localStorage,
             };
             const transaction = new LocalStorageTransaction(context, target);
-            return Promise.resolve(transaction);
+            return transaction;
         },
     });
     const db = new AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
