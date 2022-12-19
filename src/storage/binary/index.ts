@@ -3997,12 +3997,11 @@ async function _writeNode(storage: AceBaseStorage, path: string, value: any, loc
     else {
         // Store object
         Object.keys(value).forEach(key => {
-            // eslint-disable-next-line no-control-regex
             if (/[\x00-\x08\x0b\x0c\x0e-\x1f/[\]\\]/.test(key)) {
                 throw new Error(`Invalid key "${key}" for object to store at path "${path}". Keys cannot contain control characters or any of the following characters: \\ / [ ]`);
             }
             if (key.length > 128) { throw new Error(`Key "${key}" is too long to store for object at path "${path}". Max key length is 128`); }
-
+            if (key.length === 0) { throw new Error(`Child key for path "${path}" is not allowed be empty`); }
             const childPath = PathInfo.getChildPath(path, key); // `${path}/${key}`;
             const val = value[key];
             if (typeof val === 'function' || val === null) {
