@@ -83,9 +83,7 @@ function insertionSort(arr: any[], compareFn: (a: any, b: any) => number) {
         const value = arr[i];
         let j: number;
         for (j = i - 1; j >= 0; j--) {
-            if (compareFn(arr[j], value) <= 0) // arr[j] <= value
-                break;
-
+            if (compareFn(arr[j], value) <= 0) { break; }
             arr[j + 1] = arr[j];
         }
         arr[j + 1] = value;

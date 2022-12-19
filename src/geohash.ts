@@ -26,7 +26,7 @@ export const encode = function (lat: number, lon: number, precision?: number): s
         for (let p = 1; p <= 12; p++) {
             const hash = encode(lat, lon, p);
             const posn = decode(hash);
-            if (posn.lat == lat && posn.lon == lon) return hash;
+            if (posn.lat == lat && posn.lon == lon) { return hash; }
         }
         precision = 12; // set to maximum
     }
@@ -35,7 +35,7 @@ export const encode = function (lat: number, lon: number, precision?: number): s
     lon = Number(lon);
     precision = Number(precision);
 
-    if (isNaN(lat) || isNaN(lon) || isNaN(precision)) throw new Error('Invalid geohash');
+    if (isNaN(lat) || isNaN(lon) || isNaN(precision)) { throw new Error('Invalid geohash'); }
 
     let idx = 0; // index into base32 map
     let bit = 0; // each char holds 5 bits
@@ -114,7 +114,7 @@ export const decode = function (geohash: string): { lat: number; lon: number; } 
  * @param geohash Cell that bounds are required of.
  */
 export const bounds = function (geohash: string): { sw: { lat: number, lon: number }, ne: { lat: number, lon: number } } {
-    if (geohash.length === 0) throw new Error('Invalid geohash');
+    if (geohash.length === 0) { throw new Error('Invalid geohash'); }
 
     geohash = geohash.toLowerCase();
 
@@ -125,7 +125,7 @@ export const bounds = function (geohash: string): { sw: { lat: number, lon: numb
     for (let i = 0; i < geohash.length; i++) {
         const chr = geohash.charAt(i);
         const idx = base32.indexOf(chr);
-        if (idx == -1) throw new Error('Invalid geohash');
+        if (idx == -1) { throw new Error('Invalid geohash'); }
 
         for (let n = 4; n >= 0; n--) {
             const bitN = idx >> n & 1;
@@ -172,8 +172,8 @@ export const adjacent = function (geohash: string, direction: 'N' | 'n' | 'S' | 
     geohash = geohash.toLowerCase();
     direction = direction.toLowerCase() as 'n' | 's' | 'e' | 'w';
 
-    if (length === 0) throw new Error('Invalid geohash');
-    if ('nsew'.indexOf(direction) == -1) throw new Error('Invalid direction');
+    if (length === 0) { throw new Error('Invalid geohash'); }
+    if ('nsew'.indexOf(direction) == -1) { throw new Error('Invalid direction'); }
 
     const neighbour = {
         n: ['p0r21436x8zb9dcf5h7kjnmqesgutwvy', 'bc01fg45238967deuvhjyznpkmstqrwx'],
