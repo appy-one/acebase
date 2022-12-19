@@ -599,8 +599,8 @@ export class Storage extends SimpleEventEmitter {
             const eventPaths = valueSubscribers
                 .map(sub => { return { path: sub.dataPath, keys: PathInfo.getPathKeys(sub.dataPath) }; })
                 .sort((a,b) => {
-                    if (a.keys.length < b.keys.length) return -1;
-                    else if (a.keys.length > b.keys.length) return 1;
+                    if (a.keys.length < b.keys.length) { return -1; }
+                    else if (a.keys.length > b.keys.length) { return 1; }
                     return 0;
                 });
             const first = eventPaths[0];
@@ -626,8 +626,8 @@ export class Storage extends SimpleEventEmitter {
             indexes.sort((a,b) => {
                 if (typeof a._pathKeys === 'undefined') { a._pathKeys = PathInfo.getPathKeys(a.path); }
                 if (typeof b._pathKeys === 'undefined') { b._pathKeys = PathInfo.getPathKeys(b.path); }
-                if (a._pathKeys.length < b._pathKeys.length) return -1;
-                else if (a._pathKeys.length > b._pathKeys.length) return 1;
+                if (a._pathKeys.length < b._pathKeys.length) { return -1; }
+                else if (a._pathKeys.length > b._pathKeys.length) { return 1; }
                 return 0;
             });
             const topIndex = indexes[0];

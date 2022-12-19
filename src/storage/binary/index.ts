@@ -544,10 +544,10 @@ export class AceBaseStorage extends Storage {
 
             sort: () => {
                 FST.ranges.sort((a,b) => {
-                    if (a.page < b.page) return -1;
-                    if (a.page > b.page) return 1;
-                    if (a.start < b.start) return -1;
-                    if (a.start > b.start) return 1;
+                    if (a.page < b.page) { return -1; }
+                    if (a.page > b.page) { return 1; }
+                    if (a.start < b.start) { return -1; }
+                    if (a.start > b.start) { return 1; }
                     return 0; // Impossible!
                 });
             },
@@ -2044,7 +2044,7 @@ export class AceBaseStorage extends Storage {
 
         const getChildCount = async (nodeInfo: BinaryNodeInfo) => {
             let childCount = 0;
-            if ([VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(nodeInfo.valueType) && nodeInfo.address) {
+            if (([VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT] as number[]).includes(nodeInfo.valueType) && nodeInfo.address) {
                 // Get number of children
                 const childLock = await this.nodeLocker.lock(path, tid.toString(), false, `storage.getNodeInfo "/${path}"`);
                 try {
@@ -2124,7 +2124,7 @@ export class AceBaseStorage extends Storage {
                     const childPath = PathInfo.getChildPath(pathReference.path, pathInfo.key);
                     childInfo = await this.getNodeInfo(childPath, { tid, no_cache: options.no_cache });
                 }
-                else if (!parentInfo.exists || ![VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(parentInfo.valueType) || !parentInfo.address) {
+                else if (!parentInfo.exists || !([VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY] as number[]).includes(parentInfo.valueType) || !parentInfo.address) {
                     // Parent does not exist, is not an object or array, or has no children (object not stored in own address)
                     // so child doesn't exist
                     childInfo = new BinaryNodeInfo({ path, exists: false });
@@ -2845,7 +2845,7 @@ class NodeReader {
                     await this.getChildStream(streamOptions)
                         .next(child => {
                             const keyOrIndex = isArray ? child.index : child.key;
-                            if (options.child_objects === false && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(child.type)) {
+                            if (options.child_objects === false && ([VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY] as number[]).includes(child.type)) {
                                 // Options specify not to include any child objects
                                 return;
                             }
@@ -4485,7 +4485,7 @@ async function _write(
             }
             let bytesWritten = promise ? await promise : 0;
             const data = await readChunk(range.length * bytesPerRecord);
-            bytesWritten += 'byteLength' in data ? data.byteLength : data.length;
+            bytesWritten += data.byteLength;
             await storage.writeData(fileIndex, data);
             return bytesWritten;
         }, null as Promise<number>);

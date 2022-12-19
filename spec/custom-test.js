@@ -1,5 +1,6 @@
 const { AceBase, ID } = require('../src/index');
 
+// TODO: finish this test, move to /src/test
 const db = new AceBase('custom-test');
 db.ready(async () => {
 
