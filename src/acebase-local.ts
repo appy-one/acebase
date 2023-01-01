@@ -56,9 +56,9 @@ export class AceBase extends AceBaseBase {
             db: this as AceBaseBase,
             settings,
         };
-        this.api = new LocalApi(dbname, apiSettings, () => {
-            this.emit('ready');
-        });
+        this.api = new LocalApi(dbname, apiSettings);
+        this.api.pipeOnce('ready', this);
+        this.api.pipe('error', this);
     }
 
     public recovery = {
