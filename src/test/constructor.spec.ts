@@ -11,7 +11,7 @@ const removeDB = async (db: AceBase) => {
     // Remove database
     const dbdir = `${db.api.storage.settings.path}/${db.name}.acebase`;
     const files = await readdir(dbdir);
-    await Promise.all(files.map(file => rm(dbdir + '/' + file)));
+    await Promise.all(files.map(file => rm(dbdir + '/' + file).catch(err => { if (err.code !== 'ENOENT') { throw err; }})));
     await rmdir(dbdir);
 };
 
@@ -41,5 +41,32 @@ describe('constructor', () => {
         const db = new AceBase(ID.generate(), { ipc: { port: 54321, role: 'master' } });
         await removeDB(db);
     });
+
+    it('prevents duplicate file access', async () => {
+        const name = ID.generate();
+        const db1 = new AceBase(name);
+        const db2 = new AceBase(name);
+        const counts = { ready: 0, error: 0, total: 0 };
+        let thrownError: any;
+        await new Promise<void>((resolve, reject) => {
+            const event = (arg: any) => {
+                counts.total++;
+                if (counts.total === 2) { resolve(); }
+            };
+            const ready = () => { console.log('ready event fired'); event(++counts.ready); };
+            const error = (err: any) => { console.log('error event fired'); thrownError = err; event(++counts.error); };
+            db1.once('ready', ready);
+            db2.once('ready', ready);
+            db1.once('error', error);
+            db2.once('error', error);
+        });
+        expect(counts.total).toBe(2);
+        expect(counts.ready).toBe(1);
+        expect(counts.error).toBe(1);
+
+        // TODO: check thrownError
+
+        await removeDB(db1);
+    }, 5000);
 
 });
