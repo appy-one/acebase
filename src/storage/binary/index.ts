@@ -14,6 +14,7 @@ import { Uint8ArrayBuilder } from '../../binary';
 import { IAceBaseIPCLock } from '../../ipc/ipc';
 import { BinaryBPlusTreeTransactionOperation } from '../../btree/binary-tree-transaction-operation';
 import { NodeLock } from '../../node-lock';
+import { assert } from '../../assert';
 
 const { concatTypedArrays, bytesToNumber, bytesToBigint, numberToBytes, bigintToBytes, encodeString, decodeString, cloneObject } = Utils;
 const REMOVED_CHILD_DATA_IMPLEMENTED = false; // not used yet - allows marking of deleted children without having to rewrite the whole node
@@ -118,7 +119,7 @@ export class AceBaseStorage extends Storage {
      * Stores data in a binary file
      */
     constructor(name: string, settings: AceBaseStorageSettings, env: StorageEnv) {
-        console.assert(settings instanceof AceBaseStorageSettings, 'settings must be an instance of AceBaseStorageSettings');
+        assert(settings instanceof AceBaseStorageSettings, 'settings must be an instance of AceBaseStorageSettings');
         super(name, settings, env);
 
         if (settings.maxInlineValueSize > 64) {
@@ -155,7 +156,7 @@ export class AceBaseStorage extends Storage {
         this.ipc.on('request', async message => {
             // Master functionality: handle requests from workers
 
-            console.assert(this.ipc.isMaster, 'Workers should not receive requests');
+            assert(this.ipc.isMaster, 'Workers should not receive requests');
             const request = message.data;
             const reply = (result: any) => {
                 // const reply = { type: 'result', id: message.id, ok: true, from: this.ipc.id, to: message.from, data: result };
@@ -454,7 +455,7 @@ export class AceBaseStorage extends Storage {
                     // Do use the available whole page ranges
                     for (let i = 0; i < test.wholePages; i++) {
                         const range = test.ranges[i];
-                        console.assert(range.start === 0 && range.end === recordsPerPage, 'Available ranges were not sorted correctly, this range MUST be a whole page!!');
+                        assert(range.start === 0 && range.end === recordsPerPage, 'Available ranges were not sorted correctly, this range MUST be a whole page!!');
                         const rangeIndex = FST.ranges.indexOf(range);
                         FST.ranges.splice(rangeIndex, 1);
                         allocation.push({ pageNr: range.page, recordNr: 0, length: recordsPerPage });
@@ -479,7 +480,7 @@ export class AceBaseStorage extends Storage {
                     test.ranges.forEach((r, i) => {
                         const length = r.end - r.start;
                         if (length > requiredRecords) {
-                            console.assert(i === test.ranges.length - 1, 'DEV ERROR: This MUST be the last range or logic is not right!');
+                            assert(i === test.ranges.length - 1, 'DEV ERROR: This MUST be the last range or logic is not right!');
                             allocation.push({ pageNr: r.page, recordNr: r.start, length: requiredRecords });
                             r.start += requiredRecords;
                             requiredRecords = 0;
@@ -492,7 +493,7 @@ export class AceBaseStorage extends Storage {
                         }
                     });
                 }
-                console.assert(requiredRecords === 0, 'DEV ERROR: requiredRecords MUST be zero now!');
+                assert(requiredRecords === 0, 'DEV ERROR: requiredRecords MUST be zero now!');
                 return ret('scraps');
             },
 
@@ -658,7 +659,7 @@ export class AceBaseStorage extends Storage {
             },
             update: async (address, fromIPC = false) => {
                 // Root address changed
-                console.assert(address.path === '');
+                assert(address.path === '');
                 if (address.pageNr === rootRecord.pageNr && address.recordNr === rootRecord.recordNr) {
                     // No need to update
                     return;
@@ -921,7 +922,7 @@ export class AceBaseStorage extends Storage {
             // convert it to a Buffer instance or fs.write will FAIL.
             buffer = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
         }
-        console.assert(buffer instanceof Buffer, 'buffer argument must be a Buffer or Uint8Array');
+        assert(buffer instanceof Buffer, 'buffer argument must be a Buffer or Uint8Array');
         if (length === -1) {
             length = buffer.byteLength;
         }
@@ -2341,7 +2342,7 @@ export class AceBaseStorage extends Storage {
             }
 
             if (parentUpdated && pathInfo.parentPath !== '') {
-                console.assert(this.nodeCache.has(pathInfo.parentPath), 'Not cached?!!');
+                assert(this.nodeCache.has(pathInfo.parentPath), 'Not cached?!!');
             }
 
             if (deallocate && deallocate.totalAddresses > 0) {
@@ -2492,7 +2493,7 @@ class NodeAllocation {
                 i--;
             }
         }
-        console.assert(this.totalAddresses === total, 'the amount of addresses changed during normalization');
+        assert(this.totalAddresses === total, 'the amount of addresses changed during normalization');
     }
 }
 
@@ -4203,7 +4204,7 @@ function _serializeValue (
         if (val.length === 0) {
             return create({ type: VALUE_TYPES.ARRAY, bytes: [] });
         }
-        console.assert(parentTid, missingTidMessage);
+        assert(parentTid, missingTidMessage);
         return _lockAndWriteNode(storage, path, val, parentTid)
             .then(recordInfo => {
                 return create({ type: VALUE_TYPES.ARRAY, record: recordInfo.address });
@@ -4215,7 +4216,7 @@ function _serializeValue (
     }
     else if (val instanceof ArrayBuffer) {
         if (val.byteLength > storage.settings.maxInlineValueSize) {
-            console.assert(parentTid, missingTidMessage);
+            assert(parentTid, missingTidMessage);
             return _lockAndWriteNode(storage, path, val, parentTid)
                 .then(recordInfo => {
                     return create({ type: VALUE_TYPES.BINARY, record: recordInfo.address });
@@ -4229,7 +4230,7 @@ function _serializeValue (
         const encoded = encodeString(val.path); // textEncoder.encode(val.path);
         if (encoded.length > storage.settings.maxInlineValueSize) {
             // Create seperate record for this string value
-            console.assert(parentTid, missingTidMessage);
+            assert(parentTid, missingTidMessage);
             return _lockAndWriteNode(storage, path, val, parentTid)
                 .then(recordInfo => {
                     return create({ type: VALUE_TYPES.REFERENCE, record: recordInfo.address });
@@ -4246,7 +4247,7 @@ function _serializeValue (
             return create({ type: VALUE_TYPES.OBJECT, bytes: [] });
         }
         // Create seperate record for this object
-        console.assert(parentTid, missingTidMessage);
+        assert(parentTid, missingTidMessage);
         return _lockAndWriteNode(storage, path, val, parentTid)
             .then(recordInfo => {
                 return create({ type: VALUE_TYPES.OBJECT, record: recordInfo.address });
@@ -4274,7 +4275,7 @@ function _serializeValue (
         const encoded = encodeString(val); // textEncoder.encode(val);
         if (encoded.length > storage.settings.maxInlineValueSize) {
             // Create seperate record for this string value
-            console.assert(parentTid, missingTidMessage);
+            assert(parentTid, missingTidMessage);
             return _lockAndWriteNode(storage, path, val, parentTid)
                 .then(recordInfo => {
                     return create({ type: VALUE_TYPES.STRING, record: recordInfo.address });
@@ -4550,7 +4551,7 @@ async function _rebuildKeyTree(tree: BinaryBPlusTree, nodeReader: NodeReader, op
     };
     const newRecordInfo = await _write(storage, path, nodeReader.recordInfo.valueType, bytesWritten, true, reader, nodeReader.recordInfo);
 
-    console.assert(
+    assert(
         newRecordInfo.allocation.totalAddresses * newRecordInfo.bytesPerRecord >= bytesWritten,
         `insufficient space allocated for tree of path ${path}: ${newRecordInfo.allocation.totalAddresses} records for ${bytesWritten} bytes`
     );
