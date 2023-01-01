@@ -12,6 +12,7 @@ import { IndexQueryStats } from './query-stats';
 import { IndexQueryResult, IndexQueryResults } from './query-results';
 import { BPlusTreeLeafEntryValue } from '../btree/tree-leaf-entry-value';
 import { assert } from '../assert';
+import { retry } from '../retry';
 const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
 
 const DISK_BLOCK_SIZE = 4096; // use 512 for older disks
@@ -570,22 +571,12 @@ export class DataIndex {
             await headerStats.updateTreeLength(treeStatistics.byteLength);
             await pfs.close(fd);
 
-            const renameFile = async (retry = 0) => {
-                try {
-                    // rename new file, overwriting the old file
-                    await pfs.rename(newIndexFile, this.fileName);
-                }
-                catch(err) {
-                    // Occasionally getting EPERM "operation not permitted" errors lately with Node 16.
-                    // Fix: try again after 100ms, up to 10 times
-                    if (err.code === 'EPERM' && retry < 10) {
-                        await new Promise(resolve => setTimeout(resolve, 100));
-                        await renameFile(retry+1);
-                    }
-                    throw err;
-                }
+            const renameFile = async () => {
+                // rename new file, overwriting the old file
+                await pfs.rename(newIndexFile, this.fileName);
             };
-            await renameFile();
+            // Occasionally getting EPERM "operation not permitted" errors lately with Node 16. Retry with small exponential back-off
+            await retry(renameFile, { minTimeout: 100, factor: 1.25, retries: 10, check: (err) => err.code === 'EPERM' });
             this.state = DataIndex.STATE.READY;
             idx.release();
         }
@@ -1024,7 +1015,7 @@ export class DataIndex {
             : DataIndex.STATE.BUILD;
         this._buildError = null;
         const path = this.path;
-        const wildcardNames = path.match(/\*|\$[a-z0-9_]+/gi) || [];
+        const wildcardNames: string[] = path.match(/\*|\$[a-z0-9_]+/gi) ?? [];
         // const hasWildcards = wildcardNames.length > 0;
         const wildcardsPattern = '^' + path.replace(/\*|\$[a-z0-9_]+/gi, '([a-z0-9_]+)') + '/';
         const wildcardRE = new RegExp(wildcardsPattern, 'i');
@@ -1032,7 +1023,7 @@ export class DataIndex {
         // let idx; // Once using binary file to write to
         const tid = ID.generate();
         const keys = PathInfo.getPathKeys(path);
-        const indexableTypes = [VALUE_TYPES.STRING, VALUE_TYPES.NUMBER, VALUE_TYPES.BOOLEAN, VALUE_TYPES.DATETIME, VALUE_TYPES.BIGINT];
+        const indexableTypes: number[] = [VALUE_TYPES.STRING, VALUE_TYPES.NUMBER, VALUE_TYPES.BOOLEAN, VALUE_TYPES.DATETIME, VALUE_TYPES.BIGINT];
         const allowedKeyValueTypes = options && options.valueTypes
             ? options.valueTypes
             : indexableTypes;
