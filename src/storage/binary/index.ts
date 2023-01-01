@@ -15,6 +15,9 @@ import { IAceBaseIPCLock } from '../../ipc/ipc';
 import { BinaryBPlusTreeTransactionOperation } from '../../btree/binary-tree-transaction-operation';
 import { NodeLock } from '../../node-lock';
 import { assert } from '../../assert';
+import { lock as lockFile, type ReleaseFunction as LockFileReleaseFunction } from './lockfile';
+import { retry } from '../../retry';
+import { ErrorWithCode } from './error';
 
 const { concatTypedArrays, bytesToNumber, bytesToBigint, numberToBytes, bigintToBytes, encodeString, decodeString, cloneObject } = Utils;
 const REMOVED_CHILD_DATA_IMPLEMENTED = false; // not used yet - allows marking of deleted children without having to rewrite the whole node
@@ -696,122 +699,113 @@ export class AceBaseStorage extends Storage {
             MAX_INLINE_VALUE_SIZE: baseIndex + 12,
         };
 
+        let releaseLockFile: LockFileReleaseFunction;
         const openDatabaseFile = async (justCreated = false) => {
-            const handleError = (err: any, txt: string) => {
-                this.debug.error(txt);
-                this.debug.error(err);
-                if (this.file) {
-                    pfs.close(this.file).catch(err => {
-                        // ...
-                    });
-                }
-                this.emit('error', err);
-                throw err;
-            };
-
             try {
+                if (this.ipc.isMaster) {
+                    // Try getting a lock on the data file
+                    releaseLockFile = await lockFile(this.fileName);
+                }
                 this.file = await pfs.open(this.fileName, settings.readOnly === true ? 'r' : 'r+', 0);
-            }
-            catch (err) {
-                handleError(err, 'Failed to open database file');
-            }
 
-            // const logfile = fs.openSync(`${this.settings.path}/${this.name}.acebase/log`, 'as');
-            // this.logwrite = (action) => {
-            //     fs.appendFile(logfile, JSON.stringify(action), () => {});
-            // };
-
-            const data = Buffer.alloc(64);
-            let bytesRead = 0;
-            try {
-                const result = await pfs.read(this.file, data, 0, data.length, 0);
-                bytesRead = result.bytesRead;
-            }
-            catch (err) {
-                handleError(err, 'Could not read database header');
-            }
-
-            // Cast Buffer to Uint8Array
-            const header = new Uint8Array(data);
-
-            // Check descriptor
-            const hasAceBaseDescriptor = () => {
-                for(let i = 0; i < descriptor.length; i++) {
-                    if (header[i] !== descriptor[i]) {
-                        return false;
-                    }
+                const data = Buffer.alloc(64);
+                let bytesRead = 0;
+                try {
+                    const result = await pfs.read(this.file, data, 0, data.length, 0);
+                    bytesRead = result.bytesRead;
                 }
-                return true;
-            };
-            if (bytesRead < 64 || !hasAceBaseDescriptor()) {
-                return handleError('unsupported_db', 'This is not a supported database file');
+                catch (err) {
+                    throw new ErrorWithCode('corrupt_db', 'Could not read database header', err);
+                }
+
+                // Cast Buffer to Uint8Array
+                const header = new Uint8Array(data);
+
+                // Check descriptor
+                const hasAceBaseDescriptor = () => {
+                    for(let i = 0; i < descriptor.length; i++) {
+                        if (header[i] !== descriptor[i]) {
+                            return false;
+                        }
+                    }
+                    return true;
+                };
+                if (bytesRead < 64 || !hasAceBaseDescriptor()) {
+                    throw new ErrorWithCode('unsupported_db', 'This is not a supported database file');
+                }
+
+                // Version should be 1
+                let index = descriptor.length;
+                if (header[index] !== 1) {
+                    throw new ErrorWithCode('unsupported_db', 'This database version is not supported, update your source code');
+                }
+                index++;
+
+                // Read flags
+                const flagsIndex = index;
+                const flags = header[flagsIndex]; // flag bits: [r, r, r, r, r, r, FST2, LOCK]
+                const lock = {
+                    enabled: ((flags & 0x1) > 0),
+                    forUs: true,
+                };
+                this.isLocked = (forUs = false) => {
+                    return lock.enabled && lock.forUs === forUs;
+                };
+                this.lock = async (forUs = false) => {
+                    await pfs.write(this.file, new Uint8Array([flags | 0x1]), 0, 1, flagsIndex);
+                    lock.enabled = true;
+                    lock.forUs = forUs;
+                    this.emit('locked', { forUs });
+                };
+                this.unlock = async () => {
+                    await pfs.write(this.file, new Uint8Array([flags & 0xfe]), 0, 1, flagsIndex);
+                    lock.enabled = false;
+                    this.emit('unlocked');
+                };
+                this.settings.fst2 = (flags & 0x2) > 0;
+                if (this.settings.fst2) {
+                    throw new ErrorWithCode('unsupported_db', 'FST2 is not supported by this version yet');
+                }
+                index++;
+
+                // Read root record address
+                const view = new DataView(header.buffer, index, 6);
+                rootRecord.pageNr = view.getUint32(0);
+                rootRecord.recordNr = view.getUint16(4);
+                if (!justCreated) {
+                    rootRecord.exists = true;
+                }
+                index += 6;
+
+                // Read saved settings
+                this.settings.recordSize = header[index] << 8 | header[index+1];
+                this.settings.pageSize = header[index+2] << 8 | header[index+3];
+                this.settings.maxInlineValueSize = header[index+4] << 8 | header[index+5];
+                // Fix issue #110: (see https://github.com/appy-one/acebase/issues/110)
+                if (this.settings.recordSize === 0) { this.settings.recordSize = 65536; }
+                if (this.settings.pageSize === 0) { this.settings.pageSize = 65536; }
+                if (this.settings.maxInlineValueSize === 0) { this.settings.maxInlineValueSize = 65536; }
+
+                const intro = ColorStyle.dim;
+                this.debug.log(`Database "${name}" details:`.colorize(intro));
+                this.debug.log('- Type: AceBase binary'.colorize(intro));
+                this.debug.log(`- Record size: ${this.settings.recordSize} bytes`.colorize(intro));
+                this.debug.log(`- Page size: ${this.settings.pageSize} records (${this.settings.pageSize * this.settings.recordSize} bytes)`.colorize(intro));
+                this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize} bytes`.colorize(intro));
+                this.debug.log(`- Root record address: ${this.rootRecord.pageNr}, ${this.rootRecord.recordNr}`.colorize(intro));
+
+                await this.KIT.load();  // Read Key Index Table
+                await this.FST.load();  // Read Free Space Table
+                await this.indexes.load(); // Load indexes
+                return this.file;
             }
-
-            // Version should be 1
-            let index = descriptor.length;
-            if (header[index] !== 1) {
-                return handleError('unsupported_db', 'This database version is not supported, update your source code');
+            catch (err) {
+                if (this.file) {
+                    // Close it
+                    pfs.close(this.file).catch();
+                }
+                throw err; // rethrow
             }
-            index++;
-
-            // Read flags
-            const flagsIndex = index;
-            const flags = header[flagsIndex]; // flag bits: [r, r, r, r, r, r, FST2, LOCK]
-            const lock = {
-                enabled: ((flags & 0x1) > 0),
-                forUs: true,
-            };
-            this.isLocked = (forUs = false) => {
-                return lock.enabled && lock.forUs === forUs;
-            };
-            this.lock = async (forUs = false) => {
-                await pfs.write(this.file, new Uint8Array([flags | 0x1]), 0, 1, flagsIndex);
-                lock.enabled = true;
-                lock.forUs = forUs;
-                this.emit('locked', { forUs });
-            };
-            this.unlock = async () => {
-                await pfs.write(this.file, new Uint8Array([flags & 0xfe]), 0, 1, flagsIndex);
-                lock.enabled = false;
-                this.emit('unlocked');
-            };
-            this.settings.fst2 = (flags & 0x2) > 0;
-            if (this.settings.fst2) {
-                throw new Error('FST2 is not supported by this version yet');
-            }
-            index++;
-
-            // Read root record address
-            const view = new DataView(header.buffer, index, 6);
-            rootRecord.pageNr = view.getUint32(0);
-            rootRecord.recordNr = view.getUint16(4);
-            if (!justCreated) {
-                rootRecord.exists = true;
-            }
-            index += 6;
-
-            // Read saved settings
-            this.settings.recordSize = header[index] << 8 | header[index+1];
-            this.settings.pageSize = header[index+2] << 8 | header[index+3];
-            this.settings.maxInlineValueSize = header[index+4] << 8 | header[index+5];
-            // Fix issue #110: (see https://github.com/appy-one/acebase/issues/110)
-            if (this.settings.recordSize === 0) { this.settings.recordSize = 65536; }
-            if (this.settings.pageSize === 0) { this.settings.pageSize = 65536; }
-            if (this.settings.maxInlineValueSize === 0) { this.settings.maxInlineValueSize = 65536; }
-
-            const intro = ColorStyle.dim;
-            this.debug.log(`Database "${name}" details:`.colorize(intro));
-            this.debug.log('- Type: AceBase binary'.colorize(intro));
-            this.debug.log(`- Record size: ${this.settings.recordSize} bytes`.colorize(intro));
-            this.debug.log(`- Page size: ${this.settings.pageSize} records (${this.settings.pageSize * this.settings.recordSize} bytes)`.colorize(intro));
-            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize} bytes`.colorize(intro));
-            this.debug.log(`- Root record address: ${this.rootRecord.pageNr}, ${this.rootRecord.recordNr}`.colorize(intro));
-
-            await this.KIT.load();  // Read Key Index Table
-            await this.FST.load();  // Read Free Space Table
-            await this.indexes.load(); // Load indexes
-            !justCreated && this.emitOnce('ready');
-            return this.file;
         };
 
         const createDatabaseFile = async () => {
@@ -868,33 +862,41 @@ export class AceBaseStorage extends Storage {
             // Now create the root record
             await this.setNode('', {});
             rootRecord.exists = true;
-            this.emitOnce('ready');
         };
 
-        // Open or create database
         const exists = fs.existsSync(this.fileName);
-        if (exists) {
-            // Open
-            openDatabaseFile(false);
-        }
-        else if (settings.readOnly) {
+        if (!exists && settings.readOnly) {
             throw new Error(`Cannot create readonly database "${name}"`);
         }
-        else if (!this.ipc.isMaster) {
-            // Prevent race condition - let master process create database, poll for existance
-            const poll = () => {
-                setTimeout(async () => {
-                    const exists = await pfs.exists(this.fileName);
-                    if (exists) { openDatabaseFile(); }
-                    else { poll(); }
-                }, 10); // Wait 10ms before trying again
-            };
-            poll();
-        }
-        else {
-            // Create new file
-            createDatabaseFile();
-        }
+
+        // Proceed async
+        (async () => {
+            try {
+                // Open or create database
+                if (exists) {
+                    // Open
+                    await openDatabaseFile(false);
+                }
+                else if (!this.ipc.isMaster) {
+                    // Prevent race condition - let master process create database, poll for existance
+                    const operation = async () => {
+                        const exists = await pfs.exists(this.fileName);
+                        if (!exists) { throw new Error(`Database ${this.fileName} still not created`); }
+                    };
+                    await retry(operation, { retries: 100, factor: 1, minTimeout: 10, maxTimeout: 10 });
+                }
+                else {
+                    // Create new file
+                    await createDatabaseFile();
+                }
+                this.emitOnce('ready');
+            }
+            catch (err) {
+                const msg = `FATAL: Unable to open database ${this.fileName}: ${err.message}`;
+                this.debug.error(msg);
+                this.emit('error', new Error(msg, { cause: err }));
+            }
+        })();
 
         this.ipc.once('exit', code => {
             // Close database file
@@ -902,6 +904,8 @@ export class AceBaseStorage extends Storage {
             pfs.close(this.file).catch(err => {
                 this.debug.error('Could not close database:', err);
             });
+            // Release the file lock if we owned it
+            releaseLockFile?.();
         });
     }
 
