@@ -20,7 +20,7 @@ export class LocalApi extends Api {
     public storage: Storage;
     public logLevel: LoggingLevel;
 
-    constructor(dbname = 'default', init: { db: AceBaseBase, settings: AceBaseLocalSettings }, readyCallback: () => any) {
+    constructor(dbname = 'default', init: { db: AceBaseBase, settings: AceBaseLocalSettings }) {
         super();
         this.db = init.db;
 
@@ -46,7 +46,8 @@ export class LocalApi extends Api {
         else {
             this.storage = new AceBaseStorage(dbname, new AceBaseStorageSettings(), storageEnv);
         }
-        this.storage.on('ready', readyCallback);
+        this.storage.pipeOnce('ready', this);
+        this.storage.pipe('error', this);
     }
 
     async stats(options?: any) {
