@@ -30,6 +30,7 @@ AceBase is easy to set up and runs anywhere: in the cloud, NAS, local server, yo
     * [Counting children](#counting-children)
     * [Limit nested data loading](#limit-nested-data-loading)
     * [Iterating (streaming) children](#iterating-streaming-children)
+    * [Asserting data types in TypeScript](#asserting-data-types-in-typescript)
 * Realtime monitoring
     * [Monitoring realtime data changes](#monitoring-realtime-data-changes)
     * [Using variables and wildcards in subscription paths](#using-variables-and-wildcards-in-subscription-paths)
@@ -486,6 +487,31 @@ await db.ref('books').forEach(
 
 Also see [Streaming query results](#streaming-query-results)
 
+### Asserting data types in TypeScript
+If you are using TypeScript, you can pass a type parameter to most data retrieval methods that will assert the type of the returned value. Note that you are responsible for ensuring the value matches the asserted type at runtime.
+
+Examples:
+```typescript
+const snapshot = await db.ref<MyClass>('users/someuser/posts').get<MyClass>();
+//                            ^ type parameter can go here,        ^ here,
+if (snapshot.exists()) {
+    config = snapshot.val<MyClass>();
+    //                    ^ or here
+}
+
+// A type parameter can also be used to assert the type of a callback parameter
+await db.ref('users/someuser/posts')
+    .transaction<MyClass>(snapshot => {
+        const posts = snapshot.val(); // posts is of type MyClass
+        return posts;
+    })
+
+// Or when iterating over children
+await db.ref('users').forEach<UserClass>(userSnapshot => {
+    const user = snapshot.val(); // user is of type UserClass
+})
+```
+
 ## Monitoring realtime data changes
 
 You can subscribe to data events to get realtime notifications as the monitored node is being changed. When connected to a remote AceBase server, the events will be pushed to clients through a websocket connection. Supported events are:  
@@ -564,6 +590,18 @@ subscription1.stop();
 // or, to stop all active subscriptions:
 newPostStream.stop();
 ```
+
+If you are using TypeScript, you can pass a type parameter to `.on` or to `.subscribe` to assert the type of the value stored in the snapshot. This type is not checked by TypeScript; it is your responsibility to ensure that the value stored matches your assertion.
+
+```typescript
+const newPostStream = db.ref('posts').on<MyClass>('child_added');
+const subscription1 = newPostStream.subscribe(childSnapshot => {
+    const child = childSnapshot.val(); // child is of type MyClass
+ });
+const subscription2 = newPostStream.subscribe<MyOtherClass>(childSnapshot => { 
+    const child = childSnapshot.val(); // child is of type MyOtherClass
+    // .subscribe overrode .on's type parameter
+ });
 
 ### Using variables and wildcards in subscription paths
 
