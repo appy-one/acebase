@@ -479,6 +479,22 @@ describe('Wildcard query', () => {
         }
     }, 60e3); // increased timeout for debugging
 
+    it('wildcards with explicit filter value', async () => {
+
+        // Insert data without index
+        await db.ref('other_users/user1/messages').push({ text: 'First message' });
+        await db.ref('other_users/user2/messages').push({ text: 'Second message' });
+        await db.ref('other_users/user1/messages').push({ text: 'Third message' });
+
+        let promise = db.query('other_users/$username/messages').filter('$username', '==', 'user1').count();
+        await expectAsync(promise).toBeResolvedTo(2);
+        promise = db.query('other_users/$username/messages').filter('$username', '==', 'user2').count();
+        await expectAsync(promise).toBeResolvedTo(1);
+        promise = db.query('other_users/$username/messages').filter('$username', 'in', ['user1', 'user2']).count();
+        await expectAsync(promise).toBeResolvedTo(3);
+
+    }, 60e3); // increased timeout for debugging
+
 });
 
 describe('Wildcard query with delete', () => {
