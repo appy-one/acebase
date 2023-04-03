@@ -309,6 +309,10 @@ export class Storage extends SimpleEventEmitter {
         },
 
         add: async (fileName: string) => {
+            const existingIndex = this._indexes.find(index => index.fileName === fileName);
+            if (existingIndex) {
+                return existingIndex;
+            }
             try {
                 const index = await DataIndex.readFromFile(this, fileName);
                 this._indexes.push(index);
