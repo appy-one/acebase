@@ -93,7 +93,7 @@ describe('Examples', () => {
 
         // And changes to the database will update the liveQuestion object:
         const now = new Date();
-        await questionRef.update({ edited: now });
+        await questionRef.update({ edited: now } as any);
 
         // In the next tick, the live proxy value will have updated:
         process.nextTick(() => {
