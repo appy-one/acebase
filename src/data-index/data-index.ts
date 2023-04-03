@@ -667,6 +667,7 @@ export class DataIndex {
     }
 
     async handleRecordUpdate(path: string, oldValue: unknown, newValue: unknown, indexMetadata?: IndexMetaData): Promise<void> {
+        this.storage.debug.verbose(`Handling index ${this.description} update request for "/${path}"`);
         const getValues = (key: string, oldValue: unknown, newValue: unknown) =>
             PathInfo.getPathKeys(key).reduce((values, key) =>
                 getChildValues(key, values.oldValue, values.newValue), { oldValue, newValue }) as { oldValue: IndexableValue; newValue: IndexableValue };
@@ -691,6 +692,7 @@ export class DataIndex {
         const includedValuesChanged = includedValues.some(values => compareValues(values.oldValue, values.newValue) !== 'identical');
 
         if (!keyValueChanged && !includedValuesChanged) {
+            this.storage.debug.verbose(`Update on "/${path}" has no effective changes for index ${this.description}`);
             return;
         }
 
@@ -712,10 +714,11 @@ export class DataIndex {
             // Invalidate query cache
             this._cache.clear();
             // Update the tree
+            this.storage.debug.verbose(`Updating index ${this.description} tree for "/${path}"`);
             return await this._updateTree(path, keyValues.oldValue, keyValues.newValue, recordPointer, recordPointer, metadata);
         }
         else {
-            this.storage.debug.verbose(`Queueing index ${this.description} update for "/${path}"`);
+            this.storage.debug.log(`Queueing index ${this.description} update for "/${path}"`);
             // Queue the update
             const update = {
                 path,
@@ -731,10 +734,9 @@ export class DataIndex {
             const p = new Promise<void>((resolve, reject) => {
                 update.resolve = resolve;
                 update.reject = reject;
-            })
-                .catch(err => {
-                    this.storage.debug.error(`Unable to process queued update for "/${path}" on index ${this.description}:`, err);
-                });
+            }).catch(err => {
+                this.storage.debug.error(`Unable to process queued update for "/${path}" on index ${this.description}:`, err);
+            });
 
             this._updateQueue.push(update);
             //return p; // Don't wait for p, prevents deadlock when tree is rebuilding
