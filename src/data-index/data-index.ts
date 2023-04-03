@@ -643,6 +643,10 @@ export class DataIndex {
         return await this._processUpdateQueue();
     }
 
+    clearCache(forPath: string) {
+        this._cache.clear(); // TODO: check which cache results should be adjusted intelligently
+    }
+
     async _processUpdateQueue() {
         const queue = this._updateQueue.splice(0);
         if (queue.length === 0) { return; }

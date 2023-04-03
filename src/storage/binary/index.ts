@@ -1038,6 +1038,9 @@ export class AceBaseStorage extends Storage {
 
     public invalidateCache(fromIPC: boolean, path: string, recursive: boolean | Record<string, 'delete' | 'invalidate'>, reason?: string) {
         this.nodeCache.invalidate(path, recursive, reason);
+        this.indexes.getAll(path, { parentPaths: true, childPaths: true }).forEach((index) => {
+            index.clearCache(path);
+        });
         if (!fromIPC) {
             this.ipc.sendNotification({ type: 'cache.invalidate', path, recursive, reason });
         }
