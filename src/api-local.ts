@@ -7,7 +7,7 @@ import { SQLiteStorage, SQLiteStorageSettings } from './storage/sqlite';
 import { MSSQLStorage, MSSQLStorageSettings } from './storage/mssql';
 import { CustomStorage, CustomStorageSettings } from './storage/custom';
 import { VALUE_TYPES } from './node-value-types';
-import { query as executeQuery } from './query';
+import { executeQuery } from './query';
 import { Storage, StorageEnv } from './storage';
 import { CreateIndexOptions } from './storage/indexes';
 import type { BinaryNodeAddress } from './storage/binary/node-address';
