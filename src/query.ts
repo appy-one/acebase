@@ -676,11 +676,10 @@ export async function executeQuery(
             if (options.monitor === true) {
                 options.monitor = { add: true, change: true, remove: true };
             }
-            // eslint-disable-next-line @typescript-eslint/no-empty-function
-            let stop = async () => {};
             if (typeof options.monitor === 'object' && (options.monitor.add || options.monitor.change || options.monitor.remove)) {
                 // TODO: Refactor this to use 'mutations' event instead of 'notify_child_*'
 
+                const monitor = options.monitor;
                 const matchedPaths = options.snapshots ? matches.map(match => match.path) : matches.slice();
                 const ref = api.db.ref(path);
                 const removeMatch = (path: string) => {
@@ -770,16 +769,16 @@ export async function executeQuery(
                             const node = await api.storage.getNode(path, loadOptions);
                             newValue = node.value;
                         }
-                        if (wasMatch && options.monitor.change) {
+                        if (wasMatch && monitor.change) {
                             keepMonitoring = options.eventHandler({ name: 'change', path, value: newValue }) !== false;
                         }
-                        else if (!wasMatch && options.monitor.add) {
+                        else if (!wasMatch && monitor.add) {
                             keepMonitoring = options.eventHandler({ name: 'add', path, value: newValue }) !== false;
                         }
                     }
                     else if (wasMatch) {
                         removeMatch(path);
-                        if (options.monitor.remove) {
+                        if (monitor.remove) {
                             keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: oldValue }) !== false;
                         }
                     }
@@ -797,7 +796,7 @@ export async function executeQuery(
                     let keepMonitoring = true;
                     if (isMatch) {
                         addMatch(path);
-                        if (options.monitor.add) {
+                        if (monitor.add) {
                             keepMonitoring = options.eventHandler({ name: 'add', path: path, value: options.snapshots ? newValue : null }) !== false;
                         }
                     }
@@ -806,7 +805,7 @@ export async function executeQuery(
                 const childRemovedCallback: EventSubscriptionCallback = (err, path, newValue, oldValue) => {
                     let keepMonitoring = true;
                     removeMatch(path);
-                    if (options.monitor.remove) {
+                    if (monitor.remove) {
                         keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: options.snapshots ? oldValue : null }) !== false;
                     }
                     if (keepMonitoring === false) { stopMonitoring(); }
