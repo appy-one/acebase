@@ -303,7 +303,7 @@ export class LocalApi extends Api {
                         recordNr: (nodeInfo.address as BinaryNodeAddress).recordNr,
                     }
                     : undefined;
-                const isObjectOrArray = nodeInfo.exists && nodeInfo.address && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeInfo.type);
+                const isObjectOrArray = nodeInfo.exists && nodeInfo.address && ([VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY] as number[]).includes(nodeInfo.type);
                 if (args.child_count === true) {
                     // set child count instead of enumerating
                     info.children = { count: isObjectOrArray ? nodeInfo.childCount : 0 };
