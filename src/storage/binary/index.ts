@@ -3273,11 +3273,7 @@ class NodeReader {
                                 const keyLength = (binary[index] & 127) + 1;
                                 index++;
                                 assert(keyLength);
-                                let key = '';
-                                for(let i = 0; i < keyLength; i++) {
-                                    key += String.fromCharCode(binary[index + i]);
-                                }
-
+                                const key = decodeString(binary.slice(index, index + keyLength));
                                 child.key = key;
                                 child.path = PathInfo.getChildPath(this.address.path, key);
                                 index += keyLength;
@@ -4077,10 +4073,9 @@ async function _writeNode(storage: AceBaseStorage, path: string, value: any, loc
                 }
                 else {
                     // Inline key name
-                    builder.writeByte(kvp.key.length - 1); // key_length
-                    // key_name:
                     const keyBytes = encodeString(kvp.key);
-                    builder.append(keyBytes);
+                    builder.writeByte(keyBytes.byteLength - 1); // key_length
+                    builder.append(keyBytes); // key_name
                 }
             }
             // const binaryValue = _getValueBytes(kvp);
