@@ -886,7 +886,7 @@ export class AceBaseStorage extends Storage {
                     const exists = await pfs.exists(this.fileName);
                     if (exists) { openDatabaseFile(); }
                     else { poll(); }
-                }, 10); // Wait 10ms before trying again
+                }, 1000); // Wait 1s before trying again
             };
             poll();
         }

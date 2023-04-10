@@ -9,6 +9,8 @@ import { DataIndex } from '../data-index'; // Indexing might not be available: t
 import { createIndex, CreateIndexOptions } from './indexes';
 import { IndexesContext } from './context';
 import { assert } from '../assert';
+import { IPCSocketPeer } from '../ipc/socket';
+import { Server } from 'net';
 
 const { compareValues, getChildValues, encodeString, defer } = Utils;
 
@@ -109,9 +111,10 @@ export class StorageSettings {
     readOnly = false;
 
     /**
-     * IPC settings if you are using AceBase in pm2 or cloud-based clusters
+     * IPC settings if you are using AceBase in pm2 or cloud-based clusters, or (NEW) `'socket'` to connect
+     * to an automatically spawned IPC service ("daemon") on this machine
      */
-    ipc?: IPCClientSettings;
+    ipc?: IPCClientSettings | 'socket' | Server;
 
     /**
      * Settings for optional transaction logging
@@ -126,7 +129,7 @@ export class StorageSettings {
         if (typeof settings.lockTimeout === 'number') { this.lockTimeout = settings.lockTimeout; }
         if (typeof settings.type === 'string') { this.type = settings.type; }
         if (typeof settings.readOnly === 'boolean') { this.readOnly = settings.readOnly; }
-        if (typeof settings.ipc === 'object') { this.ipc = settings.ipc; }
+        if (['object', 'string'].includes(typeof settings.ipc)) { this.ipc = settings.ipc; }
     }
 }
 
@@ -143,7 +146,7 @@ export class Storage extends SimpleEventEmitter {
     public debug: DebugLogger;
     public stats: any;
 
-    public ipc: IPCPeer | RemoteIPCPeer;
+    public ipc: IPCPeer | RemoteIPCPeer | IPCSocketPeer;
     public nodeLocker: {
         lock(path: string, tid: string, write: boolean, comment?: string): ReturnType<IPCPeer['lock']>;
     };
@@ -169,7 +172,11 @@ export class Storage extends SimpleEventEmitter {
 
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
-        if (settings.ipc) {
+        if (settings.ipc === 'socket' || settings.ipc instanceof Server) {
+            const ipcSettings = { ipcName, server: settings.ipc instanceof Server ? settings.ipc : null };
+            this.ipc = new IPCSocketPeer(this, ipcSettings);
+        }
+        else if (settings.ipc) {
             if (typeof settings.ipc.port !== 'number') {
                 throw new Error('IPC port number must be a number');
             }
@@ -708,7 +715,6 @@ export class Storage extends SimpleEventEmitter {
                 const trailKeys = pathKeys.slice(eventPathKeys.length);
                 let currentValue = topEventData;
                 while (trailKeys.length > 0 && currentValue !== null) {
-                    /** @type {string|number} trailKeys.shift() as string|number */
                     const childKey = trailKeys.shift();
                     currentValue = typeof currentValue === 'object' && childKey in currentValue ? currentValue[childKey] : null;
                 }
