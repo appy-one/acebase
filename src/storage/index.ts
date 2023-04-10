@@ -309,6 +309,10 @@ export class Storage extends SimpleEventEmitter {
         },
 
         add: async (fileName: string) => {
+            const existingIndex = this._indexes.find(index => index.fileName === fileName);
+            if (existingIndex) {
+                return existingIndex;
+            }
             try {
                 const index = await DataIndex.readFromFile(this, fileName);
                 this._indexes.push(index);
@@ -858,7 +862,7 @@ export class Storage extends SimpleEventEmitter {
                     // Index is on updated path
                     const p = this.ipc.isMaster
                         ? index.handleRecordUpdate(topEventPath, oldValue, newValue)
-                        : this.ipc.sendRequest({ type: 'index.update', path: topEventPath, oldValue, newValue });
+                        : this.ipc.sendRequest({ type: 'index.update', fileName: index.fileName, path: topEventPath, oldValue, newValue });
                     indexUpdates.push(p);
                     return; // next index
                 }
@@ -911,7 +915,7 @@ export class Storage extends SimpleEventEmitter {
                 results.forEach(result => {
                     const p = this.ipc.isMaster
                         ? index.handleRecordUpdate(result.path, result.oldValue, result.newValue)
-                        : this.ipc.sendRequest({ type: 'index.update', path: result.path, oldValue: result.oldValue, newValue: result.newValue });
+                        : this.ipc.sendRequest({ type: 'index.update', fileName: index.fileName, path: result.path, oldValue: result.oldValue, newValue: result.newValue });
                     indexUpdates.push(p);
                 });
             });
