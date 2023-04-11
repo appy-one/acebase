@@ -143,7 +143,7 @@ export class AceBaseStorage extends Storage {
         this.type = settings.type;
         if (this.type === 'data' && settings.transactions.log === true) {
             // Get/create storage for mutations logging
-            const txSettings = new AceBaseStorageSettings({ type: 'transaction', path: settings.path, removeVoidProperties: true, transactions: settings.transactions });
+            const txSettings = new AceBaseStorageSettings({ type: 'transaction', path: settings.path, removeVoidProperties: true, transactions: settings.transactions, ipc: settings.ipc });
             this.txStorage = new AceBaseStorage(name, txSettings, { logLevel: 'error' });
         }
 
@@ -1576,18 +1576,24 @@ export class AceBaseStorage extends Storage {
 
             let count = 0;
             const oldestValidCursor = this.oldestValidCursor, expiredTransactions: string[] = [], inspectFurther: string[] = [];
-            await this.getChildren('history', { tid })
-                .next(childInfo => {
+            try {
+                await this.getChildren('history', { tid }).next(childInfo => {
                     const txCursor = childInfo.key.slice(0, cursor.length);
                     if (txCursor < oldestValidCursor) { expiredTransactions.push(childInfo.key); }
                     if (txCursor < cursor) { return; }
                     if (txCursor === cursor) {
-                    // cuid timestamp bytes are equal - perform extra check on this mutation later to find out if we have to include it in the results
+                        // cuid timestamp bytes are equal - perform extra check on this mutation later to find out if we have to include it in the results
                         inspectFurther.push(childInfo.key);
                     }
                     count++;
                     check(childInfo.key);
                 });
+            }
+            catch (err) {
+                if (!(err instanceof NodeNotFoundError)) {
+                    throw err;
+                }
+            }
 
             allEnumerated = true;
             if (count > 0) {
