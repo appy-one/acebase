@@ -1,8 +1,11 @@
+/// <reference types="node" />
 import { Utils, DebugLogger, SimpleEventEmitter, DataRetrievalOptions, ISchemaCheckResult, LoggingLevel } from 'acebase-core';
 import { NodeInfo } from '../node-info';
 import { IPCPeer, RemoteIPCPeer } from '../ipc';
 import { DataIndex } from '../data-index';
 import { CreateIndexOptions } from './indexes';
+import { IPCSocketPeer } from '../ipc/socket';
+import { Server } from 'net';
 export declare class SchemaValidationError extends Error {
     reason: string;
     constructor(reason: string);
@@ -81,9 +84,10 @@ export declare class StorageSettings {
      */
     readOnly: boolean;
     /**
-     * IPC settings if you are using AceBase in pm2 or cloud-based clusters
+     * IPC settings if you are using AceBase in pm2 or cloud-based clusters, or (NEW) `'socket'` to connect
+     * to an automatically spawned IPC service ("daemon") on this machine
      */
-    ipc?: IPCClientSettings;
+    ipc?: IPCClientSettings | 'socket' | Server;
     /**
      * Settings for optional transaction logging
      */
@@ -102,7 +106,7 @@ export declare class Storage extends SimpleEventEmitter {
     settings: StorageSettings;
     debug: DebugLogger;
     stats: any;
-    ipc: IPCPeer | RemoteIPCPeer;
+    ipc: IPCPeer | RemoteIPCPeer | IPCSocketPeer;
     nodeLocker: {
         lock(path: string, tid: string, write: boolean, comment?: string): ReturnType<IPCPeer['lock']>;
     };

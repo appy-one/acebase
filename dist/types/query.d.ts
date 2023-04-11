@@ -16,7 +16,7 @@ declare type LocalApi = Api & {
  * @param options Additional options
  * @returns Returns a promise that resolves with matching data or paths in `results`
  */
-export declare function query(api: LocalApi, path: string, query: Query, options?: QueryOptions): Promise<{
+export declare function executeQuery(api: LocalApi, path: string, query: Query, options?: QueryOptions): Promise<{
     results: Array<{
         path: string;
         val: any;

@@ -13,7 +13,7 @@ const noop = () => { };
  * @param options Additional options
  * @returns Returns a promise that resolves with matching data or paths in `results`
  */
-export function query(api, path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: noop }) {
+export async function executeQuery(api, path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: noop }) {
     // TODO: Refactor to async
     if (typeof options !== 'object') {
         options = {};
@@ -98,8 +98,70 @@ export function query(api, path, query, options = { snapshots: false, include: u
     const isWildcardPath = pathInfo.keys.some(key => key === '*' || key.toString().startsWith('$')); // path.includes('*');
     const availableIndexes = api.storage.indexes.get(path);
     const usingIndexes = [];
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    let stop = async () => { };
     if (isWildcardPath) {
-        if (availableIndexes.length === 0) {
+        // Check if path contains $vars with explicit filter values. If so, execute multiple queries and merge results
+        const vars = pathInfo.keys.filter(key => typeof key === 'string' && key.startsWith('$'));
+        const hasExplicitFilterValues = vars.length > 0 && vars.every(v => query.filters.some(f => f.key === v && ['==', 'in'].includes(f.op)));
+        const isRealtime = typeof options.monitor === 'object' && [options.monitor?.add, options.monitor?.change, options.monitor?.remove].some(val => val === true);
+        if (hasExplicitFilterValues && !isRealtime) {
+            // create path combinations
+            const combinations = [];
+            for (const v of vars) {
+                const filters = query.filters.filter(f => f.key === v);
+                const filterValues = filters.reduce((values, f) => {
+                    if (f.op === '==') {
+                        values.push(f.compare);
+                    }
+                    if (f.op === 'in') {
+                        if (!(f.compare instanceof Array)) {
+                            throw new Error(`compare argument for 'in' operator must be an Array`);
+                        }
+                        values.push(...f.compare);
+                    }
+                    return values;
+                }, []);
+                // Expand all current combinations with these filter values
+                const prevCombinations = combinations.splice(0);
+                filterValues.forEach(fv => {
+                    if (prevCombinations.length === 0) {
+                        combinations.push({ [v]: fv });
+                    }
+                    else {
+                        combinations.push(...prevCombinations.map(c => ({ ...c, [v]: fv })));
+                    }
+                });
+            }
+            // create queries
+            const filters = query.filters.filter(f => !vars.includes(f.key));
+            const paths = combinations.map(vars => PathInfo.get(PathInfo.getPathKeys(path).map(key => vars[key] ?? key)).path);
+            const loadData = query.order.length > 0;
+            const promises = paths.map(path => executeQuery(api, path, { filters, take: 0, skip: 0, order: [] }, {
+                snapshots: loadData,
+                cache_mode: options.cache_mode,
+                include: [...(options.include ?? []), ...query.order.map(o => o.key)],
+                exclude: options.exclude,
+            }));
+            const resultSets = await Promise.all(promises);
+            let results = resultSets.reduce((results, set) => (results.push(...set.results), results), []);
+            if (loadData) {
+                sortMatches(results);
+            }
+            if (query.skip > 0) {
+                results.splice(0, query.skip);
+            }
+            if (query.take > 0) {
+                results.splice(query.take);
+            }
+            if (options.snapshots && (!loadData || options.include?.length > 0 || options.exclude?.length > 0 || !options.child_objects)) {
+                const { include, exclude, child_objects } = options;
+                results = await loadResultsData(results, { include, exclude, child_objects });
+            }
+            return { results, context: null, stop };
+            // const results = options.snapshots ? results
+        }
+        else if (availableIndexes.length === 0) {
             // Wildcard paths require data to be indexed
             const err = new Error(`Query on wildcard path "/${path}" requires an index`);
             return Promise.reject(err);
@@ -560,10 +622,9 @@ export function query(api, path, query, options = { snapshots: false, include: u
         if (options.monitor === true) {
             options.monitor = { add: true, change: true, remove: true };
         }
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        let stop = async () => { };
         if (typeof options.monitor === 'object' && (options.monitor.add || options.monitor.change || options.monitor.remove)) {
             // TODO: Refactor this to use 'mutations' event instead of 'notify_child_*'
+            const monitor = options.monitor;
             const matchedPaths = options.snapshots ? matches.map(match => match.path) : matches.slice();
             const ref = api.db.ref(path);
             const removeMatch = (path) => {
@@ -659,16 +720,16 @@ export function query(api, path, query, options = { snapshots: false, include: u
                         const node = await api.storage.getNode(path, loadOptions);
                         newValue = node.value;
                     }
-                    if (wasMatch && options.monitor.change) {
+                    if (wasMatch && monitor.change) {
                         keepMonitoring = options.eventHandler({ name: 'change', path, value: newValue }) !== false;
                     }
-                    else if (!wasMatch && options.monitor.add) {
+                    else if (!wasMatch && monitor.add) {
                         keepMonitoring = options.eventHandler({ name: 'add', path, value: newValue }) !== false;
                     }
                 }
                 else if (wasMatch) {
                     removeMatch(path);
-                    if (options.monitor.remove) {
+                    if (monitor.remove) {
                         keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: oldValue }) !== false;
                     }
                 }
@@ -688,7 +749,7 @@ export function query(api, path, query, options = { snapshots: false, include: u
                 let keepMonitoring = true;
                 if (isMatch) {
                     addMatch(path);
-                    if (options.monitor.add) {
+                    if (monitor.add) {
                         keepMonitoring = options.eventHandler({ name: 'add', path: path, value: options.snapshots ? newValue : null }) !== false;
                     }
                 }
@@ -699,7 +760,7 @@ export function query(api, path, query, options = { snapshots: false, include: u
             const childRemovedCallback = (err, path, newValue, oldValue) => {
                 let keepMonitoring = true;
                 removeMatch(path);
-                if (options.monitor.remove) {
+                if (monitor.remove) {
                     keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: options.snapshots ? oldValue : null }) !== false;
                 }
                 if (keepMonitoring === false) {

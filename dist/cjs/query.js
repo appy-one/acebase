@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.query = void 0;
+exports.executeQuery = void 0;
 const acebase_core_1 = require("acebase-core");
 const node_value_types_1 = require("./node-value-types");
 const node_errors_1 = require("./node-errors");
@@ -16,9 +16,9 @@ const noop = () => { };
  * @param options Additional options
  * @returns Returns a promise that resolves with matching data or paths in `results`
  */
-function query(api, path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: noop }) {
+async function executeQuery(api, path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: noop }) {
+    var _a, _b, _c, _d, _e, _f;
     // TODO: Refactor to async
-    var _a;
     if (typeof options !== 'object') {
         options = {};
     }
@@ -102,8 +102,73 @@ function query(api, path, query, options = { snapshots: false, include: undefine
     const isWildcardPath = pathInfo.keys.some(key => key === '*' || key.toString().startsWith('$')); // path.includes('*');
     const availableIndexes = api.storage.indexes.get(path);
     const usingIndexes = [];
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    let stop = async () => { };
     if (isWildcardPath) {
-        if (availableIndexes.length === 0) {
+        // Check if path contains $vars with explicit filter values. If so, execute multiple queries and merge results
+        const vars = pathInfo.keys.filter(key => typeof key === 'string' && key.startsWith('$'));
+        const hasExplicitFilterValues = vars.length > 0 && vars.every(v => query.filters.some(f => f.key === v && ['==', 'in'].includes(f.op)));
+        const isRealtime = typeof options.monitor === 'object' && [(_b = options.monitor) === null || _b === void 0 ? void 0 : _b.add, (_c = options.monitor) === null || _c === void 0 ? void 0 : _c.change, (_d = options.monitor) === null || _d === void 0 ? void 0 : _d.remove].some(val => val === true);
+        if (hasExplicitFilterValues && !isRealtime) {
+            // create path combinations
+            const combinations = [];
+            for (const v of vars) {
+                const filters = query.filters.filter(f => f.key === v);
+                const filterValues = filters.reduce((values, f) => {
+                    if (f.op === '==') {
+                        values.push(f.compare);
+                    }
+                    if (f.op === 'in') {
+                        if (!(f.compare instanceof Array)) {
+                            throw new Error(`compare argument for 'in' operator must be an Array`);
+                        }
+                        values.push(...f.compare);
+                    }
+                    return values;
+                }, []);
+                // Expand all current combinations with these filter values
+                const prevCombinations = combinations.splice(0);
+                filterValues.forEach(fv => {
+                    if (prevCombinations.length === 0) {
+                        combinations.push({ [v]: fv });
+                    }
+                    else {
+                        combinations.push(...prevCombinations.map(c => (Object.assign(Object.assign({}, c), { [v]: fv }))));
+                    }
+                });
+            }
+            // create queries
+            const filters = query.filters.filter(f => !vars.includes(f.key));
+            const paths = combinations.map(vars => acebase_core_1.PathInfo.get(acebase_core_1.PathInfo.getPathKeys(path).map(key => { var _a; return (_a = vars[key]) !== null && _a !== void 0 ? _a : key; })).path);
+            const loadData = query.order.length > 0;
+            const promises = paths.map(path => {
+                var _a;
+                return executeQuery(api, path, { filters, take: 0, skip: 0, order: [] }, {
+                    snapshots: loadData,
+                    cache_mode: options.cache_mode,
+                    include: [...((_a = options.include) !== null && _a !== void 0 ? _a : []), ...query.order.map(o => o.key)],
+                    exclude: options.exclude,
+                });
+            });
+            const resultSets = await Promise.all(promises);
+            let results = resultSets.reduce((results, set) => (results.push(...set.results), results), []);
+            if (loadData) {
+                sortMatches(results);
+            }
+            if (query.skip > 0) {
+                results.splice(0, query.skip);
+            }
+            if (query.take > 0) {
+                results.splice(query.take);
+            }
+            if (options.snapshots && (!loadData || ((_e = options.include) === null || _e === void 0 ? void 0 : _e.length) > 0 || ((_f = options.exclude) === null || _f === void 0 ? void 0 : _f.length) > 0 || !options.child_objects)) {
+                const { include, exclude, child_objects } = options;
+                results = await loadResultsData(results, { include, exclude, child_objects });
+            }
+            return { results, context: null, stop };
+            // const results = options.snapshots ? results
+        }
+        else if (availableIndexes.length === 0) {
             // Wildcard paths require data to be indexed
             const err = new Error(`Query on wildcard path "/${path}" requires an index`);
             return Promise.reject(err);
@@ -564,10 +629,9 @@ function query(api, path, query, options = { snapshots: false, include: undefine
         if (options.monitor === true) {
             options.monitor = { add: true, change: true, remove: true };
         }
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        let stop = async () => { };
         if (typeof options.monitor === 'object' && (options.monitor.add || options.monitor.change || options.monitor.remove)) {
             // TODO: Refactor this to use 'mutations' event instead of 'notify_child_*'
+            const monitor = options.monitor;
             const matchedPaths = options.snapshots ? matches.map(match => match.path) : matches.slice();
             const ref = api.db.ref(path);
             const removeMatch = (path) => {
@@ -664,16 +728,16 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                         const node = await api.storage.getNode(path, loadOptions);
                         newValue = node.value;
                     }
-                    if (wasMatch && options.monitor.change) {
+                    if (wasMatch && monitor.change) {
                         keepMonitoring = options.eventHandler({ name: 'change', path, value: newValue }) !== false;
                     }
-                    else if (!wasMatch && options.monitor.add) {
+                    else if (!wasMatch && monitor.add) {
                         keepMonitoring = options.eventHandler({ name: 'add', path, value: newValue }) !== false;
                     }
                 }
                 else if (wasMatch) {
                     removeMatch(path);
-                    if (options.monitor.remove) {
+                    if (monitor.remove) {
                         keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: oldValue }) !== false;
                     }
                 }
@@ -693,7 +757,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                 let keepMonitoring = true;
                 if (isMatch) {
                     addMatch(path);
-                    if (options.monitor.add) {
+                    if (monitor.add) {
                         keepMonitoring = options.eventHandler({ name: 'add', path: path, value: options.snapshots ? newValue : null }) !== false;
                     }
                 }
@@ -704,7 +768,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
             const childRemovedCallback = (err, path, newValue, oldValue) => {
                 let keepMonitoring = true;
                 removeMatch(path);
-                if (options.monitor.remove) {
+                if (monitor.remove) {
                     keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: options.snapshots ? oldValue : null }) !== false;
                 }
                 if (keepMonitoring === false) {
@@ -725,5 +789,5 @@ function query(api, path, query, options = { snapshots: false, include: undefine
         return { results: matches, context, stop };
     });
 }
-exports.query = query;
+exports.executeQuery = executeQuery;
 //# sourceMappingURL=query.js.map

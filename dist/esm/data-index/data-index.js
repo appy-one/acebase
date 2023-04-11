@@ -529,6 +529,9 @@ export class DataIndex {
         // Process any queued updates
         return await this._processUpdateQueue();
     }
+    clearCache(forPath) {
+        this._cache.clear(); // TODO: check which cache results should be adjusted intelligently
+    }
     async _processUpdateQueue() {
         const queue = this._updateQueue.splice(0);
         if (queue.length === 0) {
@@ -550,6 +553,7 @@ export class DataIndex {
         await Promise.all(promises);
     }
     async handleRecordUpdate(path, oldValue, newValue, indexMetadata) {
+        this.storage.debug.verbose(`Handling index ${this.description} update request for "/${path}"`);
         const getValues = (key, oldValue, newValue) => PathInfo.getPathKeys(key).reduce((values, key) => getChildValues(key, values.oldValue, values.newValue), { oldValue, newValue });
         const updatedKey = PathInfo.get(path).key;
         if (typeof updatedKey === 'number') {
@@ -574,6 +578,7 @@ export class DataIndex {
         const keyValueChanged = compareValues(keyValues.oldValue, keyValues.newValue) !== 'identical';
         const includedValuesChanged = includedValues.some(values => compareValues(values.oldValue, values.newValue) !== 'identical');
         if (!keyValueChanged && !includedValuesChanged) {
+            this.storage.debug.verbose(`Update on "/${path}" has no effective changes for index ${this.description}`);
             return;
         }
         const wildcardKeys = this._getWildcardKeys(path);
@@ -593,10 +598,11 @@ export class DataIndex {
             // Invalidate query cache
             this._cache.clear();
             // Update the tree
+            this.storage.debug.verbose(`Updating index ${this.description} tree for "/${path}"`);
             return await this._updateTree(path, keyValues.oldValue, keyValues.newValue, recordPointer, recordPointer, metadata);
         }
         else {
-            this.storage.debug.verbose(`Queueing index ${this.description} update for "/${path}"`);
+            this.storage.debug.log(`Queueing index ${this.description} update for "/${path}"`);
             // Queue the update
             const update = {
                 path,
@@ -611,8 +617,7 @@ export class DataIndex {
             const p = new Promise((resolve, reject) => {
                 update.resolve = resolve;
                 update.reject = reject;
-            })
-                .catch(err => {
+            }).catch(err => {
                 this.storage.debug.error(`Unable to process queued update for "/${path}" on index ${this.description}:`, err);
             });
             this._updateQueue.push(update);

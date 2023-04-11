@@ -4,7 +4,7 @@ import { SQLiteStorage, SQLiteStorageSettings } from './storage/sqlite/index.js'
 import { MSSQLStorage, MSSQLStorageSettings } from './storage/mssql/index.js';
 import { CustomStorage, CustomStorageSettings } from './storage/custom/index.js';
 import { VALUE_TYPES } from './node-value-types.js';
-import { query as executeQuery } from './query.js';
+import { executeQuery } from './query.js';
 import { NodeNotFoundError } from './node-errors.js';
 export class LocalApi extends Api {
     constructor(dbname = 'default', init, readyCallback) {

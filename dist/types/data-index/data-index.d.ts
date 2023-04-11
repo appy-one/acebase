@@ -63,6 +63,7 @@ export declare class DataIndex {
         release(): void;
     }): Promise<void>;
     _processTreeOperations(path: string, operations: BinaryBPlusTreeTransactionOperation[]): Promise<void>;
+    clearCache(forPath: string): void;
     _processUpdateQueue(): Promise<void>;
     handleRecordUpdate(path: string, oldValue: unknown, newValue: unknown, indexMetadata?: IndexMetaData): Promise<void>;
     _lock(mode?: string, timeout?: number): Promise<import("../thread-safe").ThreadSafeLock>;

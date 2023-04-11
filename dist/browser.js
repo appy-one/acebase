@@ -45,7 +45,7 @@ class BrowserAceBase extends acebase_local_1.AceBase {
 }
 exports.BrowserAceBase = BrowserAceBase;
 
-},{"./acebase-local":2,"./storage/custom/indexed-db":22}],2:[function(require,module,exports){
+},{"./acebase-local":2,"./storage/custom/indexed-db":24}],2:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBase = exports.AceBaseLocalSettings = exports.IndexedDBStorageSettings = exports.LocalStorageSettings = void 0;
@@ -145,7 +145,7 @@ class AceBase extends acebase_core_1.AceBaseBase {
 }
 exports.AceBase = AceBase;
 
-},{"./api-local":3,"./storage/binary":18,"./storage/custom/indexed-db/settings":23,"./storage/custom/local-storage":25,"acebase-core":43}],3:[function(require,module,exports){
+},{"./api-local":3,"./storage/binary":20,"./storage/custom/indexed-db/settings":25,"./storage/custom/local-storage":27,"acebase-core":45}],3:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalApi = void 0;
@@ -280,7 +280,7 @@ class LocalApi extends acebase_core_1.Api {
      * @returns Returns a promise that resolves with matching data or paths in `results`
      */
     async query(path, query, options = { snapshots: false }) {
-        const results = await (0, query_1.query)(this, path, query, options);
+        const results = await (0, query_1.executeQuery)(this, path, query, options);
         return results;
     }
     /**
@@ -446,7 +446,7 @@ class LocalApi extends acebase_core_1.Api {
 }
 exports.LocalApi = LocalApi;
 
-},{"./node-errors":11,"./node-value-types":14,"./query":17,"./storage/binary":18,"./storage/custom":21,"./storage/mssql":30,"./storage/sqlite":31,"acebase-core":43}],4:[function(require,module,exports){
+},{"./node-errors":13,"./node-value-types":16,"./query":19,"./storage/binary":20,"./storage/custom":23,"./storage/mssql":32,"./storage/sqlite":33,"acebase-core":45}],4:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.assert = void 0;
@@ -622,7 +622,7 @@ var storage_1 = require("./storage");
 Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return storage_1.StorageSettings; } });
 Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return storage_1.SchemaValidationError; } });
 
-},{"./acebase-browser":1,"./acebase-local":2,"./storage":28,"./storage/binary":18,"./storage/custom":21,"./storage/mssql":30,"./storage/sqlite":31,"acebase-core":43}],7:[function(require,module,exports){
+},{"./acebase-browser":1,"./acebase-local":2,"./storage":30,"./storage/binary":20,"./storage/custom":23,"./storage/mssql":32,"./storage/sqlite":33,"acebase-core":45}],7:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ArrayIndex = exports.GeoIndex = exports.FullTextIndex = exports.DataIndex = void 0;
@@ -652,7 +652,7 @@ class ArrayIndex extends not_supported_1.NotSupported {
 }
 exports.ArrayIndex = ArrayIndex;
 
-},{"../not-supported":15}],8:[function(require,module,exports){
+},{"../not-supported":17}],8:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RemoteIPCPeer = exports.IPCPeer = void 0;
@@ -795,7 +795,7 @@ class RemoteIPCPeer extends not_supported_1.NotSupported {
 }
 exports.RemoteIPCPeer = RemoteIPCPeer;
 
-},{"../not-supported":15,"./ipc":9,"acebase-core":43}],9:[function(require,module,exports){
+},{"../not-supported":17,"./ipc":9,"acebase-core":45}],9:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
@@ -1294,7 +1294,245 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock":13,"acebase-core":43}],10:[function(require,module,exports){
+},{"../node-lock":15,"acebase-core":45}],10:[function(require,module,exports){
+(function (process){(function (){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MSG_DELIMITER = exports.getSocketPath = void 0;
+function getSocketPath(filePath) {
+    return process.platform === 'win32'
+        ? `\\\\.\\pipe\\${filePath.replace(/^\//, '').replace(/\//g, '-')}`
+        : `${filePath}.sock`;
+}
+exports.getSocketPath = getSocketPath;
+// export const MSG_DELIMITER = String.fromCharCode(0) + String.fromCharCode(1) + String.fromCharCode(3) + String.fromCharCode(5) + String.fromCharCode(0);
+exports.MSG_DELIMITER = '\n';
+
+}).call(this)}).call(this,require('_process'))
+},{"_process":62}],11:[function(require,module,exports){
+(function (process,Buffer,__dirname){(function (){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.IPCSocketPeer = void 0;
+const net_1 = require("net");
+const path_1 = require("path");
+const child_process_1 = require("child_process");
+const ipc_1 = require("./ipc");
+const acebase_core_1 = require("acebase-core");
+const shared_1 = require("./service/shared");
+const masterPeerId = '[master]';
+/**
+ * Node cluster functionality - enables vertical scaling with forked processes. AceBase will enable IPC at startup, so
+ * any forked process will communicate database changes and events automatically. Locking of resources will be done by
+ * the cluster's primary (previously master) process. NOTE: if the master process dies, all peers stop working
+ */
+class IPCSocketPeer extends ipc_1.AceBaseIPCPeer {
+    constructor(storage, ipcSettings) {
+        const isMaster = storage.settings.ipc instanceof net_1.Server;
+        const peerId = isMaster ? masterPeerId : acebase_core_1.ID.generate();
+        super(storage, peerId, ipcSettings.ipcName);
+        this.server = ipcSettings.server;
+        this.masterPeerId = masterPeerId;
+        this.ipcType = 'node.socket';
+        const dbFile = (0, path_1.resolve)(storage.path, `${storage.settings.type}.db`);
+        const socketPath = (0, shared_1.getSocketPath)(dbFile);
+        /** Adds an event handler that is automatically removed upon IPC exit */
+        const bindEventHandler = (target, event, handler) => {
+            var _a;
+            ((_a = target.on) !== null && _a !== void 0 ? _a : target.addListener).bind(target)(event, handler);
+            this.on('exit', () => { var _a; return ((_a = target.off) !== null && _a !== void 0 ? _a : target.removeListener).bind(target)(event, handler); });
+        };
+        // Setup process exit handler
+        bindEventHandler(process, 'SIGINT', () => {
+            this.exit();
+        });
+        if (!isMaster) {
+            // Try starting IPC service if it is not running yet
+            const service = (0, child_process_1.fork)(__dirname + '/service/start.js', [dbFile], { detached: true, stdio: 'inherit' });
+            service.unref(); // Process is detached and allowed to keep running after we exit
+            bindEventHandler(service, 'exit', (code, signal) => {
+                console.log(`Service exited with code ${code}`);
+            });
+            // // For testing:
+            // startServer(dbFile, (code) => {
+            //     console.log(`Service exited with code ${code}`);
+            // });
+        }
+        /**
+         * Socket connection with master (workers only)
+         */
+        let socket = null;
+        let connected = false;
+        const queue = [];
+        /**
+         * Maps peers to IPC sockets (master only)
+         */
+        const peerSockets = isMaster ? new Map() : null;
+        const handleMessage = (socket, message) => {
+            if (typeof message !== 'object') {
+                // Ignore non-object IPC messages
+                return;
+            }
+            if (isMaster && message.to !== masterPeerId) {
+                // Message is meant for others (or all). Forward it
+                this.sendMessage(message);
+            }
+            if (message.to && message.to !== this.id) {
+                // Message is for somebody else. Ignore
+                return;
+            }
+            if (this.isMaster) {
+                if (message.type === 'hello') {
+                    // Bind peer id to incoming socket
+                    peerSockets.set(message.from, socket);
+                }
+                else if (message.type === 'bye') {
+                    // Remove bound socket for peer
+                    peerSockets.delete(message.from);
+                }
+            }
+            return super.handleMessage(message);
+        };
+        if (isMaster) {
+            this.server.on('connection', (socket) => {
+                // New socket connected. We don't know which peer it is until we get a "hello" message
+                let buffer = Buffer.alloc(0); // Buffer to store incomplete messages
+                socket.on('data', chunk => {
+                    // Received data from a worker
+                    buffer = Buffer.concat([buffer, chunk]);
+                    while (buffer.length > 0) {
+                        const delimiterIndex = buffer.indexOf(shared_1.MSG_DELIMITER);
+                        if (delimiterIndex === -1) {
+                            break; // wait for more data
+                        }
+                        // Extract message from buffer
+                        const message = buffer.slice(0, delimiterIndex);
+                        buffer = buffer.slice(delimiterIndex + shared_1.MSG_DELIMITER.length);
+                        try {
+                            const json = message.toString('utf-8');
+                            // console.log(`Received socket message: `, json);
+                            const serialized = JSON.parse(json);
+                            const msg = acebase_core_1.Transport.deserialize2(serialized);
+                            handleMessage(socket, msg);
+                        }
+                        catch (err) {
+                            console.error(`Error parsing message: ${err}`);
+                        }
+                    }
+                });
+                socket.on('close', (hadError) => {
+                    // socket has disconnected. Find registered peer
+                    for (const [peerId, peerSocket] of peerSockets.entries()) {
+                        if (peerSocket === socket) {
+                            // Worker apparently did not have time to say goodbye,
+                            // remove the peer ourselves
+                            this.removePeer(peerId);
+                            // Send "bye" message on their behalf
+                            this.sayGoodbye(peerId);
+                            break;
+                        }
+                    }
+                });
+            });
+        }
+        else {
+            const connectSocket = async (path) => {
+                const tryConnect = async (tries) => {
+                    try {
+                        const s = (0, net_1.connect)({ path });
+                        await new Promise((resolve, reject) => {
+                            s.once('error', reject);
+                            s.once('connect', resolve);
+                        });
+                        console.log(`IPC peer ${this.id} successfully established connection to the server`);
+                        socket = s;
+                        connected = true;
+                    }
+                    catch (err) {
+                        if (tries < 100) {
+                            // Retry in 10ms
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                            return tryConnect(tries + 1);
+                        }
+                        console.error(err.message);
+                        throw err;
+                    }
+                };
+                await tryConnect(1);
+                this.once('exit', () => {
+                    socket.destroy();
+                });
+                bindEventHandler(socket, 'close', (hadError) => {
+                    // Connection to server closed
+                    console.log(`IPC peer ${this.id} lost its connection to the server${hadError ? ' because of an error' : ''}`);
+                });
+                let buffer = Buffer.alloc(0); // Buffer to store incomplete messages
+                bindEventHandler(socket, 'data', chunk => {
+                    // Received data from server
+                    buffer = Buffer.concat([buffer, chunk]);
+                    while (buffer.length > 0) {
+                        const delimiterIndex = buffer.indexOf(shared_1.MSG_DELIMITER);
+                        if (delimiterIndex === -1) {
+                            break; // wait for more data
+                        }
+                        // Extract message from buffer
+                        const message = buffer.slice(0, delimiterIndex);
+                        buffer = buffer.slice(delimiterIndex + shared_1.MSG_DELIMITER.length);
+                        try {
+                            const json = message.toString('utf-8');
+                            // console.log(`Received server message: `, json);
+                            const serialized = JSON.parse(json);
+                            const msg = acebase_core_1.Transport.deserialize2(serialized);
+                            handleMessage(socket, msg);
+                        }
+                        catch (err) {
+                            console.error(`Error parsing message: ${err}`);
+                        }
+                    }
+                });
+                connected = true;
+                while (queue.length) {
+                    const message = queue.shift();
+                    this.sendMessage(message);
+                }
+            };
+            connectSocket(socketPath);
+        }
+        this.sendMessage = (message) => {
+            const serialized = acebase_core_1.Transport.serialize2(message);
+            const buffer = Buffer.from(JSON.stringify(serialized) + shared_1.MSG_DELIMITER);
+            if (this.isMaster) {
+                // We are the master, send the message to the target worker(s)
+                this.peers
+                    .filter(p => p.id !== message.from && (!message.to || p.id === message.to))
+                    .forEach(peer => {
+                    const socket = peerSockets.get(peer.id);
+                    socket === null || socket === void 0 ? void 0 : socket.write(buffer);
+                });
+            }
+            else if (connected) {
+                // Send the message to the master who will forward it to the target worker(s)
+                socket.write(buffer);
+            }
+            else {
+                // Not connected yet, queue message
+                queue.push(message);
+            }
+        };
+        // Send hello to other peers
+        const helloMsg = { type: 'hello', from: this.id, data: undefined };
+        this.sendMessage(helloMsg);
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    sendMessage(message) { throw new Error('Must be set by constructor'); }
+    async exit(code = 0) {
+        await super.exit(code);
+    }
+}
+exports.IPCSocketPeer = IPCSocketPeer;
+
+}).call(this)}).call(this,require('_process'),require("buffer").Buffer,"/dist/cjs/ipc")
+},{"./ipc":9,"./service/shared":10,"_process":62,"acebase-core":45,"buffer":60,"child_process":60,"net":60,"path":61}],12:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RemovedNodeAddress = exports.NodeAddress = void 0;
@@ -1329,7 +1567,7 @@ class RemovedNodeAddress extends NodeAddress {
 }
 exports.RemovedNodeAddress = RemovedNodeAddress;
 
-},{}],11:[function(require,module,exports){
+},{}],13:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeRevisionError = exports.NodeNotFoundError = void 0;
@@ -1340,7 +1578,7 @@ class NodeRevisionError extends Error {
 }
 exports.NodeRevisionError = NodeRevisionError;
 
-},{}],12:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeInfo = void 0;
@@ -1389,7 +1627,7 @@ class NodeInfo {
 }
 exports.NodeInfo = NodeInfo;
 
-},{"./node-value-types":14,"acebase-core":43}],13:[function(require,module,exports){
+},{"./node-value-types":16,"acebase-core":45}],15:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeLock = exports.NodeLocker = exports.LOCK_STATE = void 0;
@@ -1674,7 +1912,7 @@ class NodeLock {
 }
 exports.NodeLock = NodeLock;
 
-},{"./assert":4,"acebase-core":43}],14:[function(require,module,exports){
+},{"./assert":4,"acebase-core":45}],16:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getValueType = exports.getNodeValueType = exports.getValueTypeName = exports.VALUE_TYPES = void 0;
@@ -1766,7 +2004,7 @@ function getValueType(value) {
 }
 exports.getValueType = getValueType;
 
-},{"acebase-core":43}],15:[function(require,module,exports){
+},{"acebase-core":45}],17:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotSupported = void 0;
@@ -1775,7 +2013,7 @@ class NotSupported {
 }
 exports.NotSupported = NotSupported;
 
-},{}],16:[function(require,module,exports){
+},{}],18:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pfs = void 0;
@@ -1785,10 +2023,10 @@ class pfs {
 }
 exports.pfs = pfs;
 
-},{}],17:[function(require,module,exports){
+},{}],19:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.query = void 0;
+exports.executeQuery = void 0;
 const acebase_core_1 = require("acebase-core");
 const node_value_types_1 = require("./node-value-types");
 const node_errors_1 = require("./node-errors");
@@ -1804,9 +2042,9 @@ const noop = () => { };
  * @param options Additional options
  * @returns Returns a promise that resolves with matching data or paths in `results`
  */
-function query(api, path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: noop }) {
+async function executeQuery(api, path, query, options = { snapshots: false, include: undefined, exclude: undefined, child_objects: undefined, eventHandler: noop }) {
+    var _a, _b, _c, _d, _e, _f;
     // TODO: Refactor to async
-    var _a;
     if (typeof options !== 'object') {
         options = {};
     }
@@ -1890,8 +2128,73 @@ function query(api, path, query, options = { snapshots: false, include: undefine
     const isWildcardPath = pathInfo.keys.some(key => key === '*' || key.toString().startsWith('$')); // path.includes('*');
     const availableIndexes = api.storage.indexes.get(path);
     const usingIndexes = [];
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    let stop = async () => { };
     if (isWildcardPath) {
-        if (availableIndexes.length === 0) {
+        // Check if path contains $vars with explicit filter values. If so, execute multiple queries and merge results
+        const vars = pathInfo.keys.filter(key => typeof key === 'string' && key.startsWith('$'));
+        const hasExplicitFilterValues = vars.length > 0 && vars.every(v => query.filters.some(f => f.key === v && ['==', 'in'].includes(f.op)));
+        const isRealtime = typeof options.monitor === 'object' && [(_b = options.monitor) === null || _b === void 0 ? void 0 : _b.add, (_c = options.monitor) === null || _c === void 0 ? void 0 : _c.change, (_d = options.monitor) === null || _d === void 0 ? void 0 : _d.remove].some(val => val === true);
+        if (hasExplicitFilterValues && !isRealtime) {
+            // create path combinations
+            const combinations = [];
+            for (const v of vars) {
+                const filters = query.filters.filter(f => f.key === v);
+                const filterValues = filters.reduce((values, f) => {
+                    if (f.op === '==') {
+                        values.push(f.compare);
+                    }
+                    if (f.op === 'in') {
+                        if (!(f.compare instanceof Array)) {
+                            throw new Error(`compare argument for 'in' operator must be an Array`);
+                        }
+                        values.push(...f.compare);
+                    }
+                    return values;
+                }, []);
+                // Expand all current combinations with these filter values
+                const prevCombinations = combinations.splice(0);
+                filterValues.forEach(fv => {
+                    if (prevCombinations.length === 0) {
+                        combinations.push({ [v]: fv });
+                    }
+                    else {
+                        combinations.push(...prevCombinations.map(c => (Object.assign(Object.assign({}, c), { [v]: fv }))));
+                    }
+                });
+            }
+            // create queries
+            const filters = query.filters.filter(f => !vars.includes(f.key));
+            const paths = combinations.map(vars => acebase_core_1.PathInfo.get(acebase_core_1.PathInfo.getPathKeys(path).map(key => { var _a; return (_a = vars[key]) !== null && _a !== void 0 ? _a : key; })).path);
+            const loadData = query.order.length > 0;
+            const promises = paths.map(path => {
+                var _a;
+                return executeQuery(api, path, { filters, take: 0, skip: 0, order: [] }, {
+                    snapshots: loadData,
+                    cache_mode: options.cache_mode,
+                    include: [...((_a = options.include) !== null && _a !== void 0 ? _a : []), ...query.order.map(o => o.key)],
+                    exclude: options.exclude,
+                });
+            });
+            const resultSets = await Promise.all(promises);
+            let results = resultSets.reduce((results, set) => (results.push(...set.results), results), []);
+            if (loadData) {
+                sortMatches(results);
+            }
+            if (query.skip > 0) {
+                results.splice(0, query.skip);
+            }
+            if (query.take > 0) {
+                results.splice(query.take);
+            }
+            if (options.snapshots && (!loadData || ((_e = options.include) === null || _e === void 0 ? void 0 : _e.length) > 0 || ((_f = options.exclude) === null || _f === void 0 ? void 0 : _f.length) > 0 || !options.child_objects)) {
+                const { include, exclude, child_objects } = options;
+                results = await loadResultsData(results, { include, exclude, child_objects });
+            }
+            return { results, context: null, stop };
+            // const results = options.snapshots ? results
+        }
+        else if (availableIndexes.length === 0) {
             // Wildcard paths require data to be indexed
             const err = new Error(`Query on wildcard path "/${path}" requires an index`);
             return Promise.reject(err);
@@ -2352,10 +2655,9 @@ function query(api, path, query, options = { snapshots: false, include: undefine
         if (options.monitor === true) {
             options.monitor = { add: true, change: true, remove: true };
         }
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        let stop = async () => { };
         if (typeof options.monitor === 'object' && (options.monitor.add || options.monitor.change || options.monitor.remove)) {
             // TODO: Refactor this to use 'mutations' event instead of 'notify_child_*'
+            const monitor = options.monitor;
             const matchedPaths = options.snapshots ? matches.map(match => match.path) : matches.slice();
             const ref = api.db.ref(path);
             const removeMatch = (path) => {
@@ -2452,16 +2754,16 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                         const node = await api.storage.getNode(path, loadOptions);
                         newValue = node.value;
                     }
-                    if (wasMatch && options.monitor.change) {
+                    if (wasMatch && monitor.change) {
                         keepMonitoring = options.eventHandler({ name: 'change', path, value: newValue }) !== false;
                     }
-                    else if (!wasMatch && options.monitor.add) {
+                    else if (!wasMatch && monitor.add) {
                         keepMonitoring = options.eventHandler({ name: 'add', path, value: newValue }) !== false;
                     }
                 }
                 else if (wasMatch) {
                     removeMatch(path);
-                    if (options.monitor.remove) {
+                    if (monitor.remove) {
                         keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: oldValue }) !== false;
                     }
                 }
@@ -2481,7 +2783,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
                 let keepMonitoring = true;
                 if (isMatch) {
                     addMatch(path);
-                    if (options.monitor.add) {
+                    if (monitor.add) {
                         keepMonitoring = options.eventHandler({ name: 'add', path: path, value: options.snapshots ? newValue : null }) !== false;
                     }
                 }
@@ -2492,7 +2794,7 @@ function query(api, path, query, options = { snapshots: false, include: undefine
             const childRemovedCallback = (err, path, newValue, oldValue) => {
                 let keepMonitoring = true;
                 removeMatch(path);
-                if (options.monitor.remove) {
+                if (monitor.remove) {
                     keepMonitoring = options.eventHandler({ name: 'remove', path: path, value: options.snapshots ? oldValue : null }) !== false;
                 }
                 if (keepMonitoring === false) {
@@ -2513,9 +2815,9 @@ function query(api, path, query, options = { snapshots: false, include: undefine
         return { results: matches, context, stop };
     });
 }
-exports.query = query;
+exports.executeQuery = executeQuery;
 
-},{"./async-task-batch":5,"./data-index":7,"./node-errors":11,"./node-value-types":14,"acebase-core":43}],18:[function(require,module,exports){
+},{"./async-task-batch":5,"./data-index":7,"./node-errors":13,"./node-value-types":16,"acebase-core":45}],20:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseStorage = exports.AceBaseStorageSettings = void 0;
@@ -2533,7 +2835,7 @@ class AceBaseStorage extends not_supported_1.NotSupported {
 }
 exports.AceBaseStorage = AceBaseStorage;
 
-},{"../../not-supported":15}],19:[function(require,module,exports){
+},{"../../not-supported":17}],21:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
@@ -2572,7 +2874,7 @@ async function createIndex(context, path, key, options) {
         // Pass create request to master
         const result = await ipc.sendRequest({ type: 'index.create', path, key, options });
         if (result.ok) {
-            return this.add(result.fileName);
+            return storage.indexes.add(result.fileName);
         }
         throw new Error(result.reason);
     }
@@ -2610,7 +2912,7 @@ async function createIndex(context, path, key, options) {
 }
 exports.createIndex = createIndex;
 
-},{"../data-index":7,"../promise-fs":16,"acebase-core":43}],20:[function(require,module,exports){
+},{"../data-index":7,"../promise-fs":18,"acebase-core":45}],22:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorageHelpers = void 0;
@@ -2679,7 +2981,7 @@ class CustomStorageHelpers {
 }
 exports.CustomStorageHelpers = CustomStorageHelpers;
 
-},{"acebase-core":43}],21:[function(require,module,exports){
+},{"acebase-core":45}],23:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorage = exports.CustomStorageNodeInfo = exports.CustomStorageNodeAddress = exports.CustomStorageSettings = exports.CustomStorageTransaction = exports.ICustomStorageNode = exports.ICustomStorageNodeMetaData = exports.CustomStorageHelpers = void 0;
@@ -3894,7 +4196,7 @@ class CustomStorage extends index_1.Storage {
 }
 exports.CustomStorage = CustomStorage;
 
-},{"../../assert":4,"../../node-address":10,"../../node-errors":11,"../../node-info":12,"../../node-lock":13,"../../node-value-types":14,"../index":28,"./helpers":20,"acebase-core":43}],22:[function(require,module,exports){
+},{"../../assert":4,"../../node-address":12,"../../node-errors":13,"../../node-info":14,"../../node-lock":15,"../../node-value-types":16,"../index":30,"./helpers":22,"acebase-core":45}],24:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndexedDBInstance = void 0;
@@ -3972,7 +4274,7 @@ function createIndexedDBInstance(dbname, init = {}) {
 }
 exports.createIndexedDBInstance = createIndexedDBInstance;
 
-},{"..":21,"../../..":6,"./settings":23,"./transaction":24,"acebase-core":43}],23:[function(require,module,exports){
+},{"..":23,"../../..":6,"./settings":25,"./transaction":26,"acebase-core":45}],25:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageSettings = void 0;
@@ -4016,7 +4318,7 @@ class IndexedDBStorageSettings extends __1.StorageSettings {
 }
 exports.IndexedDBStorageSettings = IndexedDBStorageSettings;
 
-},{"../..":28}],24:[function(require,module,exports){
+},{"../..":30}],26:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageTransaction = void 0;
@@ -4243,7 +4545,7 @@ class IndexedDBStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.IndexedDBStorageTransaction = IndexedDBStorageTransaction;
 
-},{"..":21}],25:[function(require,module,exports){
+},{"..":23}],27:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createLocalStorageInstance = exports.LocalStorageTransaction = exports.LocalStorageSettings = void 0;
@@ -4283,7 +4585,7 @@ function createLocalStorageInstance(dbname, init = {}) {
 }
 exports.createLocalStorageInstance = createLocalStorageInstance;
 
-},{"..":21,"../../..":6,"./settings":26,"./transaction":27}],26:[function(require,module,exports){
+},{"..":23,"../../..":6,"./settings":28,"./transaction":29}],28:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageSettings = void 0;
@@ -4325,7 +4627,7 @@ class LocalStorageSettings extends __1.StorageSettings {
 }
 exports.LocalStorageSettings = LocalStorageSettings;
 
-},{"../..":28}],27:[function(require,module,exports){
+},{"../..":30}],29:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageTransaction = void 0;
@@ -4419,7 +4721,7 @@ class LocalStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.LocalStorageTransaction = LocalStorageTransaction;
 
-},{"..":21}],28:[function(require,module,exports){
+},{"..":23}],30:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Storage = exports.StorageSettings = exports.SchemaValidationError = void 0;
@@ -4433,6 +4735,8 @@ const promise_fs_1 = require("../promise-fs");
 const data_index_1 = require("../data-index"); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
 const indexes_1 = require("./indexes");
 const assert_1 = require("../assert");
+const socket_1 = require("../ipc/socket");
+const net_1 = require("net");
 const { compareValues, getChildValues, encodeString, defer } = acebase_core_1.Utils;
 const DEBUG_MODE = false;
 const SUPPORTED_EVENTS = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
@@ -4503,7 +4807,7 @@ class StorageSettings {
         if (typeof settings.readOnly === 'boolean') {
             this.readOnly = settings.readOnly;
         }
-        if (typeof settings.ipc === 'object') {
+        if (['object', 'string'].includes(typeof settings.ipc)) {
             this.ipc = settings.ipc;
         }
     }
@@ -4620,6 +4924,10 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 await Promise.all(promises);
             },
             add: async (fileName) => {
+                const existingIndex = this._indexes.find(index => index.fileName === fileName);
+                if (existingIndex) {
+                    return existingIndex;
+                }
                 try {
                     const index = await data_index_1.DataIndex.readFromFile(this, fileName);
                     this._indexes.push(index);
@@ -4823,7 +5131,11 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         this.debug = new acebase_core_1.DebugLogger(env.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
-        if (settings.ipc) {
+        if (settings.ipc === 'socket' || settings.ipc instanceof net_1.Server) {
+            const ipcSettings = { ipcName, server: settings.ipc instanceof net_1.Server ? settings.ipc : null };
+            this.ipc = new socket_1.IPCSocketPeer(this, ipcSettings);
+        }
+        else if (settings.ipc) {
             if (typeof settings.ipc.port !== 'number') {
                 throw new Error('IPC port number must be a number');
             }
@@ -5026,7 +5338,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 const trailKeys = pathKeys.slice(eventPathKeys.length);
                 let currentValue = topEventData;
                 while (trailKeys.length > 0 && currentValue !== null) {
-                    /** @type {string|number} trailKeys.shift() as string|number */
                     const childKey = trailKeys.shift();
                     currentValue = typeof currentValue === 'object' && childKey in currentValue ? currentValue[childKey] : null;
                 }
@@ -5177,7 +5488,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 // Index is on updated path
                 const p = this.ipc.isMaster
                     ? index.handleRecordUpdate(topEventPath, oldValue, newValue)
-                    : this.ipc.sendRequest({ type: 'index.update', path: topEventPath, oldValue, newValue });
+                    : this.ipc.sendRequest({ type: 'index.update', fileName: index.fileName, path: topEventPath, oldValue, newValue });
                 indexUpdates.push(p);
                 return; // next index
             }
@@ -5229,7 +5540,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             results.forEach(result => {
                 const p = this.ipc.isMaster
                     ? index.handleRecordUpdate(result.path, result.oldValue, result.newValue)
-                    : this.ipc.sendRequest({ type: 'index.update', path: result.path, oldValue: result.oldValue, newValue: result.newValue });
+                    : this.ipc.sendRequest({ type: 'index.update', fileName: index.fileName, path: result.path, oldValue: result.oldValue, newValue: result.newValue });
                 indexUpdates.push(p);
             });
         });
@@ -6495,14 +6806,14 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
 }
 exports.Storage = Storage;
 
-},{"../assert":4,"../data-index":7,"../ipc":8,"../node-errors":11,"../node-info":12,"../node-value-types":14,"../promise-fs":16,"./indexes":29,"acebase-core":43}],29:[function(require,module,exports){
+},{"../assert":4,"../data-index":7,"../ipc":8,"../ipc/socket":11,"../node-errors":13,"../node-info":14,"../node-value-types":16,"../promise-fs":18,"./indexes":31,"acebase-core":45,"net":60}],31:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
 var create_index_1 = require("./create-index");
 Object.defineProperty(exports, "createIndex", { enumerable: true, get: function () { return create_index_1.createIndex; } });
 
-},{"./create-index":19}],30:[function(require,module,exports){
+},{"./create-index":21}],32:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MSSQLStorage = exports.MSSQLStorageSettings = void 0;
@@ -6520,7 +6831,7 @@ class MSSQLStorage extends not_supported_1.NotSupported {
 }
 exports.MSSQLStorage = MSSQLStorage;
 
-},{"../../not-supported":15}],31:[function(require,module,exports){
+},{"../../not-supported":17}],33:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SQLiteStorage = exports.SQLiteStorageSettings = void 0;
@@ -6538,7 +6849,7 @@ class SQLiteStorage extends not_supported_1.NotSupported {
 }
 exports.SQLiteStorage = SQLiteStorage;
 
-},{"../../not-supported":15}],32:[function(require,module,exports){
+},{"../../not-supported":17}],34:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseBase = exports.AceBaseBaseSettings = void 0;
@@ -6732,19 +7043,22 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
 }
 exports.AceBaseBase = AceBaseBase;
 
-},{"./data-reference":39,"./debug":41,"./optional-observable":45,"./simple-colors":52,"./simple-event-emitter":53,"./type-mappings":56}],33:[function(require,module,exports){
+},{"./data-reference":41,"./debug":43,"./optional-observable":47,"./simple-colors":54,"./simple-event-emitter":55,"./type-mappings":58}],35:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Api = void 0;
+/* eslint-disable @typescript-eslint/no-unused-vars */
+const simple_event_emitter_1 = require("./simple-event-emitter");
 class NotImplementedError extends Error {
     constructor(name) { super(`${name} is not implemented`); }
 }
 /**
  * Refactor to type/interface once acebase and acebase-client have been ported to TS
  */
-class Api {
-    // eslint-disable-next-line @typescript-eslint/no-empty-function
-    constructor() { }
+class Api extends simple_event_emitter_1.SimpleEventEmitter {
+    constructor() {
+        super();
+    }
     /**
      * Provides statistics
      * @param options
@@ -6779,7 +7093,7 @@ class Api {
 }
 exports.Api = Api;
 
-},{}],34:[function(require,module,exports){
+},{"./simple-event-emitter":55}],36:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ascii85 = void 0;
@@ -6858,7 +7172,7 @@ exports.ascii85 = {
     },
 };
 
-},{}],35:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 "use strict";
 var _a, _b;
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -6871,7 +7185,7 @@ function fingerprint() {
 }
 exports.default = fingerprint;
 
-},{"../pad":37}],36:[function(require,module,exports){
+},{"../pad":39}],38:[function(require,module,exports){
 "use strict";
 /**
  * cuid.js
@@ -6923,7 +7237,7 @@ function cuid(timebias = 0) {
 exports.default = cuid;
 // Not using slugs, removed code
 
-},{"./fingerprint":35,"./pad":37}],37:[function(require,module,exports){
+},{"./fingerprint":37,"./pad":39}],39:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 function pad(num, size) {
@@ -6932,7 +7246,7 @@ function pad(num, size) {
 }
 exports.default = pad;
 
-},{}],38:[function(require,module,exports){
+},{}],40:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OrderedCollectionProxy = exports.proxyAccess = exports.LiveDataProxy = void 0;
@@ -7280,7 +7594,7 @@ class LiveDataProxy {
             };
             localMutationsEmitter.on('mutations', mutationsHandler);
             const stop = () => {
-                localMutationsEmitter.off('mutations').off('mutations', mutationsHandler);
+                localMutationsEmitter.off('mutations', mutationsHandler);
                 clientSubscriptions.splice(clientSubscriptions.findIndex(cs => cs.stop === stop), 1);
             };
             clientSubscriptions.push({ target, stop });
@@ -8158,7 +8472,7 @@ class OrderedCollectionProxy {
 }
 exports.OrderedCollectionProxy = OrderedCollectionProxy;
 
-},{"./data-reference":39,"./data-snapshot":40,"./id":42,"./optional-observable":45,"./path-info":47,"./path-reference":48,"./process":49,"./simple-event-emitter":53,"./utils":57}],39:[function(require,module,exports){
+},{"./data-reference":41,"./data-snapshot":42,"./id":44,"./optional-observable":47,"./path-info":49,"./path-reference":50,"./process":51,"./simple-event-emitter":55,"./utils":59}],41:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DataReferencesArray = exports.DataSnapshotsArray = exports.DataReferenceQuery = exports.DataReference = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = void 0;
@@ -8370,7 +8684,7 @@ class DataReference {
     }
     /**
      * Updates properties of the referenced node
-     * @param updates object containing the properties to update
+     * @param updates containing the properties to update
      * @param onComplete optional completion callback to use instead of returning promise
      * @return returns promise that resolves with this reference once completed
      */
@@ -9232,7 +9546,7 @@ class DataReferencesArray extends Array {
 }
 exports.DataReferencesArray = DataReferencesArray;
 
-},{"./data-proxy":38,"./data-snapshot":40,"./id":42,"./optional-observable":45,"./path-info":47,"./subscription":54}],40:[function(require,module,exports){
+},{"./data-proxy":40,"./data-snapshot":42,"./id":44,"./optional-observable":47,"./path-info":49,"./subscription":56}],42:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MutationsDataSnapshot = exports.DataSnapshot = void 0;
@@ -9291,11 +9605,6 @@ class DataSnapshot {
     static for(ref, value) {
         return new DataSnapshot(ref, value);
     }
-    /**
-     * Gets a new snapshot for a child node
-     * @param path child key or path
-     * @returns Returns a `DataSnapshot` of the child
-     */
     child(path) {
         // Create new snapshot for child data
         const val = getChild(this, path, false);
@@ -9362,30 +9671,25 @@ class MutationsDataSnapshot extends DataSnapshot {
      * @returns Returns whether every child was interated
      */
     forEach(callback) {
-        const mutations = this.val();
+        const mutations = this.val(false);
         return mutations.every(mutation => {
             const ref = mutation.target.reduce((ref, key) => ref.child(key), this.ref);
             const snap = new DataSnapshot(ref, mutation.val, false, mutation.prev);
             return callback(snap);
         });
     }
-    /**
-     * Gets a snapshot of a mutated node
-     * @param index index of the mutation
-     * @returns Returns a DataSnapshot of the mutated node
-     */
     child(index) {
         if (typeof index !== 'number') {
             throw new Error('child index must be a number');
         }
-        const mutation = this.val()[index];
+        const mutation = this.val(false)[index];
         const ref = mutation.target.reduce((ref, key) => ref.child(key), this.ref);
         return new DataSnapshot(ref, mutation.val, false, mutation.prev);
     }
 }
 exports.MutationsDataSnapshot = MutationsDataSnapshot;
 
-},{"./path-info":47}],41:[function(require,module,exports){
+},{"./path-info":49}],43:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DebugLogger = void 0;
@@ -9417,7 +9721,7 @@ class DebugLogger {
 }
 exports.DebugLogger = DebugLogger;
 
-},{"./process":49}],42:[function(require,module,exports){
+},{"./process":51}],44:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ID = void 0;
@@ -9443,7 +9747,7 @@ class ID {
 }
 exports.ID = ID;
 
-},{"./cuid":36}],43:[function(require,module,exports){
+},{"./cuid":38}],45:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ObjectCollection = exports.PartialArray = exports.SimpleObservable = exports.SchemaDefinition = exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.OrderedCollectionProxy = exports.proxyAccess = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.DataReferencesArray = exports.DataSnapshotsArray = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
@@ -9499,7 +9803,7 @@ Object.defineProperty(exports, "PartialArray", { enumerable: true, get: function
 const object_collection_1 = require("./object-collection");
 Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return object_collection_1.ObjectCollection; } });
 
-},{"./acebase-base":32,"./api":33,"./ascii85":34,"./data-proxy":38,"./data-reference":39,"./data-snapshot":40,"./debug":41,"./id":42,"./object-collection":44,"./optional-observable":45,"./partial-array":46,"./path-info":47,"./path-reference":48,"./schema":50,"./simple-cache":51,"./simple-colors":52,"./simple-event-emitter":53,"./subscription":54,"./transport":55,"./type-mappings":56,"./utils":57}],44:[function(require,module,exports){
+},{"./acebase-base":34,"./api":35,"./ascii85":36,"./data-proxy":40,"./data-reference":41,"./data-snapshot":42,"./debug":43,"./id":44,"./object-collection":46,"./optional-observable":47,"./partial-array":48,"./path-info":49,"./path-reference":50,"./schema":52,"./simple-cache":53,"./simple-colors":54,"./simple-event-emitter":55,"./subscription":56,"./transport":57,"./type-mappings":58,"./utils":59}],46:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ObjectCollection = void 0;
@@ -9551,7 +9855,7 @@ class ObjectCollection {
 }
 exports.ObjectCollection = ObjectCollection;
 
-},{"./id":42}],45:[function(require,module,exports){
+},{"./id":44}],47:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleObservable = exports.setObservable = exports.getObservable = void 0;
@@ -9642,7 +9946,7 @@ class SimpleObservable {
 }
 exports.SimpleObservable = SimpleObservable;
 
-},{"./utils":57,"rxjs":58}],46:[function(require,module,exports){
+},{"./utils":59,"rxjs":60}],48:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PartialArray = void 0;
@@ -9665,7 +9969,7 @@ class PartialArray {
 }
 exports.PartialArray = PartialArray;
 
-},{}],47:[function(require,module,exports){
+},{}],49:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathInfo = void 0;
@@ -9967,7 +10271,7 @@ class PathInfo {
 }
 exports.PathInfo = PathInfo;
 
-},{}],48:[function(require,module,exports){
+},{}],50:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathReference = void 0;
@@ -9982,7 +10286,7 @@ class PathReference {
 }
 exports.PathReference = PathReference;
 
-},{}],49:[function(require,module,exports){
+},{}],51:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = {
@@ -9992,7 +10296,7 @@ exports.default = {
     },
 };
 
-},{}],50:[function(require,module,exports){
+},{}],52:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SchemaDefinition = void 0;
@@ -10092,10 +10396,13 @@ function parse(definition) {
                     const types = readTypes();
                     type.children.push({ name: prop.name, optional: prop.optional, wildcard: prop.wildcard, types });
                     consumeSpaces();
+                    if (definition[pos] === ';' || definition[pos] === ',') {
+                        consumeCharacter(definition[pos]);
+                        consumeSpaces();
+                    }
                     if (definition[pos] === '}') {
                         break;
                     }
-                    consumeCharacter(',');
                 }
                 consumeCharacter('}');
             }
@@ -10345,7 +10652,7 @@ class SchemaDefinition {
 }
 exports.SchemaDefinition = SchemaDefinition;
 
-},{}],51:[function(require,module,exports){
+},{}],53:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleCache = void 0;
@@ -10429,7 +10736,7 @@ class SimpleCache {
 }
 exports.SimpleCache = SimpleCache;
 
-},{"./utils":57}],52:[function(require,module,exports){
+},{"./utils":59}],54:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Colorize = exports.SetColorsEnabled = exports.ColorsSupported = exports.ColorStyle = void 0;
@@ -10583,7 +10890,7 @@ String.prototype.colorize = function (style) {
     return Colorize(this, style);
 };
 
-},{"./process":49}],53:[function(require,module,exports){
+},{"./process":51}],55:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleEventEmitter = void 0;
@@ -10595,20 +10902,22 @@ function runCallback(callback, data) {
         console.error('Error in subscription callback', err);
     }
 }
+const _subscriptions = Symbol('subscriptions');
+const _oneTimeEvents = Symbol('oneTimeEvents');
 class SimpleEventEmitter {
     constructor() {
-        this._subscriptions = [];
-        this._oneTimeEvents = new Map();
+        this[_subscriptions] = [];
+        this[_oneTimeEvents] = new Map();
     }
     on(event, callback) {
-        if (this._oneTimeEvents.has(event)) {
-            return runCallback(callback, this._oneTimeEvents.get(event));
+        if (this[_oneTimeEvents].has(event)) {
+            return runCallback(callback, this[_oneTimeEvents].get(event));
         }
-        this._subscriptions.push({ event, callback, once: false });
+        this[_subscriptions].push({ event, callback, once: false });
         return this;
     }
     off(event, callback) {
-        this._subscriptions = this._subscriptions.filter(s => s.event !== event || (callback && s.callback !== callback));
+        this[_subscriptions] = this[_subscriptions].filter(s => s.event !== event || (callback && s.callback !== callback));
         return this;
     }
     once(event, callback) {
@@ -10617,44 +10926,54 @@ class SimpleEventEmitter {
                 resolve(data);
                 callback === null || callback === void 0 ? void 0 : callback(data);
             };
-            if (this._oneTimeEvents.has(event)) {
-                runCallback(ourCallback, this._oneTimeEvents.get(event));
+            if (this[_oneTimeEvents].has(event)) {
+                runCallback(ourCallback, this[_oneTimeEvents].get(event));
             }
             else {
-                this._subscriptions.push({ event, callback: ourCallback, once: true });
+                this[_subscriptions].push({ event, callback: ourCallback, once: true });
             }
         });
     }
     emit(event, data) {
-        if (this._oneTimeEvents.has(event)) {
+        if (this[_oneTimeEvents].has(event)) {
             throw new Error(`Event "${event}" was supposed to be emitted only once`);
         }
-        for (let i = 0; i < this._subscriptions.length; i++) {
-            const s = this._subscriptions[i];
+        for (let i = 0; i < this[_subscriptions].length; i++) {
+            const s = this[_subscriptions][i];
             if (s.event !== event) {
                 continue;
             }
             runCallback(s.callback, data);
             if (s.once) {
-                this._subscriptions.splice(i, 1);
+                this[_subscriptions].splice(i, 1);
                 i--;
             }
         }
         return this;
     }
     emitOnce(event, data) {
-        if (this._oneTimeEvents.has(event)) {
+        if (this[_oneTimeEvents].has(event)) {
             throw new Error(`Event "${event}" was supposed to be emitted only once`);
         }
         this.emit(event, data);
-        this._oneTimeEvents.set(event, data); // Mark event as being emitted once for future subscribers
+        this[_oneTimeEvents].set(event, data); // Mark event as being emitted once for future subscribers
         this.off(event); // Remove all listeners for this event, they won't fire again
         return this;
+    }
+    pipe(event, eventEmitter) {
+        this.on(event, (data) => {
+            eventEmitter.emit(event, data);
+        });
+    }
+    pipeOnce(event, eventEmitter) {
+        this.once(event, (data) => {
+            eventEmitter.emitOnce(event, data);
+        });
     }
 }
 exports.SimpleEventEmitter = SimpleEventEmitter;
 
-},{}],54:[function(require,module,exports){
+},{}],56:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EventStream = exports.EventPublisher = exports.EventSubscription = void 0;
@@ -10841,7 +11160,7 @@ class EventStream {
 }
 exports.EventStream = EventStream;
 
-},{}],55:[function(require,module,exports){
+},{}],57:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deserialize2 = exports.serialize2 = exports.serialize = exports.detectSerializeVersion = exports.deserialize = void 0;
@@ -11177,7 +11496,7 @@ const deserialize2 = (data) => {
 };
 exports.deserialize2 = deserialize2;
 
-},{"./ascii85":34,"./partial-array":46,"./path-info":47,"./path-reference":48,"./utils":57}],56:[function(require,module,exports){
+},{"./ascii85":36,"./partial-array":48,"./path-info":49,"./path-reference":50,"./utils":59}],58:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TypeMappings = void 0;
@@ -11499,7 +11818,7 @@ class TypeMappings {
 }
 exports.TypeMappings = TypeMappings;
 
-},{"./data-reference":39,"./data-snapshot":40,"./path-info":47,"./utils":57}],57:[function(require,module,exports){
+},{"./data-reference":41,"./data-snapshot":42,"./path-info":49,"./utils":59}],59:[function(require,module,exports){
 (function (global,Buffer){(function (){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -11948,7 +12267,726 @@ function getGlobalObject() {
 exports.getGlobalObject = getGlobalObject;
 
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {},require("buffer").Buffer)
-},{"./partial-array":46,"./path-reference":48,"./process":49,"buffer":58}],58:[function(require,module,exports){
+},{"./partial-array":48,"./path-reference":50,"./process":51,"buffer":60}],60:[function(require,module,exports){
+
+},{}],61:[function(require,module,exports){
+(function (process){(function (){
+// 'path' module extracted from Node.js v8.11.1 (only the posix part)
+// transplited with Babel
+
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+'use strict';
+
+function assertPath(path) {
+  if (typeof path !== 'string') {
+    throw new TypeError('Path must be a string. Received ' + JSON.stringify(path));
+  }
+}
+
+// Resolves . and .. elements in a path with directory names
+function normalizeStringPosix(path, allowAboveRoot) {
+  var res = '';
+  var lastSegmentLength = 0;
+  var lastSlash = -1;
+  var dots = 0;
+  var code;
+  for (var i = 0; i <= path.length; ++i) {
+    if (i < path.length)
+      code = path.charCodeAt(i);
+    else if (code === 47 /*/*/)
+      break;
+    else
+      code = 47 /*/*/;
+    if (code === 47 /*/*/) {
+      if (lastSlash === i - 1 || dots === 1) {
+        // NOOP
+      } else if (lastSlash !== i - 1 && dots === 2) {
+        if (res.length < 2 || lastSegmentLength !== 2 || res.charCodeAt(res.length - 1) !== 46 /*.*/ || res.charCodeAt(res.length - 2) !== 46 /*.*/) {
+          if (res.length > 2) {
+            var lastSlashIndex = res.lastIndexOf('/');
+            if (lastSlashIndex !== res.length - 1) {
+              if (lastSlashIndex === -1) {
+                res = '';
+                lastSegmentLength = 0;
+              } else {
+                res = res.slice(0, lastSlashIndex);
+                lastSegmentLength = res.length - 1 - res.lastIndexOf('/');
+              }
+              lastSlash = i;
+              dots = 0;
+              continue;
+            }
+          } else if (res.length === 2 || res.length === 1) {
+            res = '';
+            lastSegmentLength = 0;
+            lastSlash = i;
+            dots = 0;
+            continue;
+          }
+        }
+        if (allowAboveRoot) {
+          if (res.length > 0)
+            res += '/..';
+          else
+            res = '..';
+          lastSegmentLength = 2;
+        }
+      } else {
+        if (res.length > 0)
+          res += '/' + path.slice(lastSlash + 1, i);
+        else
+          res = path.slice(lastSlash + 1, i);
+        lastSegmentLength = i - lastSlash - 1;
+      }
+      lastSlash = i;
+      dots = 0;
+    } else if (code === 46 /*.*/ && dots !== -1) {
+      ++dots;
+    } else {
+      dots = -1;
+    }
+  }
+  return res;
+}
+
+function _format(sep, pathObject) {
+  var dir = pathObject.dir || pathObject.root;
+  var base = pathObject.base || (pathObject.name || '') + (pathObject.ext || '');
+  if (!dir) {
+    return base;
+  }
+  if (dir === pathObject.root) {
+    return dir + base;
+  }
+  return dir + sep + base;
+}
+
+var posix = {
+  // path.resolve([from ...], to)
+  resolve: function resolve() {
+    var resolvedPath = '';
+    var resolvedAbsolute = false;
+    var cwd;
+
+    for (var i = arguments.length - 1; i >= -1 && !resolvedAbsolute; i--) {
+      var path;
+      if (i >= 0)
+        path = arguments[i];
+      else {
+        if (cwd === undefined)
+          cwd = process.cwd();
+        path = cwd;
+      }
+
+      assertPath(path);
+
+      // Skip empty entries
+      if (path.length === 0) {
+        continue;
+      }
+
+      resolvedPath = path + '/' + resolvedPath;
+      resolvedAbsolute = path.charCodeAt(0) === 47 /*/*/;
+    }
+
+    // At this point the path should be resolved to a full absolute path, but
+    // handle relative paths to be safe (might happen when process.cwd() fails)
+
+    // Normalize the path
+    resolvedPath = normalizeStringPosix(resolvedPath, !resolvedAbsolute);
+
+    if (resolvedAbsolute) {
+      if (resolvedPath.length > 0)
+        return '/' + resolvedPath;
+      else
+        return '/';
+    } else if (resolvedPath.length > 0) {
+      return resolvedPath;
+    } else {
+      return '.';
+    }
+  },
+
+  normalize: function normalize(path) {
+    assertPath(path);
+
+    if (path.length === 0) return '.';
+
+    var isAbsolute = path.charCodeAt(0) === 47 /*/*/;
+    var trailingSeparator = path.charCodeAt(path.length - 1) === 47 /*/*/;
+
+    // Normalize the path
+    path = normalizeStringPosix(path, !isAbsolute);
+
+    if (path.length === 0 && !isAbsolute) path = '.';
+    if (path.length > 0 && trailingSeparator) path += '/';
+
+    if (isAbsolute) return '/' + path;
+    return path;
+  },
+
+  isAbsolute: function isAbsolute(path) {
+    assertPath(path);
+    return path.length > 0 && path.charCodeAt(0) === 47 /*/*/;
+  },
+
+  join: function join() {
+    if (arguments.length === 0)
+      return '.';
+    var joined;
+    for (var i = 0; i < arguments.length; ++i) {
+      var arg = arguments[i];
+      assertPath(arg);
+      if (arg.length > 0) {
+        if (joined === undefined)
+          joined = arg;
+        else
+          joined += '/' + arg;
+      }
+    }
+    if (joined === undefined)
+      return '.';
+    return posix.normalize(joined);
+  },
+
+  relative: function relative(from, to) {
+    assertPath(from);
+    assertPath(to);
+
+    if (from === to) return '';
+
+    from = posix.resolve(from);
+    to = posix.resolve(to);
+
+    if (from === to) return '';
+
+    // Trim any leading backslashes
+    var fromStart = 1;
+    for (; fromStart < from.length; ++fromStart) {
+      if (from.charCodeAt(fromStart) !== 47 /*/*/)
+        break;
+    }
+    var fromEnd = from.length;
+    var fromLen = fromEnd - fromStart;
+
+    // Trim any leading backslashes
+    var toStart = 1;
+    for (; toStart < to.length; ++toStart) {
+      if (to.charCodeAt(toStart) !== 47 /*/*/)
+        break;
+    }
+    var toEnd = to.length;
+    var toLen = toEnd - toStart;
+
+    // Compare paths to find the longest common path from root
+    var length = fromLen < toLen ? fromLen : toLen;
+    var lastCommonSep = -1;
+    var i = 0;
+    for (; i <= length; ++i) {
+      if (i === length) {
+        if (toLen > length) {
+          if (to.charCodeAt(toStart + i) === 47 /*/*/) {
+            // We get here if `from` is the exact base path for `to`.
+            // For example: from='/foo/bar'; to='/foo/bar/baz'
+            return to.slice(toStart + i + 1);
+          } else if (i === 0) {
+            // We get here if `from` is the root
+            // For example: from='/'; to='/foo'
+            return to.slice(toStart + i);
+          }
+        } else if (fromLen > length) {
+          if (from.charCodeAt(fromStart + i) === 47 /*/*/) {
+            // We get here if `to` is the exact base path for `from`.
+            // For example: from='/foo/bar/baz'; to='/foo/bar'
+            lastCommonSep = i;
+          } else if (i === 0) {
+            // We get here if `to` is the root.
+            // For example: from='/foo'; to='/'
+            lastCommonSep = 0;
+          }
+        }
+        break;
+      }
+      var fromCode = from.charCodeAt(fromStart + i);
+      var toCode = to.charCodeAt(toStart + i);
+      if (fromCode !== toCode)
+        break;
+      else if (fromCode === 47 /*/*/)
+        lastCommonSep = i;
+    }
+
+    var out = '';
+    // Generate the relative path based on the path difference between `to`
+    // and `from`
+    for (i = fromStart + lastCommonSep + 1; i <= fromEnd; ++i) {
+      if (i === fromEnd || from.charCodeAt(i) === 47 /*/*/) {
+        if (out.length === 0)
+          out += '..';
+        else
+          out += '/..';
+      }
+    }
+
+    // Lastly, append the rest of the destination (`to`) path that comes after
+    // the common path parts
+    if (out.length > 0)
+      return out + to.slice(toStart + lastCommonSep);
+    else {
+      toStart += lastCommonSep;
+      if (to.charCodeAt(toStart) === 47 /*/*/)
+        ++toStart;
+      return to.slice(toStart);
+    }
+  },
+
+  _makeLong: function _makeLong(path) {
+    return path;
+  },
+
+  dirname: function dirname(path) {
+    assertPath(path);
+    if (path.length === 0) return '.';
+    var code = path.charCodeAt(0);
+    var hasRoot = code === 47 /*/*/;
+    var end = -1;
+    var matchedSlash = true;
+    for (var i = path.length - 1; i >= 1; --i) {
+      code = path.charCodeAt(i);
+      if (code === 47 /*/*/) {
+          if (!matchedSlash) {
+            end = i;
+            break;
+          }
+        } else {
+        // We saw the first non-path separator
+        matchedSlash = false;
+      }
+    }
+
+    if (end === -1) return hasRoot ? '/' : '.';
+    if (hasRoot && end === 1) return '//';
+    return path.slice(0, end);
+  },
+
+  basename: function basename(path, ext) {
+    if (ext !== undefined && typeof ext !== 'string') throw new TypeError('"ext" argument must be a string');
+    assertPath(path);
+
+    var start = 0;
+    var end = -1;
+    var matchedSlash = true;
+    var i;
+
+    if (ext !== undefined && ext.length > 0 && ext.length <= path.length) {
+      if (ext.length === path.length && ext === path) return '';
+      var extIdx = ext.length - 1;
+      var firstNonSlashEnd = -1;
+      for (i = path.length - 1; i >= 0; --i) {
+        var code = path.charCodeAt(i);
+        if (code === 47 /*/*/) {
+            // If we reached a path separator that was not part of a set of path
+            // separators at the end of the string, stop now
+            if (!matchedSlash) {
+              start = i + 1;
+              break;
+            }
+          } else {
+          if (firstNonSlashEnd === -1) {
+            // We saw the first non-path separator, remember this index in case
+            // we need it if the extension ends up not matching
+            matchedSlash = false;
+            firstNonSlashEnd = i + 1;
+          }
+          if (extIdx >= 0) {
+            // Try to match the explicit extension
+            if (code === ext.charCodeAt(extIdx)) {
+              if (--extIdx === -1) {
+                // We matched the extension, so mark this as the end of our path
+                // component
+                end = i;
+              }
+            } else {
+              // Extension does not match, so our result is the entire path
+              // component
+              extIdx = -1;
+              end = firstNonSlashEnd;
+            }
+          }
+        }
+      }
+
+      if (start === end) end = firstNonSlashEnd;else if (end === -1) end = path.length;
+      return path.slice(start, end);
+    } else {
+      for (i = path.length - 1; i >= 0; --i) {
+        if (path.charCodeAt(i) === 47 /*/*/) {
+            // If we reached a path separator that was not part of a set of path
+            // separators at the end of the string, stop now
+            if (!matchedSlash) {
+              start = i + 1;
+              break;
+            }
+          } else if (end === -1) {
+          // We saw the first non-path separator, mark this as the end of our
+          // path component
+          matchedSlash = false;
+          end = i + 1;
+        }
+      }
+
+      if (end === -1) return '';
+      return path.slice(start, end);
+    }
+  },
+
+  extname: function extname(path) {
+    assertPath(path);
+    var startDot = -1;
+    var startPart = 0;
+    var end = -1;
+    var matchedSlash = true;
+    // Track the state of characters (if any) we see before our first dot and
+    // after any path separator we find
+    var preDotState = 0;
+    for (var i = path.length - 1; i >= 0; --i) {
+      var code = path.charCodeAt(i);
+      if (code === 47 /*/*/) {
+          // If we reached a path separator that was not part of a set of path
+          // separators at the end of the string, stop now
+          if (!matchedSlash) {
+            startPart = i + 1;
+            break;
+          }
+          continue;
+        }
+      if (end === -1) {
+        // We saw the first non-path separator, mark this as the end of our
+        // extension
+        matchedSlash = false;
+        end = i + 1;
+      }
+      if (code === 46 /*.*/) {
+          // If this is our first dot, mark it as the start of our extension
+          if (startDot === -1)
+            startDot = i;
+          else if (preDotState !== 1)
+            preDotState = 1;
+      } else if (startDot !== -1) {
+        // We saw a non-dot and non-path separator before our dot, so we should
+        // have a good chance at having a non-empty extension
+        preDotState = -1;
+      }
+    }
+
+    if (startDot === -1 || end === -1 ||
+        // We saw a non-dot character immediately before the dot
+        preDotState === 0 ||
+        // The (right-most) trimmed path component is exactly '..'
+        preDotState === 1 && startDot === end - 1 && startDot === startPart + 1) {
+      return '';
+    }
+    return path.slice(startDot, end);
+  },
+
+  format: function format(pathObject) {
+    if (pathObject === null || typeof pathObject !== 'object') {
+      throw new TypeError('The "pathObject" argument must be of type Object. Received type ' + typeof pathObject);
+    }
+    return _format('/', pathObject);
+  },
+
+  parse: function parse(path) {
+    assertPath(path);
+
+    var ret = { root: '', dir: '', base: '', ext: '', name: '' };
+    if (path.length === 0) return ret;
+    var code = path.charCodeAt(0);
+    var isAbsolute = code === 47 /*/*/;
+    var start;
+    if (isAbsolute) {
+      ret.root = '/';
+      start = 1;
+    } else {
+      start = 0;
+    }
+    var startDot = -1;
+    var startPart = 0;
+    var end = -1;
+    var matchedSlash = true;
+    var i = path.length - 1;
+
+    // Track the state of characters (if any) we see before our first dot and
+    // after any path separator we find
+    var preDotState = 0;
+
+    // Get non-dir info
+    for (; i >= start; --i) {
+      code = path.charCodeAt(i);
+      if (code === 47 /*/*/) {
+          // If we reached a path separator that was not part of a set of path
+          // separators at the end of the string, stop now
+          if (!matchedSlash) {
+            startPart = i + 1;
+            break;
+          }
+          continue;
+        }
+      if (end === -1) {
+        // We saw the first non-path separator, mark this as the end of our
+        // extension
+        matchedSlash = false;
+        end = i + 1;
+      }
+      if (code === 46 /*.*/) {
+          // If this is our first dot, mark it as the start of our extension
+          if (startDot === -1) startDot = i;else if (preDotState !== 1) preDotState = 1;
+        } else if (startDot !== -1) {
+        // We saw a non-dot and non-path separator before our dot, so we should
+        // have a good chance at having a non-empty extension
+        preDotState = -1;
+      }
+    }
+
+    if (startDot === -1 || end === -1 ||
+    // We saw a non-dot character immediately before the dot
+    preDotState === 0 ||
+    // The (right-most) trimmed path component is exactly '..'
+    preDotState === 1 && startDot === end - 1 && startDot === startPart + 1) {
+      if (end !== -1) {
+        if (startPart === 0 && isAbsolute) ret.base = ret.name = path.slice(1, end);else ret.base = ret.name = path.slice(startPart, end);
+      }
+    } else {
+      if (startPart === 0 && isAbsolute) {
+        ret.name = path.slice(1, startDot);
+        ret.base = path.slice(1, end);
+      } else {
+        ret.name = path.slice(startPart, startDot);
+        ret.base = path.slice(startPart, end);
+      }
+      ret.ext = path.slice(startDot, end);
+    }
+
+    if (startPart > 0) ret.dir = path.slice(0, startPart - 1);else if (isAbsolute) ret.dir = '/';
+
+    return ret;
+  },
+
+  sep: '/',
+  delimiter: ':',
+  win32: null,
+  posix: null
+};
+
+posix.posix = posix;
+
+module.exports = posix;
+
+}).call(this)}).call(this,require('_process'))
+},{"_process":62}],62:[function(require,module,exports){
+// shim for using process in browser
+var process = module.exports = {};
+
+// cached from whatever global is present so that test runners that stub it
+// don't break things.  But we need to wrap it in a try catch in case it is
+// wrapped in strict mode code which doesn't define any globals.  It's inside a
+// function because try/catches deoptimize in certain engines.
+
+var cachedSetTimeout;
+var cachedClearTimeout;
+
+function defaultSetTimout() {
+    throw new Error('setTimeout has not been defined');
+}
+function defaultClearTimeout () {
+    throw new Error('clearTimeout has not been defined');
+}
+(function () {
+    try {
+        if (typeof setTimeout === 'function') {
+            cachedSetTimeout = setTimeout;
+        } else {
+            cachedSetTimeout = defaultSetTimout;
+        }
+    } catch (e) {
+        cachedSetTimeout = defaultSetTimout;
+    }
+    try {
+        if (typeof clearTimeout === 'function') {
+            cachedClearTimeout = clearTimeout;
+        } else {
+            cachedClearTimeout = defaultClearTimeout;
+        }
+    } catch (e) {
+        cachedClearTimeout = defaultClearTimeout;
+    }
+} ())
+function runTimeout(fun) {
+    if (cachedSetTimeout === setTimeout) {
+        //normal enviroments in sane situations
+        return setTimeout(fun, 0);
+    }
+    // if setTimeout wasn't available but was latter defined
+    if ((cachedSetTimeout === defaultSetTimout || !cachedSetTimeout) && setTimeout) {
+        cachedSetTimeout = setTimeout;
+        return setTimeout(fun, 0);
+    }
+    try {
+        // when when somebody has screwed with setTimeout but no I.E. maddness
+        return cachedSetTimeout(fun, 0);
+    } catch(e){
+        try {
+            // When we are in I.E. but the script has been evaled so I.E. doesn't trust the global object when called normally
+            return cachedSetTimeout.call(null, fun, 0);
+        } catch(e){
+            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error
+            return cachedSetTimeout.call(this, fun, 0);
+        }
+    }
+
+
+}
+function runClearTimeout(marker) {
+    if (cachedClearTimeout === clearTimeout) {
+        //normal enviroments in sane situations
+        return clearTimeout(marker);
+    }
+    // if clearTimeout wasn't available but was latter defined
+    if ((cachedClearTimeout === defaultClearTimeout || !cachedClearTimeout) && clearTimeout) {
+        cachedClearTimeout = clearTimeout;
+        return clearTimeout(marker);
+    }
+    try {
+        // when when somebody has screwed with setTimeout but no I.E. maddness
+        return cachedClearTimeout(marker);
+    } catch (e){
+        try {
+            // When we are in I.E. but the script has been evaled so I.E. doesn't  trust the global object when called normally
+            return cachedClearTimeout.call(null, marker);
+        } catch (e){
+            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error.
+            // Some versions of I.E. have different rules for clearTimeout vs setTimeout
+            return cachedClearTimeout.call(this, marker);
+        }
+    }
+
+
+
+}
+var queue = [];
+var draining = false;
+var currentQueue;
+var queueIndex = -1;
+
+function cleanUpNextTick() {
+    if (!draining || !currentQueue) {
+        return;
+    }
+    draining = false;
+    if (currentQueue.length) {
+        queue = currentQueue.concat(queue);
+    } else {
+        queueIndex = -1;
+    }
+    if (queue.length) {
+        drainQueue();
+    }
+}
+
+function drainQueue() {
+    if (draining) {
+        return;
+    }
+    var timeout = runTimeout(cleanUpNextTick);
+    draining = true;
+
+    var len = queue.length;
+    while(len) {
+        currentQueue = queue;
+        queue = [];
+        while (++queueIndex < len) {
+            if (currentQueue) {
+                currentQueue[queueIndex].run();
+            }
+        }
+        queueIndex = -1;
+        len = queue.length;
+    }
+    currentQueue = null;
+    draining = false;
+    runClearTimeout(timeout);
+}
+
+process.nextTick = function (fun) {
+    var args = new Array(arguments.length - 1);
+    if (arguments.length > 1) {
+        for (var i = 1; i < arguments.length; i++) {
+            args[i - 1] = arguments[i];
+        }
+    }
+    queue.push(new Item(fun, args));
+    if (queue.length === 1 && !draining) {
+        runTimeout(drainQueue);
+    }
+};
+
+// v8 likes predictible objects
+function Item(fun, array) {
+    this.fun = fun;
+    this.array = array;
+}
+Item.prototype.run = function () {
+    this.fun.apply(null, this.array);
+};
+process.title = 'browser';
+process.browser = true;
+process.env = {};
+process.argv = [];
+process.version = ''; // empty string to avoid regexp issues
+process.versions = {};
+
+function noop() {}
+
+process.on = noop;
+process.addListener = noop;
+process.once = noop;
+process.off = noop;
+process.removeListener = noop;
+process.removeAllListeners = noop;
+process.emit = noop;
+process.prependListener = noop;
+process.prependOnceListener = noop;
+
+process.listeners = function (name) { return [] }
+
+process.binding = function (name) {
+    throw new Error('process.binding is not supported');
+};
+
+process.cwd = function () { return '/' };
+process.chdir = function (dir) {
+    throw new Error('process.chdir is not supported');
+};
+process.umask = function() { return 0; };
 
 },{}]},{},[6])(6)
 });

@@ -8,6 +8,8 @@ import { pfs } from '../promise-fs/index.js';
 import { DataIndex } from '../data-index/index.js'; // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
 import { createIndex } from './indexes.js';
 import { assert } from '../assert.js';
+import { IPCSocketPeer } from '../ipc/socket.js';
+import { Server } from 'net';
 const { compareValues, getChildValues, encodeString, defer } = Utils;
 const DEBUG_MODE = false;
 const SUPPORTED_EVENTS = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
@@ -77,7 +79,7 @@ export class StorageSettings {
         if (typeof settings.readOnly === 'boolean') {
             this.readOnly = settings.readOnly;
         }
-        if (typeof settings.ipc === 'object') {
+        if (['object', 'string'].includes(typeof settings.ipc)) {
             this.ipc = settings.ipc;
         }
     }
@@ -193,6 +195,10 @@ export class Storage extends SimpleEventEmitter {
                 await Promise.all(promises);
             },
             add: async (fileName) => {
+                const existingIndex = this._indexes.find(index => index.fileName === fileName);
+                if (existingIndex) {
+                    return existingIndex;
+                }
                 try {
                     const index = await DataIndex.readFromFile(this, fileName);
                     this._indexes.push(index);
@@ -396,7 +402,11 @@ export class Storage extends SimpleEventEmitter {
         this.debug = new DebugLogger(env.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
-        if (settings.ipc) {
+        if (settings.ipc === 'socket' || settings.ipc instanceof Server) {
+            const ipcSettings = { ipcName, server: settings.ipc instanceof Server ? settings.ipc : null };
+            this.ipc = new IPCSocketPeer(this, ipcSettings);
+        }
+        else if (settings.ipc) {
             if (typeof settings.ipc.port !== 'number') {
                 throw new Error('IPC port number must be a number');
             }
@@ -599,7 +609,6 @@ export class Storage extends SimpleEventEmitter {
                 const trailKeys = pathKeys.slice(eventPathKeys.length);
                 let currentValue = topEventData;
                 while (trailKeys.length > 0 && currentValue !== null) {
-                    /** @type {string|number} trailKeys.shift() as string|number */
                     const childKey = trailKeys.shift();
                     currentValue = typeof currentValue === 'object' && childKey in currentValue ? currentValue[childKey] : null;
                 }
@@ -750,7 +759,7 @@ export class Storage extends SimpleEventEmitter {
                 // Index is on updated path
                 const p = this.ipc.isMaster
                     ? index.handleRecordUpdate(topEventPath, oldValue, newValue)
-                    : this.ipc.sendRequest({ type: 'index.update', path: topEventPath, oldValue, newValue });
+                    : this.ipc.sendRequest({ type: 'index.update', fileName: index.fileName, path: topEventPath, oldValue, newValue });
                 indexUpdates.push(p);
                 return; // next index
             }
@@ -802,7 +811,7 @@ export class Storage extends SimpleEventEmitter {
             results.forEach(result => {
                 const p = this.ipc.isMaster
                     ? index.handleRecordUpdate(result.path, result.oldValue, result.newValue)
-                    : this.ipc.sendRequest({ type: 'index.update', path: result.path, oldValue: result.oldValue, newValue: result.newValue });
+                    : this.ipc.sendRequest({ type: 'index.update', fileName: index.fileName, path: result.path, oldValue: result.oldValue, newValue: result.newValue });
                 indexUpdates.push(p);
             });
         });

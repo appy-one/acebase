@@ -132,7 +132,7 @@ class LocalApi extends acebase_core_1.Api {
      * @returns Returns a promise that resolves with matching data or paths in `results`
      */
     async query(path, query, options = { snapshots: false }) {
-        const results = await (0, query_1.query)(this, path, query, options);
+        const results = await (0, query_1.executeQuery)(this, path, query, options);
         return results;
     }
     /**

@@ -11,6 +11,8 @@ const promise_fs_1 = require("../promise-fs");
 const data_index_1 = require("../data-index"); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
 const indexes_1 = require("./indexes");
 const assert_1 = require("../assert");
+const socket_1 = require("../ipc/socket");
+const net_1 = require("net");
 const { compareValues, getChildValues, encodeString, defer } = acebase_core_1.Utils;
 const DEBUG_MODE = false;
 const SUPPORTED_EVENTS = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
@@ -81,7 +83,7 @@ class StorageSettings {
         if (typeof settings.readOnly === 'boolean') {
             this.readOnly = settings.readOnly;
         }
-        if (typeof settings.ipc === 'object') {
+        if (['object', 'string'].includes(typeof settings.ipc)) {
             this.ipc = settings.ipc;
         }
     }
@@ -198,6 +200,10 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 await Promise.all(promises);
             },
             add: async (fileName) => {
+                const existingIndex = this._indexes.find(index => index.fileName === fileName);
+                if (existingIndex) {
+                    return existingIndex;
+                }
                 try {
                     const index = await data_index_1.DataIndex.readFromFile(this, fileName);
                     this._indexes.push(index);
@@ -401,7 +407,11 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         this.debug = new acebase_core_1.DebugLogger(env.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
-        if (settings.ipc) {
+        if (settings.ipc === 'socket' || settings.ipc instanceof net_1.Server) {
+            const ipcSettings = { ipcName, server: settings.ipc instanceof net_1.Server ? settings.ipc : null };
+            this.ipc = new socket_1.IPCSocketPeer(this, ipcSettings);
+        }
+        else if (settings.ipc) {
             if (typeof settings.ipc.port !== 'number') {
                 throw new Error('IPC port number must be a number');
             }
@@ -604,7 +614,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 const trailKeys = pathKeys.slice(eventPathKeys.length);
                 let currentValue = topEventData;
                 while (trailKeys.length > 0 && currentValue !== null) {
-                    /** @type {string|number} trailKeys.shift() as string|number */
                     const childKey = trailKeys.shift();
                     currentValue = typeof currentValue === 'object' && childKey in currentValue ? currentValue[childKey] : null;
                 }
@@ -755,7 +764,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 // Index is on updated path
                 const p = this.ipc.isMaster
                     ? index.handleRecordUpdate(topEventPath, oldValue, newValue)
-                    : this.ipc.sendRequest({ type: 'index.update', path: topEventPath, oldValue, newValue });
+                    : this.ipc.sendRequest({ type: 'index.update', fileName: index.fileName, path: topEventPath, oldValue, newValue });
                 indexUpdates.push(p);
                 return; // next index
             }
@@ -807,7 +816,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             results.forEach(result => {
                 const p = this.ipc.isMaster
                     ? index.handleRecordUpdate(result.path, result.oldValue, result.newValue)
-                    : this.ipc.sendRequest({ type: 'index.update', path: result.path, oldValue: result.oldValue, newValue: result.newValue });
+                    : this.ipc.sendRequest({ type: 'index.update', fileName: index.fileName, path: result.path, oldValue: result.oldValue, newValue: result.newValue });
                 indexUpdates.push(p);
             });
         });

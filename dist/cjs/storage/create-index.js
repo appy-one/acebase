@@ -36,7 +36,7 @@ async function createIndex(context, path, key, options) {
         // Pass create request to master
         const result = await ipc.sendRequest({ type: 'index.create', path, key, options });
         if (result.ok) {
-            return this.add(result.fileName);
+            return storage.indexes.add(result.fileName);
         }
         throw new Error(result.reason);
     }

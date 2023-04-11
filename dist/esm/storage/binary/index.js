@@ -113,7 +113,7 @@ export class AceBaseStorage extends Storage {
         this.type = settings.type;
         if (this.type === 'data' && settings.transactions.log === true) {
             // Get/create storage for mutations logging
-            const txSettings = new AceBaseStorageSettings({ type: 'transaction', path: settings.path, removeVoidProperties: true, transactions: settings.transactions });
+            const txSettings = new AceBaseStorageSettings({ type: 'transaction', path: settings.path, removeVoidProperties: true, transactions: settings.transactions, ipc: settings.ipc });
             this.txStorage = new AceBaseStorage(name, txSettings, { logLevel: 'error' });
         }
         this.once('ready', () => {
@@ -832,7 +832,7 @@ export class AceBaseStorage extends Storage {
                     else {
                         poll();
                     }
-                }, 10); // Wait 10ms before trying again
+                }, 1000); // Wait 1s before trying again
             };
             poll();
         }
@@ -921,6 +921,9 @@ export class AceBaseStorage extends Storage {
     }
     invalidateCache(fromIPC, path, recursive, reason) {
         this.nodeCache.invalidate(path, recursive, reason);
+        this.indexes.getAll(path, { parentPaths: true, childPaths: true }).forEach((index) => {
+            index.clearCache(path);
+        });
         if (!fromIPC) {
             this.ipc.sendNotification({ type: 'cache.invalidate', path, recursive, reason });
         }
@@ -1362,22 +1365,28 @@ export class AceBaseStorage extends Storage {
             };
             let count = 0;
             const oldestValidCursor = this.oldestValidCursor, expiredTransactions = [], inspectFurther = [];
-            await this.getChildren('history', { tid })
-                .next(childInfo => {
-                const txCursor = childInfo.key.slice(0, cursor.length);
-                if (txCursor < oldestValidCursor) {
-                    expiredTransactions.push(childInfo.key);
+            try {
+                await this.getChildren('history', { tid }).next(childInfo => {
+                    const txCursor = childInfo.key.slice(0, cursor.length);
+                    if (txCursor < oldestValidCursor) {
+                        expiredTransactions.push(childInfo.key);
+                    }
+                    if (txCursor < cursor) {
+                        return;
+                    }
+                    if (txCursor === cursor) {
+                        // cuid timestamp bytes are equal - perform extra check on this mutation later to find out if we have to include it in the results
+                        inspectFurther.push(childInfo.key);
+                    }
+                    count++;
+                    check(childInfo.key);
+                });
+            }
+            catch (err) {
+                if (!(err instanceof NodeNotFoundError)) {
+                    throw err;
                 }
-                if (txCursor < cursor) {
-                    return;
-                }
-                if (txCursor === cursor) {
-                    // cuid timestamp bytes are equal - perform extra check on this mutation later to find out if we have to include it in the results
-                    inspectFurther.push(childInfo.key);
-                }
-                count++;
-                check(childInfo.key);
-            });
+            }
             allEnumerated = true;
             if (count > 0) {
                 await donePromise;
@@ -2857,10 +2866,7 @@ class NodeReader {
                                 const keyLength = (binary[index] & 127) + 1;
                                 index++;
                                 assert(keyLength);
-                                let key = '';
-                                for (let i = 0; i < keyLength; i++) {
-                                    key += String.fromCharCode(binary[index + i]);
-                                }
+                                const key = decodeString(binary.slice(index, index + keyLength));
                                 child.key = key;
                                 child.path = PathInfo.getChildPath(this.address.path, key);
                                 index += keyLength;
@@ -3588,10 +3594,9 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo) {
                 }
                 else {
                     // Inline key name
-                    builder.writeByte(kvp.key.length - 1); // key_length
-                    // key_name:
                     const keyBytes = encodeString(kvp.key);
-                    builder.append(keyBytes);
+                    builder.writeByte(keyBytes.byteLength - 1); // key_length
+                    builder.append(keyBytes); // key_name
                 }
             }
             // const binaryValue = _getValueBytes(kvp);

@@ -13,6 +13,7 @@ async function createTempDB(enable = {}) {
     if (typeof enable.config === 'function') {
         enable.config(options);
     }
+    options.storage.ipc = 'socket';
     const db = new __1.AceBase(dbname, options);
     await db.ready();
     const nodeVersion = process.versions.node.split('.').reduce((v, n, i) => (v[i === 0 ? 'major' : i === 1 ? 'minor' : 'patch'] = +n, v), { major: 0, minor: 0, patch: 0 });
