@@ -3,6 +3,7 @@ import { Storage } from '../storage';
 import * as Cluster from 'cluster';
 const cluster: typeof Cluster = (Cluster as any).default ?? Cluster; // ESM and CJS compatible approach
 export { RemoteIPCPeer, RemoteIPCServerConfig } from './remote';
+export { IPCSocketPeer, NetIPCServer } from './socket';
 
 const masterPeerId = '[master]';
 

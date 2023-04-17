@@ -2,15 +2,13 @@ import { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEm
 import { VALUE_TYPES } from '../node-value-types';
 import { NodeRevisionError } from '../node-errors';
 import { NodeInfo } from '../node-info';
-import { IPCPeer, RemoteIPCPeer } from '../ipc';
+import { IPCPeer, RemoteIPCPeer, IPCSocketPeer, NetIPCServer } from '../ipc';
 import { pfs } from '../promise-fs';
 // const { IPCTransactionManager } = require('./node-transaction');
 import { DataIndex } from '../data-index'; // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
 import { createIndex, CreateIndexOptions } from './indexes';
 import { IndexesContext } from './context';
 import { assert } from '../assert';
-import { IPCSocketPeer } from '../ipc/socket';
-import { Server } from 'net';
 
 const { compareValues, getChildValues, encodeString, defer } = Utils;
 
@@ -114,7 +112,7 @@ export class StorageSettings {
      * IPC settings if you are using AceBase in pm2 or cloud-based clusters, or (NEW) `'socket'` to connect
      * to an automatically spawned IPC service ("daemon") on this machine
      */
-    ipc?: IPCClientSettings | 'socket' | Server;
+    ipc?: IPCClientSettings | 'socket' | NetIPCServer;
 
     /**
      * Settings for optional transaction logging
@@ -172,8 +170,8 @@ export class Storage extends SimpleEventEmitter {
 
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
-        if (settings.ipc === 'socket' || settings.ipc instanceof Server) {
-            const ipcSettings = { ipcName, server: settings.ipc instanceof Server ? settings.ipc : null };
+        if (settings.ipc === 'socket' || settings.ipc instanceof NetIPCServer) {
+            const ipcSettings = { ipcName, server: settings.ipc instanceof NetIPCServer ? settings.ipc : null };
             this.ipc = new IPCSocketPeer(this, ipcSettings);
         }
         else if (settings.ipc) {
