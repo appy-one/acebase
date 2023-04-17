@@ -6,6 +6,7 @@ import { Storage } from '../storage';
 import { ID, Transport } from 'acebase-core';
 import { getSocketPath, MSG_DELIMITER } from './service/shared';
 import { startServer } from './service';
+export { Server as NetIPCServer } from 'net';
 
 const masterPeerId = '[master]';
 
