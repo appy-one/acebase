@@ -4,6 +4,7 @@ import { fork } from 'child_process';
 import { AceBaseIPCPeer } from './ipc.js';
 import { ID, Transport } from 'acebase-core';
 import { getSocketPath, MSG_DELIMITER } from './service/shared.js';
+export { Server as NetIPCServer } from 'net';
 const masterPeerId = '[master]';
 /**
  * Node cluster functionality - enables vertical scaling with forked processes. AceBase will enable IPC at startup, so

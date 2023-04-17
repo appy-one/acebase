@@ -1,12 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.IPCSocketPeer = void 0;
+exports.IPCSocketPeer = exports.NetIPCServer = void 0;
 const net_1 = require("net");
 const path_1 = require("path");
 const child_process_1 = require("child_process");
 const ipc_1 = require("./ipc");
 const acebase_core_1 = require("acebase-core");
 const shared_1 = require("./service/shared");
+var net_2 = require("net");
+Object.defineProperty(exports, "NetIPCServer", { enumerable: true, get: function () { return net_2.Server; } });
 const masterPeerId = '[master]';
 /**
  * Node cluster functionality - enables vertical scaling with forked processes. AceBase will enable IPC at startup, so

@@ -1,9 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.RemoteIPCPeer = exports.IPCPeer = void 0;
+exports.NetIPCServer = exports.IPCSocketPeer = exports.RemoteIPCPeer = exports.IPCPeer = void 0;
 const acebase_core_1 = require("acebase-core");
 const ipc_1 = require("./ipc");
 const not_supported_1 = require("../not-supported");
+Object.defineProperty(exports, "RemoteIPCPeer", { enumerable: true, get: function () { return not_supported_1.NotSupported; } });
+Object.defineProperty(exports, "IPCSocketPeer", { enumerable: true, get: function () { return not_supported_1.NotSupported; } });
+Object.defineProperty(exports, "NetIPCServer", { enumerable: true, get: function () { return not_supported_1.NotSupported; } });
 /**
  * Browser tabs IPC. Database changes and events will be synchronized automatically.
  * Locking of resources will be done by the election of a single locking master:
@@ -133,10 +136,4 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
     }
 }
 exports.IPCPeer = IPCPeer;
-/**
- * Not supported in browser context
- */
-class RemoteIPCPeer extends not_supported_1.NotSupported {
-}
-exports.RemoteIPCPeer = RemoteIPCPeer;
 //# sourceMappingURL=browser.js.map

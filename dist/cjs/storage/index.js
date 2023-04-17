@@ -11,8 +11,6 @@ const promise_fs_1 = require("../promise-fs");
 const data_index_1 = require("../data-index"); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
 const indexes_1 = require("./indexes");
 const assert_1 = require("../assert");
-const socket_1 = require("../ipc/socket");
-const net_1 = require("net");
 const { compareValues, getChildValues, encodeString, defer } = acebase_core_1.Utils;
 const DEBUG_MODE = false;
 const SUPPORTED_EVENTS = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
@@ -407,9 +405,9 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         this.debug = new acebase_core_1.DebugLogger(env.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
-        if (settings.ipc === 'socket' || settings.ipc instanceof net_1.Server) {
-            const ipcSettings = { ipcName, server: settings.ipc instanceof net_1.Server ? settings.ipc : null };
-            this.ipc = new socket_1.IPCSocketPeer(this, ipcSettings);
+        if (settings.ipc === 'socket' || settings.ipc instanceof ipc_1.NetIPCServer) {
+            const ipcSettings = { ipcName, server: settings.ipc instanceof ipc_1.NetIPCServer ? settings.ipc : null };
+            this.ipc = new ipc_1.IPCSocketPeer(this, ipcSettings);
         }
         else if (settings.ipc) {
             if (typeof settings.ipc.port !== 'number') {

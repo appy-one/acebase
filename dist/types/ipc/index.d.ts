@@ -1,6 +1,7 @@
 import { AceBaseIPCPeer, IMessage } from './ipc';
 import { Storage } from '../storage';
 export { RemoteIPCPeer, RemoteIPCServerConfig } from './remote';
+export { IPCSocketPeer, NetIPCServer } from './socket';
 /**
  * Node cluster functionality - enables vertical scaling with forked processes. AceBase will enable IPC at startup, so
  * any forked process will communicate database changes and events automatically. Locking of resources will be done by

@@ -1,12 +1,15 @@
 "use strict";
 var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.IPCPeer = exports.RemoteIPCPeer = void 0;
+exports.IPCPeer = exports.NetIPCServer = exports.IPCSocketPeer = exports.RemoteIPCPeer = void 0;
 const ipc_1 = require("./ipc");
 const Cluster = require("cluster");
 const cluster = (_a = Cluster.default) !== null && _a !== void 0 ? _a : Cluster; // ESM and CJS compatible approach
 var remote_1 = require("./remote");
 Object.defineProperty(exports, "RemoteIPCPeer", { enumerable: true, get: function () { return remote_1.RemoteIPCPeer; } });
+var socket_1 = require("./socket");
+Object.defineProperty(exports, "IPCSocketPeer", { enumerable: true, get: function () { return socket_1.IPCSocketPeer; } });
+Object.defineProperty(exports, "NetIPCServer", { enumerable: true, get: function () { return socket_1.NetIPCServer; } });
 const masterPeerId = '[master]';
 /**
  * Node cluster functionality - enables vertical scaling with forked processes. AceBase will enable IPC at startup, so

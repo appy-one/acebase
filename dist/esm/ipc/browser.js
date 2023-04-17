@@ -132,6 +132,5 @@ export class IPCPeer extends AceBaseIPCPeer {
 /**
  * Not supported in browser context
  */
-export class RemoteIPCPeer extends NotSupported {
-}
+export { NotSupported as RemoteIPCPeer, NotSupported as IPCSocketPeer, NotSupported as NetIPCServer, };
 //# sourceMappingURL=browser.js.map

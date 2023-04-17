@@ -2,6 +2,7 @@ import { AceBaseIPCPeer } from './ipc.js';
 import * as Cluster from 'cluster';
 const cluster = Cluster.default ?? Cluster; // ESM and CJS compatible approach
 export { RemoteIPCPeer } from './remote.js';
+export { IPCSocketPeer, NetIPCServer } from './socket.js';
 const masterPeerId = '[master]';
 /**
  * Node cluster functionality - enables vertical scaling with forked processes. AceBase will enable IPC at startup, so

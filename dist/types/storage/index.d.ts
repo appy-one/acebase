@@ -1,11 +1,9 @@
 /// <reference types="node" />
 import { Utils, DebugLogger, SimpleEventEmitter, DataRetrievalOptions, ISchemaCheckResult, LoggingLevel } from 'acebase-core';
 import { NodeInfo } from '../node-info';
-import { IPCPeer, RemoteIPCPeer } from '../ipc';
+import { IPCPeer, RemoteIPCPeer, IPCSocketPeer, NetIPCServer } from '../ipc';
 import { DataIndex } from '../data-index';
 import { CreateIndexOptions } from './indexes';
-import { IPCSocketPeer } from '../ipc/socket';
-import { Server } from 'net';
 export declare class SchemaValidationError extends Error {
     reason: string;
     constructor(reason: string);
@@ -87,7 +85,7 @@ export declare class StorageSettings {
      * IPC settings if you are using AceBase in pm2 or cloud-based clusters, or (NEW) `'socket'` to connect
      * to an automatically spawned IPC service ("daemon") on this machine
      */
-    ipc?: IPCClientSettings | 'socket' | Server;
+    ipc?: IPCClientSettings | 'socket' | NetIPCServer;
     /**
      * Settings for optional transaction logging
      */

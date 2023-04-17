@@ -2,14 +2,12 @@ import { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEm
 import { VALUE_TYPES } from '../node-value-types.js';
 import { NodeRevisionError } from '../node-errors.js';
 import { NodeInfo } from '../node-info.js';
-import { IPCPeer, RemoteIPCPeer } from '../ipc/index.js';
+import { IPCPeer, RemoteIPCPeer, IPCSocketPeer, NetIPCServer } from '../ipc/index.js';
 import { pfs } from '../promise-fs/index.js';
 // const { IPCTransactionManager } = require('./node-transaction');
 import { DataIndex } from '../data-index/index.js'; // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
 import { createIndex } from './indexes.js';
 import { assert } from '../assert.js';
-import { IPCSocketPeer } from '../ipc/socket.js';
-import { Server } from 'net';
 const { compareValues, getChildValues, encodeString, defer } = Utils;
 const DEBUG_MODE = false;
 const SUPPORTED_EVENTS = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
@@ -402,8 +400,8 @@ export class Storage extends SimpleEventEmitter {
         this.debug = new DebugLogger(env.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
-        if (settings.ipc === 'socket' || settings.ipc instanceof Server) {
-            const ipcSettings = { ipcName, server: settings.ipc instanceof Server ? settings.ipc : null };
+        if (settings.ipc === 'socket' || settings.ipc instanceof NetIPCServer) {
+            const ipcSettings = { ipcName, server: settings.ipc instanceof NetIPCServer ? settings.ipc : null };
             this.ipc = new IPCSocketPeer(this, ipcSettings);
         }
         else if (settings.ipc) {
