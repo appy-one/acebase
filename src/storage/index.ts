@@ -2281,7 +2281,7 @@ export class Storage extends SimpleEventEmitter {
             pathInfo.isOnTrailOf(s.path), //pathInfo.equals(s.path) || pathInfo.isAncestorOf(s.path)
         ).every(s => {
             if (pathInfo.isDescendantOf(s.path)) {
-            // Given check path is a descendant of this schema definition's path
+                // Given check path is a descendant of this schema definition's path
                 const ancestorPath = PathInfo.fillVariables(s.path, path);
                 const trailKeys = pathInfo.keys.slice(PathInfo.getPathKeys(s.path).length);
                 result = s.schema.check(ancestorPath, value, options.updates, trailKeys);
@@ -2290,6 +2290,10 @@ export class Storage extends SimpleEventEmitter {
 
             // Given check path is on schema definition's path or on a higher path
             const trailKeys = PathInfo.getPathKeys(s.path).slice(pathInfo.keys.length);
+            if (options.updates === true && trailKeys.length > 0 && !(trailKeys[0] in value)) {
+                // Fixes #217: this update on a higher path does not affect any data at schema's target path
+                return result.ok;
+            }
             const partial = options.updates === true && trailKeys.length === 0;
             const check = (path: string, value: any, trailKeys: Array<string|number>): ISchemaCheckResult => {
                 if (trailKeys.length === 0) {
