@@ -96,6 +96,10 @@ describe('schema', () => {
         result = await db.schema.check('clients/client1', { unknown: null }, true);
         expect(result).toEqual({ ok: true });
 
+        // Test updating a higher path that does not have a schema set (#217)
+        result = await db.schema.check('', { test: 'Test' }, true);
+        expect(result).toEqual({ ok: true });
+
         // Try using classnames & regular expressions
         const emailRegex = /[a-z.\-_]+@(?:[a-z\-_]+\.){1,}[a-z]{2,}$/i;
         const clientSchema2 = {
