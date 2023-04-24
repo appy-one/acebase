@@ -6522,6 +6522,10 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             }
             // Given check path is on schema definition's path or on a higher path
             const trailKeys = acebase_core_1.PathInfo.getPathKeys(s.path).slice(pathInfo.keys.length);
+            if (options.updates === true && trailKeys.length > 0 && !(trailKeys[0] in value)) {
+                // Fixes #217: this update on a higher path does not affect any data at schema's target path
+                return result.ok;
+            }
             const partial = options.updates === true && trailKeys.length === 0;
             const check = (path, value, trailKeys) => {
                 if (trailKeys.length === 0) {
