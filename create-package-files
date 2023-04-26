@@ -43,7 +43,7 @@ JSON
 
 # Write typings to support Node16 module resolution 
 cat >dist/esm/index.d.ts <<TYPESCRIPT
-export * from '../types';
+export * from '../types/index.d.ts';
 TYPESCRIPT
 
 # Write example file for runkit
