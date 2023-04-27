@@ -1,6 +1,6 @@
 import { PathReference } from 'acebase-core';
 
-export const VALUE_TYPES = Object.freeze({
+const nodeValueTypes = {
     // Native types:
     OBJECT: 1,
     ARRAY: 2,
@@ -14,7 +14,9 @@ export const VALUE_TYPES = Object.freeze({
     REFERENCE: 9,        // Absolute or relative path to other node
     // Future:
     // DOCUMENT: 10,     // JSON/XML documents that are contained entirely within the stored node
-});
+} as const;
+export type NodeValueType = typeof nodeValueTypes[keyof typeof nodeValueTypes];
+export const VALUE_TYPES = nodeValueTypes as Record<keyof typeof nodeValueTypes, NodeValueType>;
 
 export function getValueTypeName(valueType: number) {
     switch (valueType) {

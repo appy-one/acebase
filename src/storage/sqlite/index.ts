@@ -701,7 +701,7 @@ export class SQLiteStorage extends Storage {
         } = {},
     ) {
         // return generator
-        type CallbackFunction = (child: SQLiteNodeInfo) => boolean;
+        type CallbackFunction = (child: SQLiteNodeInfo) => boolean | void | Promise<boolean | void>;
         let callback: CallbackFunction; //, resolve, reject;
         const generator = {
             /**

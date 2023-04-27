@@ -8,7 +8,7 @@ import { BinaryNodeInfo } from './node-info';
 // import { NodeLock } from '../../node-lock';
 import { NodeNotFoundError } from '../../node-errors';
 import { InternalDataRetrievalOptions, IWriteNodeResult, Storage, StorageEnv, StorageSettings } from '../index';
-import { VALUE_TYPES } from '../../node-value-types';
+import { NodeValueType, VALUE_TYPES } from '../../node-value-types';
 import { BinaryBPlusTree, BPlusTreeBuilder, BinaryWriter } from '../../btree';
 import { Uint8ArrayBuilder } from '../../binary';
 import { IAceBaseIPCLock } from '../../ipc/ipc';
@@ -1171,7 +1171,7 @@ export class AceBaseStorage extends Storage {
             }
             else {
                 // This is a small record. Rewrite the entire node
-                const mergedValue = isArray ? [] as any[] : {} as Record<string, any>;
+                const mergedValue = (isArray ? [] : {}) as Record<string, any>;
 
                 await nodeReader.getChildStream().next(child => {
                     const keyOrIndex = isArray ? child.index : child.key;
@@ -1912,8 +1912,8 @@ export class AceBaseStorage extends Storage {
         } = {
             async: false,
         },
-    ) { // : { next: (callback: (child: BinaryNodeInfo) => boolean) => Promise<boolean>}
-        type ChildCallbackFunction = (child: BinaryNodeInfo) => boolean | void;
+    ) {
+        type ChildCallbackFunction = (child: BinaryNodeInfo) => boolean | void | Promise<boolean | void>;
         if (typeof options.async !== 'boolean') {
             options.async = false;
         }
@@ -2521,7 +2521,7 @@ class RecordInfo {
     constructor(
         public path: string,
         public hasKeyIndex: boolean,
-        public valueType: number,
+        public valueType: NodeValueType,
         public allocation: NodeAllocation,
         public headerLength: number,
         public lastRecordLength: number,
@@ -3148,11 +3148,11 @@ class NodeReader {
                 }
             };
             assert(2);
-            child.type = binary[index] >> 4;
+            child.type = binary[index] >> 4 as NodeValueType;
             //let value, address;
             const tinyValue = binary[index] & 0xf;
             const valueInfo = binary[index + 1];
-            const isRemoved = child.type === 0;
+            const isRemoved = child.type as number === 0;
             const unusedDataLength = isRemoved ? valueInfo : 0;
             const isTinyValue = (valueInfo & 192) === 64;
             const isInlineValue = (valueInfo & 192) === 128;
@@ -3462,7 +3462,7 @@ class NodeReader {
         if (bytesRead < bytesPerRecord) { throw new Error(`Not enough bytes read from file at index ${fileIndex}, expected ${bytesPerRecord} but got ${bytesRead}`); }
 
         const hasKeyIndex = (data[0] & FLAG_KEY_TREE) === FLAG_KEY_TREE;
-        const valueType = data[0] & FLAG_VALUE_TYPE; // Last 4-bits of first byte of read data has value type
+        const valueType = (data[0] & FLAG_VALUE_TYPE) as NodeValueType; // Last 4-bits of first byte of read data has value type
 
         // Read Chunk Table
         let view = new DataView(data.buffer);
@@ -3945,7 +3945,7 @@ async function _writeNode(storage: AceBaseStorage, path: string, value: any, loc
         throw new Error(`Cannot write to node "/${path}" because lock is on the wrong path or not for writing`);
     }
 
-    const write = (valueType: number, buffer: number[] | Uint8Array, keyTree = false) => {
+    const write = (valueType: NodeValueType, buffer: number[] | Uint8Array, keyTree = false) => {
         let readOffset = 0;
         const reader = (length: number) => {
             const slice = buffer.slice(readOffset, readOffset + length);
@@ -4295,7 +4295,7 @@ function _serializeValue (
 async function _write(
     storage: AceBaseStorage,
     path: string,
-    type: number,
+    type: NodeValueType,
     length: number,
     hasKeyTree: boolean,
     reader: (length: number) => Uint8Array | number[] | Promise<Uint8Array | number[]>,
