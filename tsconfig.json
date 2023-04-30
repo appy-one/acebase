@@ -1,10 +1,11 @@
 {
     "compilerOptions": {
         "lib": ["esnext","dom"],
-        "listEmittedFiles": true,
+        "listEmittedFiles": false,
         "noImplicitAny": true,
         "sourceMap": true,
         "module": "es2020",
+        "rootDir": "./src",
         "outDir": "./dist/esm",
         "moduleResolution": "node",
         "target": "es2020",
@@ -14,9 +15,5 @@
         "declarationDir": "./dist/types",
         "resolveJsonModule": true,
         "skipLibCheck": false
-    },
-    "include": ["src/**/*"],
-    "exclude": [
-        "node_modules"
-    ]
+    }
 }
