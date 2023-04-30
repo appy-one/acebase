@@ -280,7 +280,7 @@ export declare class AceBaseStorage extends Storage {
          * @param valueCallback callback function to run for each child. Return false to stop iterating
          * @returns returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
          */
-        next(valueCallback: (child: BinaryNodeInfo) => boolean | void, useAsync?: boolean): Promise<boolean>;
+        next(valueCallback: (child: BinaryNodeInfo) => boolean | void | Promise<boolean | void>, useAsync?: boolean): Promise<boolean>;
     };
     /**
      * Gets a node's value and (if supported) revision

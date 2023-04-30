@@ -21,7 +21,7 @@ export declare const FLAGS: {
     IS_LEAF: number;
     LEAF_HAS_EXT_DATA: number;
 };
-declare type CreateNodeInfo = {
+type CreateNodeInfo = {
     index: number;
     gtIndex: number;
     entries: {
@@ -29,12 +29,12 @@ declare type CreateNodeInfo = {
         ltIndex: number;
     }[];
 };
-declare type CreateNodeOptions = {
+type CreateNodeOptions = {
     addFreeSpace: boolean;
     maxLength?: number;
     allowMissingChildIndexes?: boolean;
 };
-declare type CreateLeafInfo = {
+type CreateLeafInfo = {
     index: number;
     prevIndex: number;
     nextIndex: number | 'adjacent';
@@ -45,7 +45,7 @@ declare type CreateLeafInfo = {
         rebuild?: boolean;
     };
 };
-declare type CreateLeafOptions = {
+type CreateLeafOptions = {
     addFreeSpace: boolean;
     maxLength?: number;
     addExtData?: (pointerIndex: number, data: Uint8Array) => {

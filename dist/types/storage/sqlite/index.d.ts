@@ -76,7 +76,7 @@ export declare class SQLiteStorage extends Storage {
          * @param valueCallback callback function to run for each child. Return false to stop iterating
          * @returns returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
          */
-        next(valueCallback: (child: SQLiteNodeInfo) => boolean): Promise<boolean>;
+        next(valueCallback: (child: SQLiteNodeInfo) => boolean | void | Promise<boolean | void>): Promise<boolean>;
     };
     getNode(path: string, options?: {
         include?: (string | number)[];

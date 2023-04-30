@@ -83,6 +83,7 @@ const WS_CLOSE_PROCESS_EXIT = 2;
  * }
  */
 export class RemoteIPCPeer extends AceBaseIPCPeer {
+    get version() { return '1.0.0'; }
     constructor(storage, config) {
         super(storage, config.role === 'master' ? masterPeerId : ID.generate(), config.dbname);
         this.config = config;
@@ -95,7 +96,6 @@ export class RemoteIPCPeer extends AceBaseIPCPeer {
             this.exit();
         });
     }
-    get version() { return '1.0.0'; }
     async connect(options) {
         const ws = await (async () => {
             try {

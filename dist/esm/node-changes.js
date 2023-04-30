@@ -4,14 +4,14 @@ const CHANGE_TYPE = Object.freeze({
     INSERT: 'insert',
 });
 export class NodeChange {
+    static get CHANGE_TYPE() {
+        return CHANGE_TYPE;
+    }
     constructor(keyOrIndex, changeType, oldValue, newValue) {
         this.keyOrIndex = keyOrIndex;
         this.changeType = changeType;
         this.oldValue = oldValue;
         this.newValue = newValue;
-    }
-    static get CHANGE_TYPE() {
-        return CHANGE_TYPE;
     }
 }
 export class NodeChangeTracker {

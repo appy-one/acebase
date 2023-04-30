@@ -229,6 +229,7 @@ class NodeLocker {
 exports.NodeLocker = NodeLocker;
 let lastid = 0;
 class NodeLock {
+    static get LOCK_STATE() { return exports.LOCK_STATE; }
     /**
      * Constructor for a record lock
      * @param {NodeLocker} locker
@@ -250,7 +251,6 @@ class NodeLock {
         this.id = ++lastid;
         this.history = [];
     }
-    static get LOCK_STATE() { return exports.LOCK_STATE; }
     async release(comment) {
         //return this.storage.unlock(this.path, this.tid, comment);
         this.history.push({ action: 'release', path: this.path, forWriting: this.forWriting, comment });

@@ -6,6 +6,18 @@ const detailed_error_1 = require("../detailed-error");
 const binary_tree_node_info_1 = require("./binary-tree-node-info");
 const typesafe_compare_1 = require("./typesafe-compare");
 class BinaryBPlusTreeLeaf extends binary_tree_node_info_1.BinaryBPlusTreeNodeInfo {
+    static get prevLeafPtrIndex() { return 9; }
+    static get nextLeafPtrIndex() { return 15; }
+    static getPrevLeafOffset(leafIndex, prevLeafIndex) {
+        return prevLeafIndex > 0
+            ? prevLeafIndex - leafIndex - 9
+            : 0;
+    }
+    static getNextLeafOffset(leafIndex, nextLeafIndex) {
+        return nextLeafIndex > 0
+            ? nextLeafIndex - leafIndex - 15
+            : 0;
+    }
     constructor(nodeInfo) {
         (0, assert_1.assert)(typeof nodeInfo.hasExtData === 'boolean', 'nodeInfo.hasExtData must be specified');
         super(nodeInfo);
@@ -21,18 +33,6 @@ class BinaryBPlusTreeLeaf extends binary_tree_node_info_1.BinaryBPlusTreeNodeInf
             },
         };
         this.entries = [];
-    }
-    static get prevLeafPtrIndex() { return 9; }
-    static get nextLeafPtrIndex() { return 15; }
-    static getPrevLeafOffset(leafIndex, prevLeafIndex) {
-        return prevLeafIndex > 0
-            ? prevLeafIndex - leafIndex - 9
-            : 0;
-    }
-    static getNextLeafOffset(leafIndex, nextLeafIndex) {
-        return nextLeafIndex > 0
-            ? nextLeafIndex - leafIndex - 15
-            : 0;
     }
     get hasPrevious() { return typeof this.getPrevious === 'function'; }
     get hasNext() { return typeof this.getNext === 'function'; }

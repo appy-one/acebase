@@ -12,7 +12,7 @@ import { LeafEntryMetaData } from './leaf-entry-metadata';
 import { LeafEntryRecordPointer } from './leaf-entry-recordpointer';
 import { BPlusTree } from './tree';
 import { BPlusTreeBuilder } from './tree-builder';
-declare type WriteFunction = (data: number[] | Uint8Array, index: number) => any | Promise<any>;
+type WriteFunction = (data: number[] | Uint8Array, index: number) => any | Promise<any>;
 export declare class BlacklistingSearchOperator {
     check: (entry: BinaryBPlusTreeLeafEntry) => BinaryBPlusTreeLeafEntryValue[] | void;
     /**

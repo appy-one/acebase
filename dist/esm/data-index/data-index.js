@@ -98,6 +98,17 @@ function _parseRecordPointer(path, recordPointer) {
     return { key: keyOrIndex, path: `${path}/${key}`, wildcards };
 }
 export class DataIndex {
+    static get STATE() {
+        return {
+            INIT: 'init',
+            READY: 'ready',
+            BUILD: 'build',
+            REBUILD: 'rebuild',
+            ERROR: 'error',
+            REMOVED: 'removed',
+            CLOSED: 'closed',
+        };
+    }
     /**
      * Creates a new index
      */
@@ -137,17 +148,6 @@ export class DataIndex {
                 entries: 0,
                 values: 0,
             },
-        };
-    }
-    static get STATE() {
-        return {
-            INIT: 'init',
-            READY: 'ready',
-            BUILD: 'build',
-            REBUILD: 'rebuild',
-            ERROR: 'error',
-            REMOVED: 'removed',
-            CLOSED: 'closed',
         };
     }
     get allMetadataKeys() {
@@ -873,7 +873,7 @@ export class DataIndex {
             : DataIndex.STATE.BUILD;
         this._buildError = null;
         const path = this.path;
-        const wildcardNames = path.match(/\*|\$[a-z0-9_]+/gi) || [];
+        const wildcardNames = Array.from(path.match(/\*|\$[a-z0-9_]+/gi) ?? []);
         // const hasWildcards = wildcardNames.length > 0;
         const wildcardsPattern = '^' + path.replace(/\*|\$[a-z0-9_]+/gi, '([a-z0-9_]+)') + '/';
         const wildcardRE = new RegExp(wildcardsPattern, 'i');

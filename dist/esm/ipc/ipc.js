@@ -8,6 +8,7 @@ export class AceBaseIPCPeerExitingError extends Error {
  * These processes will have to communicate with eachother because they are reading and writing to the same database file
  */
 export class AceBaseIPCPeer extends SimpleEventEmitter {
+    get isMaster() { return this.masterPeerId === this.id; }
     constructor(storage, id, dbname = storage.name) {
         super();
         this.storage = storage;
@@ -64,7 +65,6 @@ export class AceBaseIPCPeer extends SimpleEventEmitter {
             });
         });
     }
-    get isMaster() { return this.masterPeerId === this.id; }
     /**
      * Requests the peer to shut down. Resolves once its locks are cleared and 'exit' event has been emitted.
      * Has to be overridden by the IPC implementation to perform custom shutdown tasks

@@ -1,5 +1,5 @@
 /// <reference types="node" />
-export declare type ReadFunction = (index: number, length: number) => Promise<Buffer>;
+export type ReadFunction = (index: number, length: number) => Promise<Buffer>;
 export declare class BinaryReader {
     chunkSize: number;
     read: ReadFunction;

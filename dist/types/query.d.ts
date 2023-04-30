@@ -4,7 +4,7 @@ import { Storage } from './storage';
 /**
  * TODO: import once LocalApi has been ported to TypeScript
  */
-declare type LocalApi = Api & {
+type LocalApi = Api & {
     db: AceBaseBase;
     storage: Storage;
 };

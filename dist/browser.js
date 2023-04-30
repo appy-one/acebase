@@ -807,6 +807,7 @@ exports.AceBaseIPCPeerExitingError = AceBaseIPCPeerExitingError;
  * These processes will have to communicate with eachother because they are reading and writing to the same database file
  */
 class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
+    get isMaster() { return this.masterPeerId === this.id; }
     constructor(storage, id, dbname = storage.name) {
         super();
         this.storage = storage;
@@ -863,7 +864,6 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
             });
         });
     }
-    get isMaster() { return this.masterPeerId === this.id; }
     /**
      * Requests the peer to shut down. Resolves once its locks are cleared and 'exit' event has been emitted.
      * Has to be overridden by the IPC implementation to perform custom shutdown tasks
@@ -1618,6 +1618,7 @@ class NodeLocker {
 exports.NodeLocker = NodeLocker;
 let lastid = 0;
 class NodeLock {
+    static get LOCK_STATE() { return exports.LOCK_STATE; }
     /**
      * Constructor for a record lock
      * @param {NodeLocker} locker
@@ -1639,7 +1640,6 @@ class NodeLock {
         this.id = ++lastid;
         this.history = [];
     }
-    static get LOCK_STATE() { return exports.LOCK_STATE; }
     async release(comment) {
         //return this.storage.unlock(this.path, this.tid, comment);
         this.history.push({ action: 'release', path: this.path, forWriting: this.forWriting, comment });
@@ -1676,7 +1676,7 @@ exports.NodeLock = NodeLock;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getValueType = exports.getNodeValueType = exports.getValueTypeName = exports.VALUE_TYPES = void 0;
 const acebase_core_1 = require("acebase-core");
-exports.VALUE_TYPES = Object.freeze({
+const nodeValueTypes = {
     // Native types:
     OBJECT: 1,
     ARRAY: 2,
@@ -1690,7 +1690,8 @@ exports.VALUE_TYPES = Object.freeze({
     REFERENCE: 9, // Absolute or relative path to other node
     // Future:
     // DOCUMENT: 10,     // JSON/XML documents that are contained entirely within the stored node
-});
+};
+exports.VALUE_TYPES = nodeValueTypes;
 function getValueTypeName(valueType) {
     switch (valueType) {
         case exports.VALUE_TYPES.ARRAY: return 'array';
@@ -3836,7 +3837,7 @@ class CustomStorage extends index_1.Storage {
             }
             if (options.include_child_count) {
                 info.childCount = 0;
-                if ([node_value_types_1.VALUE_TYPES.ARRAY, node_value_types_1.VALUE_TYPES.OBJECT].includes(info.valueType) && info.address) {
+                if ([node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(info.valueType) && info.address) {
                     // Get number of children
                     info.childCount = node.value ? Object.keys(node.value).length : 0;
                     info.childCount += await transaction.getChildCount(path);
@@ -4571,6 +4572,9 @@ class StorageSettings {
 }
 exports.StorageSettings = StorageSettings;
 class Storage extends acebase_core_1.SimpleEventEmitter {
+    createTid() {
+        return DEBUG_MODE ? ++this._lastTid : acebase_core_1.ID.generate();
+    }
     /**
      * Base class for database storage, must be extended by back-end specific methods.
      * Currently implemented back-ends are AceBaseStorage, SQLiteStorage, MSSQLStorage, CustomStorage
@@ -4922,9 +4926,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         // this.transactionManager = new IPCTransactionManager(this.ipc);
         this._lastTid = 0;
     } // end of constructor
-    createTid() {
-        return DEBUG_MODE ? ++this._lastTid : acebase_core_1.ID.generate();
-    }
     async close() {
         // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.
         await this.ipc.exit();
@@ -9341,6 +9342,10 @@ function getChildren(snapshot) {
 }
 class DataSnapshot {
     /**
+     * Indicates whether the node exists in the database
+     */
+    exists() { return false; }
+    /**
      * Creates a new DataSnapshot instance
      */
     constructor(ref, value, isRemoved = false, prevValue, context) {
@@ -9355,10 +9360,6 @@ class DataSnapshot {
         };
         this.context = () => { return context || {}; };
     }
-    /**
-     * Indicates whether the node exists in the database
-     */
-    exists() { return false; }
     /**
      * Creates a `DataSnapshot` instance
      * @internal (for internal use)
@@ -9745,15 +9746,6 @@ function getPathKeys(path) {
     });
 }
 class PathInfo {
-    constructor(path) {
-        if (typeof path === 'string') {
-            this.keys = getPathKeys(path);
-        }
-        else if (path instanceof Array) {
-            this.keys = path;
-        }
-        this.path = this.keys.reduce((path, key, i) => i === 0 ? `${key}` : typeof key === 'string' ? `${path}/${key}` : `${path}[${key}]`, '');
-    }
     static get(path) {
         return new PathInfo(path);
     }
@@ -9763,6 +9755,15 @@ class PathInfo {
     }
     static getPathKeys(path) {
         return getPathKeys(path);
+    }
+    constructor(path) {
+        if (typeof path === 'string') {
+            this.keys = getPathKeys(path);
+        }
+        else if (path instanceof Array) {
+            this.keys = path;
+        }
+        this.path = this.keys.reduce((path, key, i) => i === 0 ? `${key}` : typeof key === 'string' ? `${path}/${key}` : `${path}[${key}]`, '');
     }
     get key() {
         return this.keys.length === 0 ? null : this.keys.slice(-1)[0];
@@ -10424,6 +10425,7 @@ const calculateExpiryTime = (expirySeconds) => expirySeconds > 0 ? Date.now() + 
  * Immutability is enforced by cloning the stored and retrieved values. To change a cached value, it will have to be `set` again with the new value.
  */
 class SimpleCache {
+    get size() { return this.cache.size; }
     constructor(options) {
         var _a;
         this.enabled = true;
@@ -10441,7 +10443,6 @@ class SimpleCache {
         const interval = setInterval(() => { this.cleanUp(); }, 60 * 1000);
         (_a = interval.unref) === null || _a === void 0 ? void 0 : _a.call(interval);
     }
-    get size() { return this.cache.size; }
     has(key) {
         if (!this.enabled) {
             return false;

@@ -1030,7 +1030,7 @@ export class AceBaseStorage extends Storage {
             }
             else {
                 // This is a small record. Rewrite the entire node
-                const mergedValue = isArray ? [] : {};
+                const mergedValue = (isArray ? [] : {});
                 await nodeReader.getChildStream().next(child => {
                     const keyOrIndex = isArray ? child.index : child.key;
                     if (keyOrIndex === key) {
@@ -3039,7 +3039,7 @@ class NodeReader {
             throw new Error(`Not enough bytes read from file at index ${fileIndex}, expected ${bytesPerRecord} but got ${bytesRead}`);
         }
         const hasKeyIndex = (data[0] & FLAG_KEY_TREE) === FLAG_KEY_TREE;
-        const valueType = data[0] & FLAG_VALUE_TYPE; // Last 4-bits of first byte of read data has value type
+        const valueType = (data[0] & FLAG_VALUE_TYPE); // Last 4-bits of first byte of read data has value type
         // Read Chunk Table
         let view = new DataView(data.buffer);
         let offset = 1;

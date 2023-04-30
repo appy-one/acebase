@@ -1083,7 +1083,7 @@ export class CustomStorage extends Storage {
             }
             if (options.include_child_count) {
                 info.childCount = 0;
-                if ([VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(info.valueType) && info.address) {
+                if ([VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(info.valueType) && info.address) {
                     // Get number of children
                     info.childCount = node.value ? Object.keys(node.value).length : 0;
                     info.childCount += await transaction.getChildCount(path);

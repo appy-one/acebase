@@ -1,6 +1,7 @@
 import { Utils } from 'acebase-core';
 import { NodeInfo } from '../../node-info';
 import { NodeLock } from '../../node-lock';
+import { NodeValueType } from '../../node-value-types';
 import { Storage, StorageEnv, StorageSettings } from '../index';
 import { NodeAddress } from '../../node-address';
 export { CustomStorageHelpers } from './helpers';
@@ -15,7 +16,7 @@ export declare class ICustomStorageNodeMetaData {
     /** Last modification date/time in ms since epoch UTC */
     modified: number;
     /** Type of the node's value. 1=object, 2=array, 3=number, 4=boolean, 5=string, 6=date, 7=reserved, 8=binary, 9=reference */
-    type: number;
+    type: NodeValueType;
 }
 /** Interface for metadata combined with a stored value */
 export declare class ICustomStorageNode extends ICustomStorageNodeMetaData {
@@ -193,7 +194,7 @@ export declare class CustomStorage extends Storage {
          * @param valueCallback callback function to run for each child. Return false to stop iterating
          * @returns returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
          */
-        next(valueCallback: (child: NodeInfo) => boolean): Promise<boolean>;
+        next(valueCallback: (child: NodeInfo) => boolean | void | Promise<boolean | void>): Promise<boolean>;
     };
     getNode(path: string, options?: {
         include?: string[];

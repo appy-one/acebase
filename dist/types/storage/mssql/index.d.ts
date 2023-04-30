@@ -1,6 +1,6 @@
 import { Storage, StorageEnv, StorageSettings } from '..';
 import { NodeInfo } from '../../node-info';
-import { VALUE_TYPES } from '../../node-value-types';
+import { NodeValueType, VALUE_TYPES } from '../../node-value-types';
 import { NodeAddress } from '../../node-address';
 export declare class MSSQLNodeAddress extends NodeAddress {
     constructor(containerPath: string);
@@ -110,7 +110,7 @@ export declare class MSSQLStorage extends Storage {
     private _each;
     private _createTransaction;
     _getTypeFromStoredValue(val: unknown): {
-        type: number;
+        type: NodeValueType;
         value: any;
     };
     _createJSON(obj: any): string;
@@ -143,7 +143,7 @@ export declare class MSSQLStorage extends Storage {
          * @param valueCallback callback function to run for each child. Return false to stop iterating
          * @returns returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
          */
-        next(valueCallback: (child: MSSQLNodeInfo) => boolean): Promise<boolean>;
+        next(valueCallback: (child: MSSQLNodeInfo) => boolean | void | Promise<boolean | void>): Promise<boolean>;
     };
     getNode(path: string, options?: {
         include?: (string | number)[];

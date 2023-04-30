@@ -11,11 +11,6 @@ class IndexQueryResult {
 }
 exports.IndexQueryResult = IndexQueryResult;
 class IndexQueryResults extends Array {
-    constructor(...args) {
-        super(...args);
-        this.hints = [];
-        this.stats = null;
-    }
     static fromResults(results, filterKey) {
         const arr = new IndexQueryResults(results.length);
         results.forEach((result, i) => arr[i] = result);
@@ -100,6 +95,11 @@ class IndexQueryResults extends Array {
             }
         });
         return IndexQueryResults.fromResults(filtered, this.filterKey);
+    }
+    constructor(...args) {
+        super(...args);
+        this.hints = [];
+        this.stats = null;
     }
 }
 exports.IndexQueryResults = IndexQueryResults;

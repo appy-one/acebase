@@ -211,8 +211,8 @@ class GeoIndex extends data_index_1.DataIndex {
             this.storage.debug.warn('Not implemented: query options for geo indexes are ignored');
         }
         if (op === 'geo:nearby') {
-            if (val === null || typeof val !== 'object' || !('lat' in val) || !('long' in val) || !('radius' in val)) {
-                throw new Error(`geo nearby query expects an object with lat, long and radius properties`);
+            if (val === null || typeof val !== 'object' || !('lat' in val) || !('long' in val) || !('radius' in val) || typeof val.lat !== 'number' || typeof val.long !== 'number' || typeof val.radius !== 'number') {
+                throw new Error(`geo nearby query expects an object with numeric lat, long and radius properties`);
             }
             return this.nearby(val);
         }

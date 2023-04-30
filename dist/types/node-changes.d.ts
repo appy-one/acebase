@@ -1,4 +1,4 @@
-declare type KeyOrIndex = string | number;
+type KeyOrIndex = string | number;
 export declare class NodeChange {
     keyOrIndex: string | number;
     changeType: 'update' | 'insert' | 'delete';

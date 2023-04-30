@@ -1,11 +1,11 @@
 import { NodeEntryKeyType } from '../btree/entry-key-type';
 import { LeafEntryMetaData } from '../btree/leaf-entry-metadata';
 import { LeafEntryRecordPointer } from '../btree/leaf-entry-recordpointer';
-export declare type FileSystemError = Error & {
+export type FileSystemError = Error & {
     code: string;
 };
-export declare type IndexableValue = NodeEntryKeyType;
-export declare type IndexableValueOrArray = IndexableValue | IndexableValue[];
-export declare type IndexRecordPointer = LeafEntryRecordPointer;
-export declare type IndexMetaData = LeafEntryMetaData;
+export type IndexableValue = NodeEntryKeyType;
+export type IndexableValueOrArray = IndexableValue | IndexableValue[];
+export type IndexRecordPointer = LeafEntryRecordPointer;
+export type IndexMetaData = LeafEntryMetaData;
 //# sourceMappingURL=shared.d.ts.map

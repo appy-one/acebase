@@ -3593,7 +3593,7 @@ class BinaryBPlusTree {
         });
     }
 }
-exports.BinaryBPlusTree = BinaryBPlusTree;
 BinaryBPlusTree.EntryValue = binary_tree_leaf_entry_value_1.BinaryBPlusTreeLeafEntryValue;
 BinaryBPlusTree.TransactionOperation = binary_tree_transaction_operation_1.BinaryBPlusTreeTransactionOperation;
+exports.BinaryBPlusTree = BinaryBPlusTree;
 //# sourceMappingURL=binary-tree.js.map

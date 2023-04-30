@@ -21,6 +21,68 @@ class WordInfo {
 }
 // const _wordsRegex = /[\w']+/gmi; // TODO: should use a better pattern that supports non-latin characters
 class TextInfo {
+    static get locales() {
+        return {
+            'default': {
+                pattern: '[A-Za-z0-9\']+',
+                flags: 'gmi',
+            },
+            'en': {
+                // English stoplist from https://gist.github.com/sebleier/554280
+                stoplist: ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now'],
+            },
+            get(locale) {
+                const settings = {};
+                Object.assign(settings, this.default);
+                if (typeof this[locale] === 'undefined' && locale.indexOf('-') > 0) {
+                    locale = locale.split('-')[1];
+                }
+                if (typeof this[locale] === 'undefined') {
+                    return settings;
+                }
+                Object.keys(this[locale]).forEach(key => {
+                    settings[key] = this[locale][key];
+                });
+                return settings;
+            },
+        };
+    }
+    getWordInfo(word) {
+        return this.words.get(word);
+    }
+    /**
+     * Reconstructs an array of words in the order they were encountered
+     */
+    toSequence() {
+        const arr = [];
+        for (const { word, indexes } of this.words.values()) {
+            for (const index of indexes) {
+                arr[index] = word;
+            }
+        }
+        return arr;
+    }
+    /**
+     * Returns all unique words in an array
+     */
+    toArray() {
+        const arr = [];
+        for (const word of this.words.keys()) {
+            arr.push(word);
+        }
+        return arr;
+    }
+    get uniqueWordCount() {
+        return this.words.size; //.length;
+    }
+    get wordCount() {
+        let total = 0;
+        for (const wordInfo of this.words.values()) {
+            total += wordInfo.occurs;
+        }
+        return total;
+        // return this.words.reduce((total, word) => total + word.occurs, 0);
+    }
     constructor(text, options) {
         var _a;
         // this.text = text; // Be gone later...
@@ -133,68 +195,6 @@ class TextInfo {
             }
             wordIndex++;
         }
-    }
-    static get locales() {
-        return {
-            'default': {
-                pattern: '[A-Za-z0-9\']+',
-                flags: 'gmi',
-            },
-            'en': {
-                // English stoplist from https://gist.github.com/sebleier/554280
-                stoplist: ['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now'],
-            },
-            get(locale) {
-                const settings = {};
-                Object.assign(settings, this.default);
-                if (typeof this[locale] === 'undefined' && locale.indexOf('-') > 0) {
-                    locale = locale.split('-')[1];
-                }
-                if (typeof this[locale] === 'undefined') {
-                    return settings;
-                }
-                Object.keys(this[locale]).forEach(key => {
-                    settings[key] = this[locale][key];
-                });
-                return settings;
-            },
-        };
-    }
-    getWordInfo(word) {
-        return this.words.get(word);
-    }
-    /**
-     * Reconstructs an array of words in the order they were encountered
-     */
-    toSequence() {
-        const arr = [];
-        for (const { word, indexes } of this.words.values()) {
-            for (const index of indexes) {
-                arr[index] = word;
-            }
-        }
-        return arr;
-    }
-    /**
-     * Returns all unique words in an array
-     */
-    toArray() {
-        const arr = [];
-        for (const word of this.words.keys()) {
-            arr.push(word);
-        }
-        return arr;
-    }
-    get uniqueWordCount() {
-        return this.words.size; //.length;
-    }
-    get wordCount() {
-        let total = 0;
-        for (const wordInfo of this.words.values()) {
-            total += wordInfo.occurs;
-        }
-        return total;
-        // return this.words.reduce((total, word) => total + word.occurs, 0);
     }
 }
 /**

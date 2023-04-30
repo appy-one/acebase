@@ -23,11 +23,11 @@ export declare class LocalStorageTransaction extends CustomStorageTransaction {
     childrenOf(path: string, include: {
         metadata?: boolean;
         value?: boolean;
-    }, checkCallback: (path: string) => boolean, addCallback: (path: string, node: ICustomStorageNodeMetaData | ICustomStorageNode) => boolean): Promise<void>;
+    }, checkCallback: (path: string) => boolean, addCallback: (path: string, node?: ICustomStorageNodeMetaData | ICustomStorageNode) => boolean): Promise<void>;
     descendantsOf(path: string, include: {
         metadata?: boolean;
         value?: boolean;
-    }, checkCallback: (path: string) => boolean, addCallback: (path: string, node: ICustomStorageNodeMetaData | ICustomStorageNode) => boolean): Promise<void>;
+    }, checkCallback: (path: string) => boolean, addCallback: (path: string, node?: ICustomStorageNodeMetaData | ICustomStorageNode) => boolean): Promise<void>;
     /**
      * Helper function to get the path from a localStorage key
      */

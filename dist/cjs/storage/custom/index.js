@@ -1093,7 +1093,7 @@ class CustomStorage extends index_1.Storage {
             }
             if (options.include_child_count) {
                 info.childCount = 0;
-                if ([node_value_types_1.VALUE_TYPES.ARRAY, node_value_types_1.VALUE_TYPES.OBJECT].includes(info.valueType) && info.address) {
+                if ([node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(info.valueType) && info.address) {
                     // Get number of children
                     info.childCount = node.value ? Object.keys(node.value).length : 0;
                     info.childCount += await transaction.getChildCount(path);

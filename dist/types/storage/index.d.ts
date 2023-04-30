@@ -95,8 +95,8 @@ export declare class StorageSettings {
 export interface StorageEnv {
     logLevel: LoggingLevel;
 }
-export declare type SubscriptionCallback = (err: Error, path: string, newValue: any, oldValue: any, context: any) => void;
-export declare type InternalDataRetrievalOptions = DataRetrievalOptions & {
+export type SubscriptionCallback = (err: Error, path: string, newValue: any, oldValue: any, context: any) => void;
+export type InternalDataRetrievalOptions = DataRetrievalOptions & {
     tid?: string | number;
 };
 export declare class Storage extends SimpleEventEmitter {

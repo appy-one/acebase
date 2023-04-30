@@ -1,5 +1,5 @@
 /// <reference types="node" />
-export declare type BufferLike = number[] | Uint8Array | Buffer;
+export type BufferLike = number[] | Uint8Array | Buffer;
 export declare function writeByteLength<T extends BufferLike>(bytes: T, index: number, length: number): T;
 export declare function readByteLength(bytes: BufferLike, index: number): number;
 export declare function writeSignedNumber<T extends BufferLike>(bytes: T, index: number, offset: number): T;

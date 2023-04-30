@@ -1,7 +1,7 @@
 /// <reference types="node" />
 /// <reference types="node" />
 import * as fs from 'fs';
-export declare type TypedArray = Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | BigUint64Array | BigInt64Array;
+export type TypedArray = Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | BigUint64Array | BigInt64Array;
 export declare abstract class pfs {
     static get hasFileSystem(): boolean;
     static get fs(): typeof fs;

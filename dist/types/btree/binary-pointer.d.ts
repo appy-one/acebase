@@ -1,5 +1,5 @@
 import { BPlusTreeLeaf } from './tree-leaf';
-export declare type BinaryPointer = {
+export type BinaryPointer = {
     name: string;
     leaf: BPlusTreeLeaf;
     index: number;

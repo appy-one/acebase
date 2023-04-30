@@ -1,6 +1,6 @@
 import { BPlusTreeLeaf } from './tree-leaf';
 import { BPlusTreeNode } from './tree-node';
-export declare type BinaryReference = {
+export type BinaryReference = {
     name: string;
     target: BPlusTreeNode | BPlusTreeLeaf;
     index: number;

@@ -3,8 +3,8 @@
 import type { WriteStream } from 'fs';
 import { Uint8ArrayBuilder, BufferLike } from '../binary';
 import { NodeEntryKeyType } from './entry-key-type';
-declare type WriteStreamLike = Pick<WriteStream, 'write' | 'end' | 'once' | 'bytesWritten'>;
-declare type WriteFunction = (data: Uint8Array, position: number) => Promise<void>;
+type WriteStreamLike = Pick<WriteStream, 'write' | 'end' | 'once' | 'bytesWritten'>;
+type WriteFunction = (data: Uint8Array, position: number) => Promise<void>;
 export declare class BinaryWriter {
     private _stream;
     private _write;

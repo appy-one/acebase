@@ -34,7 +34,7 @@ class NoTreeInfoError extends Error {
 }
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 async function noop() { }
-export class BinaryBPlusTree {
+class BinaryBPlusTree {
     /**
      * Provides functionality to read and search in a B+tree from a binary data source
      */
@@ -3586,4 +3586,5 @@ export class BinaryBPlusTree {
 }
 BinaryBPlusTree.EntryValue = BinaryBPlusTreeLeafEntryValue;
 BinaryBPlusTree.TransactionOperation = BinaryBPlusTreeTransactionOperation;
+export { BinaryBPlusTree };
 //# sourceMappingURL=binary-tree.js.map

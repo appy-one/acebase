@@ -3,6 +3,18 @@ import { DetailedError } from '../detailed-error.js';
 import { BinaryBPlusTreeNodeInfo } from './binary-tree-node-info.js';
 import { _isEqual } from './typesafe-compare.js';
 export class BinaryBPlusTreeLeaf extends BinaryBPlusTreeNodeInfo {
+    static get prevLeafPtrIndex() { return 9; }
+    static get nextLeafPtrIndex() { return 15; }
+    static getPrevLeafOffset(leafIndex, prevLeafIndex) {
+        return prevLeafIndex > 0
+            ? prevLeafIndex - leafIndex - 9
+            : 0;
+    }
+    static getNextLeafOffset(leafIndex, nextLeafIndex) {
+        return nextLeafIndex > 0
+            ? nextLeafIndex - leafIndex - 15
+            : 0;
+    }
     constructor(nodeInfo) {
         assert(typeof nodeInfo.hasExtData === 'boolean', 'nodeInfo.hasExtData must be specified');
         super(nodeInfo);
@@ -18,18 +30,6 @@ export class BinaryBPlusTreeLeaf extends BinaryBPlusTreeNodeInfo {
             },
         };
         this.entries = [];
-    }
-    static get prevLeafPtrIndex() { return 9; }
-    static get nextLeafPtrIndex() { return 15; }
-    static getPrevLeafOffset(leafIndex, prevLeafIndex) {
-        return prevLeafIndex > 0
-            ? prevLeafIndex - leafIndex - 9
-            : 0;
-    }
-    static getNextLeafOffset(leafIndex, nextLeafIndex) {
-        return nextLeafIndex > 0
-            ? nextLeafIndex - leafIndex - 15
-            : 0;
     }
     get hasPrevious() { return typeof this.getPrevious === 'function'; }
     get hasNext() { return typeof this.getNext === 'function'; }

@@ -83,6 +83,9 @@ export class StorageSettings {
     }
 }
 export class Storage extends SimpleEventEmitter {
+    createTid() {
+        return DEBUG_MODE ? ++this._lastTid : ID.generate();
+    }
     /**
      * Base class for database storage, must be extended by back-end specific methods.
      * Currently implemented back-ends are AceBaseStorage, SQLiteStorage, MSSQLStorage, CustomStorage
@@ -434,9 +437,6 @@ export class Storage extends SimpleEventEmitter {
         // this.transactionManager = new IPCTransactionManager(this.ipc);
         this._lastTid = 0;
     } // end of constructor
-    createTid() {
-        return DEBUG_MODE ? ++this._lastTid : ID.generate();
-    }
     async close() {
         // Close the database by calling exit on the ipc channel, which will emit an 'exit' event when the database can be safely closed.
         await this.ipc.exit();

@@ -3,7 +3,7 @@ import { Storage } from '../storage';
 export declare class AceBaseIPCPeerExitingError extends Error {
     constructor(message: string);
 }
-declare type InternalLockInfo = {
+type InternalLockInfo = {
     tid: string;
     granted: boolean;
     request: ILockRequestData;
@@ -93,7 +93,7 @@ export interface IAceBaseIPCLock {
     release(comment?: string): Promise<void>;
     moveToParent(): Promise<IAceBaseIPCLock>;
 }
-export declare type AceBaseSubscribeCallback = (error: Error, path: string, newValue: any, oldValue: any, eventContext: any) => void;
+export type AceBaseSubscribeCallback = (error: Error, path: string, newValue: any, oldValue: any, eventContext: any) => void;
 export interface IMessage {
     /**
      * Message type, determines how to handle data
@@ -128,7 +128,7 @@ export interface ICustomNotificationMessage extends IMessage {
     type: 'notification';
     data: any;
 }
-export declare type AceBaseEventType = string;
+export type AceBaseEventType = string;
 export interface ISubscriptionData {
     path: string;
     event: AceBaseEventType;

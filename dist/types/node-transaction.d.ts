@@ -1,6 +1,6 @@
 import { PathInfo } from 'acebase-core';
 import { IPCPeer } from './ipc';
-declare type NodeKey = string | number;
+type NodeKey = string | number;
 export declare abstract class NodeLockIntention {
     /**
      * The intention to read a single node for reflection purposes (eg enumerating its children).
@@ -55,8 +55,8 @@ interface INodeLockRequest {
     pathInfo?: PathInfo;
     intention: NodeLockIntention;
 }
-declare type TransactionID = number;
-declare type LockID = number;
+type TransactionID = number;
+type LockID = number;
 declare enum NodeLockState {
     pending = 0,
     locked = 1,

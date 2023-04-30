@@ -103,6 +103,7 @@ export class ThreadSafe {
  * New locking mechasnism that supports exclusive or shared locking
  */
 export class ThreadSafeLock2 extends SimpleEventEmitter {
+    get shared() { return this._shared; }
     constructor(target, shared) {
         super();
         this.target = target;
@@ -111,7 +112,6 @@ export class ThreadSafeLock2 extends SimpleEventEmitter {
         this._shared = shared;
         this.achieved = new Date();
     }
-    get shared() { return this._shared; }
     release() {
         if (this.shared && this.shares > 0) {
             this.shares--;
