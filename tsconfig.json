@@ -13,7 +13,7 @@
         "declarationMap": true,
         "declarationDir": "./dist/types",
         "resolveJsonModule": true,
-        "skipLibCheck": true
+        "skipLibCheck": false
     },
     "include": ["src/**/*"],
     "exclude": [
