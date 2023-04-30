@@ -40,7 +40,7 @@ export class LocalStorageTransaction extends CustomStorageTransaction {
     async childrenOf(path: string,
         include: { metadata?: boolean; value?: boolean },
         checkCallback: (path: string) => boolean,
-        addCallback: (path: string, node: ICustomStorageNodeMetaData | ICustomStorageNode) => boolean,
+        addCallback: (path: string, node?: ICustomStorageNodeMetaData | ICustomStorageNode) => boolean,
     ) {
         // Streams all child paths
         // Cannot query localStorage, so loop through all stored keys to find children
@@ -64,7 +64,7 @@ export class LocalStorageTransaction extends CustomStorageTransaction {
     async descendantsOf(path: string,
         include: { metadata?: boolean; value?: boolean },
         checkCallback: (path: string) => boolean,
-        addCallback: (path: string, node: ICustomStorageNodeMetaData | ICustomStorageNode) => boolean,
+        addCallback: (path: string, node?: ICustomStorageNodeMetaData | ICustomStorageNode) => boolean,
     ) {
         // Streams all descendant paths
         // Cannot query localStorage, so loop through all stored keys to find descendants

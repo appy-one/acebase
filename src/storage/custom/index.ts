@@ -2,7 +2,7 @@ import { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils, DebugLogger } 
 const { compareValues } = Utils;
 import { NodeInfo } from '../../node-info';
 import { NodeLock, NodeLocker } from '../../node-lock';
-import { VALUE_TYPES } from '../../node-value-types';
+import { NodeValueType, VALUE_TYPES } from '../../node-value-types';
 import { NodeNotFoundError, NodeRevisionError } from '../../node-errors';
 import { Storage, StorageEnv, StorageSettings } from '../index';
 import { CustomStorageHelpers } from './helpers';
@@ -21,7 +21,7 @@ export class ICustomStorageNodeMetaData {
     /** Last modification date/time in ms since epoch UTC */
     modified = 0;
     /** Type of the node's value. 1=object, 2=array, 3=number, 4=boolean, 5=string, 6=date, 7=reserved, 8=binary, 9=reference */
-    type = 0;
+    type = 0 as NodeValueType;
 }
 
 /** Interface for metadata combined with a stored value */
@@ -455,7 +455,7 @@ export class CustomStorage extends Storage {
     }
 
     private _getTypeFromStoredValue(val: unknown) {
-        let type;
+        let type: NodeValueType;
         if (typeof val === 'string') {
             type = VALUE_TYPES.STRING;
         }
@@ -470,7 +470,7 @@ export class CustomStorage extends Storage {
         }
         else if (typeof val === 'object') {
             if ('type' in val) {
-                const serialized = val as { type: number, value: number | string };
+                const serialized = val as { type: NodeValueType, value: number | string };
                 type = serialized.type;
                 val = serialized.value;
                 if (type === VALUE_TYPES.DATETIME) {
@@ -817,7 +817,7 @@ export class CustomStorage extends Storage {
      */
     getChildren(path: string, options: { transaction?: CustomStorageTransaction, keyFilter?: string[] | number[] } = {}) {
         // return generator
-        type CallbackFunction = (child: NodeInfo) => boolean;
+        type CallbackFunction = (child: NodeInfo) => boolean | void | Promise<boolean | void>;
         let callback: CallbackFunction;
         const generator = {
             /**
@@ -1055,7 +1055,7 @@ export class CustomStorage extends Storage {
                     // Apply child_objects filter. If metadata is not loaded, we can only skip deeper descendants here - any child object that does get through will be ignored by addDescendant
                     if (include
                         && options.child_objects === false
-                        && (pathInfo.isParentOf(descPath) && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(metadata ? metadata.type : -1)
+                        && (pathInfo.isParentOf(descPath) && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(metadata ? metadata.type : -1 as NodeValueType)
                         || PathInfo.getPathKeys(descPath).length > pathInfo.pathKeys.length + 1)
                     ) {
                         include = false;
@@ -1241,7 +1241,7 @@ export class CustomStorage extends Storage {
                 path,
                 key: typeof pathInfo.key === 'string' ? pathInfo.key : null,
                 index: typeof pathInfo.key === 'number' ? pathInfo.key : null,
-                type: node ? node.type : 0,
+                type: node ? node.type : 0 as NodeValueType,
                 exists: node !== null,
                 address: node ? new NodeAddress(path) : null,
                 created: node ? new Date(node.created) : null,
@@ -1275,7 +1275,7 @@ export class CustomStorage extends Storage {
 
             if (options.include_child_count) {
                 info.childCount = 0;
-                if ([VALUE_TYPES.ARRAY, VALUE_TYPES.OBJECT].includes(info.valueType) && info.address) {
+                if ([VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(info.valueType) && info.address) {
                     // Get number of children
                     info.childCount = node.value ? Object.keys(node.value).length : 0;
                     info.childCount += await transaction.getChildCount(path);

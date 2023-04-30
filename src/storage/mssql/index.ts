@@ -1,7 +1,7 @@
 import { ID, PathReference, PathInfo, ascii85, ColorStyle } from 'acebase-core';
 import { Storage, StorageEnv, StorageSettings } from '..';
 import { NodeInfo } from '../../node-info';
-import { VALUE_TYPES } from '../../node-value-types';
+import { NodeValueType, VALUE_TYPES } from '../../node-value-types';
 import { NodeNotFoundError, NodeRevisionError } from '../../node-errors';
 import { pfs } from '../../promise-fs';
 import { NodeAddress } from '../../node-address';
@@ -447,7 +447,7 @@ export class MSSQLStorage extends Storage {
     }
 
     _getTypeFromStoredValue(val: unknown) {
-        let type: number;
+        let type: NodeValueType;
         if (typeof val === 'string') {
             type = VALUE_TYPES.STRING;
         }
@@ -783,7 +783,7 @@ export class MSSQLStorage extends Storage {
         } = {},
     ) {
         // return generator
-        type CallbackFunction = (child: MSSQLNodeInfo) => boolean;
+        type CallbackFunction = (child: MSSQLNodeInfo) => boolean | void | Promise<boolean | void>;
         let callback: CallbackFunction;
         const generator = {
             /**

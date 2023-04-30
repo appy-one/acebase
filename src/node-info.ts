@@ -1,10 +1,10 @@
-import { getValueTypeName } from './node-value-types';
+import { NodeValueType, getValueTypeName } from './node-value-types';
 import { PathInfo } from 'acebase-core';
 import { NodeAddress } from './node-address';
 
 export class NodeInfo {
     path?: string;
-    type?: number;
+    type?: NodeValueType;
     index?: number;
     key?: string;
     exists?: boolean;
