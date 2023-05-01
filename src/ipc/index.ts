@@ -1,7 +1,7 @@
 import { AceBaseIPCPeer, IHelloMessage, IMessage } from './ipc';
 import { Storage } from '../storage';
 import * as Cluster from 'cluster';
-const cluster: typeof Cluster = (Cluster as any).default ?? Cluster; // ESM and CJS compatible approach
+const cluster = Cluster.default ?? Cluster as any as typeof Cluster.default; // ESM and CJS compatible approach
 export { RemoteIPCPeer, RemoteIPCServerConfig } from './remote';
 export { IPCSocketPeer, NetIPCServer } from './socket';
 
