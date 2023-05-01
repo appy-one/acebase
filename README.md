@@ -2218,6 +2218,8 @@ AceBase supports running in multiple processes by using interprocess communicati
 
 If you are using pm2 to run your app in a cluster, or run your app in a cloud-based cluster (eg Kubernetes, Docker Swarm), AceBase instances will need some other way to communicate with eachother. This is now possible using an AceBase IPC Server, which allows fast communication using websockets. See [AceBase IPC Server](https://github.com/appy-one/acebase-ipc-server) for more info!
 
+**NEW** (v1.28.0): AceBase now supports an IPC mode that enables isolated processes on a single machine to access the same database simultaneously, without them having to setup an IPC cluster. By setting the storage `ipc` setting to `'socket'`, AceBase will launch (or connect to) a dedicated service process that communicates through very fast in-memory Unix sockets, or named pipes on Windows. The service will automatically shut down again once the database is not being accessed by any running process anymore. This will become the default IPC setting in the future.
+
 ## CommonJS and ESM packages
 The TypeScript sources are compiled to both CommonJS and ESM module systems. The sources loaded depend on whether you `import` or `require` acebase:
 | Statement                                  | Module system | Target |
