@@ -11,7 +11,7 @@ declare const nodeValueTypes: {
 };
 export type NodeValueType = typeof nodeValueTypes[keyof typeof nodeValueTypes];
 export declare const VALUE_TYPES: Record<"OBJECT" | "ARRAY" | "NUMBER" | "BOOLEAN" | "STRING" | "BIGINT" | "DATETIME" | "BINARY" | "REFERENCE", NodeValueType>;
-export declare function getValueTypeName(valueType: number): "object" | "string" | "number" | "binary" | "date" | "bigint" | "boolean" | "array" | "reference";
+export declare function getValueTypeName(valueType: number): "object" | "string" | "number" | "binary" | "bigint" | "boolean" | "date" | "array" | "reference";
 export declare function getNodeValueType(value: unknown): NodeValueType;
 export declare function getValueType(value: unknown): NodeValueType;
 export {};

@@ -4,8 +4,23 @@ const _1 = require(".");
 (async () => {
     try {
         const dbFile = process.argv[2]; // full path to db storage file, eg '/home/ewout/project/db.acebase/data.db'
-        await (0, _1.startServer)(dbFile, (code) => {
-            process.exit(code);
+        const settings = process.argv.slice(3).reduce((settings, arg, i, args) => {
+            switch (arg.toLowerCase()) {
+                case '--loglevel':
+                    settings.logLevel = args[i + 1];
+                    break;
+                case '--maxidletime':
+                    settings.maxIdleTime = parseInt(args[i + 1]);
+                    break;
+            }
+            return settings;
+        }, { logLevel: 'log', maxIdleTime: 5000 });
+        await (0, _1.startServer)(dbFile, {
+            logLevel: settings.logLevel,
+            maxIdleTime: settings.maxIdleTime,
+            exit: (code) => {
+                process.exit(code);
+            },
         });
     }
     catch (err) {

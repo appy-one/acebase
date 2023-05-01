@@ -7,13 +7,17 @@ const child_process_1 = require("child_process");
 const ipc_1 = require("./ipc");
 const acebase_core_1 = require("acebase-core");
 const shared_1 = require("./service/shared");
+// import { startServer } from './service';
 var net_2 = require("net");
 Object.defineProperty(exports, "NetIPCServer", { enumerable: true, get: function () { return net_2.Server; } });
 const masterPeerId = '[master]';
 /**
- * Node cluster functionality - enables vertical scaling with forked processes. AceBase will enable IPC at startup, so
- * any forked process will communicate database changes and events automatically. Locking of resources will be done by
- * the cluster's primary (previously master) process. NOTE: if the master process dies, all peers stop working
+ * Socket IPC implementation. Peers will attempt starting up a dedicated service process for the target database,
+ * or connect to an already running process. The service acts as the IPC master and governs over locks, space allocation
+ * and communication between peers. Communication between the processes is done using (very fast in-memory) Unix sockets.
+ * This IPC implementation allows different processes on a single machine to access the same database simultaniously without
+ * them having to explicitly configure their IPC settings.
+ * Currently can be used by passing `ipc: 'socket'` in AceBase's `storage` settings, will become the default soon.
  */
 class IPCSocketPeer extends ipc_1.AceBaseIPCPeer {
     constructor(storage, ipcSettings) {
@@ -36,15 +40,17 @@ class IPCSocketPeer extends ipc_1.AceBaseIPCPeer {
             this.exit();
         });
         if (!isMaster) {
-            // Try starting IPC service if it is not running yet
-            const service = (0, child_process_1.fork)(__dirname + '/service/start.js', [dbFile], { detached: true, stdio: 'inherit' });
-            service.unref(); // Process is detached and allowed to keep running after we exit
-            bindEventHandler(service, 'exit', (code, signal) => {
-                console.log(`Service exited with code ${code}`);
-            });
-            // // For testing:
-            // startServer(dbFile, (code) => {
-            //     console.log(`Service exited with code ${code}`);
+            // Try starting IPC service if it is not running yet.
+            // Use maxIdleTime 0 to allow tests to remove database files when done, make this configurable!
+            const service = (0, child_process_1.spawn)('node', [__dirname + '/service/start.js', dbFile, '--loglevel', storage.debug.level, '--maxidletime', '0'], { detached: true, stdio: 'ignore' });
+            service.unref(); // Process is detached and allowed to keep running after we exit. Do not keep a reference to it, possibly preventing app exit.
+            // For testing:
+            // startServer(dbFile, {
+            //     maxIdleTime: 0,
+            //     logLevel: storage.debug.level,
+            //     exit: (code) => {
+            //         storage.debug.log(`[IPC ${ipcSettings.ipcName}] service exited with code ${code}`);
+            //     },
             // });
         }
         /**
@@ -95,17 +101,17 @@ class IPCSocketPeer extends ipc_1.AceBaseIPCPeer {
                             break; // wait for more data
                         }
                         // Extract message from buffer
-                        const message = buffer.slice(0, delimiterIndex);
-                        buffer = buffer.slice(delimiterIndex + shared_1.MSG_DELIMITER.length);
+                        const message = buffer.subarray(0, delimiterIndex);
+                        buffer = buffer.subarray(delimiterIndex + shared_1.MSG_DELIMITER.length);
                         try {
                             const json = message.toString('utf-8');
-                            // console.log(`Received socket message: `, json);
+                            // storage.debug.log(`[IPC ${ipcSettings.ipcName}] Received socket message: `, json);
                             const serialized = JSON.parse(json);
                             const msg = acebase_core_1.Transport.deserialize2(serialized);
                             handleMessage(socket, msg);
                         }
                         catch (err) {
-                            console.error(`Error parsing message: ${err}`);
+                            storage.debug.error(`[IPC ${ipcSettings.ipcName}] Error parsing message: ${err}`);
                         }
                     }
                 });
@@ -128,12 +134,15 @@ class IPCSocketPeer extends ipc_1.AceBaseIPCPeer {
             const connectSocket = async (path) => {
                 const tryConnect = async (tries) => {
                     try {
+                        if (this._exiting) {
+                            return;
+                        }
                         const s = (0, net_1.connect)({ path });
                         await new Promise((resolve, reject) => {
-                            s.once('error', reject);
-                            s.once('connect', resolve);
+                            s.once('error', reject).unref();
+                            s.once('connect', resolve).unref();
                         });
-                        console.log(`IPC peer ${this.id} successfully established connection to the server`);
+                        storage.debug.log(`[IPC ${ipcSettings.ipcName}] peer ${this.id} successfully established connection to the service`);
                         socket = s;
                         connected = true;
                     }
@@ -143,17 +152,17 @@ class IPCSocketPeer extends ipc_1.AceBaseIPCPeer {
                             await new Promise(resolve => setTimeout(resolve, 100));
                             return tryConnect(tries + 1);
                         }
-                        console.error(err.message);
+                        storage.debug.error(`[IPC ${ipcSettings.ipcName}] peer ${this.id} cannot connect to service: ${err.message}`);
                         throw err;
                     }
                 };
                 await tryConnect(1);
                 this.once('exit', () => {
-                    socket.destroy();
+                    socket === null || socket === void 0 ? void 0 : socket.destroy();
                 });
                 bindEventHandler(socket, 'close', (hadError) => {
                     // Connection to server closed
-                    console.log(`IPC peer ${this.id} lost its connection to the server${hadError ? ' because of an error' : ''}`);
+                    storage.debug.log(`IPC peer ${this.id} lost its connection to the service${hadError ? ' because of an error' : ''}`);
                 });
                 let buffer = Buffer.alloc(0); // Buffer to store incomplete messages
                 bindEventHandler(socket, 'data', chunk => {
@@ -165,17 +174,17 @@ class IPCSocketPeer extends ipc_1.AceBaseIPCPeer {
                             break; // wait for more data
                         }
                         // Extract message from buffer
-                        const message = buffer.slice(0, delimiterIndex);
-                        buffer = buffer.slice(delimiterIndex + shared_1.MSG_DELIMITER.length);
+                        const message = buffer.subarray(0, delimiterIndex);
+                        buffer = buffer.subarray(delimiterIndex + shared_1.MSG_DELIMITER.length);
                         try {
                             const json = message.toString('utf-8');
-                            // console.log(`Received server message: `, json);
+                            // storage.debug.log(`Received server message: `, json);
                             const serialized = JSON.parse(json);
                             const msg = acebase_core_1.Transport.deserialize2(serialized);
                             handleMessage(socket, msg);
                         }
                         catch (err) {
-                            console.error(`Error parsing message: ${err}`);
+                            storage.debug.error(`Error parsing message: ${err}`);
                         }
                     }
                 });

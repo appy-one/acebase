@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const tempdb_1 = require("./tempdb");
 const acebase_core_1 = require("acebase-core");
 // This test takes at least an hour on a fast system, enable only if you have time
-const LONG_RUNNING_TEST_ENABLED = false;
+const LONG_RUNNING_TEST_ENABLED = process.env.LONG_RUNNING_TESTS === 'true';
 describe('bulk import', () => {
     let db, removeDB;
     beforeAll(async () => {

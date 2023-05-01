@@ -1,1 +1,1 @@
-{"version":3,"file":"shared.d.ts","sourceRoot":"","sources":["../../../../src/ipc/service/shared.ts"],"names":[],"mappings":"AAAA,wBAAgB,aAAa,CAAC,QAAQ,EAAE,MAAM,UAI7C;AAGD,eAAO,MAAM,aAAa,OAAO,CAAC"}
+{"version":3,"file":"shared.d.ts","sourceRoot":"","sources":["../../../../src/ipc/service/shared.ts"],"names":[],"mappings":"AAEA,wBAAgB,aAAa,CAAC,QAAQ,EAAE,MAAM,UAa7C;AAGD,eAAO,MAAM,aAAa,OAAO,CAAC"}
