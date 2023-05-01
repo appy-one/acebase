@@ -3,7 +3,7 @@ import { createTempDB } from './tempdb';
 import { ID } from 'acebase-core';
 
 // This test takes at least an hour on a fast system, enable only if you have time
-const LONG_RUNNING_TEST_ENABLED = false;
+const LONG_RUNNING_TEST_ENABLED = process.env.LONG_RUNNING_TESTS === 'true';
 
 describe('bulk import', () => {
     let db: AceBase, removeDB: () => Promise<void>;
