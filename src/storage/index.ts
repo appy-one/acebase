@@ -207,6 +207,7 @@ export class Storage extends SimpleEventEmitter {
     } // end of constructor
 
     private _indexes: DataIndex[] = [];
+    private _annoucedIndexes = new Map<string, Promise<DataIndex>>();
     public indexes = {
         /**
          * Tests if (the default storage implementation of) indexes are supported in the environment.
@@ -318,9 +319,18 @@ export class Storage extends SimpleEventEmitter {
             if (existingIndex) {
                 return existingIndex;
             }
+            else if (this._annoucedIndexes.has(fileName)) {
+                // Index is already in the process of being added, wait until it becomes availabe
+                const index = await this._annoucedIndexes.get(fileName);
+                return index;
+            }
             try {
-                const index = await DataIndex.readFromFile(this, fileName);
+                // Announce the index to prevent race condition in between reading and receiving the IPC index.created notification
+                const indexPromise = DataIndex.readFromFile(this, fileName);
+                this._annoucedIndexes.set(fileName, indexPromise);
+                const index = await indexPromise;
                 this._indexes.push(index);
+                this._annoucedIndexes.delete(fileName);
                 return index;
             }
             catch(err) {
@@ -951,6 +961,7 @@ export class Storage extends SimpleEventEmitter {
             else if (type === 'child_removed') {
                 trigger = oldValue !== null && newValue === null;
             }
+            if (!trigger) { return; }
 
             const pathKeys = PathInfo.getPathKeys(sub.dataPath);
             variables.forEach(variable => {
@@ -960,7 +971,7 @@ export class Storage extends SimpleEventEmitter {
                 pathKeys[index] = variable.value;
             });
             const dataPath = pathKeys.reduce<string>((path, key) => PathInfo.getChildPath(path, key), '');
-            trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
+            this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
         };
 
         const prepareMutationEvents = (
@@ -1168,7 +1179,6 @@ export class Storage extends SimpleEventEmitter {
         defer(triggerAllEvents); // Delayed execution
         return result;
     }
-
 
     /**
      * Enumerates all children of a given Node for reflection purposes
