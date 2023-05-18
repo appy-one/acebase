@@ -711,7 +711,8 @@ export class BinaryBPlusTree {
                             });
 
                             // update ext_block_free_length:
-                            writeByteLength(bytes, 4, self._length - bytes.length);
+                            const freeBytes = self._length - bytes.length + 8; // Do not count 8 header bytes
+                            writeByteLength(bytes, 4, freeBytes);
 
                             const valueListLengthData = writeByteLength([], 0, self.totalValues - 1);
                             await Promise.all([
@@ -722,7 +723,7 @@ export class BinaryBPlusTree {
                             ]);
 
                             self.totalValues--;
-                            self._freeBytes = self._length - bytes.length;
+                            self._freeBytes = freeBytes;
                         },
                     };
 
