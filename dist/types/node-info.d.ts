@@ -12,7 +12,7 @@ export declare class NodeInfo {
     childCount?: number;
     constructor(info: Partial<NodeInfo>);
     get valueType(): NodeValueType;
-    get valueTypeName(): "object" | "string" | "number" | "binary" | "bigint" | "boolean" | "date" | "array" | "reference";
+    get valueTypeName(): "object" | "string" | "number" | "array" | "boolean" | "date" | "bigint" | "binary" | "reference";
     toString(): string;
 }
 //# sourceMappingURL=node-info.d.ts.map

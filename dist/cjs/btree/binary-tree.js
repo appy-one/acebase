@@ -605,7 +605,8 @@ class BinaryBPlusTree {
                                 (0, utils_1._appendToArray)(bytes, valData);
                             });
                             // update ext_block_free_length:
-                            (0, binary_1.writeByteLength)(bytes, 4, self._length - bytes.length);
+                            const freeBytes = self._length - bytes.length + 8; // Do not count 8 header bytes
+                            (0, binary_1.writeByteLength)(bytes, 4, freeBytes);
                             const valueListLengthData = (0, binary_1.writeByteLength)([], 0, self.totalValues - 1);
                             await Promise.all([
                                 // write ext_data_block
@@ -614,7 +615,7 @@ class BinaryBPlusTree {
                                 tree._writeFn(valueListLengthData, self._listLengthIndex),
                             ]);
                             self.totalValues--;
-                            self._freeBytes = self._length - bytes.length;
+                            self._freeBytes = freeBytes;
                         },
                     };
                     entry.loadValues = async function loadValues() {
@@ -794,7 +795,7 @@ class BinaryBPlusTree {
             throw new detailed_error_1.DetailedError('write-node-fail', `Failed to write node: ${err.message}`, err);
         }
     }
-    async _writeLeaf(leafInfo) {
+    async _writeLeaf(leafInfo, options = { addFreeSpace: true }) {
         (0, assert_1.assert)(leafInfo.entries.every((entry, index, arr) => index === 0 || (0, typesafe_compare_1._isMore)(entry.key, arr[index - 1].key)), 'Leaf entries are not sorted ok');
         try {
             const builder = new binary_tree_builder_1.BinaryBPlusTreeBuilder({
@@ -814,7 +815,7 @@ class BinaryBPlusTree {
                     rebuild: leafInfo.extData.loaded,
                 }
                 : null;
-            const addFreeSpace = true;
+            const addFreeSpace = options.addFreeSpace !== false;
             const writes = [];
             const bytes = builder.createLeaf({
                 index: leafInfo.index,
@@ -1941,7 +1942,7 @@ class BinaryBPlusTree {
                         if (options.rollbackOnFailure === false) {
                             return;
                         }
-                        return this._writeLeaf(leaf);
+                        return this._writeLeaf(leaf, { addFreeSpace: false });
                     }
                     else {
                         return this._registerFreeSpace(allocated.index, allocated.length);

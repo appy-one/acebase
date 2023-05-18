@@ -17,7 +17,7 @@ describe('readonly databases', () => {
         await db.ref('test').set({ text: 'This is a test' });
         await db.close();
         // Open it readonly
-        db = new AceBase(db.name, { logLevel: 'verbose', storage: { path: /file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1], readOnly: true } });
+        db = new AceBase(db.name, { logLevel: 'verbose', storage: { path: `${process.platform === 'win32' ? '' : '/'}${/file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1]}`, readOnly: true } });
         try {
             // Try writing to it
             await db.ref('test').update({ test: 'Not allowed' });
@@ -35,7 +35,7 @@ describe('readonly databases', () => {
         await db.ref('test').set({ text: 'This is a test' });
         await db.close();
         // Open it readonly
-        db = new AceBase(db.name, { logLevel: 'verbose', storage: { path: /file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1], readOnly: true } });
+        db = new AceBase(db.name, { logLevel: 'verbose', storage: { path: `${process.platform === 'win32' ? '' : '/'}${/file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1]}`, readOnly: true } });
         // Try reading from it
         const snap = await db.ref('test').get();
         const val = snap.val();

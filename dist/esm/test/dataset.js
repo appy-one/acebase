@@ -6,7 +6,7 @@ export async function readDataSet(name) {
     return JSON.parse(file);
 }
 export function getDataSetPath(name) {
-    const path = resolve(/file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1], '../../../spec/dataset'); // dir relative to dist/[cjs|esm]/test
+    const path = resolve(`${process.platform === 'win32' ? '' : '/'}${/file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1]}`, '../../../spec/dataset'); // dir relative to dist/[cjs|esm]/test
     return `${path}/${name}.json`;
 }
 //# sourceMappingURL=dataset.js.map

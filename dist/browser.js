@@ -4588,6 +4588,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         // private _validation = new Map<string, { validate?: (previous: any, value: any) => boolean, schema?: SchemaDefinition }>;
         this._schemas = [];
         this._indexes = [];
+        this._annoucedIndexes = new Map();
         this.indexes = {
             /**
              * Tests if (the default storage implementation of) indexes are supported in the environment.
@@ -4689,9 +4690,18 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 if (existingIndex) {
                     return existingIndex;
                 }
+                else if (this._annoucedIndexes.has(fileName)) {
+                    // Index is already in the process of being added, wait until it becomes availabe
+                    const index = await this._annoucedIndexes.get(fileName);
+                    return index;
+                }
                 try {
-                    const index = await data_index_1.DataIndex.readFromFile(this, fileName);
+                    // Announce the index to prevent race condition in between reading and receiving the IPC index.created notification
+                    const indexPromise = data_index_1.DataIndex.readFromFile(this, fileName);
+                    this._annoucedIndexes.set(fileName, indexPromise);
+                    const index = await indexPromise;
                     this._indexes.push(index);
+                    this._annoucedIndexes.delete(fileName);
                     return index;
                 }
                 catch (err) {
@@ -5324,6 +5334,9 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             else if (type === 'child_removed') {
                 trigger = oldValue !== null && newValue === null;
             }
+            if (!trigger) {
+                return;
+            }
             const pathKeys = acebase_core_1.PathInfo.getPathKeys(sub.dataPath);
             variables.forEach(variable => {
                 // only replaces first occurrence (so multiple *'s will be processed 1 by 1)
@@ -5332,7 +5345,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 pathKeys[index] = variable.value;
             });
             const dataPath = pathKeys.reduce((path, key) => acebase_core_1.PathInfo.getChildPath(path, key), '');
-            trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
+            this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
         };
         const prepareMutationEvents = (currentPath, oldValue, newValue, compareResult) => {
             const batch = [];
@@ -9087,10 +9100,15 @@ class DataReferenceQuery {
                 }
                 ev = eventData;
             }
-            listeners.forEach(callback => { try {
-                callback(ev);
-            }
-            catch (e) { } });
+            listeners.forEach(callback => {
+                var _a, _b;
+                try {
+                    callback(ev);
+                }
+                catch (err) {
+                    this.ref.db.debug.error(`Error executing "${ev.name}" event handler of realtime query on path "${this.ref.path}": ${(_b = (_a = err === null || err === void 0 ? void 0 : err.stack) !== null && _a !== void 0 ? _a : err === null || err === void 0 ? void 0 : err.message) !== null && _b !== void 0 ? _b : err}`);
+                }
+            });
         };
         // Check if there are event listeners set for realtime changes
         options.monitor = { add: false, change: false, remove: false };

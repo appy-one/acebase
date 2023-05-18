@@ -119,6 +119,7 @@ export declare class Storage extends SimpleEventEmitter {
      */
     constructor(name: string, settings: StorageSettings, env: StorageEnv);
     private _indexes;
+    private _annoucedIndexes;
     indexes: {
         /**
          * Tests if (the default storage implementation of) indexes are supported in the environment.

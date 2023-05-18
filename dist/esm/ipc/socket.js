@@ -37,7 +37,7 @@ export class IPCSocketPeer extends AceBaseIPCPeer {
         if (!isMaster) {
             // Try starting IPC service if it is not running yet.
             // Use maxIdleTime 0 to allow tests to remove database files when done, make this configurable!
-            const service = spawn('node', [/file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1] + '/service/start.js', dbFile, '--loglevel', storage.debug.level, '--maxidletime', '0'], { detached: true, stdio: 'ignore' });
+            const service = spawn('node', [`${process.platform === 'win32' ? '' : '/'}${/file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1]}` + '/service/start.js', dbFile, '--loglevel', storage.debug.level, '--maxidletime', '0'], { detached: true, stdio: 'ignore' });
             service.unref(); // Process is detached and allowed to keep running after we exit. Do not keep a reference to it, possibly preventing app exit.
             // For testing:
             // startServer(dbFile, {

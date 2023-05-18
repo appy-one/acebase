@@ -3,7 +3,7 @@ import { readdir, rm, rmdir } from 'fs/promises';
 export async function createTempDB(enable = {}) {
     // Create temp db
     const dbname = 'test-' + ID.generate();
-    const options = { storage: { path: /file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1] }, logLevel: enable.logLevel || 'log' };
+    const options = { storage: { path: `${process.platform === 'win32' ? '' : '/'}${/file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1]}` }, logLevel: enable.logLevel || 'log' };
     if (enable.transactionLogging === true) {
         options.transactions = { log: true };
     }
@@ -18,7 +18,7 @@ export async function createTempDB(enable = {}) {
         // Close database
         await db.close();
         // Remove database
-        const dbdir = `${/file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1]}/${dbname}.acebase`;
+        const dbdir = `${`${process.platform === 'win32' ? '' : '/'}${/file:\/{2,3}(.+)\/[^/]/.exec(import.meta.url)[1]}`}/${dbname}.acebase`;
         if (nodeVersion.major < 12) {
             // console.error(`Node ${process.version} cannot remove temp database directory ${dbdir}. Remove it manually!`);
             const files = await readdir(dbdir);
