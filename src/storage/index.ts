@@ -961,6 +961,7 @@ export class Storage extends SimpleEventEmitter {
             else if (type === 'child_removed') {
                 trigger = oldValue !== null && newValue === null;
             }
+            if (!trigger) { return; }
 
             const pathKeys = PathInfo.getPathKeys(sub.dataPath);
             variables.forEach(variable => {
@@ -970,7 +971,7 @@ export class Storage extends SimpleEventEmitter {
                 pathKeys[index] = variable.value;
             });
             const dataPath = pathKeys.reduce<string>((path, key) => PathInfo.getChildPath(path, key), '');
-            trigger && this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
+            this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, oldValue, newValue, options.context);
         };
 
         const prepareMutationEvents = (
