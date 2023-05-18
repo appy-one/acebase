@@ -734,7 +734,7 @@ These events are mainly used by AceBase behind the scenes to automatically updat
 
 Having said that, here's how to use them: 
 
-If we you want to monitor a specific node's value, but don't want to get its entire new value every time a small mutation is made to it, subscribe to the "mutated" event. This event is only fired with the target data actually being changed. This allows you to keep a cached copy of your data in memory (or cache db), and replicate all changes being made to it:
+If you want to monitor a specific node's value, but don't want to get its entire new value every time a small mutation is made to it, subscribe to the "mutated" event. This event is only fired with the target data actually being changed. This allows you to keep a cached copy of your data in memory (or cache db), and replicate all changes being made to it:
 
 ```javascript
 const chatRef = db.ref('chats/chat_id');
