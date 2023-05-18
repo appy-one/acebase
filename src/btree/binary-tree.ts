@@ -915,7 +915,7 @@ export class BinaryBPlusTree {
         }
     }
 
-    private async _writeLeaf(leafInfo: BinaryBPlusTreeLeaf): Promise<unknown[]> {
+    private async _writeLeaf(leafInfo: BinaryBPlusTreeLeaf, options: { addFreeSpace?: boolean } = { addFreeSpace: true }): Promise<unknown[]> {
         assert(leafInfo.entries.every((entry, index, arr) => index === 0 || _isMore(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
 
         try {
@@ -936,7 +936,7 @@ export class BinaryBPlusTree {
                     rebuild: leafInfo.extData.loaded,
                 }
                 : null;
-            const addFreeSpace = true;
+            const addFreeSpace = options.addFreeSpace !== false;
             const writes = [];
             const bytes = builder.createLeaf({
                 index: leafInfo.index,
@@ -2079,7 +2079,7 @@ export class BinaryBPlusTree {
                     // release allocated space again
                     if (oneLeafTree) {
                         if (options.rollbackOnFailure === false) { return; }
-                        return this._writeLeaf(leaf);
+                        return this._writeLeaf(leaf, { addFreeSpace: false });
                     }
                     else {
                         return this._registerFreeSpace(allocated.index, allocated.length);
