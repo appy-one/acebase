@@ -401,8 +401,8 @@ class LocalApi extends acebase_core_1.Api {
     }) {
         return this.storage.importNode(path, read, options);
     }
-    async setSchema(path, schema) {
-        return this.storage.setSchema(path, schema);
+    async setSchema(path, schema, warnOnly = false) {
+        return this.storage.setSchema(path, schema, warnOnly);
     }
     async getSchema(path) {
         return this.storage.getSchema(path);
@@ -6451,7 +6451,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
      * @param path target path to enforce the schema on, can include wildcards. Eg: 'users/*\/posts/*' or 'users/$uid/posts/$postid'
      * @param schema schema type definitions. When null value is passed, a previously set schema is removed.
      */
-    setSchema(path, schema) {
+    setSchema(path, schema, warnOnly = false) {
         if (typeof schema === 'undefined') {
             throw new TypeError('schema argument must be given');
         }
@@ -6462,7 +6462,10 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             return;
         }
         // Parse schema, add or update it
-        const definition = new acebase_core_1.SchemaDefinition(schema);
+        const definition = new acebase_core_1.SchemaDefinition(schema, {
+            warnOnly,
+            warnCallback: (message) => this.debug.warn(message),
+        });
         const item = this._schemas.find(s => s.path === path);
         if (item) {
             item.schema = definition;
@@ -6804,8 +6807,8 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
             get: (path) => {
                 return this.api.getSchema(path);
             },
-            set: (path, schema) => {
-                return this.api.setSchema(path, schema);
+            set: (path, schema, warnOnly = false) => {
+                return this.api.setSchema(path, schema, warnOnly);
             },
             all: () => {
                 return this.api.getSchemas();
@@ -6859,7 +6862,7 @@ class Api extends simple_event_emitter_1.SimpleEventEmitter {
     createIndex(path, key, options) { throw new NotImplementedError('createIndex'); }
     getIndexes() { throw new NotImplementedError('getIndexes'); }
     deleteIndex(filePath) { throw new NotImplementedError('deleteIndex'); }
-    setSchema(path, schema) { throw new NotImplementedError('setSchema'); }
+    setSchema(path, schema, warnOnly) { throw new NotImplementedError('setSchema'); }
     getSchema(path) { throw new NotImplementedError('getSchema'); }
     getSchemas() { throw new NotImplementedError('getSchemas'); }
     validateSchema(path, value, isUpdate) { throw new NotImplementedError('validateSchema'); }
@@ -10379,7 +10382,8 @@ function getConstructorType(val) {
     }
 }
 class SchemaDefinition {
-    constructor(definition) {
+    constructor(definition, handling = { warnOnly: false }) {
+        this.handling = handling;
         this.source = definition;
         if (typeof definition === 'object') {
             // Turn object into typescript definitions
@@ -10427,7 +10431,14 @@ class SchemaDefinition {
         this.type = parse(this.text);
     }
     check(path, value, partial, trailKeys) {
-        return checkType(path, this.type, value, partial, trailKeys);
+        const result = checkType(path, this.type, value, partial, trailKeys);
+        if (!result.ok && this.handling.warnOnly) {
+            // Only issue a warning, allows schema definitions to be added to a production db to monitor if they are accurate before enforcing them.
+            result.warning = `${partial ? 'Partial schema' : 'Schema'} check on path "${path}"${trailKeys ? ` for child "${trailKeys.join('/')}"` : ''} failed: ${result.reason}`;
+            result.ok = true;
+            this.handling.warnCallback(result.warning);
+        }
+        return result;
     }
 }
 exports.SchemaDefinition = SchemaDefinition;

@@ -1967,7 +1967,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
      * @param path target path to enforce the schema on, can include wildcards. Eg: 'users/*\/posts/*' or 'users/$uid/posts/$postid'
      * @param schema schema type definitions. When null value is passed, a previously set schema is removed.
      */
-    setSchema(path, schema) {
+    setSchema(path, schema, warnOnly = false) {
         if (typeof schema === 'undefined') {
             throw new TypeError('schema argument must be given');
         }
@@ -1978,7 +1978,10 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             return;
         }
         // Parse schema, add or update it
-        const definition = new acebase_core_1.SchemaDefinition(schema);
+        const definition = new acebase_core_1.SchemaDefinition(schema, {
+            warnOnly,
+            warnCallback: (message) => this.debug.warn(message),
+        });
         const item = this._schemas.find(s => s.path === path);
         if (item) {
             item.schema = definition;

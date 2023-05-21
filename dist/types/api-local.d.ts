@@ -125,7 +125,7 @@ export declare class LocalApi extends Api {
         suppress_events: boolean;
         method: 'set' | 'update' | 'merge';
     }): Promise<void>;
-    setSchema(path: string, schema: Record<string, any> | string): Promise<void>;
+    setSchema(path: string, schema: Record<string, any> | string, warnOnly?: boolean): Promise<void>;
     getSchema(path: string): Promise<{
         path: string;
         schema: string | object;

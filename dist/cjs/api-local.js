@@ -253,8 +253,8 @@ class LocalApi extends acebase_core_1.Api {
     }) {
         return this.storage.importNode(path, read, options);
     }
-    async setSchema(path, schema) {
-        return this.storage.setSchema(path, schema);
+    async setSchema(path, schema, warnOnly = false) {
+        return this.storage.setSchema(path, schema, warnOnly);
     }
     async getSchema(path) {
         return this.storage.getSchema(path);

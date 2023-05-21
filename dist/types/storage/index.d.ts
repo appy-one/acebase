@@ -457,7 +457,7 @@ export declare class Storage extends SimpleEventEmitter {
      * @param path target path to enforce the schema on, can include wildcards. Eg: 'users/*\/posts/*' or 'users/$uid/posts/$postid'
      * @param schema schema type definitions. When null value is passed, a previously set schema is removed.
      */
-    setSchema(path: string, schema: string | object): void;
+    setSchema(path: string, schema: string | object, warnOnly?: boolean): void;
     /**
      * Gets currently active schema definition for the specified path
      */
