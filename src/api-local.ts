@@ -340,8 +340,8 @@ export class LocalApi extends Api {
         return this.storage.importNode(path, read, options);
     }
 
-    async setSchema(path: string, schema: Record<string, any> | string) {
-        return this.storage.setSchema(path, schema);
+    async setSchema(path: string, schema: Record<string, any> | string, warnOnly = false) {
+        return this.storage.setSchema(path, schema, warnOnly);
     }
 
     async getSchema(path: string) {
