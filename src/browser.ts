@@ -41,10 +41,12 @@ const acebase = {
     DataSnapshotsArray,
 };
 
-// Expose classes to window.acebase:
-(window as any).acebase = acebase;
-// Expose BrowserAceBase class as window.AceBase:
-(window as any).AceBase = BrowserAceBase;
+if (typeof window !== 'undefined') {
+    // Expose classes to window.acebase:
+    (window as any).acebase = acebase;
+    // Expose BrowserAceBase class as window.AceBase:
+    (window as any).AceBase = BrowserAceBase;
+}
 
 // Expose classes for module imports:
 export default acebase;

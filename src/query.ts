@@ -351,9 +351,9 @@ export async function executeQuery(
         if (filter.index && filter.indexUsage !== 'filter') {
             let promise = filter.index.query(filter.op, filter.compare)
                 .then(results => {
-                    options.eventHandler && options.eventHandler({ name: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
+                    options.eventHandler?.({ name: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
                     if (results.hints.length > 0) {
-                        options.eventHandler && options.eventHandler({ name: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
+                        options.eventHandler?.({ name: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
                     }
                     return results;
                 });
@@ -403,9 +403,9 @@ export async function executeQuery(
             });
             const promise = sortIndex.take(query.skip, Math.abs(query.take), { ascending, metadataSort })
                 .then(results => {
-                    options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
+                    options.eventHandler?.({ name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
                     if (results.hints.length > 0) {
-                        options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: sortIndex.description, hints: results.hints });
+                        options.eventHandler?.({ name: 'hints', type: 'sort_index_take', source: sortIndex.description, hints: results.hints });
                     }
                     return results;
                 });

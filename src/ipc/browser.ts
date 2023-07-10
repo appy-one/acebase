@@ -22,13 +22,13 @@ export class IPCPeer extends AceBaseIPCPeer {
 
         // Setup process exit handler
         // Monitor onbeforeunload event to say goodbye when the window is closed
-        window.addEventListener('beforeunload', () => {
+        addEventListener('beforeunload', () => {
             this.exit();
         });
 
         // Create BroadcastChannel to allow multi-tab communication
         // This allows other tabs to make changes to the database, notifying us of those changes.
-        if (typeof window.BroadcastChannel !== 'undefined') {
+        if (typeof BroadcastChannel !== 'undefined') {
             this.channel = new BroadcastChannel(`acebase:${storage.name}`);
         }
         else {
@@ -73,7 +73,7 @@ export class IPCPeer extends AceBaseIPCPeer {
             } as BroadcastChannel;
 
             // Listen for storage events to intercept possible messages
-            window.addEventListener('storage', event => {
+            addEventListener('storage', event => {
                 const [ acebase, dbname, peerId, messageId ] = event.key.split(':');
                 if (acebase !== 'acebase' || dbname !== storage.name || peerId === this.id || event.newValue === null) {
                     return;
