@@ -596,10 +596,12 @@ const acebase = {
     proxyAccess: acebase_core_1.proxyAccess,
     DataSnapshotsArray: acebase_core_1.DataSnapshotsArray,
 };
-// Expose classes to window.acebase:
-window.acebase = acebase;
-// Expose BrowserAceBase class as window.AceBase:
-window.AceBase = acebase_browser_1.BrowserAceBase;
+if (typeof window !== 'undefined') {
+    // Expose classes to window.acebase:
+    window.acebase = acebase;
+    // Expose BrowserAceBase class as window.AceBase:
+    window.AceBase = acebase_browser_1.BrowserAceBase;
+}
 // Expose classes for module imports:
 exports.default = acebase;
 var acebase_local_2 = require("./acebase-local");
@@ -674,12 +676,12 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
         this.ipcType = 'browser.bcc';
         // Setup process exit handler
         // Monitor onbeforeunload event to say goodbye when the window is closed
-        window.addEventListener('beforeunload', () => {
+        addEventListener('beforeunload', () => {
             this.exit();
         });
         // Create BroadcastChannel to allow multi-tab communication
         // This allows other tabs to make changes to the database, notifying us of those changes.
-        if (typeof window.BroadcastChannel !== 'undefined') {
+        if (typeof BroadcastChannel !== 'undefined') {
             this.channel = new BroadcastChannel(`acebase:${storage.name}`);
         }
         else {
@@ -721,7 +723,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
                 },
             };
             // Listen for storage events to intercept possible messages
-            window.addEventListener('storage', event => {
+            addEventListener('storage', event => {
                 const [acebase, dbname, peerId, messageId] = event.key.split(':');
                 if (acebase !== 'acebase' || dbname !== storage.name || peerId === this.id || event.newValue === null) {
                     return;
@@ -2111,9 +2113,10 @@ async function executeQuery(api, path, query, options = { snapshots: false, incl
         if (filter.index && filter.indexUsage !== 'filter') {
             let promise = filter.index.query(filter.op, filter.compare)
                 .then(results => {
-                options.eventHandler && options.eventHandler({ name: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
+                var _a, _b;
+                (_a = options.eventHandler) === null || _a === void 0 ? void 0 : _a.call(options, { name: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
                 if (results.hints.length > 0) {
-                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
+                    (_b = options.eventHandler) === null || _b === void 0 ? void 0 : _b.call(options, { name: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
                 }
                 return results;
             });
@@ -2159,9 +2162,10 @@ async function executeQuery(api, path, query, options = { snapshots: false, incl
             });
             const promise = sortIndex.take(query.skip, Math.abs(query.take), { ascending, metadataSort })
                 .then(results => {
-                options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
+                var _a, _b;
+                (_a = options.eventHandler) === null || _a === void 0 ? void 0 : _a.call(options, { name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
                 if (results.hints.length > 0) {
-                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: sortIndex.description, hints: results.hints });
+                    (_b = options.eventHandler) === null || _b === void 0 ? void 0 : _b.call(options, { name: 'hints', type: 'sort_index_take', source: sortIndex.description, hints: results.hints });
                 }
                 return results;
             });
@@ -3968,8 +3972,7 @@ const transaction_1 = require("./transaction");
 function createIndexedDBInstance(dbname, init = {}) {
     const settings = new settings_1.IndexedDBStorageSettings(init);
     // We'll create an IndexedDB with name "dbname.acebase"
-    const IndexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB; // browser prefixes not really needed, see https://caniuse.com/#feat=indexeddb
-    const request = IndexedDB.open(`${dbname}.acebase`, 1);
+    const request = indexedDB.open(`${dbname}.acebase`, 1);
     request.onupgradeneeded = (e) => {
         // create datastore
         const db = request.result;
@@ -4318,7 +4321,7 @@ Object.defineProperty(exports, "LocalStorageTransaction", { enumerable: true, ge
 function createLocalStorageInstance(dbname, init = {}) {
     const settings = new settings_1.LocalStorageSettings(init);
     // Determine whether to use localStorage or sessionStorage
-    const localStorage = settings.provider ? settings.provider : settings.temp ? window.localStorage : window.sessionStorage;
+    const ls = settings.provider ? settings.provider : settings.temp ? localStorage : sessionStorage;
     // Setup our CustomStorageSettings
     const storageSettings = new __1.CustomStorageSettings({
         name: 'LocalStorage',
@@ -4333,7 +4336,7 @@ function createLocalStorageInstance(dbname, init = {}) {
             const context = {
                 debug: true,
                 dbname,
-                localStorage,
+                localStorage: ls,
             };
             const transaction = new transaction_1.LocalStorageTransaction(context, target);
             return transaction;
@@ -6821,7 +6824,7 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
 }
 exports.AceBaseBase = AceBaseBase;
 
-},{"./data-reference":39,"./debug":41,"./optional-observable":45,"./simple-colors":52,"./simple-event-emitter":53,"./type-mappings":56}],33:[function(require,module,exports){
+},{"./data-reference":39,"./debug":41,"./optional-observable":45,"./simple-colors":52,"./simple-event-emitter":53,"./type-mappings":57}],33:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Api = void 0;
@@ -8250,7 +8253,7 @@ class OrderedCollectionProxy {
 }
 exports.OrderedCollectionProxy = OrderedCollectionProxy;
 
-},{"./data-reference":39,"./data-snapshot":40,"./id":42,"./optional-observable":45,"./path-info":47,"./path-reference":48,"./process":49,"./simple-event-emitter":53,"./utils":57}],39:[function(require,module,exports){
+},{"./data-reference":39,"./data-snapshot":40,"./id":42,"./optional-observable":45,"./path-info":47,"./path-reference":48,"./process":49,"./simple-event-emitter":53,"./utils":58}],39:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DataReferencesArray = exports.DataSnapshotsArray = exports.DataReferenceQuery = exports.DataReference = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = void 0;
@@ -9329,7 +9332,7 @@ class DataReferencesArray extends Array {
 }
 exports.DataReferencesArray = DataReferencesArray;
 
-},{"./data-proxy":38,"./data-snapshot":40,"./id":42,"./optional-observable":45,"./path-info":47,"./subscription":54}],40:[function(require,module,exports){
+},{"./data-proxy":38,"./data-snapshot":40,"./id":42,"./optional-observable":45,"./path-info":47,"./subscription":55}],40:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MutationsDataSnapshot = exports.DataSnapshot = void 0;
@@ -9579,14 +9582,14 @@ Object.defineProperty(exports, "ColorStyle", { enumerable: true, get: function (
 Object.defineProperty(exports, "Colorize", { enumerable: true, get: function () { return simple_colors_1.Colorize; } });
 var schema_1 = require("./schema");
 Object.defineProperty(exports, "SchemaDefinition", { enumerable: true, get: function () { return schema_1.SchemaDefinition; } });
-var optional_observable_1 = require("./optional-observable");
-Object.defineProperty(exports, "SimpleObservable", { enumerable: true, get: function () { return optional_observable_1.SimpleObservable; } });
+var simple_observable_1 = require("./simple-observable");
+Object.defineProperty(exports, "SimpleObservable", { enumerable: true, get: function () { return simple_observable_1.SimpleObservable; } });
 var partial_array_1 = require("./partial-array");
 Object.defineProperty(exports, "PartialArray", { enumerable: true, get: function () { return partial_array_1.PartialArray; } });
 const object_collection_1 = require("./object-collection");
 Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return object_collection_1.ObjectCollection; } });
 
-},{"./acebase-base":32,"./api":33,"./ascii85":34,"./data-proxy":38,"./data-reference":39,"./data-snapshot":40,"./debug":41,"./id":42,"./object-collection":44,"./optional-observable":45,"./partial-array":46,"./path-info":47,"./path-reference":48,"./schema":50,"./simple-cache":51,"./simple-colors":52,"./simple-event-emitter":53,"./subscription":54,"./transport":55,"./type-mappings":56,"./utils":57}],44:[function(require,module,exports){
+},{"./acebase-base":32,"./api":33,"./ascii85":34,"./data-proxy":38,"./data-reference":39,"./data-snapshot":40,"./debug":41,"./id":42,"./object-collection":44,"./partial-array":46,"./path-info":47,"./path-reference":48,"./schema":50,"./simple-cache":51,"./simple-colors":52,"./simple-event-emitter":53,"./simple-observable":54,"./subscription":55,"./transport":56,"./type-mappings":57,"./utils":58}],44:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ObjectCollection = void 0;
@@ -9641,7 +9644,8 @@ exports.ObjectCollection = ObjectCollection;
 },{"./id":42}],45:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SimpleObservable = exports.setObservable = exports.getObservable = void 0;
+exports.setObservable = exports.getObservable = void 0;
+const simple_observable_1 = require("./simple-observable");
 const utils_1 = require("./utils");
 let _shimRequested = false;
 let _observable;
@@ -9660,11 +9664,11 @@ let _observable;
     }
     catch (_a) {
         // rxjs Observable not available, setObservable must be used if usage of SimpleObservable is not desired
-        _observable = SimpleObservable;
+        _observable = simple_observable_1.SimpleObservable;
     }
 })();
 function getObservable() {
-    if (_observable === SimpleObservable && !_shimRequested) {
+    if (_observable === simple_observable_1.SimpleObservable && !_shimRequested) {
         console.warn('Using AceBase\'s simple Observable implementation because rxjs is not available. ' +
             'Add it to your project with "npm install rxjs", add it to AceBase using db.setObservable(Observable), ' +
             'or call db.setObservable("shim") to suppress this warning');
@@ -9677,7 +9681,7 @@ function getObservable() {
 exports.getObservable = getObservable;
 function setObservable(Observable) {
     if (Observable === 'shim') {
-        _observable = SimpleObservable;
+        _observable = simple_observable_1.SimpleObservable;
         _shimRequested = true;
     }
     else {
@@ -9685,51 +9689,8 @@ function setObservable(Observable) {
     }
 }
 exports.setObservable = setObservable;
-/**
- * rxjs is an optional dependency that only needs installing when any of AceBase's observe methods are used.
- * If for some reason rxjs is not available (eg in test suite), we can provide a shim. This class is used when
- * `db.setObservable("shim")` is called
- */
-class SimpleObservable {
-    constructor(create) {
-        this._active = false;
-        this._subscribers = [];
-        this._create = create;
-    }
-    subscribe(subscriber) {
-        if (!this._active) {
-            const next = (value) => {
-                // emit value to all subscribers
-                this._subscribers.forEach(s => {
-                    try {
-                        s(value);
-                    }
-                    catch (err) {
-                        console.error('Error in subscriber callback:', err);
-                    }
-                });
-            };
-            const observer = { next };
-            this._cleanup = this._create(observer);
-            this._active = true;
-        }
-        this._subscribers.push(subscriber);
-        const unsubscribe = () => {
-            this._subscribers.splice(this._subscribers.indexOf(subscriber), 1);
-            if (this._subscribers.length === 0) {
-                this._active = false;
-                this._cleanup();
-            }
-        };
-        const subscription = {
-            unsubscribe,
-        };
-        return subscription;
-    }
-}
-exports.SimpleObservable = SimpleObservable;
 
-},{"./utils":57,"rxjs":58}],46:[function(require,module,exports){
+},{"./simple-observable":54,"./utils":58,"rxjs":59}],46:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PartialArray = void 0;
@@ -10527,7 +10488,7 @@ class SimpleCache {
 }
 exports.SimpleCache = SimpleCache;
 
-},{"./utils":57}],52:[function(require,module,exports){
+},{"./utils":58}],52:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Colorize = exports.SetColorsEnabled = exports.ColorsSupported = exports.ColorStyle = void 0;
@@ -10767,6 +10728,54 @@ exports.SimpleEventEmitter = SimpleEventEmitter;
 },{}],54:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.SimpleObservable = void 0;
+/**
+ * rxjs is an optional dependency that only needs installing when any of AceBase's observe methods are used.
+ * If for some reason rxjs is not available (eg in test suite), we can provide a shim. This class is used when
+ * `db.setObservable("shim")` is called
+ */
+class SimpleObservable {
+    constructor(create) {
+        this._active = false;
+        this._subscribers = [];
+        this._create = create;
+    }
+    subscribe(subscriber) {
+        if (!this._active) {
+            const next = (value) => {
+                // emit value to all subscribers
+                this._subscribers.forEach(s => {
+                    try {
+                        s(value);
+                    }
+                    catch (err) {
+                        console.error('Error in subscriber callback:', err);
+                    }
+                });
+            };
+            const observer = { next };
+            this._cleanup = this._create(observer);
+            this._active = true;
+        }
+        this._subscribers.push(subscriber);
+        const unsubscribe = () => {
+            this._subscribers.splice(this._subscribers.indexOf(subscriber), 1);
+            if (this._subscribers.length === 0) {
+                this._active = false;
+                this._cleanup();
+            }
+        };
+        const subscription = {
+            unsubscribe,
+        };
+        return subscription;
+    }
+}
+exports.SimpleObservable = SimpleObservable;
+
+},{}],55:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
 exports.EventStream = exports.EventPublisher = exports.EventSubscription = void 0;
 class EventSubscription {
     /**
@@ -10951,7 +10960,7 @@ class EventStream {
 }
 exports.EventStream = EventStream;
 
-},{}],55:[function(require,module,exports){
+},{}],56:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deserialize2 = exports.serialize2 = exports.serialize = exports.detectSerializeVersion = exports.deserialize = void 0;
@@ -11287,7 +11296,7 @@ const deserialize2 = (data) => {
 };
 exports.deserialize2 = deserialize2;
 
-},{"./ascii85":34,"./partial-array":46,"./path-info":47,"./path-reference":48,"./utils":57}],56:[function(require,module,exports){
+},{"./ascii85":34,"./partial-array":46,"./path-info":47,"./path-reference":48,"./utils":58}],57:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TypeMappings = void 0;
@@ -11609,7 +11618,7 @@ class TypeMappings {
 }
 exports.TypeMappings = TypeMappings;
 
-},{"./data-reference":39,"./data-snapshot":40,"./path-info":47,"./utils":57}],57:[function(require,module,exports){
+},{"./data-reference":39,"./data-snapshot":40,"./path-info":47,"./utils":58}],58:[function(require,module,exports){
 (function (global,Buffer){(function (){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -12058,7 +12067,7 @@ function getGlobalObject() {
 exports.getGlobalObject = getGlobalObject;
 
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {},require("buffer").Buffer)
-},{"./partial-array":46,"./path-reference":48,"./process":49,"buffer":58}],58:[function(require,module,exports){
+},{"./partial-array":46,"./path-reference":48,"./process":49,"buffer":59}],59:[function(require,module,exports){
 
 },{}]},{},[6])(6)
 });

@@ -9,8 +9,7 @@ const transaction_1 = require("./transaction");
 function createIndexedDBInstance(dbname, init = {}) {
     const settings = new settings_1.IndexedDBStorageSettings(init);
     // We'll create an IndexedDB with name "dbname.acebase"
-    const IndexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB; // browser prefixes not really needed, see https://caniuse.com/#feat=indexeddb
-    const request = IndexedDB.open(`${dbname}.acebase`, 1);
+    const request = indexedDB.open(`${dbname}.acebase`, 1);
     request.onupgradeneeded = (e) => {
         // create datastore
         const db = request.result;

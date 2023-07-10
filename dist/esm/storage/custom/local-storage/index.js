@@ -6,7 +6,7 @@ export { LocalStorageSettings, LocalStorageTransaction };
 export function createLocalStorageInstance(dbname, init = {}) {
     const settings = new LocalStorageSettings(init);
     // Determine whether to use localStorage or sessionStorage
-    const localStorage = settings.provider ? settings.provider : settings.temp ? window.localStorage : window.sessionStorage;
+    const ls = settings.provider ? settings.provider : settings.temp ? localStorage : sessionStorage;
     // Setup our CustomStorageSettings
     const storageSettings = new CustomStorageSettings({
         name: 'LocalStorage',
@@ -21,7 +21,7 @@ export function createLocalStorageInstance(dbname, init = {}) {
             const context = {
                 debug: true,
                 dbname,
-                localStorage,
+                localStorage: ls,
             };
             const transaction = new LocalStorageTransaction(context, target);
             return transaction;

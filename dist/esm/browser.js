@@ -35,10 +35,12 @@ const acebase = {
     proxyAccess,
     DataSnapshotsArray,
 };
-// Expose classes to window.acebase:
-window.acebase = acebase;
-// Expose BrowserAceBase class as window.AceBase:
-window.AceBase = BrowserAceBase;
+if (typeof window !== 'undefined') {
+    // Expose classes to window.acebase:
+    window.acebase = acebase;
+    // Expose BrowserAceBase class as window.AceBase:
+    window.AceBase = BrowserAceBase;
+}
 // Expose classes for module imports:
 export default acebase;
 // acebase-core exports

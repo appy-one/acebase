@@ -51,10 +51,12 @@ const acebase = {
     proxyAccess: acebase_core_1.proxyAccess,
     DataSnapshotsArray: acebase_core_1.DataSnapshotsArray,
 };
-// Expose classes to window.acebase:
-window.acebase = acebase;
-// Expose BrowserAceBase class as window.AceBase:
-window.AceBase = acebase_browser_1.BrowserAceBase;
+if (typeof window !== 'undefined') {
+    // Expose classes to window.acebase:
+    window.acebase = acebase;
+    // Expose BrowserAceBase class as window.AceBase:
+    window.AceBase = acebase_browser_1.BrowserAceBase;
+}
 // Expose classes for module imports:
 exports.default = acebase;
 var acebase_local_2 = require("./acebase-local");

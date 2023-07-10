@@ -325,9 +325,10 @@ async function executeQuery(api, path, query, options = { snapshots: false, incl
         if (filter.index && filter.indexUsage !== 'filter') {
             let promise = filter.index.query(filter.op, filter.compare)
                 .then(results => {
-                options.eventHandler && options.eventHandler({ name: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
+                var _a, _b;
+                (_a = options.eventHandler) === null || _a === void 0 ? void 0 : _a.call(options, { name: 'stats', type: 'index_query', source: filter.index.description, stats: results.stats });
                 if (results.hints.length > 0) {
-                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
+                    (_b = options.eventHandler) === null || _b === void 0 ? void 0 : _b.call(options, { name: 'hints', type: 'index_query', source: filter.index.description, hints: results.hints });
                 }
                 return results;
             });
@@ -373,9 +374,10 @@ async function executeQuery(api, path, query, options = { snapshots: false, incl
             });
             const promise = sortIndex.take(query.skip, Math.abs(query.take), { ascending, metadataSort })
                 .then(results => {
-                options.eventHandler && options.eventHandler({ name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
+                var _a, _b;
+                (_a = options.eventHandler) === null || _a === void 0 ? void 0 : _a.call(options, { name: 'stats', type: 'sort_index_take', source: sortIndex.description, stats: results.stats });
                 if (results.hints.length > 0) {
-                    options.eventHandler && options.eventHandler({ name: 'hints', type: 'sort_index_take', source: sortIndex.description, hints: results.hints });
+                    (_b = options.eventHandler) === null || _b === void 0 ? void 0 : _b.call(options, { name: 'hints', type: 'sort_index_take', source: sortIndex.description, hints: results.hints });
                 }
                 return results;
             });
