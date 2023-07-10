@@ -8,8 +8,7 @@ export function createIndexedDBInstance(dbname: string, init: Partial<IndexedDBS
     const settings = new IndexedDBStorageSettings(init);
 
     // We'll create an IndexedDB with name "dbname.acebase"
-    const IndexedDB: IDBFactory = window.indexedDB || (window as any).mozIndexedDB || (window as any).webkitIndexedDB || (window as any).msIndexedDB; // browser prefixes not really needed, see https://caniuse.com/#feat=indexeddb
-    const request = IndexedDB.open(`${dbname}.acebase`, 1);
+    const request = indexedDB.open(`${dbname}.acebase`, 1);
 
     request.onupgradeneeded = (e) => {
         // create datastore
