@@ -1,3 +1,4 @@
+import { MutationsDataSnapshot } from 'acebase-core';
 import { AceBase, DataSnapshot } from '..';
 import { createTempDB } from './tempdb';
 
@@ -156,6 +157,47 @@ describe('Event', () => {
 
         expect(path).toBe(`recipes/${ref.key}/name`);
     });
+
+    it('"mutations" event path contains no wildcard characters', async () => {
+
+        await new Promise<void>(async (resolve, reject) => {
+            let eventsFired = 0;
+            db.ref('users/*/books').on('mutations', (mutations: MutationsDataSnapshot) => {
+                console.log(`mutations event fired on ${mutations.ref.path}`);
+                eventsFired++;
+                const val = mutations.val(false);
+                try {
+                    switch (eventsFired) {
+                        case 1: {
+                            expect(val.length).toBe(1);
+                            expect(val[0].target).toEqual([]);
+                            mutations.forEach(snap => {
+                                expect(snap.ref.path).toEqual('users/user1/books');
+                                return true;                        
+                            });
+                            break;
+                        }
+                        case 2: {
+                            expect(val.length).toBe(1);
+                            expect(val[0].target).toEqual(['book1', 'title']);
+                            mutations.forEach(snap => {
+                                expect(snap.ref.path).toEqual('users/user1/books/book1/title');
+                                return true;                        
+                            });
+                            // Last event: resolve spec
+                            resolve();
+                            break;
+                        }    
+                    }
+                }
+                catch (err) {
+                    reject(err);
+                }
+            });
+            await db.ref('users/user1/books/book1/title').set('AceBase for dummies');
+            await db.ref('users/user1/books/book1/title').set('AceBase for PROs');
+        });
+    }, 240e3)
 
     afterAll(async () => {
         await removeDB();
