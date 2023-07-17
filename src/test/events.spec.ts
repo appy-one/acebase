@@ -165,39 +165,54 @@ describe('Event', () => {
             db.ref('users/*/books').on('mutations', (mutations: MutationsDataSnapshot) => {
                 console.log(`mutations event fired on ${mutations.ref.path}`);
                 eventsFired++;
+                expect(mutations.ref.path).toBe('users/user1/books');
                 const val = mutations.val(false);
                 try {
-                    switch (eventsFired) {
-                        case 1: {
-                            expect(val.length).toBe(1);
-                            expect(val[0].target).toEqual([]);
-                            mutations.forEach(snap => {
-                                expect(snap.ref.path).toEqual('users/user1/books');
-                                return true;                        
-                            });
-                            break;
-                        }
-                        case 2: {
-                            expect(val.length).toBe(1);
-                            expect(val[0].target).toEqual(['book1', 'title']);
-                            mutations.forEach(snap => {
-                                expect(snap.ref.path).toEqual('users/user1/books/book1/title');
-                                return true;                        
-                            });
-                            // Last event: resolve spec
-                            resolve();
-                            break;
-                        }    
+                    if (eventsFired === 1) {
+                        expect(val.length).toBe(1);
+                        expect(val[0].target).toEqual([]);
+                        mutations.forEach(snap => {
+                            expect(snap.ref.path).toEqual('users/user1/books');
+                            return true;
+                        });
+                    }
+                    else if (eventsFired === 2) {
+                        expect(val.length).toBe(1);
+                        expect(val[0].target).toEqual(['book1', 'title']);
+                        mutations.forEach(snap => {
+                            expect(snap.ref.path).toEqual('users/user1/books/book1/title');
+                            return true;
+                        });
+                    }
+                    else if (eventsFired === 3) {
+                        expect(val.length).toBe(2);
+                        expect(val[0].target).toEqual(['book1', 'tags']);
+                        expect(val[1].target).toEqual(['book1', 'description']);
+                    }
+                    else if (eventsFired === 4) {
+                        expect(val.length).toBe(1);
+                        expect(val[0].target).toEqual([]);
+                        expect(val[0].val).toBeNull();
+                        expect(val[0].prev).not.toBeNull();
                     }
                 }
                 catch (err) {
                     reject(err);
                 }
+                if (eventsFired === 4) {
+                    // Last event: resolve spec promise
+                    resolve();
+                }
             });
             await db.ref('users/user1/books/book1/title').set('AceBase for dummies');
             await db.ref('users/user1/books/book1/title').set('AceBase for PROs');
+            await db.ref('users/user1/books/book1').update({
+                tags: ['acebase', 'book'],
+                description: 'Covers the ins and outs of the AceBase realtime database',
+            });
+            await db.ref('users/user1').remove();
         });
-    }, 240e3)
+    }, 240e3);
 
     afterAll(async () => {
         await removeDB();
