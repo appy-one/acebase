@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="193px" height="35px" version="1.1" viewBox="0 0 193 35">
+ <title>Tweet about AceBase</title>
+ <style>
+g { cursor: pointer }
+rect { fill-rule:evenodd; fill: #fafbfc; stroke: rgba(27,31,35,.15); stroke-width: 1.3; transition: fill .2s cubic-bezier(0.3,0,0.5,1); }
+g:hover rect { fill: #f3f4f6; }
+path { fill:#00acee; stroke-width: 1; stroke: #00acee; transform: scale3d(0.07,0.07,0.07) translate(-120px, -40px); transform-origin: 25px 14px; }
+g:hover path { transform: scale3d(0.075,0.075,0.075) translate(-120px, -40px); transition: transform .15s cubic-bezier(0.2, 0, 0.13, 2); transition-duration: .1s; animation: none }
+text { fill: #24292e;font-size: 14px;font-weight: 500;font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"; }
+</style>
+<g>
+ <rect width="193" height="35" rx="8"/>
+ <path d="M 273.5 26.3 a 109.77 109.77 0 0 1 -32.2 8.8 a 56.07 56.07 0 0 0 24.7 -31 a 113.39 113.39 0 0 1 -35.7 13.6 a 56.1 56.1 0 0 0 -97 38.4 a 54 54 0 0 0 1.5 12.8 A 159.68 159.68 0 0 1 19.1 10.3 a 56.12 56.12 0 0 0 17.4 74.9 a 56.06 56.06 0 0 1 -25.4 -7 v 0.7 a 56.11 56.11 0 0 0 45 55 a 55.65 55.65 0 0 1 -14.8 2 a 62.39 62.39 0 0 1 -10.6 -1 a 56.24 56.24 0 0 0 52.4 39 a 112.87 112.87 0 0 1 -69.7 24 a 119 119 0 0 1 -13.4 -0.8 a 158.83 158.83 0 0 0 86 25.2 c 103.2 0 159.6 -85.5 159.6 -159.6 c 0 -2.4 -0.1 -4.9 -0.2 -7.3 a 114.25 114.25 0 0 0 28.1 -29.1"/>
+ <text x="43" y="23" xml:space="preserve">Tweet about AceBase</text>
+</g>
+</svg>
