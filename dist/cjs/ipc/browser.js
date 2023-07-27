@@ -27,7 +27,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
         if (typeof BroadcastChannel !== 'undefined') {
             this.channel = new BroadcastChannel(`acebase:${storage.name}`);
         }
-        else {
+        else if (typeof localStorage !== 'undefined') {
             // Use localStorage as polyfill for Safari & iOS WebKit
             const listeners = [null]; // first callback reserved for onmessage handler
             const notImplemented = () => { throw new Error('Not implemented'); };
@@ -74,6 +74,12 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
                 const message = acebase_core_1.Transport.deserialize(JSON.parse(event.newValue));
                 this.channel.dispatchEvent({ data: message });
             });
+        }
+        else {
+            // No localStorage either, this is probably an old browser running in a webworker
+            this.storage.debug.warn(`[BroadcastChannel] not supported`);
+            this.sendMessage = () => { };
+            return;
         }
         // Monitor incoming messages
         this.channel.addEventListener('message', async (event) => {

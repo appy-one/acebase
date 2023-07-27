@@ -1016,37 +1016,64 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             mutationEvents.forEach(sub => {
                 // Get the target data this subscription is interested in
                 let currentPath = topEventPath;
-                const trailPath = sub.eventPath.slice(currentPath.length).replace(/^\//, '');
-                const trailKeys = acebase_core_1.PathInfo.getPathKeys(trailPath);
+                // const trailPath = sub.eventPath.slice(currentPath.length).replace(/^\//, ''); // eventPath can contain vars and * ?
+                const trailKeys = acebase_core_1.PathInfo.getPathKeys(sub.eventPath).slice(acebase_core_1.PathInfo.getPathKeys(currentPath).length); //PathInfo.getPathKeys(trailPath);
+                const events = [];
                 let oldValue = topEventData, newValue = newTopEventData;
-                while (trailKeys.length > 0) {
-                    const subKey = trailKeys.shift();
-                    currentPath = acebase_core_1.PathInfo.getChildPath(currentPath, subKey);
-                    const childValues = getChildValues(subKey, oldValue, newValue);
-                    oldValue = childValues.oldValue;
-                    newValue = childValues.newValue;
-                }
-                const batch = prepareMutationEvents(currentPath, oldValue, newValue);
-                if (batch.length === 0) {
-                    return;
-                }
-                const isNotifyEvent = sub.type.startsWith('notify_');
-                if (['mutated', 'notify_mutated'].includes(sub.type)) {
-                    // Send all mutations 1 by 1
-                    batch.forEach((mutation, index) => {
-                        const context = options.context; // const context = cloneObject(options.context);
-                        // context.acebase_mutated_event = { nr: index + 1, total: batch.length }; // Add context info about number of mutations
-                        const prevVal = isNotifyEvent ? null : mutation.oldValue;
-                        const newVal = isNotifyEvent ? null : mutation.newValue;
-                        this.subscriptions.trigger(sub.type, sub.subscriptionPath, mutation.path, prevVal, newVal, context);
-                    });
-                }
-                else if (['mutations', 'notify_mutations'].includes(sub.type)) {
-                    // Send 1 batch with all mutations
-                    // const oldValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.oldValue })); // batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.oldValue, obj), {});
-                    // const newValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.newValue })) //batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.newValue, obj), {});
-                    const values = isNotifyEvent ? null : batch.map(m => ({ target: acebase_core_1.PathInfo.getPathKeys(m.path.slice(sub.subscriptionPath.length)), prev: m.oldValue, val: m.newValue }));
-                    this.subscriptions.trigger(sub.type, sub.subscriptionPath, sub.subscriptionPath, null, values, options.context);
+                const processNextTrailKey = (target, currentTarget, oldValue, newValue, vars) => {
+                    if (target.length === 0) {
+                        // Add it
+                        return events.push({ target: currentTarget, oldValue, newValue, vars });
+                    }
+                    const subKey = target[0];
+                    const keys = new Set();
+                    const isWildcardKey = typeof subKey === 'string' && (subKey === '*' || subKey.startsWith('$'));
+                    if (isWildcardKey) {
+                        // Recursive for each key in oldValue and newValue
+                        if (oldValue !== null && typeof oldValue === 'object') {
+                            Object.keys(oldValue).forEach(key => keys.add(key));
+                        }
+                        if (newValue !== null && typeof newValue === 'object') {
+                            Object.keys(newValue).forEach(key => keys.add(key));
+                        }
+                    }
+                    else {
+                        keys.add(subKey); // just one specific key
+                    }
+                    for (const key of keys) {
+                        const childValues = getChildValues(key, oldValue, newValue);
+                        oldValue = childValues.oldValue;
+                        newValue = childValues.newValue;
+                        processNextTrailKey(target.slice(1), currentTarget.concat(key), oldValue, newValue, isWildcardKey ? vars.concat({ name: subKey, value: key }) : vars);
+                    }
+                };
+                processNextTrailKey(trailKeys, [], oldValue, newValue, []);
+                for (const event of events) {
+                    const targetPath = acebase_core_1.PathInfo.get(currentPath).child(event.target).path;
+                    const batch = prepareMutationEvents(targetPath, event.oldValue, event.newValue);
+                    if (batch.length === 0) {
+                        continue;
+                    }
+                    const isNotifyEvent = sub.type.startsWith('notify_');
+                    if (['mutated', 'notify_mutated'].includes(sub.type)) {
+                        // Send all mutations 1 by 1
+                        batch.forEach((mutation, index) => {
+                            const context = options.context; // const context = cloneObject(options.context);
+                            // context.acebase_mutated_event = { nr: index + 1, total: batch.length }; // Add context info about number of mutations
+                            const prevVal = isNotifyEvent ? null : mutation.oldValue;
+                            const newVal = isNotifyEvent ? null : mutation.newValue;
+                            this.subscriptions.trigger(sub.type, sub.subscriptionPath, mutation.path, prevVal, newVal, context);
+                        });
+                    }
+                    else if (['mutations', 'notify_mutations'].includes(sub.type)) {
+                        // Send 1 batch with all mutations
+                        // const oldValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.oldValue })); // batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.oldValue, obj), {});
+                        // const newValues = isNotifyEvent ? null : batch.map(m => ({ target: PathInfo.getPathKeys(mutation.path.slice(sub.subscriptionPath.length)), val: m.newValue })) //batch.reduce((obj, mutation) => (obj[mutation.path.slice(sub.subscriptionPath.length).replace(/^\//, '') || '.'] = mutation.newValue, obj), {});
+                        const subscriptionPathKeys = acebase_core_1.PathInfo.getPathKeys(sub.subscriptionPath);
+                        const values = isNotifyEvent ? null : batch.map(m => ({ target: acebase_core_1.PathInfo.getPathKeys(m.path).slice(subscriptionPathKeys.length), prev: m.oldValue, val: m.newValue }));
+                        const dataPath = acebase_core_1.PathInfo.get(acebase_core_1.PathInfo.getPathKeys(targetPath).slice(0, subscriptionPathKeys.length)).path;
+                        this.subscriptions.trigger(sub.type, sub.subscriptionPath, dataPath, null, values, options.context);
+                    }
                 }
             });
         };
