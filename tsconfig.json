@@ -15,5 +15,6 @@
         "declarationDir": "./dist/types",
         "resolveJsonModule": true,
         "skipLibCheck": false
-    }
+    },
+    "include": ["./src/**/*.ts"]
 }
