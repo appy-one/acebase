@@ -1758,9 +1758,17 @@ export class BinaryBPlusTree {
                 ? results.filter(r => options.stats ? r.totalValues > 0 : r.value !== null)
                 : results;
         }
+        const results = [] as Array<{ key: NodeEntryKeyType, value: any, totalValues: number }>;
 
         // Get upperbound
-        const lastLeaf = await this._getLastLeaf();
+        let lastLeaf = await this._getLastLeaf();
+        while (lastLeaf.entries.length === 0 && lastLeaf.hasPrevious) {
+            lastLeaf = await lastLeaf.getPrevious();
+        }
+        if (lastLeaf.entries.length === 0) {
+            // Empty tree
+            return [] as typeof results;
+        }
         const lastEntry = lastLeaf.entries.slice(-1)[0];
         const lastKey = lastEntry.key;
 
@@ -1773,7 +1781,10 @@ export class BinaryBPlusTree {
         }
 
         // Get lowerbound
-        const firstLeaf = await this._getFirstLeaf();
+        let firstLeaf = await this._getFirstLeaf();
+        while (firstLeaf.entries.length === 0 && firstLeaf.hasNext) {
+            firstLeaf = await firstLeaf.getNext();
+        }
         const firstEntry = firstLeaf.entries[0];
         const firstKey = firstEntry.key;
 
@@ -1783,7 +1794,7 @@ export class BinaryBPlusTree {
         }
 
         // Some keys might be out of bounds, others must be looked up
-        const results = [] as Array<{ key: NodeEntryKeyType, value: any, totalValues: number }>, lookups = [] as NodeEntryKeyType[];
+        const lookups = [] as NodeEntryKeyType[];
         for (let i = 0; i < keys.length; i++) {
             const key = keys[i];
             if (_isLess(key, firstKey) || _isMore(key, lastKey)) {
@@ -2847,8 +2858,17 @@ export class BinaryBPlusTree {
                 else {
                     // Parent node has only 1 entry, removing it would also make parent node empty...
                     // throw new DetailedError('leaf-empty', 'leaf is now empty and parent node has only 1 entry, tree will have to be rebuilt');
-                    // Write the empty leaf anyway, will be removed automatically upon a future tree rebuild.
+                    // Write the empty leaf anyway, will be removed automatically with a tree rebuild.
                     await this._writeLeaf(leaf);
+
+                    // Rebuild the tree
+                    const options: Parameters<typeof this._rebuild>[1] = {
+                        allocatedBytes: this.info.byteLength,
+                        fillFactor: this.info.fillFactor,
+                        increaseMaxEntries: false,
+                    };
+                    await this._rebuild(BinaryWriter.forFunction(this._writeFn), options);
+                    await this._loadInfo(); // reload info
                 }
             };
 
@@ -2881,10 +2901,7 @@ export class BinaryBPlusTree {
                             return pointsThisDirection(node.parentNode);
                         }
                         else {
-                            // There is no parent, this is the gtChild
-                            if (!_isMoreOrEqual(key, node.entries.slice(-1)[0].key)) {
-                                throw new Error('DEV ERROR: this tree is not right..');
-                            }
+                            // There is no parent, this is a single-leaf tree
                             return true;
                         }
                     };
@@ -3000,7 +3017,7 @@ export class BinaryBPlusTree {
                 throw new DetailedError('small-ptrs-deprecated', 'small ptrs have deprecated, tree will have to be rebuilt');
             }
             const entryIndex = leaf.entries.findIndex(entry => _isEqual(key, entry.key));
-            if (!~entryIndex) { return; }
+            if (entryIndex < 0) { return; }
             if (this.info.isUnique || typeof recordPointer === 'undefined' || leaf.entries[entryIndex].totalValues === 1) {
                 leaf.entries.splice(entryIndex, 1);
             }
@@ -3009,7 +3026,7 @@ export class BinaryBPlusTree {
             }
             else {
                 const valueIndex = leaf.entries[entryIndex].values.findIndex(val => _compareBinary(val.recordPointer, recordPointer));
-                if (!~valueIndex) { return; }
+                if (valueIndex < 0) { return; }
                 leaf.entries[entryIndex].values.splice(valueIndex, 1);
             }
             if (leaf.parentNode && leaf.entries.length === 0) {
