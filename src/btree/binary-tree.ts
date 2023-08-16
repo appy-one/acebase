@@ -3011,7 +3011,7 @@ export class BinaryBPlusTree {
                 throw new DetailedError('small-ptrs-deprecated', 'small ptrs have deprecated, tree will have to be rebuilt');
             }
             const entryIndex = leaf.entries.findIndex(entry => _isEqual(key, entry.key));
-            if (!~entryIndex) { return; }
+            if (entryIndex < 0) { return; }
             if (this.info.isUnique || typeof recordPointer === 'undefined' || leaf.entries[entryIndex].totalValues === 1) {
                 leaf.entries.splice(entryIndex, 1);
             }
@@ -3020,7 +3020,7 @@ export class BinaryBPlusTree {
             }
             else {
                 const valueIndex = leaf.entries[entryIndex].values.findIndex(val => _compareBinary(val.recordPointer, recordPointer));
-                if (!~valueIndex) { return; }
+                if (valueIndex < 0) { return; }
                 leaf.entries[entryIndex].values.splice(valueIndex, 1);
             }
             if (leaf.parentNode && leaf.entries.length === 0) {
