@@ -1758,9 +1758,14 @@ export class BinaryBPlusTree {
                 ? results.filter(r => options.stats ? r.totalValues > 0 : r.value !== null)
                 : results;
         }
+        const results = [] as Array<{ key: NodeEntryKeyType, value: any, totalValues: number }>;
 
         // Get upperbound
         const lastLeaf = await this._getLastLeaf();
+        if (!lastLeaf.parentNode && lastLeaf.entries.length === 0) {
+            // Empty single-leaf tree
+            return [] as typeof results;
+        }
         const lastEntry = lastLeaf.entries.slice(-1)[0];
         const lastKey = lastEntry.key;
 
@@ -1783,7 +1788,7 @@ export class BinaryBPlusTree {
         }
 
         // Some keys might be out of bounds, others must be looked up
-        const results = [] as Array<{ key: NodeEntryKeyType, value: any, totalValues: number }>, lookups = [] as NodeEntryKeyType[];
+        const lookups = [] as NodeEntryKeyType[];
         for (let i = 0; i < keys.length; i++) {
             const key = keys[i];
             if (_isLess(key, firstKey) || _isMore(key, lastKey)) {
@@ -2847,8 +2852,17 @@ export class BinaryBPlusTree {
                 else {
                     // Parent node has only 1 entry, removing it would also make parent node empty...
                     // throw new DetailedError('leaf-empty', 'leaf is now empty and parent node has only 1 entry, tree will have to be rebuilt');
-                    // Write the empty leaf anyway, will be removed automatically upon a future tree rebuild.
+                    // Write the empty leaf anyway, will be removed automatically with a tree rebuild.
                     await this._writeLeaf(leaf);
+
+                    // Rebuild the tree
+                    const options: Parameters<typeof this._rebuild>[1] = {
+                        allocatedBytes: this.info.byteLength,
+                        fillFactor: this.info.fillFactor,
+                        increaseMaxEntries: false,
+                    };
+                    await this._rebuild(BinaryWriter.forFunction(this._writeFn), options);
+                    await this._loadInfo(); // reload info
                 }
             };
 
@@ -2881,10 +2895,7 @@ export class BinaryBPlusTree {
                             return pointsThisDirection(node.parentNode);
                         }
                         else {
-                            // There is no parent, this is the gtChild
-                            if (!_isMoreOrEqual(key, node.entries.slice(-1)[0].key)) {
-                                throw new Error('DEV ERROR: this tree is not right..');
-                            }
+                            // There is no parent, this is a single-leaf tree
                             return true;
                         }
                     };
