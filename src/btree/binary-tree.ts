@@ -1761,9 +1761,12 @@ export class BinaryBPlusTree {
         const results = [] as Array<{ key: NodeEntryKeyType, value: any, totalValues: number }>;
 
         // Get upperbound
-        const lastLeaf = await this._getLastLeaf();
-        if (!lastLeaf.parentNode && lastLeaf.entries.length === 0) {
-            // Empty single-leaf tree
+        let lastLeaf = await this._getLastLeaf();
+        while (lastLeaf.entries.length === 0 && lastLeaf.hasPrevious) {
+            lastLeaf = await lastLeaf.getPrevious();
+        }
+        if (lastLeaf.entries.length === 0) {
+            // Empty tree
             return [] as typeof results;
         }
         const lastEntry = lastLeaf.entries.slice(-1)[0];
@@ -1778,7 +1781,10 @@ export class BinaryBPlusTree {
         }
 
         // Get lowerbound
-        const firstLeaf = await this._getFirstLeaf();
+        let firstLeaf = await this._getFirstLeaf();
+        while (firstLeaf.entries.length === 0 && firstLeaf.hasNext) {
+            firstLeaf = await firstLeaf.getNext();
+        }
         const firstEntry = firstLeaf.entries[0];
         const firstKey = firstEntry.key;
 
