@@ -1636,8 +1636,16 @@ class BinaryBPlusTree {
                 ? results.filter(r => options.stats ? r.totalValues > 0 : r.value !== null)
                 : results;
         }
+        const results = [];
         // Get upperbound
-        const lastLeaf = await this._getLastLeaf();
+        let lastLeaf = await this._getLastLeaf();
+        while (lastLeaf.entries.length === 0 && lastLeaf.hasPrevious) {
+            lastLeaf = await lastLeaf.getPrevious();
+        }
+        if (lastLeaf.entries.length === 0) {
+            // Empty tree
+            return [];
+        }
         const lastEntry = lastLeaf.entries.slice(-1)[0];
         const lastKey = lastEntry.key;
         // Sort the keys
@@ -1647,7 +1655,10 @@ class BinaryBPlusTree {
             return options.existingOnly ? [] : keys.map(key => ({ key, value: null, totalValues: 0 }));
         }
         // Get lowerbound
-        const firstLeaf = await this._getFirstLeaf();
+        let firstLeaf = await this._getFirstLeaf();
+        while (firstLeaf.entries.length === 0 && firstLeaf.hasNext) {
+            firstLeaf = await firstLeaf.getNext();
+        }
         const firstEntry = firstLeaf.entries[0];
         const firstKey = firstEntry.key;
         if ((0, typesafe_compare_1._isLess)(keys.slice(-1)[0], firstKey)) {
@@ -1655,7 +1666,7 @@ class BinaryBPlusTree {
             return options.existingOnly ? [] : keys.map(key => ({ key, value: null, totalValues: 0 }));
         }
         // Some keys might be out of bounds, others must be looked up
-        const results = [], lookups = [];
+        const lookups = [];
         for (let i = 0; i < keys.length; i++) {
             const key = keys[i];
             if ((0, typesafe_compare_1._isLess)(key, firstKey) || (0, typesafe_compare_1._isMore)(key, lastKey)) {
@@ -2644,8 +2655,16 @@ class BinaryBPlusTree {
                 else {
                     // Parent node has only 1 entry, removing it would also make parent node empty...
                     // throw new DetailedError('leaf-empty', 'leaf is now empty and parent node has only 1 entry, tree will have to be rebuilt');
-                    // Write the empty leaf anyway, will be removed automatically upon a future tree rebuild.
+                    // Write the empty leaf anyway, will be removed automatically with a tree rebuild.
                     await this._writeLeaf(leaf);
+                    // Rebuild the tree
+                    const options = {
+                        allocatedBytes: this.info.byteLength,
+                        fillFactor: this.info.fillFactor,
+                        increaseMaxEntries: false,
+                    };
+                    await this._rebuild(binary_writer_1.BinaryWriter.forFunction(this._writeFn), options);
+                    await this._loadInfo(); // reload info
                 }
             };
             while (operations.length > 0) {
@@ -2676,10 +2695,7 @@ class BinaryBPlusTree {
                             return pointsThisDirection(node.parentNode);
                         }
                         else {
-                            // There is no parent, this is the gtChild
-                            if (!(0, typesafe_compare_1._isMoreOrEqual)(key, node.entries.slice(-1)[0].key)) {
-                                throw new Error('DEV ERROR: this tree is not right..');
-                            }
+                            // There is no parent, this is a single-leaf tree
                             return true;
                         }
                     };
@@ -2786,7 +2802,7 @@ class BinaryBPlusTree {
                 throw new detailed_error_1.DetailedError('small-ptrs-deprecated', 'small ptrs have deprecated, tree will have to be rebuilt');
             }
             const entryIndex = leaf.entries.findIndex(entry => (0, typesafe_compare_1._isEqual)(key, entry.key));
-            if (!~entryIndex) {
+            if (entryIndex < 0) {
                 return;
             }
             if (this.info.isUnique || typeof recordPointer === 'undefined' || leaf.entries[entryIndex].totalValues === 1) {
@@ -2797,7 +2813,7 @@ class BinaryBPlusTree {
             }
             else {
                 const valueIndex = leaf.entries[entryIndex].values.findIndex(val => (0, typesafe_compare_1._compareBinary)(val.recordPointer, recordPointer));
-                if (!~valueIndex) {
+                if (valueIndex < 0) {
                     return;
                 }
                 leaf.entries[entryIndex].values.splice(valueIndex, 1);
