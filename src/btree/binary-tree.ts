@@ -2359,6 +2359,11 @@ export class BinaryBPlusTree {
             throw new Error('specify options.cancelCallback to undo any changes when a rollback needs to be performed');
         }
 
+        if (!leaf.parentNode) {
+            // This is a single-leaf tree, cannot split without rebuilding
+            throw new DetailedError('single-leaf-tree-split', 'Cannot split leaf because it is a single-leaf tree. Tree needs to be rebuilt');
+        }
+
         if (leaf.parentNode.entries.length >= this.info.entriesPerNode) {
             // TODO: TEST splitting node
             // throw new DetailedError('parent-node-full', `Cannot split leaf because parent node is full`);
@@ -2883,10 +2888,10 @@ export class BinaryBPlusTree {
 
                 // Should this entry be added to this leaf?
                 const applyToThisLeaf = (() => {
-                    if (leaf.entries.length > this.info.entriesPerNode) {
+                    if (type === 'add' && leaf.entries.length >= this.info.entriesPerNode) {
                         return false;
                     }
-                    // Check if the "roadsigns" in parent nodes will point to this leaf for the new key
+                    // Check if the "roadsigns" in parent nodes point to this leaf for current key
                     const pointsThisDirection = (node: BinaryBPlusTreeLeaf | BinaryBPlusTreeNode): boolean => {
                         if (node.parentEntry) {
                             // Parent node's entry has a less than connection to this node/leaf
