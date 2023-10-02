@@ -1,6 +1,6 @@
 {
   "name": "acebase",
-  "version": "1.29.4",
+  "version": "1.29.5",
   "description": "AceBase realtime database. Open source firebase alternative for nodejs and browser, with additional features: indexes, geo, fulltext, queries, custom storage, offline usage, synchronization, live data proxies and more",
   "comments": {
     "browser": "webpack/browserify file replacements have moved to package.json in dist/cjs and dist/esm. See README.md for more info",
