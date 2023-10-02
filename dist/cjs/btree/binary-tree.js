@@ -3031,6 +3031,7 @@ class BinaryBPlusTree {
         reserveSpaceForNewEntries: 0,
         repairMode: false,
     }) {
+        var _a, _b, _c;
         const perf = {};
         const mark = (name) => {
             const keys = name.split('.');
@@ -3057,18 +3058,18 @@ class BinaryBPlusTree {
         }
         const originalChunkSize = this._chunkSize;
         // this._chunkSize = 1024 * 1024; // Read 1MB at a time to speed up IO
-        options = options || {};
-        options.fillFactor = options.fillFactor || this.info.fillFactor || 95;
+        options = options !== null && options !== void 0 ? options : {};
+        options.fillFactor = (_b = (_a = options.fillFactor) !== null && _a !== void 0 ? _a : this.info.fillFactor) !== null && _b !== void 0 ? _b : 95;
         options.keepFreeSpace = options.keepFreeSpace !== false;
         options.increaseMaxEntries = options.increaseMaxEntries !== false;
-        options.treeStatistics = options.treeStatistics || { byteLength: 0, totalEntries: 0, totalValues: 0, totalLeafs: 0, depth: 0, entriesPerNode: 0 };
+        options.treeStatistics = (_c = options.treeStatistics) !== null && _c !== void 0 ? _c : { byteLength: 0, totalEntries: 0, totalValues: 0, totalLeafs: 0, depth: 0, entriesPerNode: 0 };
         if (typeof options.allocatedBytes === 'number') {
             options.treeStatistics.byteLength = options.allocatedBytes;
         }
         let maxEntriesPerNode = this.info.entriesPerNode;
         if (options.increaseMaxEntries && maxEntriesPerNode < 255) {
-            // Increase nr of entries per node with 10%
-            maxEntriesPerNode = Math.min(255, Math.round(maxEntriesPerNode * 1.1));
+            // Increase nr of entries per node with 50%
+            maxEntriesPerNode = Math.min(255, Math.round(maxEntriesPerNode * 1.5));
         }
         options.treeStatistics.entriesPerNode = maxEntriesPerNode;
         // let entriesPerLeaf = Math.round(maxEntriesPerNode * (options.fillFactor / 100));

@@ -243,7 +243,7 @@ export declare class BinaryBPlusTree {
         fillFactor?: number;
         /** whether free space for later node/leaf creation is kept or added. If `allocatedBytes` is not given (or 0), 10% free space will be used. Default is `true` */
         keepFreeSpace?: boolean;
-        /** whether to increase the max amount of node/leaf entries (usually rebuilding is needed because of growth, so this might be a good idea). Default is true, will increase max entries with 10% (until the max of 255 is reached) */
+        /** whether to increase the max amount of node/leaf entries (usually rebuilding is needed because of growth, so this might be a good idea). Default is true, will increase max entries with 50% (until the max of 255 is reached) */
         increaseMaxEntries?: boolean;
         /** optionally reserves free space for specified amount of new leaf entries (overrides the default of 10% growth, only applies if `allocatedBytes` is not specified or 0). Default is `0` */
         reserveSpaceForNewEntries?: number;

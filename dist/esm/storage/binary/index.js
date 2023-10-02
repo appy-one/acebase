@@ -2031,12 +2031,33 @@ class NodeAllocation {
     }
     get addresses() {
         const addresses = [];
-        this.ranges.forEach(range => {
+        for (const range of this.ranges) {
             for (let i = 0; i < range.length; i++) {
                 const address = new StorageAddress(range.pageNr, range.recordNr + i);
                 addresses.push(address);
             }
-        });
+        }
+        return addresses;
+    }
+    /**
+     * Gets individual record addresses from current allocation
+     * @param start index to start
+     * @param end index to stop (does not include this record)
+     */
+    getAddresses(start, end) {
+        const addresses = [];
+        let nr = 0;
+        for (const range of this.ranges) {
+            for (let i = 0; i < range.length && nr < end; i++, nr++) {
+                if (nr >= start && nr < end) {
+                    const address = new StorageAddress(range.pageNr, range.recordNr + i);
+                    addresses.push(address);
+                }
+            }
+            if (nr >= end) {
+                break;
+            }
+        }
         return addresses;
     }
     get totalAddresses() {
@@ -2619,7 +2640,7 @@ class NodeReader {
             if (this.recordInfo.hasKeyIndex) {
                 return createStreamFromBinaryTree();
             }
-            else if (this.recordInfo.allocation.addresses.length === 1) {
+            else if (this.recordInfo.allocation.totalAddresses === 1) {
                 // We have all data in memory (small record)
                 return createStreamFromLinearData(this.recordInfo.startData, true);
             }
@@ -2968,7 +2989,7 @@ class NodeReader {
             nr: Math.floor((headerLength + index + length) / recordSize),
             offset: (headerLength + index + length) % recordSize,
         };
-        const writeRecords = this.recordInfo.allocation.addresses.slice(startRecord.nr, endRecord.nr + 1);
+        const writeRecords = this.recordInfo.allocation.getAddresses(startRecord.nr, endRecord.nr + 1);
         const writeRanges = NodeAllocation.fromAdresses(writeRecords).ranges;
         const writes = [];
         let bOffset = 0;
@@ -3002,10 +3023,10 @@ class NodeReader {
             nr: Math.floor((headerLength + index + length) / recordSize),
             offset: (headerLength + index + length) % recordSize,
         };
-        const readRecords = this.recordInfo.allocation.addresses.slice(startRecord.nr, endRecord.nr + 1);
+        const readRecords = this.recordInfo.allocation.getAddresses(startRecord.nr, endRecord.nr + 1);
         if (readRecords.length === 0) {
             throw new Error(`Attempt to read non-existing records of path "/${this.recordInfo.path}": ${startRecord.nr} to ${endRecord.nr + 1} ` +
-                `for index ${index} + ${length} bytes. Node has ${this.recordInfo.allocation.addresses.length} allocated records ` +
+                `for index ${index} + ${length} bytes. Node has ${this.recordInfo.allocation.totalAddresses} allocated records ` +
                 `in the following ranges: ` + this.recordInfo.allocation.toString());
         }
         const readRanges = NodeAllocation.fromAdresses(readRecords).ranges;
@@ -3044,7 +3065,6 @@ class NodeReader {
         let view = new DataView(data.buffer);
         let offset = 1;
         const firstRange = new StorageAddressRange(this.address.pageNr, this.address.recordNr, 1);
-        /** @type {StorageAddressRange[]} */
         const ranges = [firstRange];
         const allocation = new NodeAllocation(ranges);
         let readingRecordIndex = 0;
@@ -3053,7 +3073,7 @@ class NodeReader {
             if (offset + 9 + 2 >= data.length) {
                 // Read more data (next record)
                 readingRecordIndex++;
-                const address = allocation.addresses[readingRecordIndex];
+                const [address] = allocation.getAddresses(readingRecordIndex, readingRecordIndex + 1);
                 const fileIndex = this.storage.getRecordFileIndex(address.pageNr, address.recordNr);
                 const moreData = new Uint8Array(bytesPerRecord);
                 await this.storage.readData(fileIndex, moreData.buffer);
@@ -3567,7 +3587,7 @@ async function _writeNode(storage, path, value, lock, currentRecordInfo) {
     if (serialized.length > minKeysForTreeCreation) {
         // Create a B+tree
         const fillFactor = isArray || serialized.every(kvp => typeof kvp.key === 'string' && /^[0-9]+$/.test(kvp.key))
-            ? BINARY_TREE_FILL_FACTOR_50
+            ? BINARY_TREE_FILL_FACTOR_50 // TODO: Consider removing this, might be better performing now with 95% instead!
             : BINARY_TREE_FILL_FACTOR_95;
         const treeBuilder = new BPlusTreeBuilder(true, fillFactor);
         serialized.forEach(kvp => {
