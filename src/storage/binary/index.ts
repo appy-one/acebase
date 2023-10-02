@@ -3390,7 +3390,6 @@ class NodeReader {
         });
     }
 
-    // #allocatedAddresses = null as StorageAddress[] | null;
     async _treeDataWriter(binary: number[] | Buffer, index: number) {
         if (binary instanceof Array) {
             binary = Buffer.from(binary);
@@ -3406,10 +3405,6 @@ class NodeReader {
             nr: Math.floor((headerLength + index + length) / recordSize),
             offset: (headerLength + index + length) % recordSize,
         };
-        // if (!this.#allocatedAddresses) {
-        //     this.#allocatedAddresses = this.recordInfo.allocation.addresses;
-        // }
-        // const writeRecords = this.#allocatedAddresses.slice(startRecord.nr, endRecord.nr + 1);
         const writeRecords = this.recordInfo.allocation.getAddresses(startRecord.nr, endRecord.nr + 1);
         const writeRanges = NodeAllocation.fromAdresses(writeRecords).ranges;
         const writes = [];
@@ -3445,10 +3440,6 @@ class NodeReader {
             nr: Math.floor((headerLength + index + length) / recordSize),
             offset: (headerLength + index + length) % recordSize,
         };
-        // if (!this.#allocatedAddresses) {
-        //     this.#allocatedAddresses = this.recordInfo.allocation.addresses;
-        // }
-        // const readRecords = this.#allocatedAddresses.slice(startRecord.nr, endRecord.nr + 1);
         const readRecords = this.recordInfo.allocation.getAddresses(startRecord.nr, endRecord.nr + 1);
         if (readRecords.length === 0) {
             throw new Error(
