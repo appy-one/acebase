@@ -3256,7 +3256,7 @@ export class BinaryBPlusTree {
         fillFactor?: number;
         /** whether free space for later node/leaf creation is kept or added. If `allocatedBytes` is not given (or 0), 10% free space will be used. Default is `true` */
         keepFreeSpace?: boolean;
-        /** whether to increase the max amount of node/leaf entries (usually rebuilding is needed because of growth, so this might be a good idea). Default is true, will increase max entries with 10% (until the max of 255 is reached) */
+        /** whether to increase the max amount of node/leaf entries (usually rebuilding is needed because of growth, so this might be a good idea). Default is true, will increase max entries with 50% (until the max of 255 is reached) */
         increaseMaxEntries?: boolean;
         /** optionally reserves free space for specified amount of new leaf entries (overrides the default of 10% growth, only applies if `allocatedBytes` is not specified or 0). Default is `0` */
         reserveSpaceForNewEntries?: number;
@@ -3313,19 +3313,19 @@ export class BinaryBPlusTree {
         const originalChunkSize = this._chunkSize;
         // this._chunkSize = 1024 * 1024; // Read 1MB at a time to speed up IO
 
-        options = options || {};
-        options.fillFactor = options.fillFactor || this.info.fillFactor || 95;
+        options = options ?? {};
+        options.fillFactor = options.fillFactor ?? this.info.fillFactor ?? 95;
         options.keepFreeSpace = options.keepFreeSpace !== false;
         options.increaseMaxEntries = options.increaseMaxEntries !== false;
-        options.treeStatistics = options.treeStatistics || { byteLength: 0, totalEntries: 0, totalValues: 0, totalLeafs: 0, depth: 0, entriesPerNode: 0 };
+        options.treeStatistics = options.treeStatistics ?? { byteLength: 0, totalEntries: 0, totalValues: 0, totalLeafs: 0, depth: 0, entriesPerNode: 0 };
         if (typeof options.allocatedBytes === 'number') {
             options.treeStatistics.byteLength = options.allocatedBytes;
         }
 
         let maxEntriesPerNode = this.info.entriesPerNode;
         if (options.increaseMaxEntries && maxEntriesPerNode < 255) {
-            // Increase nr of entries per node with 10%
-            maxEntriesPerNode = Math.min(255, Math.round(maxEntriesPerNode * 1.1));
+            // Increase nr of entries per node with 50%
+            maxEntriesPerNode = Math.min(255, Math.round(maxEntriesPerNode * 1.5));
         }
         options.treeStatistics.entriesPerNode = maxEntriesPerNode;
         // let entriesPerLeaf = Math.round(maxEntriesPerNode * (options.fillFactor / 100));
