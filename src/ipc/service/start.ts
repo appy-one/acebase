@@ -8,11 +8,13 @@ import { type AceBaseLocalSettings } from '../../';
             switch (arg.toLowerCase()) {
                 case '--loglevel': settings.logLevel = args[i + 1] as AceBaseLocalSettings['logLevel']; break;
                 case '--maxidletime': settings.maxIdleTime = parseInt(args[i + 1]); break;
+                case '--logger': settings.loggerPluginPath = args[i + 1]; break;
             }
             return settings;
-        }, { logLevel: 'log' as AceBaseLocalSettings['logLevel'], maxIdleTime: 5000 });
+        }, { logLevel: 'log', maxIdleTime: 5000 } as { loggerPluginPath?: string, logLevel: AceBaseLocalSettings['logLevel'], maxIdleTime: number });
 
         await startServer(dbFile, {
+            loggerPluginPath: settings.loggerPluginPath,
             logLevel: settings.logLevel,
             maxIdleTime: settings.maxIdleTime,
             exit: (code) => {

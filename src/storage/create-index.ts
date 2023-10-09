@@ -61,7 +61,7 @@ export async function createIndex(
         throw new Error('Indexes are not supported in current environment because it requires Node.js fs');
     }
     // path = path.replace(/\/\*$/, ""); // Remove optional trailing "/*"
-    const { ipc, debug, indexes, storage } = context;
+    const { ipc, logger, indexes, storage } = context;
 
     const rebuild = options && options.rebuild === true;
     const indexType = (options && options.type) || 'normal';
@@ -79,7 +79,7 @@ export async function createIndex(
     }
 
     if (existingIndex && rebuild !== true) {
-        debug.log(`Index on "/${path}/*/${key}" already exists`.colorize(ColorStyle.inverse));
+        logger.info(`Index on "/${path}/*/${key}" already exists`.colorize(ColorStyle.inverse));
         return existingIndex;
     }
 
@@ -115,7 +115,7 @@ export async function createIndex(
         await index.build();
     }
     catch(err) {
-        context.debug.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.colorize(ColorStyle.red));
+        context.logger.error(`Index build on "/${path}/*/${key}" failed: ${err.message} (code: ${err.code})`.colorize(ColorStyle.red));
         if (!existingIndex) {
             // Only remove index if we added it. Build may have failed because someone tried creating the index more than once, or rebuilding it while it was building...
             indexes.splice(indexes.indexOf(index), 1);

@@ -1,4 +1,4 @@
-import { PathInfo, Utils, ID, ColorStyle, Transport } from 'acebase-core';
+import { PathInfo, Utils, ID, ColorStyle, Transport, type LoggerPlugin } from 'acebase-core';
 import { ThreadSafe } from '../thread-safe';
 import type { Storage } from '../storage';
 import { pfs } from '../promise-fs';
@@ -198,6 +198,8 @@ export class DataIndex {
 
     private _fileName?: string;
 
+    public logger: LoggerPlugin;
+
     /**
      * Creates a new index
      */
@@ -231,6 +233,8 @@ export class DataIndex {
                 values: 0,
             },
         };
+
+        this.logger = storage.logger;
     }
 
     get allMetadataKeys() {
@@ -269,7 +273,7 @@ export class DataIndex {
                 this._cache.set(op, opCache);
             }
             // let clear = () => {
-            //     // this.storage.debug.log(`Index ${this.description}, cache clean for ${op} "${val}"`);
+            //     // this.logger.info(`Index ${this.description}, cache clean for ${op} "${val}"`);
             //     opCache.delete(val);
             // }
             const scheduleClear = () => {
@@ -283,13 +287,13 @@ export class DataIndex {
                 reads: 0,
                 timeout: scheduleClear(),
                 extendLife: () => {
-                    // this.storage.debug.log(`Index ${this.description}, cache lifetime extended for ${op} "${val}". reads: ${cache.reads}`);
+                    // this.logger.info(`Index ${this.description}, cache lifetime extended for ${op} "${val}". reads: ${cache.reads}`);
                     clearTimeout(cache.timeout);
                     cache.timeout = scheduleClear();
                 },
             };
             opCache.set(val, cache);
-            // this.storage.debug.log(`Index ${this.description}, cached ${results.length} results for ${op} "${val}"`);
+            // this.logger.info(`Index ${this.description}, cached ${results.length} results for ${op} "${val}"`);
         }
     }
 
@@ -318,6 +322,7 @@ export class DataIndex {
         // Read an index from file
         const filePath = fileName.includes('/') ? fileName : `${storage.settings.path}/${storage.name}.acebase/${fileName}`;
         const fd = await pfs.open(filePath, pfs.flags.read);
+        const logger = storage.logger;
         try {
             // Read signature
             let result = await pfs.read(fd, Buffer.alloc(10));
@@ -447,7 +452,7 @@ export class DataIndex {
             return dataIndex;
         }
         catch(err) {
-            storage.debug.error(err);
+            logger.error(err);
             pfs.close(fd);
             throw err;
         }
@@ -590,7 +595,7 @@ export class DataIndex {
             idx.release();
         }
         catch(err) {
-            this.storage.debug.error('Index rebuild error: ', err);
+            this.logger.error('Index rebuild error: ', err);
             this.state = DataIndex.STATE.ERROR;
             this._buildError = err;
             idx.release();
@@ -616,7 +621,7 @@ export class DataIndex {
             }
             catch(err) {
                 // Could not update index --> leaf full?
-                this.storage.debug.verbose(`Could not update index ${this.description}: ${err.message}`.colorize(ColorStyle.yellow));
+                this.logger.trace(`Could not update index ${this.description}: ${err.message}`.colorize(ColorStyle.yellow));
 
                 if (retry > 0 && opsCount === operations.length) {
                     throw new Error(`DEV ERROR: unable to process operations because tree was rebuilt, and that didn't help?! --> ${err.stack}`);
@@ -625,7 +630,7 @@ export class DataIndex {
                 await this._rebuild(idx); // rebuild calls idx.close() and .release()
 
                 // Process left-over operations
-                this.storage.debug.verbose('Index was rebuilt, retrying pending operations');
+                this.logger.trace('Index was rebuilt, retrying pending operations');
                 idx = await this._getTree('exclusive');
                 await go(retry + 1);
                 return true; // "rebuilt"
@@ -633,11 +638,11 @@ export class DataIndex {
         };
         const rebuilt = await go();
 
-        // this.storage.debug.log(`Released update lock on index ${this.description}`.colorize(ColorStyle.blue));
+        // this.logger.info(`Released update lock on index ${this.description}`.colorize(ColorStyle.blue));
         const doneTime = Date.now();
         const ms = doneTime - startTime;
         const duration = ms < 5000 ? ms + 'ms' : Math.round(ms / 1000) + 's';
-        this.storage.debug.verbose(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration}`.colorize(ColorStyle.green));
+        this.logger.trace(`Index ${this.description} was ${rebuilt ? 'rebuilt' : 'updated'} successfully for "/${path}", took ${duration}`.colorize(ColorStyle.green));
 
         // Process any queued updates
         return await this._processUpdateQueue();
@@ -667,7 +672,7 @@ export class DataIndex {
     }
 
     async handleRecordUpdate(path: string, oldValue: unknown, newValue: unknown, indexMetadata?: IndexMetaData): Promise<void> {
-        this.storage.debug.verbose(`Handling index ${this.description} update request for "/${path}"`);
+        this.logger.trace(`Handling index ${this.description} update request for "/${path}"`);
         const getValues = (key: string, oldValue: unknown, newValue: unknown) =>
             PathInfo.getPathKeys(key).reduce((values, key) =>
                 getChildValues(key, values.oldValue, values.newValue), { oldValue, newValue }) as { oldValue: IndexableValue; newValue: IndexableValue };
@@ -692,7 +697,7 @@ export class DataIndex {
         const includedValuesChanged = includedValues.some(values => compareValues(values.oldValue, values.newValue) !== 'identical');
 
         if (!keyValueChanged && !includedValuesChanged) {
-            this.storage.debug.verbose(`Update on "/${path}" has no effective changes for index ${this.description}`);
+            this.logger.trace(`Update on "/${path}" has no effective changes for index ${this.description}`);
             return;
         }
 
@@ -714,11 +719,11 @@ export class DataIndex {
             // Invalidate query cache
             this._cache.clear();
             // Update the tree
-            this.storage.debug.verbose(`Updating index ${this.description} tree for "/${path}"`);
+            this.logger.trace(`Updating index ${this.description} tree for "/${path}"`);
             return await this._updateTree(path, keyValues.oldValue, keyValues.newValue, recordPointer, recordPointer, metadata);
         }
         else {
-            this.storage.debug.log(`Queueing index ${this.description} update for "/${path}"`);
+            this.logger.info(`Queueing index ${this.description} update for "/${path}"`);
             // Queue the update
             const update = {
                 path,
@@ -735,7 +740,7 @@ export class DataIndex {
                 update.resolve = resolve;
                 update.reject = reject;
             }).catch(err => {
-                this.storage.debug.error(`Unable to process queued update for "/${path}" on index ${this.description}:`, err);
+                this.logger.error(`Unable to process queued update for "/${path}" on index ${this.description}:`, err);
             });
 
             this._updateQueue.push(update);
@@ -1042,7 +1047,7 @@ export class DataIndex {
         const allowedKeyValueTypes = options && options.valueTypes
             ? options.valueTypes
             : indexableTypes;
-        this.storage.debug.log(`Index build ${this.description} started`.colorize(ColorStyle.blue));
+        this.logger.info(`Index build ${this.description} started`.colorize(ColorStyle.blue));
         let indexedValues = 0;
         // let addPromise;
         // let flushed = false;
@@ -1080,7 +1085,7 @@ export class DataIndex {
                     //     });
                     //     return;
                     // }
-                    this.storage.debug.log(`done writing values to ${buildFile}`);
+                    this.logger.info(`done writing values to ${buildFile}`);
                     if (streamState.wait) {
                         buildWriteStream.once('drain', () => {
                             buildWriteStream.end(resolve);
@@ -1146,7 +1151,7 @@ export class DataIndex {
                         }
                         catch (reason) {
                             // Record doesn't exist? No biggy
-                            this.storage.debug.warn(`Could not get children of "/${path}": ${reason.message}`);
+                            this.logger.warn(`Could not get children of "/${path}": ${reason.message}`);
                         }
 
                         // Iterate through the children in batches of max n nodes
@@ -1342,7 +1347,7 @@ export class DataIndex {
                                         else {
                                             addIndexValue(keyValue, recordPointer, metadata);
                                         }
-                                        this.storage.debug.log(`Indexed "/${childPath}/${this.key}" value: '${keyValue}' (${typeof keyValue})`.colorize(ColorStyle.cyan));
+                                        this.logger.info(`Indexed "/${childPath}/${this.key}" value: '${keyValue}' (${typeof keyValue})`.colorize(ColorStyle.cyan));
                                     }
                                     // return addPromise; // Do we really have to wait for this?
                                 }
@@ -1755,11 +1760,11 @@ export class DataIndex {
             // Done writing values to build file.
             // Now we have to group all values per key, sort them.
             // then create the binary B+tree.
-            this.storage.debug.log(`done writing build file ${buildFile}`);
+            this.logger.info(`done writing build file ${buildFile}`);
             await createMergeFile();
 
             // Open merge file for reading, index file for writing
-            this.storage.debug.log(`done writing merge file ${mergeFile}`);
+            this.logger.info(`done writing merge file ${mergeFile}`);
             const [ readFD, writeFD ] = await Promise.all([
                 indexedValues === 0 ? -1 : pfs.open(mergeFile, pfs.flags.read),
                 pfs.open(this.fileName, pfs.flags.write),
@@ -1810,7 +1815,7 @@ export class DataIndex {
                     isUnique: false,
                     keepFreeSpace: true,
                     metadataKeys: this.allMetadataKeys,
-                    debug: this.storage.debug,
+                    logger: this.logger,
                 },
             );
 
@@ -1825,11 +1830,11 @@ export class DataIndex {
 
             const doneTime = Date.now();
             const duration = Math.round((doneTime - startTime) / 1000 / 60);
-            this.storage.debug.log(`Index ${this.description} was built successfully, took ${duration} minutes`.colorize(ColorStyle.green));
+            this.logger.info(`Index ${this.description} was built successfully, took ${duration} minutes`.colorize(ColorStyle.green));
             this.state = DataIndex.STATE.READY;
         }
         catch(err: unknown) {
-            this.storage.debug.error(`Error building index ${this.description}: ${(err as Error)?.message || err}`);
+            this.logger.error(`Error building index ${this.description}: ${(err as Error)?.message || err}`);
             this.state = DataIndex.STATE.ERROR;
             this._buildError = err as Error;
             throw err;
@@ -2118,7 +2123,7 @@ export class DataIndex {
             await pfs.close(fd);
         }
         catch(err) {
-            this.storage.debug.error(err);
+            this.logger.error(err);
             throw err;
         }
     }
@@ -2153,7 +2158,7 @@ export class DataIndex {
                 readFn: reader,
                 chunkSize: DISK_BLOCK_SIZE,
                 writeFn: writer,
-                debug: this.storage.debug,
+                logger: this.logger,
                 id: ID.generate(), // For tree locking
             });
             tree.autoGrow = true; // Allow the tree to grow. DISABLE THIS IF THERE ARE MULTIPLE TREES IN THE INDEX FILE LATER! (which is not implemented yet)
@@ -2168,7 +2173,7 @@ export class DataIndex {
                 this._idx = null;
                 await pfs.close(fd)
                     .catch(err => {
-                        this.storage.debug.warn(`Could not close index file "${this.fileName}":`, err);
+                        this.logger.warn(`Could not close index file "${this.fileName}":`, err);
                     });
             },
             /** Releases the acquired tree lock */

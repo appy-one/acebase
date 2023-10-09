@@ -1,18 +1,10 @@
-import { AceBaseBase, ID, PathInfo } from 'acebase-core';
-import type { Api, EventSubscriptionCallback, Query, QueryOptions, QueryFilter, QueryOrder } from 'acebase-core';
+import { ID, PathInfo } from 'acebase-core';
+import type { EventSubscriptionCallback, Query, QueryOptions, QueryFilter, QueryOrder } from 'acebase-core';
 import { VALUE_TYPES } from './node-value-types';
 import { NodeNotFoundError } from './node-errors';
-import { Storage } from './storage';
 import { DataIndex, FullTextIndex, IndexQueryResults } from './data-index';
 import { AsyncTaskBatch } from './async-task-batch';
-
-/**
- * TODO: import once LocalApi has been ported to TypeScript
- */
-type LocalApi = Api & {
-    db: AceBaseBase;
-    storage: Storage;
-}
+import type { LocalApi } from './api-local';
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => {};
@@ -86,7 +78,7 @@ export async function executeQuery(
             const val = node.value;
             if (val === null) {
                 // Record was deleted, but index isn't updated yet?
-                api.storage.debug.warn(`Indexed result "/${path}" does not have a record!`);
+                api.logger.warn(`Indexed result "/${path}" does not have a record!`);
                 // TODO: let index rebuild
                 return;
             }
@@ -310,7 +302,7 @@ export async function executeQuery(
 
     // const usingIndexes = ourFilters.map(filter => filter.index).filter(index => index);
     const indexDescriptions = usingIndexes.map(index => index.description).join(', ');
-    usingIndexes.length > 0 && api.storage.debug.log(`Using indexes for query: ${indexDescriptions}`);
+    usingIndexes.length > 0 && api.logger.info(`Using indexes for query: ${indexDescriptions}`);
 
     // Filters that should run on all nodes after indexed results:
     const tableScanFilters = queryFilters.filter(filter => !filter.index);
@@ -388,7 +380,7 @@ export async function executeQuery(
     };
 
     if (queryFilters.length === 0 && query.take === 0) {
-        api.storage.debug.warn(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
+        api.logger.warn(`Filterless queries must use .take to limit the results. Defaulting to 100 for query on path "${path}"`);
         query.take = 100;
     }
 
@@ -396,7 +388,7 @@ export async function executeQuery(
         const sortIndex = querySort[0].index;
         const ascending = query.take < 0 ? !querySort[0].ascending : querySort[0].ascending;
         if (queryFilters.length === 0 && querySort.slice(1).every(s => sortIndex.allMetadataKeys.includes(s.key))) {
-            api.storage.debug.log(`Using index for sorting: ${sortIndex.description}`);
+            api.logger.info(`Using index for sorting: ${sortIndex.description}`);
             const metadataSort = querySort.slice(1).map(s => {
                 s.index = sortIndex; // Assign index to skip later processing of this sort operation
                 return { key: s.key, ascending: s.ascending };
@@ -547,10 +539,10 @@ export async function executeQuery(
 
             const batch = {
                 promises: [] as Promise<void>[],
-                add(promise: Promise<void>) {
+                async add(promise: Promise<void>) {
                     this.promises.push(promise);
                     if (this.promises.length >= 1000) {
-                        return Promise.all(this.promises.splice(0)).then(_ => undefined);
+                        await Promise.all(this.promises.splice(0));
                     }
                 },
             };
@@ -616,7 +608,7 @@ export async function executeQuery(
             catch (reason) {
                 // No record?
                 if (!(reason instanceof NodeNotFoundError)) {
-                    api.storage.debug.warn(`Error getting child stream: ${reason}`);
+                    api.logger.warn(`Error getting child stream: ${reason}`);
                 }
                 return [];
             }

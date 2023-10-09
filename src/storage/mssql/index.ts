@@ -300,18 +300,18 @@ export class MSSQLStorage extends Storage {
             // Get root record info
             this.rootRecord = await this.getNodeInfo('');
 
-            this.debug.log(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
-            this.debug.log(`- Type: MSSQL`.colorize(ColorStyle.dim));
-            this.debug.log(`- Server: ${this.settings.server}:${this.settings.port}`.colorize(ColorStyle.dim));
-            this.debug.log(`- Database: ${this.settings.database}`.colorize(ColorStyle.dim));
-            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(ColorStyle.dim));
+            this.logger.info(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
+            this.logger.info(`- Type: MSSQL`.colorize(ColorStyle.dim));
+            this.logger.info(`- Server: ${this.settings.server}:${this.settings.port}`.colorize(ColorStyle.dim));
+            this.logger.info(`- Database: ${this.settings.database}`.colorize(ColorStyle.dim));
+            this.logger.info(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(ColorStyle.dim));
 
             // Load indexes
             await this.indexes.load();
             this.emit('ready');
         }
         catch (err) {
-            this.debug.error(`Error initializing MSSQL database: ${err.message}`);
+            this.logger.error(`Error initializing MSSQL database: ${err.message}`);
             this.emit('error', err);
         }
     }
@@ -637,7 +637,7 @@ export class MSSQLStorage extends Storage {
         // Insert or update node
         if (currentRow) {
             // update
-            this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(ColorStyle.cyan));
+            this.logger.info(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(ColorStyle.cyan));
 
             const updateMainNode = () => {
                 const sql = `UPDATE nodes SET type = @type, text_value = @text_value, binary_value = @binary_value, json_value = @json_value, modified = @modified, revision_nr = revision_nr + 1, revision = @revision
@@ -720,7 +720,7 @@ export class MSSQLStorage extends Storage {
         else {
             // Current node does not exist, create it and any child nodes
             // write all child nodes that must be stored in their own record
-            this.debug.log(`Node "/${path}" is being created`.colorize(ColorStyle.cyan));
+            this.logger.info(`Node "/${path}" is being created`.colorize(ColorStyle.cyan));
 
             const childCreatePromises = Object.keys(childNodeValues).map(key => {
                 const childPath = PathInfo.getChildPath(path, key);
@@ -957,7 +957,7 @@ export class MSSQLStorage extends Storage {
                 return result;
             }
 
-            this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${rows.length} records`.colorize(ColorStyle.magenta));
+            this.logger.info(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${rows.length} records`.colorize(ColorStyle.magenta));
 
             const targetPathKeys = PathInfo.getPathKeys(path);
             const targetRow = rows.find(row => row.path === path);

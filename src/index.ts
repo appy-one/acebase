@@ -38,6 +38,9 @@ export {
     PartialArray,
 } from 'acebase-core';
 
+import { AceBase } from './acebase-local';
+export default AceBase; // Use AceBase as default export, allows: `import AceBase from 'acebase'`
+
 export {
     AceBase,
     AceBaseLocalSettings,

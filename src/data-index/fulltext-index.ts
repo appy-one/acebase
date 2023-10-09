@@ -372,7 +372,7 @@ export class FullTextIndex extends DataIndex {
         this.config = options.config || {};
         if (this.config.localeKey) {
             // localeKey is supported by all indexes now
-            storage.debug.warn(`fulltext index config option "localeKey" has been deprecated, as it is now supported for all indexes. Move the setting to the global index settings`);
+            this.logger.warn(`fulltext index config option "localeKey" has been deprecated, as it is now supported for all indexes. Move the setting to the global index settings`);
             this.textLocaleKey = this.config.localeKey; // Do use it now
         }
     }
@@ -562,7 +562,7 @@ export class FullTextIndex extends DataIndex {
                 const locale = env.locale || this.textLocale;
                 const textInfo = this.getTextInfo(text, locale);
                 if (textInfo.words.size === 0) {
-                    this.storage.debug.warn(`No words found in "${typeof text === 'string' && text.length > 50 ? text.slice(0, 50) + '...' : text}" to fulltext index "${env.path}"`);
+                    this.logger.warn(`No words found in "${typeof text === 'string' && text.length > 50 ? text.slice(0, 50) + '...' : text}" to fulltext index "${env.path}"`);
                 }
 
                 // const revLookupKey = super._getRevLookupKey(env.path);
@@ -851,7 +851,7 @@ export class FullTextIndex extends DataIndex {
         if (counts[0].count === 0) {
             stats.stop(0);
 
-            this.storage.debug.log(`Word "${counts[0].word}" not found in index, 0 results for query ${op} "${val}"`);
+            this.logger.info(`Word "${counts[0].word}" not found in index, 0 results for query ${op} "${val}"`);
             results = new IndexQueryResults(0);
             results.filterKey = this.key;
             results.stats = stats;
@@ -899,7 +899,7 @@ export class FullTextIndex extends DataIndex {
             const t1 = Date.now();
             const fr = await queryWord(word, results);
             const t2 = Date.now();
-            this.storage.debug.log(`fulltext search for "${word}" took ${t2-t1}ms`);
+            this.logger.info(`fulltext search for "${word}" took ${t2-t1}ms`);
             resultsPerWord[words.indexOf(word)] = fr;
             results = fr;
             wordIndex++;

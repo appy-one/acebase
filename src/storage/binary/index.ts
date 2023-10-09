@@ -14,6 +14,7 @@ import { Uint8ArrayBuilder } from '../../binary';
 import { IAceBaseIPCLock } from '../../ipc/ipc';
 import { BinaryBPlusTreeTransactionOperation } from '../../btree/binary-tree-transaction-operation';
 import { NodeLock } from '../../node-lock';
+import { LoggerPlugin } from 'acebase-core';
 
 const { concatTypedArrays, bytesToNumber, bytesToBigint, numberToBytes, bigintToBytes, encodeString, decodeString, cloneObject } = Utils;
 const REMOVED_CHILD_DATA_IMPLEMENTED = false; // not used yet - allows marking of deleted children without having to rewrite the whole node
@@ -144,7 +145,7 @@ export class AceBaseStorage extends Storage {
         if (this.type === 'data' && settings.transactions.log === true) {
             // Get/create storage for mutations logging
             const txSettings = new AceBaseStorageSettings({ type: 'transaction', path: settings.path, removeVoidProperties: true, transactions: settings.transactions, ipc: settings.ipc });
-            this.txStorage = new AceBaseStorage(name, txSettings, { logLevel: 'error' });
+            this.txStorage = new AceBaseStorage(name, txSettings, { logLevel: 'error', logColors: false, logger: this.logger });
         }
 
         this.once('ready', () => {
@@ -251,7 +252,7 @@ export class AceBaseStorage extends Storage {
                     return -1;
                 }
                 if (/^[0-9]+$/.test(key)) {
-                    return -1; //storage.debug.error(`Adding KIT key "${key}"?!!`);
+                    return -1; //this.logger.error(`Adding KIT key "${key}"?!!`);
                 }
                 let index = KIT.keys.indexOf(key);
                 if (index < 0) {
@@ -320,7 +321,7 @@ export class AceBaseStorage extends Storage {
             load: async () => {
                 const data = Buffer.alloc(KIT.length);
                 const { bytesRead } = await pfs.read(this.file, data, 0, data.length, KIT.fileIndex).catch(err => {
-                    this.debug.error('Error reading KIT from file: ', err);
+                    this.logger.error('Error reading KIT from file: ', err);
                     throw err;
                 });
 
@@ -339,8 +340,8 @@ export class AceBaseStorage extends Storage {
                 }
                 KIT.bytesUsed = index;
                 KIT.keys = keys;
-                this.debug.log(`KIT read, ${KIT.keys.length} keys indexed`.colorize(ColorStyle.bold));
-                //storage.debug.log(keys);
+                this.logger.info(`KIT read, ${KIT.keys.length} keys indexed`.colorize(ColorStyle.bold));
+                //this.logger.debug(keys);
                 return keys;
             },
         };
@@ -566,7 +567,7 @@ export class AceBaseStorage extends Storage {
                         .sort((a, b) => a.end - a.start < b.end - b.start ? -1 : 1)
                         .slice(0, n);
                     const totalRecords = ranges.reduce((records, range) => records + (range.end - range.start), 0);
-                    this.debug.warn(`FST grew too big to store in the database file, removing ${n} entries for ${totalRecords} records`);
+                    this.logger.warn(`FST grew too big to store in the database file, removing ${n} entries for ${totalRecords} records`);
                     ranges.forEach(range => {
                         const i = FST.ranges.indexOf(range);
                         FST.ranges.splice(i, 1);
@@ -596,7 +597,7 @@ export class AceBaseStorage extends Storage {
                 FST.bytesUsed = index;
 
                 const promise = this.writeData(FST.fileIndex, data, 0, bytesToWrite).catch(err => {
-                    this.debug.error('Error writing FST: ', err);
+                    this.logger.error('Error writing FST: ', err);
                 });
                 const writes = [promise];
                 if (updatedPageCount === true) {
@@ -606,15 +607,15 @@ export class AceBaseStorage extends Storage {
                     writes.push(promise);
                 }
                 await Promise.all(writes);
-                //this.debug.log(`FST saved, ${this.bytesUsed} bytes used for ${FST.ranges.length} ranges`);
+                //this.logger.debug(`FST saved, ${this.bytesUsed} bytes used for ${FST.ranges.length} ranges`);
             },
 
             load: async () => {
                 if (!this.ipc.isMaster) { return []; }
                 const data = Buffer.alloc(FST.length);
                 const { bytesRead } = await pfs.read(this.file, data, 0, data.length, this.FST.fileIndex).catch(err => {
-                    this.debug.error('Error reading FST from file');
-                    this.debug.error(err);
+                    this.logger.error('Error reading FST from file');
+                    this.logger.error(err);
                     throw err;
                 });
                 // Interpret the read data
@@ -636,7 +637,7 @@ export class AceBaseStorage extends Storage {
                 FST.pages = allocatedPages;
                 FST.bytesUsed = index;
                 FST.ranges = ranges;
-                this.debug.log(`FST read, ${allocatedPages} pages allocated, ${freeRangeCount} free ranges`.colorize(ColorStyle.bold));
+                this.logger.info(`FST read, ${allocatedPages} pages allocated, ${freeRangeCount} free ranges`.colorize(ColorStyle.bold));
                 return ranges;
             },
         };
@@ -666,7 +667,7 @@ export class AceBaseStorage extends Storage {
                 rootRecord.pageNr = address.pageNr;
                 rootRecord.recordNr = address.recordNr;
                 rootRecord.exists = true;
-                // this.debug.log(`Root record address updated to ${address.pageNr}, ${address.recordNr}`.colorize(ColorStyle.bold));
+                // this.logger.debug(`Root record address updated to ${address.pageNr}, ${address.recordNr}`.colorize(ColorStyle.bold));
 
                 if (!fromIPC) {
                     // Notify others
@@ -679,7 +680,7 @@ export class AceBaseStorage extends Storage {
                     view.setUint16(4, address.recordNr);
 
                     const bytesWritten = await this.writeData(HEADER_INDEXES.ROOT_RECORD_ADDRESS, bytes, 0, bytes.length);
-                    this.debug.log(`Root record address updated to ${address.pageNr}, ${address.recordNr}`.colorize(ColorStyle.bold));
+                    this.logger.info(`Root record address updated to ${address.pageNr}, ${address.recordNr}`.colorize(ColorStyle.bold));
                 }
             },
         };
@@ -697,8 +698,8 @@ export class AceBaseStorage extends Storage {
 
         const openDatabaseFile = async (justCreated = false) => {
             const handleError = (err: any, txt: string) => {
-                this.debug.error(txt);
-                this.debug.error(err);
+                this.logger.error(txt);
+                this.logger.error(err);
                 if (this.file) {
                     pfs.close(this.file).catch(err => {
                         // ...
@@ -799,12 +800,12 @@ export class AceBaseStorage extends Storage {
             if (this.settings.maxInlineValueSize === 0) { this.settings.maxInlineValueSize = 65536; }
 
             const intro = ColorStyle.dim;
-            this.debug.log(`Database "${name}" details:`.colorize(intro));
-            this.debug.log('- Type: AceBase binary'.colorize(intro));
-            this.debug.log(`- Record size: ${this.settings.recordSize} bytes`.colorize(intro));
-            this.debug.log(`- Page size: ${this.settings.pageSize} records (${this.settings.pageSize * this.settings.recordSize} bytes)`.colorize(intro));
-            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize} bytes`.colorize(intro));
-            this.debug.log(`- Root record address: ${this.rootRecord.pageNr}, ${this.rootRecord.recordNr}`.colorize(intro));
+            this.logger.info(`Database "${name}" details:`.colorize(intro));
+            this.logger.info('- Type: AceBase binary'.colorize(intro));
+            this.logger.info(`- Record size: ${this.settings.recordSize} bytes`.colorize(intro));
+            this.logger.info(`- Page size: ${this.settings.pageSize} records (${this.settings.pageSize * this.settings.recordSize} bytes)`.colorize(intro));
+            this.logger.info(`- Max inline value size: ${this.settings.maxInlineValueSize} bytes`.colorize(intro));
+            this.logger.info(`- Root record address: ${this.rootRecord.pageNr}, ${this.rootRecord.recordNr}`.colorize(intro));
 
             await this.KIT.load();  // Read Key Index Table
             await this.FST.load();  // Read Free Space Table
@@ -897,9 +898,9 @@ export class AceBaseStorage extends Storage {
 
         this.ipc.once('exit', code => {
             // Close database file
-            this.debug.log(`Closing db ${this.ipc.dbname}`);
+            this.logger.info(`Closing db ${this.ipc.dbname}`);
             pfs.close(this.file).catch(err => {
-                this.debug.error('Could not close database:', err);
+                this.logger.error('Could not close database:', err);
             });
         });
     }
@@ -926,7 +927,7 @@ export class AceBaseStorage extends Storage {
             length = buffer.byteLength;
         }
         const { bytesWritten } = await pfs.write(this.file, buffer as Buffer, offset, length, fileIndex).catch(err => {
-            this.debug.error('Error writing to file', err);
+            this.logger.error('Error writing to file', err);
             throw err;
         });
         this.stats.writes++;
@@ -963,8 +964,8 @@ export class AceBaseStorage extends Storage {
             return bytesRead;
         }
         catch (err) {
-            this.debug.error('Error reading record', buffer, offset, length, fileIndex);
-            this.debug.error(err);
+            this.logger.error('Error reading record', buffer, offset, length, fileIndex);
+            this.logger.error(err);
             throw err;
         }
     }
@@ -1108,7 +1109,7 @@ export class AceBaseStorage extends Storage {
             finally {
                 if (targetNodeInfo) {
                     const msg = `Node at path "${targetPath}" is not broken: it is a(n) ${targetNodeInfo.valueTypeName} stored ${targetNodeInfo.address ? `@${targetNodeInfo.address.pageNr},${targetNodeInfo.address.recordNr}` : 'inline'}${targetNodeInfo.value ? ` with value ${targetNodeInfo.value}` : ''}`;
-                    this.debug.warn(msg);
+                    this.logger.warn(msg);
                     if (!options.ignoreIntact) {
                         throw new Error(msg);
                     }
@@ -1132,7 +1133,7 @@ export class AceBaseStorage extends Storage {
             const removedValueIndicator = '[[removed]]';
             const isArray = nodeInfo.valueType === VALUE_TYPES.ARRAY;
             if (isArray && !options.markAsRemoved) {
-                this.debug.warn(`Node at path "${path}" is an Array, cannot remove entry at index ${key}: marking it as "${removedValueIndicator}" instead`);
+                this.logger.warn(`Node at path "${path}" is an Array, cannot remove entry at index ${key}: marking it as "${removedValueIndicator}" instead`);
                 options.markAsRemoved = true;
             }
             const nodeReader = new NodeReader(this, nodeInfo.address, lock, false);
@@ -1200,13 +1201,13 @@ export class AceBaseStorage extends Storage {
                         await this.FST.release(nodeReader.recordInfo.allocation.ranges);
                     }
                     catch (err) {
-                        this.debug.error(`Could not release previously allocated ranges for "/${path}": ${err}`);
+                        this.logger.error(`Could not release previously allocated ranges for "/${path}": ${err}`);
                     }
                     // throw new Error(`Node at path "/${path}" was not rewritten at the same location. Fix failed`);
                 }
             }
 
-            this.debug.log(`Successfully fixed node at path "${targetPath}" by ${options.markAsRemoved ? `marking key "${key}" of parent node "${path}" as removed ("${removedValueIndicator}")` : `removing key "${key}" from parent node "${path}"`}`);
+            this.logger.info(`Successfully fixed node at path "${targetPath}" by ${options.markAsRemoved ? `marking key "${key}" of parent node "${path}" as removed ("${removedValueIndicator}")` : `removing key "${key}" from parent node "${path}"`}`);
 
             // Make sure cached address is removed.
             this.invalidateCache(false, targetPath, true);
@@ -1221,7 +1222,7 @@ export class AceBaseStorage extends Storage {
      * @param path
      */
     async repairNodeTree(path: string) {
-        this.debug.warn(`Starting node tree repair for path "/${path}"`);
+        this.logger.warn(`Starting node tree repair for path "/${path}"`);
         const tid = this.createTid();
         let lock = await this.nodeLocker.lock(path, tid.toString(), true, 'repairNodeTree');
         try {
@@ -1251,7 +1252,7 @@ export class AceBaseStorage extends Storage {
             }
             const tree = new BinaryBPlusTree({
                 readFn: nodeReader._treeDataReader.bind(nodeReader),
-                debug: this.debug,
+                logger: this.logger,
                 id: `path:${path}`,
             });
             const newRecordInfo = await _rebuildKeyTree(tree, nodeReader, { repairMode: true });
@@ -1271,14 +1272,14 @@ export class AceBaseStorage extends Storage {
                 if (deallocate.totalAddresses > 0) {
                     // Release record allocation marked for deallocation
                     deallocate.normalize();
-                    this.debug.verbose(`Releasing ${deallocate.totalAddresses} addresses (${deallocate.ranges.length} ranges) previously used by node "/${path}" and/or descendants: ${deallocate}`.colorize(ColorStyle.grey));
+                    this.logger.trace(`Releasing ${deallocate.totalAddresses} addresses (${deallocate.ranges.length} ranges) previously used by node "/${path}" and/or descendants: ${deallocate}`.colorize(ColorStyle.grey));
                     await this.FST.release(deallocate.ranges);
                 }
             }
-            this.debug.warn(`Successfully repaired node tree for path "/${path}"`);
+            this.logger.warn(`Successfully repaired node tree for path "/${path}"`);
         }
         catch (err) {
-            this.debug.error(`Failed to repair node tree for path "/${path}": ${err.stack}`);
+            this.logger.error(`Failed to repair node tree for path "/${path}": ${err.stack}`);
         }
         finally {
             lock.release();
@@ -1354,7 +1355,7 @@ export class AceBaseStorage extends Storage {
                 await this._updateNode('history', { [cursor]: item }, { merge: true, _internal: true });
             }
             catch(err) {
-                this.debug.error('Failed to add to transaction log: ', err);
+                this.logger.error('Failed to add to transaction log: ', err);
             }
         };
 
@@ -1956,7 +1957,7 @@ export class AceBaseStorage extends Storage {
             }
             catch(err) {
                 if (!(err instanceof NodeNotFoundError)) {
-                    this.debug.error(`Error getting children: ${err.stack}`);
+                    this.logger.error(`Error getting children: ${err.stack}`);
                 }
                 throw err;
             }
@@ -2008,7 +2009,7 @@ export class AceBaseStorage extends Storage {
                 // TODO: release acebase-cli with ability to do that
             }
             else {
-                this.debug.error('DEBUG THIS: getNode error:', err);
+                this.logger.error('DEBUG THIS: getNode error:', err);
             }
             throw err;
         }
@@ -2152,7 +2153,7 @@ export class AceBaseStorage extends Storage {
             return childInfo;
         }
         catch(err) {
-            this.debug.error('DEBUG THIS: getNodeInfo error', err);
+            this.logger.error('DEBUG THIS: getNodeInfo error', err);
             throw err;
         }
         finally {
@@ -2268,7 +2269,7 @@ export class AceBaseStorage extends Storage {
             context: null,
         },
     ): Promise<IAppliedMutations> {
-        // this.debug.log(`Update request for node "/${path}"`);
+        // this.logger.debug(`Update request for node "/${path}"`);
 
         const tid = options.tid || this.createTid(); // ID.generate();
         const pathInfo = PathInfo.get(path);
@@ -2356,7 +2357,7 @@ export class AceBaseStorage extends Storage {
             if (deallocate && deallocate.totalAddresses > 0) {
                 // Release record allocation marked for deallocation
                 deallocate.normalize();
-                this.debug.verbose(`Releasing ${deallocate.totalAddresses} addresses (${deallocate.ranges.length} ranges) previously used by node "/${path}" and/or descendants: ${deallocate}`.colorize(ColorStyle.grey));
+                this.logger.trace(`Releasing ${deallocate.totalAddresses} addresses (${deallocate.ranges.length} ranges) previously used by node "/${path}" and/or descendants: ${deallocate}`.colorize(ColorStyle.grey));
 
                 // // TEMP check, remove loop when all is good:
                 // storage.nodeCache._cache.forEach((entry, path) => {
@@ -2378,10 +2379,10 @@ export class AceBaseStorage extends Storage {
         }
         // catch(err) {
         //     // if (err instanceof SchemaValidationError) {
-        //     //     !recursive && this.debug.error(`Schema validation error ${options.merge ? 'updating' : 'setting'} path "${path}": `, err.reason);
+        //     //     !recursive && this.logger.error(`Schema validation error ${options.merge ? 'updating' : 'setting'} path "${path}": `, err.reason);
         //     // }
         //     if (!(err instanceof SchemaValidationError)) {
-        //         this.debug.error(`Node.update ERROR: `, err.message);
+        //         this.logger.error(`Node.update ERROR: `, err.message);
         //     }
         //     throw err; //return false;
         // }
@@ -2574,6 +2575,7 @@ class CorruptRecordError extends Error {
 }
 class NodeReader {
     recordInfo: RecordInfo = null;
+    logger: LoggerPlugin;
 
     constructor(
         public storage: AceBaseStorage,
@@ -2585,6 +2587,7 @@ class NodeReader {
         if (!(address instanceof BinaryNodeAddress)) {
             throw new TypeError('address argument must be a BinaryNodeAddress');
         }
+        this.logger = storage.logger;
 
         const key = `${address.pageNr},${address.recordNr}`;
         if (key in stack) {
@@ -2613,7 +2616,7 @@ class NodeReader {
             const parentAddress = stack[Object.keys(stack).find(key => stack[key].path === pathInfo.parentPath)];
             // const error = new CorruptRecordError(stack.slice(-1)[0], pathInfo.key, `Recursive read of record address ${clash.pageNr},${clash.recordNr}. Record "/${pathInfo.parentPath}" is corrupt: property "${pathInfo.key}" refers to the address belonging to path "/${clash.path}"`);
             const error = new CorruptRecordError(parentAddress, pathInfo.key, `CORRUPT RECORD: key "${pathInfo.key}" in "/${parentAddress.path}" (@${parentAddress.pageNr},${parentAddress.recordNr}) refers to address @${clash.pageNr},${clash.recordNr} which was already used to read "/${clash.path}". Recursive or repeated reading has been prevented.`);
-            this.storage.debug.error(error.message);
+            this.logger.error(error.message);
             throw error;
         }
         stack[key] = address;
@@ -2741,7 +2744,7 @@ class NodeReader {
             await this.readHeader();
         }
 
-        this.storage.debug.log(`Reading node "/${this.address.path}" from address ${this.address.pageNr},${this.address.recordNr}`.colorize(ColorStyle.magenta));
+        this.logger.info(`Reading node "/${this.address.path}" from address ${this.address.pageNr},${this.address.recordNr}`.colorize(ColorStyle.magenta));
 
         switch (this.recordInfo.valueType) {
             case VALUE_TYPES.STRING: {
@@ -2850,18 +2853,18 @@ class NodeReader {
                         //         NodeCache.update(child.address, child.valueType); // Cache its address
                         //     }
                         //     // else if (!cachedAddress.equals(child.address)) {
-                        //     //     this.storage.debug.warn(`Using cached address to read child node "/${child.address.path}" from  address ${cachedAddress.pageNr},${cachedAddress.recordNr} instead of (${child.address.pageNr},${child.address.recordNr})`.colorize(ColorStyle.magenta));
+                        //     //     this.logger.warn(`Using cached address to read child node "/${child.address.path}" from  address ${cachedAddress.pageNr},${cachedAddress.recordNr} instead of (${child.address.pageNr},${child.address.recordNr})`.colorize(ColorStyle.magenta));
                         //     //     child.address = cachedAddress;
                         //     // }
                         // }
 
-                        // this.storage.debug.log(`Reading child node "/${child.address.path}" from ${child.address.pageNr},${child.address.recordNr}`.colorize(ColorStyle.magenta));
+                        // this.logger.debug(`Reading child node "/${child.address.path}" from ${child.address.pageNr},${child.address.recordNr}`.colorize(ColorStyle.magenta));
                         const reader = new NodeReader(this.storage, child.address, childLock, this.updateCache, this.stack);
                         const val = await reader.getValue(childOptions);
                         (obj as any)[isArray ? child.index : child.key] = val;
                     }
                     catch (reason) {
-                        this.storage.debug.error('NodeReader.getValue:child error: ', reason);
+                        this.logger.error('NodeReader.getValue:child error: ', reason);
                         throw reason;
                     }
                     finally {
@@ -2906,7 +2909,7 @@ class NodeReader {
                     return obj;
                 }
                 catch (err) {
-                    this.storage.debug.error(err);
+                    this.logger.error(err);
                     throw err;
                 }
             }
@@ -3003,7 +3006,7 @@ class NodeReader {
             if (isLastChunk) { proceed = false; }
             let index = 1;
             while (proceed) {
-                //this.storage.debug.log(address.path);
+                //this.logger.debug(address.path);
                 const chunk = chunks[index];
                 let fileIndex = this.storage.getRecordFileIndex(chunk.pageNr, chunk.recordNr);
                 let length = chunk.length * bytesPerRecord;
@@ -3092,7 +3095,7 @@ class NodeReader {
         const createStreamFromBinaryTree = async () => {
             const tree = new BinaryBPlusTree({
                 readFn: this._treeDataReader.bind(this),
-                debug: this.storage.debug,
+                logger: this.storage.logger,
                 id: `path:${this.address.path}`, // Prefix to fix #168
             });
 
@@ -3568,7 +3571,7 @@ class NodeReader {
             readFn: this._treeDataReader.bind(this),
             chunkSize: 1024 * 100, // 100KB reads/writes
             writeFn: this._treeDataWriter.bind(this),
-            debug: this.storage.debug,
+            logger: this.storage.logger,
             id: 'record@' + this.recordInfo.address.toString(),
         });
     }
@@ -3582,6 +3585,7 @@ async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, upd
         throw new TypeError('updates parameter must be an object');
     }
 
+    const logger = storage.logger;
     let nodeReader = new NodeReader(storage, nodeInfo.address, lock, false);
     const affectedKeys: Array<string | number> = Object.keys(updates);
     const changes = new NodeChangeTracker(nodeInfo.path);
@@ -3670,7 +3674,7 @@ async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, upd
     });
 
     if (changes.all.length === 0) {
-        storage.debug.log(`No effective changes to update node "/${nodeInfo.path}" with`.colorize(ColorStyle.yellow));
+        logger.info(`No effective changes to update node "/${nodeInfo.path}" with`.colorize(ColorStyle.yellow));
         return done(nodeReader.recordInfo);
     }
 
@@ -3704,7 +3708,7 @@ async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, upd
     }
 
     const maxDebugItems = 10;
-    storage.debug.log(`Node "/${nodeInfo.path}" being updated:${isInternalUpdate ? ' (internal)' : ''} adding ${changes.inserts.length} keys (${changes.inserts.slice(0, maxDebugItems).map(ch => `"${ch.keyOrIndex}"`).join(',')}${changes.inserts.length > maxDebugItems ? '...' : ''}), updating ${changes.updates.length} keys (${changes.updates.slice(0, maxDebugItems).map(ch => `"${ch.keyOrIndex}"`).join(',')}${changes.updates.length > maxDebugItems ? '...' : ''}), removing ${changes.deletes.length} keys (${changes.deletes.slice(0, maxDebugItems).map(ch => `"${ch.keyOrIndex}"`).join(',')}${changes.deletes.length > maxDebugItems ? '...' : ''})`.colorize(ColorStyle.cyan));
+    logger.info(`Node "/${nodeInfo.path}" being updated:${isInternalUpdate ? ' (internal)' : ''} adding ${changes.inserts.length} keys (${changes.inserts.slice(0, maxDebugItems).map(ch => `"${ch.keyOrIndex}"`).join(',')}${changes.inserts.length > maxDebugItems ? '...' : ''}), updating ${changes.updates.length} keys (${changes.updates.slice(0, maxDebugItems).map(ch => `"${ch.keyOrIndex}"`).join(',')}${changes.updates.length > maxDebugItems ? '...' : ''}), removing ${changes.deletes.length} keys (${changes.deletes.slice(0, maxDebugItems).map(ch => `"${ch.keyOrIndex}"`).join(',')}${changes.deletes.length > maxDebugItems ? '...' : ''})`.colorize(ColorStyle.cyan));
     if (!isInternalUpdate) {
         // Update cache (remove entries or mark them as deleted)
         // const pathInfo = PathInfo.get(nodeInfo.path);
@@ -3805,14 +3809,14 @@ async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, upd
             opCountsLog.push(operations.length);
             try {
                 await tree.transaction(operations);
-                storage.debug.log(`Updated tree for node "/${nodeInfo.path}"`.colorize(ColorStyle.green));
+                logger.info(`Updated tree for node "/${nodeInfo.path}"`.colorize(ColorStyle.green));
                 return recordInfo; // We do our own cleanup, return current allocation which is always the same as nodeReader.recordInfo
             }
             catch (err) {
-                storage.debug.log(`Could not update tree for "/${nodeInfo.path}"${retry > 0 ? ` (retry ${retry})` : ''}: ${err.message}, ${err.codes}`.colorize(ColorStyle.yellow));
+                logger.info(`Could not update tree for "/${nodeInfo.path}"${retry > 0 ? ` (retry ${retry})` : ''}: ${err.message}, ${err.codes}`.colorize(ColorStyle.yellow));
 
                 if (err.hasErrorCode && err.hasErrorCode('tree-full-no-autogrow')) {
-                    storage.debug.verbose('Tree needs more space');
+                    logger.trace('Tree needs more space');
 
                     const growBytes = Math.ceil(tree.info.byteLength * 0.1); // grow 10%
                     const bytesRequired = tree.info.byteLength + growBytes;
@@ -3852,7 +3856,7 @@ async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, upd
                 }
                 else {
                     // Failed to update the binary data, we need to rebuild the tree
-                    storage.debug.verbose(`B+Tree for path ${nodeInfo.path} needs rebuild`);
+                    logger.trace(`B+Tree for path ${nodeInfo.path} needs rebuild`);
                     fixHistory.push({ err, fix: 'rebuild' });
                     recordInfo = await _rebuildKeyTree(tree, nodeReader, { reserveSpaceForNewEntries: changes.inserts.length - changes.deletes.length });
                 }
@@ -3870,7 +3874,7 @@ async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, upd
                     readFn: nodeReader._treeDataReader.bind(nodeReader),
                     chunkSize: 1024 * 100, // 100KB reads/writes
                     writeFn: nodeReader._treeDataWriter.bind(nodeReader),
-                    debug: storage.debug,
+                    logger: storage.logger,
                     id: 'record@' + nodeReader.recordInfo.address.toString(),
                 });
 
@@ -3930,7 +3934,7 @@ async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, upd
  * Creates or overwrites a node
  */
 async function _createNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, newValue: any, lock: IAceBaseIPCLock, invalidateCache = true) {
-    storage.debug.log(`Node "/${nodeInfo.path}" is being ${nodeInfo.exists ? 'overwritten' : 'created'}`.colorize(ColorStyle.cyan));
+    storage.logger.info(`Node "/${nodeInfo.path}" is being ${nodeInfo.exists ? 'overwritten' : 'created'}`.colorize(ColorStyle.cyan));
 
     let currentAllocation: NodeAllocation = null;
     if (nodeInfo.exists && nodeInfo.address) {
@@ -4384,7 +4388,7 @@ async function _write(
     // value_page_nr    := 4 byte number
     // value_record_nr  := 2 byte number
     //
-
+    const logger = storage.logger;
     const bytesPerRecord = storage.settings.recordSize;
     let headerByteLength = 0, totalBytes = 0, requiredRecords = 0, lastChunkSize = 0;
 
@@ -4427,13 +4431,13 @@ async function _write(
         : await storage.FST.allocate(requiredRecords);
 
     let allocation = new NodeAllocation(ranges);
-    !useExistingAllocation && storage.debug.verbose(`Allocated ${allocation.totalAddresses} addresses for node "/${path}": ${allocation}`.colorize(ColorStyle.grey));
+    !useExistingAllocation && logger.trace(`Allocated ${allocation.totalAddresses} addresses for node "/${path}": ${allocation}`.colorize(ColorStyle.grey));
 
     calculateStorageNeeds(allocation.ranges.length);
     if (requiredRecords < allocation.totalAddresses) {
         const addresses = allocation.addresses;
         const deallocate = addresses.splice(requiredRecords);
-        storage.debug.verbose(`Requested ${deallocate.length} too many addresses to store node "/${path}", releasing them`.colorize(ColorStyle.grey));
+        logger.trace(`Requested ${deallocate.length} too many addresses to store node "/${path}", releasing them`.colorize(ColorStyle.grey));
         storage.FST.release(NodeAllocation.fromAdresses(deallocate).ranges);
         allocation = NodeAllocation.fromAdresses(addresses);
         calculateStorageNeeds(allocation.ranges.length);
@@ -4517,7 +4521,7 @@ async function _write(
         const nodeInfo = new BinaryNodeInfo({ path, type, exists: true, address });
 
         storage.updateCache(false, nodeInfo, true); // hasMoved?
-        storage.debug.log(`Node "/${address.path}" saved at address ${address.pageNr},${address.recordNr} - ${allocation.totalAddresses} addresses, ${bytesWritten} bytes written in ${chunks} chunk(s)`.colorize(ColorStyle.green));
+        logger.info(`Node "/${address.path}" saved at address ${address.pageNr},${address.recordNr} - ${allocation.totalAddresses} addresses, ${bytesWritten} bytes written in ${chunks} chunk(s)`.colorize(ColorStyle.green));
         // storage.logwrite({ address: address, allocation, chunks, bytesWritten });
 
         let recordInfo;
@@ -4542,13 +4546,14 @@ async function _write(
     }
     catch (reason) {
         // If any write failed, what do we do?
-        storage.debug.error(`Failed to write node "/${path}": ${reason}`);
+        logger.error(`Failed to write node "/${path}": ${reason}`);
         throw reason;
     }
 }
 
 async function _rebuildKeyTree(tree: BinaryBPlusTree, nodeReader: NodeReader, options: Parameters<BinaryBPlusTree['rebuild']>[1]) {
     const storage = nodeReader.storage;
+    const logger = storage.logger;
     const path = nodeReader.address.path;
     const tempFilepath = `${storage.settings.path}/${storage.name}.acebase/tree-${ID.generate()}.tmp`;
     let bytesWritten = 0;
@@ -4582,7 +4587,7 @@ async function _rebuildKeyTree(tree: BinaryBPlusTree, nodeReader: NodeReader, op
         .then(() => pfs.rm(tempFilepath))
         .catch(err => {
             // Error removing the file?
-            storage.debug.error(`Can't remove temp rebuild file ${tempFilepath}: `, err);
+            logger.error(`Can't remove temp rebuild file ${tempFilepath}: `, err);
         });
 
     return newRecordInfo;

@@ -84,7 +84,7 @@ export class IPCPeer extends AceBaseIPCPeer {
         }
         else {
             // No localStorage either, this is probably an old browser running in a webworker
-            this.storage.debug.warn(`[BroadcastChannel] not supported`);
+            this.logger.warn(`[BroadcastChannel] not supported`);
             this.sendMessage = () => { /* No OP */};
             return;
         }
@@ -98,22 +98,22 @@ export class IPCPeer extends AceBaseIPCPeer {
                 return;
             }
 
-            storage.debug.verbose(`[BroadcastChannel] received: `, message);
+            this.logger.trace(`[BroadcastChannel] received: `, message);
 
             if (message.type === 'hello' && message.from < this.masterPeerId) {
                 // This peer was created before other peer we thought was the master
                 this.masterPeerId = message.from;
-                storage.debug.log(`[BroadcastChannel] Tab ${this.masterPeerId} is the master.`);
+                this.logger.info(`[BroadcastChannel] Tab ${this.masterPeerId} is the master.`);
             }
             else if (message.type === 'bye' && message.from === this.masterPeerId) {
                 // The master tab is leaving
-                storage.debug.log(`[BroadcastChannel] Master tab ${this.masterPeerId} is leaving`);
+                this.logger.info(`[BroadcastChannel] Master tab ${this.masterPeerId} is leaving`);
 
                 // Elect new master
                 const allPeerIds = this.peers.map(peer => peer.id).concat(this.id).filter(id => id !== this.masterPeerId); // All peers, including us, excluding the leaving master peer
                 this.masterPeerId = allPeerIds.sort()[0];
 
-                storage.debug.log(`[BroadcastChannel] ${this.masterPeerId === this.id ? 'We are' : `tab ${this.masterPeerId} is`} the new master. Requesting ${this._locks.length} locks (${this._locks.filter(r => !r.granted).length} pending)`);
+                this.logger.info(`[BroadcastChannel] ${this.masterPeerId === this.id ? 'We are' : `tab ${this.masterPeerId} is`} the new master. Requesting ${this._locks.length} locks (${this._locks.filter(r => !r.granted).length} pending)`);
 
                 // Let the new master take over any locks and lock requests.
                 const requests =  this._locks.splice(0); // Copy and clear current lock requests before granted locks are requested again.
@@ -158,7 +158,7 @@ export class IPCPeer extends AceBaseIPCPeer {
     }
 
     sendMessage(message: IMessage) {
-        this.storage.debug.verbose(`[BroadcastChannel] sending: `, message);
+        this.logger.trace(`[BroadcastChannel] sending: `, message);
         this.channel.postMessage(message);
     }
 

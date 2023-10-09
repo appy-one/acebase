@@ -114,7 +114,7 @@ export class RemoteIPCPeer extends AceBaseIPCPeer {
         this.masterPeerId = masterPeerId;
 
         this.connect().catch(err => {
-            storage.debug.error(err.message);
+            this.logger.error(err.message);
             this.exit();
         });
     }
@@ -171,7 +171,7 @@ export class RemoteIPCPeer extends AceBaseIPCPeer {
                     }
                     else if (typeof options?.maxRetries === 'undefined' || typeof options?.maxRetries === 'number' && options?.maxRetries > 0) {
                         const retryMs = 1000; // ms
-                        this.storage.debug.error(`Unable to connect to remote IPC server (${event.message}). Trying again in ${retryMs}ms`);
+                        this.logger.error(`Unable to connect to remote IPC server (${event.message}). Trying again in ${retryMs}ms`);
                         const retryOptions:{ maxRetries?: number } = {};
                         if (typeof typeof options?.maxRetries === 'number') { retryOptions.maxRetries = options.maxRetries-1; }
                         const timeout = setTimeout(() => { this.connect(retryOptions); }, retryMs);
@@ -209,7 +209,7 @@ export class RemoteIPCPeer extends AceBaseIPCPeer {
                 // Disconnected. Try reconnecting immediately
                 if (!connected) { return; } // We weren't connected yet. Don't reconnect here, retries will be executed automatically
                 if (this._exiting) { return; }
-                this.storage.debug.error(`Connection to remote IPC server was lost. Trying to reconnect`);
+                this.logger.error(`Connection to remote IPC server was lost. Trying to reconnect`);
                 clearInterval(pingInterval);
                 this.storage.invalidateCache?.(true, '', true, 'ipc_ws_disconnect'); // Make sure the entire cache is invalidated (AceBase storage has such cache)
                 this.connect();
@@ -254,7 +254,7 @@ export class RemoteIPCPeer extends AceBaseIPCPeer {
                         super.handleMessage(msg);
                     }
                     catch (err) {
-                        this.storage.debug.error(`Failed to receive message ${msgId}:`, err);
+                        this.logger.error(`Failed to receive message ${msgId}:`, err);
                     }
                 }
                 else if (str.startsWith('{')) {
@@ -271,7 +271,7 @@ export class RemoteIPCPeer extends AceBaseIPCPeer {
     }
 
     sendMessage(message: IMessage) {
-        this.storage.debug.verbose(`[RemoteIPC] sending: `, message);
+        this.logger.trace(`[RemoteIPC] sending: `, message);
         let json = JSON.stringify(message);
         if (typeof message.to === 'string') {
             // Send to specific peer only
