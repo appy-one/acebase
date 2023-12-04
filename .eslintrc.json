@@ -34,7 +34,8 @@
         }],
         "no-trailing-spaces": "error",
         "eol-last": "error",
-        "curly": "error"
+        "curly": "error",
+        "no-invalid-this": "error"
     },
     "overrides": [{
         "files": "*.js",
