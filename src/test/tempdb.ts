@@ -1,7 +1,7 @@
 import { AceBase, ID, AceBaseLocalSettings } from '..';
 import { readdir, rm, rmdir } from 'fs/promises';
 // import { resolve as resolvePath } from 'path';
-// import customLogger from './custom-logger';
+import customLogger from './custom-logger';
 
 export async function createTempDB(enable: { transactionLogging?: boolean; logLevel?: 'verbose'|'log'|'warn'|'error'; config?: (options: any) => void } = {}) {
     // Create temp db
@@ -15,7 +15,7 @@ export async function createTempDB(enable: { transactionLogging?: boolean; logLe
     }
     // options.storage.ipc = 'socket';
     // options.storage.ipc = { role: 'socket', maxIdleTime: 0, loggerPluginPath: resolvePath(__dirname, 'custom-logger.js') };
-    // options.logger = customLogger;
+    options.logger = customLogger;
     // options.logColors = false;
     const db = new AceBase(dbname, options);
     await db.ready();
