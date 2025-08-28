@@ -1391,10 +1391,8 @@ export class DataIndex {
                     // Read next from file
                     try {
                         let processed = true;
-                        /** @type {Buffer} */
-                        let buffer;
-                        /** @type {number} */
-                        let entryIndex;
+                        let buffer: Buffer;
+                        let entryIndex: number;
                         while (processed) {
                             entryIndex = reader.sourceIndex;
                             const entryLength = await reader.getUint32(); // entry_length
