@@ -683,10 +683,10 @@ export class DataIndex {
         if (!this.caseSensitive) {
             // Convert to locale aware lowercase
             const allValues = [keyValues].concat(includedValues);
-            allValues.forEach(values => {
+            for (const values of allValues) {
                 if (typeof values.oldValue === 'string') { values.oldValue = values.oldValue.toLocaleLowerCase(this.textLocale); }
                 if (typeof values.newValue === 'string') { values.newValue = values.newValue.toLocaleLowerCase(this.textLocale); }
-            });
+            }
         }
         const keyValueChanged = compareValues(keyValues.oldValue, keyValues.newValue) !== 'identical';
         const includedValuesChanged = includedValues.some(values => compareValues(values.oldValue, values.newValue) !== 'identical');
@@ -916,10 +916,10 @@ export class DataIndex {
 
             let values = [] as BPlusTreeLeafEntryValue[];
             const valueEntryIndexes = [] as number[];
-            entries.forEach(entry => {
+            for (const entry of entries) {
                 valueEntryIndexes.push(values.length);
                 values = values.concat(entry.values);
-            });
+            }
 
             type QuicklySearchableValues = Array<BPlusTreeLeafEntryValue & { rp?: string }> & { rpTree?: BPlusTree };
             const filterValues = options.filter.entryValues;
@@ -988,8 +988,8 @@ export class DataIndex {
         else {
             // No filter, add all (unique) results
             const uniqueRecordPointers = new Set();
-            entries.forEach(entry => {
-                entry.values.forEach(value => {
+            for (const entry of entries) {
+                for (const value of entry.values) {
                     const recordPointer = _parseRecordPointer(this.path, value.recordPointer);
                     if (!uniqueRecordPointers.has(recordPointer.path)) {
                         // If a single recordPointer exists in multiple entries (can happen with eg 'like' queries),
@@ -1001,8 +1001,8 @@ export class DataIndex {
                         results.push(result);
                         results.entryValues.push(value);
                     }
-                });
-            });
+                }
+            }
             uniqueRecordPointers.clear(); // Help GC
         }
 
@@ -1451,14 +1451,14 @@ export class DataIndex {
                 const entries = await pfs.readdir(path);
                 let high = 0;
                 const checkFile = buildFile.slice(path.length + 1) + '.';
-                entries.forEach(entry => {
+                for (const entry of entries) {
                     if (typeof entry === 'string' && entry.startsWith(checkFile)) {
                         const match = /\.([0-9]+)$/.exec(entry);
                         if (!match) { return; }
                         const nr = parseInt(match[1]);
                         high = Math.max(high, nr);
                     }
-                });
+                }
                 batchNr = high;
 
                 let more = true;
@@ -1894,9 +1894,9 @@ export class DataIndex {
                 bytes.push((value.length >> 8) & 0xff);
                 bytes.push(value.length & 0xff);
                 // value_data:
-                value.forEach(val => {
+                for (const val of value) {
                     addValueBytes(bytes, val);
-                });
+                }
                 // done
                 return;
             }
@@ -1935,12 +1935,12 @@ export class DataIndex {
             // info_count:
             bytes.push(keys.length);
             // info, [info, [info...]]
-            keys.forEach(key => {
+            for (const key of keys) {
                 addNameBytes(bytes, key); // name
 
                 const value = (obj as any)[key];
                 addValueBytes(bytes, value);
-            });
+            }
         };
 
         const header = [
