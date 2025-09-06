@@ -11,7 +11,7 @@ export async function createTempDB(enable: { transactionLogging?: boolean; logLe
     if (typeof enable.config === 'function') {
         enable.config(options);
     }
-    options.storage.ipc = 'socket';
+    // options.storage.ipc = 'socket';
     const db = new AceBase(dbname, options);
     await db.ready();
 
