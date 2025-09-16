@@ -1,4 +1,4 @@
-import { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, SchemaDefinition, DataRetrievalOptions, ISchemaCheckResult, LoggingLevel } from 'acebase-core';
+import { Utils, DebugLogger, PathInfo, ID, PathReference, ascii85, SimpleEventEmitter, SchemaDefinition, DataRetrievalOptions, ISchemaCheckResult, LoggingLevel, type LoggerPlugin } from 'acebase-core';
 import { VALUE_TYPES } from '../node-value-types';
 import { NodeRevisionError } from '../node-errors';
 import { NodeInfo } from '../node-info';
@@ -30,7 +30,9 @@ export interface IWriteNodeResult {
 }
 
 /**
- * Client config for usage with an acebase-ipc-server
+ * Client config for usage with an acebase-ipc-server. See https://github.com/appy-one/acebase-ipc-server
+ * Use this to horizontally scale database access: this allows multiple machines (or isolated instances of your app) to access and modify the
+ * database simultaneously.
  */
 export interface IPCClientSettings {
     /**
@@ -59,6 +61,28 @@ export interface IPCClientSettings {
      * Determines the role of this IPC client. Only 1 process can be assigned the 'master' role, all other processes must use the role 'worker'
      */
     role: 'master' | 'worker';
+}
+
+/**
+ * IPC settings to automatically spawn (or connect to) a local service/daemon process.
+ * Use this to vertically scale database access: this allows multiple processes/threads on a single machine to access and modify the
+ * database simultaneously.
+ */
+export interface IPCSocketSettings {
+    /**
+     * Use 'socket' IPC service/daemon with additional options
+     */
+    role: 'socket';
+
+    /**
+     * Max time in ms to keep started daemon running after the last client disconnects, defaults to 5000 (5s)
+     */
+    maxIdleTime?: number;
+
+    /**
+     * Path to code that returns an initialized logger plugin. Uses the built-in logger if not specified
+     */
+    loggerPluginPath?: string;
 }
 
 export interface TransactionLogSettings {
@@ -112,7 +136,7 @@ export class StorageSettings {
      * IPC settings if you are using AceBase in pm2 or cloud-based clusters, or (NEW) `'socket'` to connect
      * to an automatically spawned IPC service ("daemon") on this machine
      */
-    ipc?: IPCClientSettings | 'socket' | NetIPCServer;
+    ipc?: IPCClientSettings | 'socket' | IPCSocketSettings | NetIPCServer;
 
     /**
      * Settings for optional transaction logging
@@ -133,6 +157,8 @@ export class StorageSettings {
 
 export interface StorageEnv {
     logLevel: LoggingLevel;
+    logColors: boolean;
+    logger?: LoggerPlugin;
 }
 
 export type SubscriptionCallback = (err: Error, path: string, newValue: any, oldValue: any, context: any) => void;
@@ -141,7 +167,7 @@ export type InternalDataRetrievalOptions = DataRetrievalOptions  & { tid?: strin
 
 export class Storage extends SimpleEventEmitter {
 
-    public debug: DebugLogger;
+    public logger: LoggerPlugin;
     public stats: any;
 
     public ipc: IPCPeer | RemoteIPCPeer | IPCSocketPeer;
@@ -166,22 +192,30 @@ export class Storage extends SimpleEventEmitter {
     constructor(public name: string, public settings: StorageSettings, env: StorageEnv) {
         super();
 
-        this.debug = new DebugLogger(env.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
+        this.logger = env.logger ?? new DebugLogger(env.logLevel, `[${name}${typeof settings.type === 'string' && settings.type !== 'data' ? `:${settings.type}` : ''}]`); // `├ ${name} ┤` // `[🧱${name}]`
 
         // Setup IPC to allow vertical scaling (multiple threads sharing locks and data)
         const ipcName = name + (typeof settings.type === 'string' ? `_${settings.type}` : '');
-        if (settings.ipc === 'socket' || settings.ipc instanceof NetIPCServer) {
-            const ipcSettings = { ipcName, server: settings.ipc instanceof NetIPCServer ? settings.ipc : null };
+        const ipcSocketSettings = typeof settings.ipc === 'object' && settings.ipc !== null && 'role' in settings.ipc && settings.ipc.role === 'socket'
+            ? settings.ipc
+            : null;
+        if (ipcSocketSettings || settings.ipc === 'socket' || settings.ipc instanceof NetIPCServer) {
+            const ipcSettings = {
+                ipcName,
+                server: settings.ipc instanceof NetIPCServer ? settings.ipc : null,
+                ...(ipcSocketSettings && { maxIdleTime: ipcSocketSettings.maxIdleTime, loggerPluginPath: ipcSocketSettings.loggerPluginPath }),
+            };
             this.ipc = new IPCSocketPeer(this, ipcSettings);
         }
         else if (settings.ipc) {
-            if (typeof settings.ipc.port !== 'number') {
+            const ipcClientSettings = settings.ipc as IPCClientSettings;
+            if (typeof ipcClientSettings.port !== 'number') {
                 throw new Error('IPC port number must be a number');
             }
-            if (!['master','worker'].includes(settings.ipc.role)) {
-                throw new Error(`IPC client role must be either "master" or "worker", not "${settings.ipc.role}"`);
+            if (!['master','worker'].includes(ipcClientSettings.role)) {
+                throw new Error(`IPC client role must be either "master" or "worker", not "${ipcClientSettings.role}"`);
             }
-            const ipcSettings = Object.assign({ dbname: ipcName }, settings.ipc);
+            const ipcSettings = Object.assign({ dbname: ipcName }, ipcClientSettings);
             this.ipc = new RemoteIPCPeer(this, ipcSettings);
         }
         else {
@@ -225,7 +259,7 @@ export class Storage extends SimpleEventEmitter {
                 rebuild: false,
             },
         ) => {
-            const context: IndexesContext = { storage: this, debug: this.debug, indexes: this._indexes, ipc: this.ipc };
+            const context: IndexesContext = { storage: this, logger: this.logger, indexes: this._indexes, ipc: this.ipc };
             return createIndex(context, path, key, options);
         },
 
@@ -298,7 +332,7 @@ export class Storage extends SimpleEventEmitter {
                 if (err.code !== 'ENOENT') {
                     // If the directory is not found, there are no file indexes. (probably not supported by used storage class)
                     // Only complain if error is something else
-                    this.debug.error(err);
+                    this.logger.error(err);
                 }
             }
             const promises = [] as Promise<unknown>[];
@@ -334,7 +368,7 @@ export class Storage extends SimpleEventEmitter {
                 return index;
             }
             catch(err) {
-                this.debug.error(err);
+                this.logger.error(err);
                 return null;
             }
         },
@@ -361,7 +395,7 @@ export class Storage extends SimpleEventEmitter {
 
         close: async () => {
             // Close all indexes
-            const promises = this.indexes.list().map(index => index.close().catch(err => this.debug.error(err)));
+            const promises = this.indexes.list().map(index => index.close().catch(err => this.logger.error(err)));
             await Promise.all(promises);
         },
 
@@ -383,7 +417,7 @@ export class Storage extends SimpleEventEmitter {
             let pathSubs = this._eventSubscriptions[path];
             if (!pathSubs) { pathSubs = this._eventSubscriptions[path] = []; }
             // if (pathSubs.findIndex(ps => ps.type === type && ps.callback === callback)) {
-            //     storage.debug.warn(`Identical subscription of type ${type} on path "${path}" being added`);
+            //     this.logger.warn(`Identical subscription of type ${type} on path "${path}" being added`);
             // }
             pathSubs.push({ created: Date.now(), type, callback });
             this.emit('subscribe', { path, event: type, callback }); // Enables IPC peers to be notified
@@ -754,7 +788,7 @@ export class Storage extends SimpleEventEmitter {
                 valueOptions.include = keysFilter;
             }
             if (topEventPath === '' && typeof valueOptions.include === 'undefined') {
-                this.debug.warn('WARNING: One or more value event listeners on the root node are causing the entire database value to be read to facilitate change tracking. Using "value", "notify_value", "child_changed" and "notify_child_changed" events on the root node are a bad practice because of the significant performance impact. Use "mutated" or "mutations" events instead');
+                this.logger.warn('WARNING: One or more value event listeners on the root node are causing the entire database value to be read to facilitate change tracking. Using "value", "notify_value", "child_changed" and "notify_child_changed" events on the root node are a bad practice because of the significant performance impact. Use "mutated" or "mutations" events instead');
             }
             const node = await this.getNode(topEventPath, valueOptions);
             currentValue = node.value;
@@ -1054,7 +1088,7 @@ export class Storage extends SimpleEventEmitter {
 
         const triggerAllEvents = () => {
             // Notify all event subscriptions, should be executed with a delay
-            // this.debug.verbose(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
+            // this.logger.debug(`Triggering events caused by ${options && options.merge ? '(merge) ' : ''}write on "${path}":`, value);
             eventSubscriptions
                 .filter(sub => !['mutated','mutations','notify_mutated','notify_mutations'].includes(sub.type))
                 .map(sub => {
@@ -1134,21 +1168,22 @@ export class Storage extends SimpleEventEmitter {
             const mutationEvents = eventSubscriptions.filter(sub => ['mutated', 'mutations', 'notify_mutated', 'notify_mutations'].includes(sub.type));
             mutationEvents.forEach(sub => {
                 // Get the target data this subscription is interested in
-                let currentPath = topEventPath;
+                const currentPath = topEventPath;
                 // const trailPath = sub.eventPath.slice(currentPath.length).replace(/^\//, ''); // eventPath can contain vars and * ?
                 const trailKeys = PathInfo.getPathKeys(sub.eventPath).slice(PathInfo.getPathKeys(currentPath).length); //PathInfo.getPathKeys(trailPath);
-                
+
                 const events = [] as Array<{
                     target: (string|number)[];
                     vars: Array<{ name: string; value: string|number }>;
                     oldValue: any;
-                    newValue: any; 
+                    newValue: any;
                 }>;
-                let oldValue = topEventData, newValue = newTopEventData;
+                const oldValue = topEventData;
+                const newValue = newTopEventData;
                 const processNextTrailKey = (target: typeof trailKeys, currentTarget: typeof trailKeys, oldValue: any, newValue: any, vars: Array<{ name: string; value: string|number }>) => {
                     if (target.length === 0) {
                         // Add it
-                        return events.push({ target: currentTarget, oldValue, newValue, vars })
+                        return events.push({ target: currentTarget, oldValue, newValue, vars });
                     }
                     const subKey = target[0];
                     const keys = new Set<typeof subKey>();
@@ -1156,10 +1191,10 @@ export class Storage extends SimpleEventEmitter {
                     if (isWildcardKey) {
                         // Recursive for each key in oldValue and newValue
                         if (oldValue !== null && typeof oldValue === 'object') {
-                            Object.keys(oldValue).forEach(key => keys.add(key)); 
+                            Object.keys(oldValue).forEach(key => keys.add(key));
                         }
                         if (newValue !== null && typeof newValue === 'object') {
-                            Object.keys(newValue).forEach(key => keys.add(key)); 
+                            Object.keys(newValue).forEach(key => keys.add(key));
                         }
                     }
                     else {
@@ -1385,12 +1420,12 @@ export class Storage extends SimpleEventEmitter {
                 newValue = callback(node.value);
                 if (newValue instanceof Promise) {
                     newValue = await newValue.catch(err => {
-                        this.debug.error(`Error in transaction callback: ${err.message}`);
+                        this.logger.error(`Error in transaction callback: ${err.message}`);
                     });
                 }
             }
             catch (err) {
-                this.debug.error(`Error in transaction callback: ${err.message}`);
+                this.logger.error(`Error in transaction callback: ${err.message}`);
             }
             if (typeof newValue === 'undefined') {
                 // Callback did not return value. Cancel transaction
@@ -1526,7 +1561,7 @@ export class Storage extends SimpleEventEmitter {
                 return isMatch;
             }
             catch (err) {
-                this.debug.error(`Error matching on "${path}": `, err);
+                this.logger.error(`Error matching on "${path}": `, err);
                 throw err;
             }
         }; // checkNode
@@ -2249,7 +2284,7 @@ export class Storage extends SimpleEventEmitter {
         // Parse schema, add or update it
         const definition = new SchemaDefinition(schema, {
             warnOnly,
-            warnCallback: (message: string) => this.debug.warn(message),
+            warnCallback: (message: string) => this.logger.warn(message),
         });
         const item = this._schemas.find(s => s.path === path);
         if (item) {

@@ -12,7 +12,7 @@ describe('Unique Binary B+Tree', () => {
 
         const bytes = [] as number[];
         await tree.toBinary(true, BinaryWriter.forArray(bytes));
-        const binaryTree = new BinaryBPlusTree({ readFn: bytes, debug });
+        const binaryTree = new BinaryBPlusTree({ readFn: bytes, logger: debug });
         binaryTree.id = ID.generate(); // Assign an id to allow edits (is enforced by tree to make sure multiple concurrent edits to the same source are sync locked)
         binaryTree.autoGrow = AUTO_GROW;
         return binaryTree;
@@ -22,7 +22,7 @@ describe('Unique Binary B+Tree', () => {
         const bytes = [] as number[];
         const id = tree.id;
         await tree.rebuild(BinaryWriter.forArray(bytes), { fillFactor: FILL_FACTOR, keepFreeSpace: true, increaseMaxEntries: true });
-        tree = new BinaryBPlusTree({ readFn: bytes, debug });
+        tree = new BinaryBPlusTree({ readFn: bytes, logger: debug });
         tree.id = id;
         tree.autoGrow = AUTO_GROW;
         return tree;
@@ -282,7 +282,7 @@ describe('Unique Binary B+Tree', () => {
             });
 
             it('with BlacklistingSearchOperator', async () => {
-                const keysToBlacklist = keys.filter(key => Math.random() > 0.25); // blacklist ~75%
+                const keysToBlacklist = keys.filter(() => Math.random() > 0.25); // blacklist ~75%
                 const expectedKeys = keys.filter(key => !keysToBlacklist.includes(key));
 
                 const blacklisted = [] as BinaryBPlusTreeLeafEntry[];

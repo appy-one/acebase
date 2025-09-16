@@ -1,7 +1,7 @@
 import { createServer, Socket } from 'net';
 import { getSocketPath } from './shared';
 import { AceBase, type AceBaseLocalSettings } from '../../';
-import { DebugLogger } from 'acebase-core';
+import { DebugLogger, LoggerPlugin } from 'acebase-core';
 
 const ERROR = Object.freeze({
     ALREADY_RUNNING: { code: 'already_running', exitCode: 2 },
@@ -9,19 +9,33 @@ const ERROR = Object.freeze({
     NO_DB: { code: 'no_db', exitCode: 4 },
 });
 
-export async function startServer(dbFile: string, options: { logLevel: AceBaseLocalSettings['logLevel'], maxIdleTime: number, exit: (code: number) => void }) {
+export async function startServer(
+    dbFile: string,
+    options: {
+        /** path to code that returns an initialized logger plugin */
+        loggerPluginPath?: string,
+        logLevel: AceBaseLocalSettings['logLevel'],
+        maxIdleTime: number,
+        exit: (code: number) => void
+    }
+) {
     const fileMatch = dbFile.match(/^(?<storagePath>.*([\\\/]))(?<dbName>.+)\.acebase\2(?<storageType>[a-z]+)\.db$/);
     if (!fileMatch) {
         return options.exit(ERROR.NO_DB.exitCode);
     }
     const { storagePath, dbName, storageType } = fileMatch.groups;
-    const logger = new DebugLogger(options.logLevel, `[IPC service ${dbName}:${storageType}]`);
+    const logger = options.loggerPluginPath
+        ? await (async () => {
+            const logger = await import(options.loggerPluginPath);
+            return (logger.default ?? logger) as LoggerPlugin;
+        })()
+        : new DebugLogger(options.logLevel, `[IPC service ${dbName}:${storageType}]`);
     let db: AceBase; // Will be opened when listening
 
     const sockets = [] as Socket[];
 
     const socketPath = getSocketPath(dbFile);
-    logger.log(`[starting socket server on path ${socketPath}`);
+    logger.info(`[starting socket server on path ${socketPath}`);
 
     const server = createServer();
     server.listen({
@@ -34,16 +48,16 @@ export async function startServer(dbFile: string, options: { logLevel: AceBaseLo
         // Started successful
         process.on('SIGINT', () => server.close());
         process.on('exit', (code) => {
-            logger.log(`exiting with code ${code}`);
+            logger.info(`exiting with code ${code}`);
         });
 
         // Start the "master" IPC client
-        db = new AceBase(dbName, { logLevel: options.logLevel, storage: { type: storageType, path: storagePath, ipc: server } });
+        db = new AceBase(dbName, { logLevel: options.logLevel, logger, storage: { type: storageType, path: storagePath, ipc: server } });
     });
 
     server.on('error', (err: Error & { code: string }) => {
         if (err.code === 'EADDRINUSE') {
-            logger.log(`socket server already running`);
+            logger.info(`socket server already running`);
             return options.exit(ERROR.ALREADY_RUNNING.exitCode);
         }
         logger.error(`socket server error ${err.code ?? err.message}`);
@@ -55,15 +69,15 @@ export async function startServer(dbFile: string, options: { logLevel: AceBaseLo
         // New socket connected handler
         connectionsMade = true;
         sockets.push(socket);
-        logger.log(`socket connected, total: ${sockets.length}`);
+        logger.info(`socket connected, total: ${sockets.length}`);
 
         socket.on('close', (hadError) => {
             // Socket is closed
             sockets.splice(sockets.indexOf(socket), 1);
-            logger.log(`socket disconnected${hadError ? ' because of an error' : ''}, total: ${sockets.length}`);
+            logger.info(`socket disconnected${hadError ? ' because of an error' : ''}, total: ${sockets.length}`);
             if (sockets.length === 0) {
                 const stop = () => {
-                    logger.log(`closing server socket because there are no more connected clients, exiting with code 0`);
+                    logger.info(`closing server socket because there are no more connected clients, exiting with code 0`);
                     // Stop socket server
                     server.close((err) => {
                         options.exit(err ? ERROR.UNKNOWN.exitCode : 0);
@@ -88,7 +102,7 @@ export async function startServer(dbFile: string, options: { logLevel: AceBaseLo
     if (options.maxIdleTime > 0) {
         setTimeout(() => {
             if (!connectionsMade) {
-                logger.log(`closing server socket because no clients connected, exiting with code 0`);
+                logger.info(`closing server socket because no clients connected, exiting with code 0`);
                 // Stop socket server
                 server.close((err) => {
                     options.exit(err ? ERROR.UNKNOWN.exitCode : 0);

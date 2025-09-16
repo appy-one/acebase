@@ -1,4 +1,4 @@
-import { PathInfo, ID, DebugLogger } from 'acebase-core';
+import { PathInfo, ID, LoggerPlugin } from 'acebase-core';
 import { assert } from './assert';
 
 const DEBUG_MODE = false;
@@ -20,14 +20,12 @@ export class NodeLocker {
      * When .quit() is called, will be set to the quit promise's resolve function
      */
     private _quit: () => void;
-    private debug: DebugLogger;
     public timeout: number;
 
     /**
      * Provides locking mechanism for nodes, ensures no simultanious read and writes happen to overlapping paths
      */
-    constructor(debug: DebugLogger, lockTimeout = DEFAULT_LOCK_TIMEOUT) {
-        this.debug = debug;
+    constructor(private logger: LoggerPlugin, lockTimeout = DEFAULT_LOCK_TIMEOUT) {
         this.timeout = lockTimeout * 1000;
     }
 
@@ -207,11 +205,11 @@ export class NodeLocker {
                         timeoutCount++;
                         if (timeoutCount <= 3) {
                             // Warn first.
-                            this.debug.warn(`${lock.forWriting ? 'write' : 'read' } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) is taking a long time to complete [${timeoutCount}]`);
+                            this.logger.warn(`${lock.forWriting ? 'write' : 'read' } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) is taking a long time to complete [${timeoutCount}]`);
                             lock.timeout = setTimeout(timeoutHandler, this.timeout / 4);
                             return;
                         }
-                        this.debug.error(`lock :: ${lock.forWriting ? 'write' : 'read' } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) took too long`);
+                        this.logger.error(`lock :: ${lock.forWriting ? 'write' : 'read' } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) took too long`);
                         lock.state = LOCK_STATE.EXPIRED;
                         // let allTransactionLocks = _locks.filter(l => l.tid === lock.tid).sort((a,b) => a.requested < b.requested ? -1 : 1);
                         // let transactionsDebug = allTransactionLocks.map(l => `${l.state} ${l.forWriting ? "WRITE" : "read"} ${l.comment}`).join("\n");

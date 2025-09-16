@@ -304,11 +304,11 @@ export class CustomStorage extends Storage {
     }
 
     private async _init() {
-        this.debug.log(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
-        this.debug.log(`- Type: CustomStorage`.colorize(ColorStyle.dim));
-        this.debug.log(`- Path: ${this.settings.path}`.colorize(ColorStyle.dim));
-        this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(ColorStyle.dim));
-        this.debug.log(`- Autoremove undefined props: ${this.settings.removeVoidProperties}`.colorize(ColorStyle.dim));
+        this.logger.info(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
+        this.logger.info(`- Type: CustomStorage`.colorize(ColorStyle.dim));
+        this.logger.info(`- Path: ${this.settings.path}`.colorize(ColorStyle.dim));
+        this.logger.info(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(ColorStyle.dim));
+        this.logger.info(`- Autoremove undefined props: ${this.settings.removeVoidProperties}`.colorize(ColorStyle.dim));
 
         // Create root node if it's not there yet
         await this._customImplementation.ready();
@@ -632,7 +632,7 @@ export class CustomStorage extends Storage {
         const isArray = mainNode.type === VALUE_TYPES.ARRAY;
         if (currentRow) {
             // update
-            this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(ColorStyle.cyan));
+            this.logger.info(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(ColorStyle.cyan));
 
             // If existing is an array or object, we have to find out which children are affected
             if (currentIsObjectOrArray || newIsObjectOrArray) {
@@ -745,7 +745,7 @@ export class CustomStorage extends Storage {
         else {
             // Current node does not exist, create it and any child nodes
             // write all child nodes that must be stored in their own record
-            this.debug.log(`Node "/${path}" is being created`.colorize(ColorStyle.cyan));
+            this.logger.info(`Node "/${path}" is being created`.colorize(ColorStyle.cyan));
 
             if (isArray) {
                 // Check if the array is "intact" (all entries have an index from 0 to the end with no gaps)
@@ -786,7 +786,7 @@ export class CustomStorage extends Storage {
      */
     private async _deleteNode(path: string, options: { transaction: CustomStorageTransaction }) {
         const pathInfo = PathInfo.get(path);
-        this.debug.log(`Node "/${path}" is being deleted`.colorize(ColorStyle.cyan));
+        this.logger.info(`Node "/${path}" is being deleted`.colorize(ColorStyle.cyan));
 
         const deletePaths = [path];
         let checkExecuted = false;
@@ -808,7 +808,7 @@ export class CustomStorage extends Storage {
         const transaction = options.transaction;
         await transaction.descendantsOf(path, { metadata: false, value: false }, includeDescendantCheck, addDescendant);
 
-        this.debug.log(`Nodes ${deletePaths.map(p => `"/${p}"`).join(',')} are being deleted`.colorize(ColorStyle.cyan));
+        this.logger.info(`Nodes ${deletePaths.map(p => `"/${p}"`).join(',')} are being deleted`.colorize(ColorStyle.cyan));
         return transaction.removeMultiple(deletePaths);
     }
 
@@ -1091,7 +1091,7 @@ export class CustomStorage extends Storage {
 
                 await transaction.descendantsOf(path, { metadata: true, value: true }, includeDescendantCheck, addDescendant);
 
-                this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}descendants from ${descRows.length + 1} records`.colorize(ColorStyle.magenta));
+                this.logger.info(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}descendants from ${descRows.length + 1} records`.colorize(ColorStyle.magenta));
 
                 const result = targetNode;
 
@@ -1143,7 +1143,7 @@ export class CustomStorage extends Storage {
                                 const mergePossible = typeof parent[key] === typeof nodeValue && [VALUE_TYPES.OBJECT, VALUE_TYPES.ARRAY].includes(nodeType);
                                 if (!mergePossible) {
                                     // Ignore the value in the child record, see issue #20: "Assertion failed: Merging child values can only be done if existing and current values are both an array or object"
-                                    this.debug.error(`The value stored in node "${otherNode.path}" cannot be merged with the parent node, value will be ignored. This error should disappear once the target node value is updated. See issue #20 for more information`, { path, parent, key, nodeType, nodeValue });
+                                    this.logger.error(`The value stored in node "${otherNode.path}" cannot be merged with the parent node, value will be ignored. This error should disappear once the target node value is updated. See issue #20 for more information`, { path, parent, key, nodeType, nodeValue });
                                 }
                                 else {
                                     Object.keys(nodeValue).forEach(childKey => {

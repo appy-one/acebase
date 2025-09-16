@@ -317,9 +317,9 @@ export class SQLiteStorage extends Storage {
             // Get root record info
             this.rootRecord = await this.getNodeInfo('');
 
-            this.debug.log(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
-            this.debug.log(`- Type: SQLite`.colorize(ColorStyle.dim));
-            this.debug.log(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(ColorStyle.dim));
+            this.logger.info(`Database "${this.name}" details:`.colorize(ColorStyle.dim));
+            this.logger.info(`- Type: SQLite`.colorize(ColorStyle.dim));
+            this.logger.info(`- Max inline value size: ${this.settings.maxInlineValueSize}`.colorize(ColorStyle.dim));
 
             // Load indexes
             await this.indexes.load();
@@ -523,7 +523,7 @@ export class SQLiteStorage extends Storage {
         // Insert or update node
         if (currentRow) {
             // update
-            this.debug.log(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(ColorStyle.cyan));
+            this.logger.info(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(ColorStyle.cyan));
 
             const updateMainNode = () => {
                 const sql = `UPDATE nodes SET type = $type, text_value = $text_value, binary_value = $binary_value, json_value = $json_value, modified = $modified, revision_nr = revision_nr + 1, revision = $revision
@@ -630,7 +630,7 @@ export class SQLiteStorage extends Storage {
         else {
             // Current node does not exist, create it and any child nodes
             // write all child nodes that must be stored in their own record
-            this.debug.log(`Node "/${path}" is being created`.colorize(ColorStyle.cyan));
+            this.logger.info(`Node "/${path}" is being created`.colorize(ColorStyle.cyan));
 
             const childCreatePromises = Object.keys(childNodeValues).map(async key => {
                 const childPath = PathInfo.getChildPath(path, key);
@@ -877,7 +877,7 @@ export class SQLiteStorage extends Storage {
                 return result;
             }
 
-            this.debug.log(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${childRows.length} records`.colorize(ColorStyle.magenta));
+            this.logger.info(`Read node "/${path}" and ${filtered ? '(filtered) ' : ''}children from ${childRows.length} records`.colorize(ColorStyle.magenta));
 
             const targetPathKeys = PathInfo.getPathKeys(path);
             const targetRow = childRows.find(row => row.path === path);

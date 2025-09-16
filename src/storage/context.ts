@@ -1,11 +1,11 @@
-import { DebugLogger } from 'acebase-core';
-import { Storage } from '.';
-import { DataIndex } from '../data-index';
-import { AceBaseIPCPeer } from '../ipc/ipc';
+import type { LoggerPlugin } from 'acebase-core';
+import type { Storage } from '.';
+import type { DataIndex } from '../data-index';
+import type { AceBaseIPCPeer } from '../ipc/ipc';
 
 export interface IndexesContext {
     storage: Storage,
-    debug: DebugLogger,
+    logger: LoggerPlugin,
     ipc: AceBaseIPCPeer,
     indexes: DataIndex[],
 }

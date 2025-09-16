@@ -56,7 +56,7 @@ export class IPCPeer extends AceBaseIPCPeer {
                 // A new worker is started
                 // Do not add yet, wait for "hello" message - a forked process might not use the same db
                 bindEventHandler(worker, 'error', err => {
-                    storage.debug.error(`Caught worker error:`, err);
+                    this.logger.error(`Caught worker error:`, err);
                 });
             });
 

@@ -1,7 +1,7 @@
 import { AceBaseBase, IStreamLike, Api, EventSubscriptionCallback,
     ReflectionType, IReflectionNodeInfo, IReflectionChildrenInfo,
     StreamReadFunction, StreamWriteFunction, TransactionLogFilter,
-    LoggingLevel, Query, QueryOptions } from 'acebase-core';
+    LoggingLevel, Query, QueryOptions, LoggerPlugin } from 'acebase-core';
 import { AceBaseStorage, AceBaseStorageSettings } from './storage/binary';
 import { SQLiteStorage, SQLiteStorageSettings } from './storage/sqlite';
 import { MSSQLStorage, MSSQLStorageSettings } from './storage/mssql';
@@ -19,12 +19,14 @@ export class LocalApi extends Api {
     public db: AceBaseBase;
     public storage: Storage;
     public logLevel: LoggingLevel;
+    public logger: LoggerPlugin;
 
     constructor(dbname = 'default', init: { db: AceBaseBase, settings: AceBaseLocalSettings }, readyCallback: () => any) {
         super();
         this.db = init.db;
+        this.logger = init.db.logger;
 
-        const storageEnv: StorageEnv = { logLevel: init.settings.logLevel };
+        const storageEnv: StorageEnv = { logLevel: init.settings.logLevel, logColors: init.settings.logColors, logger: init.settings.logger };
         if (typeof init.settings.storage === 'object') {
             // settings.storage.logLevel = settings.logLevel;
             if (SQLiteStorageSettings && (init.settings.storage instanceof SQLiteStorageSettings)) { //  || env.settings.storage.type === 'sqlite'

@@ -156,11 +156,11 @@ export class GeoIndex extends DataIndex {
         return super.build({
             addCallback: (add, obj: { lat: number; long: number; }, recordPointer, metadata) => {
                 if (typeof obj !== 'object') {
-                    this.storage.debug.warn(`GeoIndex cannot index location because value "${obj}" is not an object`);
+                    this.logger.warn(`GeoIndex cannot index location because value "${obj}" is not an object`);
                     return;
                 }
                 if (typeof obj.lat !== 'number' || typeof obj.long !== 'number') {
-                    this.storage.debug.warn(`GeoIndex cannot index location because lat (${obj.lat}) or long (${obj.long}) are invalid`);
+                    this.logger.warn(`GeoIndex cannot index location because lat (${obj.lat}) or long (${obj.long}) are invalid`);
                     return;
                 }
                 const geohash = _getGeoHash(obj);
@@ -210,7 +210,7 @@ export class GeoIndex extends DataIndex {
             throw new Error(`Not implemented: Can't query geo index with blacklisting operator yet`);
         }
         if (options) {
-            this.storage.debug.warn('Not implemented: query options for geo indexes are ignored');
+            this.logger.warn('Not implemented: query options for geo indexes are ignored');
         }
         if (op === 'geo:nearby') {
             if (val === null || typeof val !== 'object' || !('lat' in val) || !('long' in val) || !('radius' in val) || typeof val.lat !== 'number' || typeof val.long !== 'number' || typeof val.radius !== 'number') {

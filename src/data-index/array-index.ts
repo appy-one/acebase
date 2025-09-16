@@ -124,7 +124,7 @@ export class ArrayIndex extends DataIndex {
             throw new Error(`Array indexes can only be queried with operators ${ArrayIndex.validOperators.map(op => `"${op}"`).join(', ')}`);
         }
         if (options) {
-            this.storage.debug.warn('Not implemented: query options for array indexes are ignored');
+            this.logger.warn('Not implemented: query options for array indexes are ignored');
         }
 
         // Check cache
@@ -177,7 +177,7 @@ export class ArrayIndex extends DataIndex {
                 if (counts[0].count === 0) {
                     stats.stop(0);
 
-                    this.storage.debug.log(`Value "${counts[0].value}" not found in index, 0 results for query ${op} ${val}`);
+                    this.logger.info(`Value "${counts[0].value}" not found in index, 0 results for query ${op} ${val}`);
                     results = new IndexQueryResults(0);
                     results.filterKey = this.key;
                     results.stats = stats;

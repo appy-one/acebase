@@ -1,4 +1,4 @@
-import { ID, SimpleEventEmitter } from 'acebase-core';
+import { ID, LoggerPlugin, SimpleEventEmitter } from 'acebase-core';
 import { NodeLocker, NodeLock, LOCK_STATE } from '../node-lock';
 import { Storage } from '../storage';
 
@@ -23,15 +23,18 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
     private _nodeLocker: NodeLocker;
 
+    public logger: LoggerPlugin;
+
     constructor(protected storage: Storage, protected id: string, public dbname: string = storage.name) {
         super();
-        this._nodeLocker = new NodeLocker(storage.debug, storage.settings.lockTimeout);
+        this._nodeLocker = new NodeLocker(storage.logger, storage.settings.lockTimeout);
+        this.logger = storage.logger;
 
         // Setup db event listeners
         storage.on('subscribe', (subscription: { path: string, event: string, callback: AceBaseSubscribeCallback }) => {
             // Subscription was added to db
 
-            storage.debug.verbose(`database subscription being added on peer ${this.id}`);
+            this.logger.trace(`database subscription being added on peer ${this.id}`);
 
             const remoteSubscription = this.remoteSubscriptions.find(sub => sub.callback === subscription.callback);
             if (remoteSubscription) {
@@ -92,17 +95,17 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
             return this.once('exit');
         }
         this._exiting = true;
-        this.storage.debug.warn(`Received ${this.isMaster ? 'master' : 'worker ' + this.id} process exit request`);
+        this.logger.warn(`Received ${this.isMaster ? 'master' : 'worker ' + this.id} process exit request`);
 
         if (this._locks.length > 0) {
-            this.storage.debug.warn(`Waiting for ${this.isMaster ? 'master' : 'worker'} ${this.id} locks to clear`);
+            this.logger.warn(`Waiting for ${this.isMaster ? 'master' : 'worker'} ${this.id} locks to clear`);
             await this.once('locks-cleared');
         }
 
         // Send "bye"
         this.sayGoodbye(this.id);
 
-        this.storage.debug.warn(`${this.isMaster ? 'Master' : 'Worker ' + this.id} will now exit`);
+        this.logger.warn(`${this.isMaster ? 'Master' : 'Worker ' + this.id} will now exit`);
         this.emitOnce('exit', code);
     }
 
@@ -155,7 +158,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
 
     protected addRemoteSubscription(peerId: string, details:ISubscriptionData) {
         if (this._exiting) { return; }
-        // this.storage.debug.log(`remote subscription being added`);
+        // this.logger.debug(`remote subscription being added`);
 
         if (this.remoteSubscriptions.some(sub => sub.for === peerId && sub.event === details.event && sub.path === details.path)) {
             // We're already serving this event for the other peer. Ignore
@@ -393,7 +396,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         const removeLock = (lockDetails: InternalLockInfo) => {
             this._locks.splice(this._locks.indexOf(lockDetails), 1);
             if (this._locks.length === 0) {
-                // this.storage.debug.log(`No more locks in worker ${this.id}`);
+                // this.logger.debug(`No more locks in worker ${this.id}`);
                 this.emit('locks-cleared');
             }
         };
@@ -449,7 +452,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
                         const req: IUnlockRequestMessage = { type: 'unlock-request', id: ID.generate(), from: this.id, to: this.masterPeerId, data: { id: lockInfo.lock.id } };
                         await this.request(req);
                         lockInfo.lock.state = LOCK_STATE.DONE;
-                        this.storage.debug.verbose(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
+                        this.logger.trace(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
                         removeLock(lockInfo);
                     },
                     moveToParent: async () => {
@@ -468,7 +471,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
                         return lockInfo.lock;
                     },
                 };
-                // this.storage.debug.log(`Worker ${this.id} received lock ${lock.id} (tid ${lock.tid}, ${lock.comment}, "/${lock.path}", ${lock.forWriting ? 'write' : 'read'})`);
+                // this.logger.debug(`Worker ${this.id} received lock ${lock.id} (tid ${lock.tid}, ${lock.comment}, "/${lock.path}", ${lock.forWriting ? 'write' : 'read'})`);
                 return lockInfo.lock;
             };
 
@@ -520,7 +523,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         const req: ICustomRequestMessage = { type: 'request', from: this.id, to: this.masterPeerId, id: ID.generate(), data: request };
         return this.request(req)
             .catch(err => {
-                this.storage.debug.error(err);
+                this.logger.error(err);
                 throw err;
             });
     }
@@ -551,7 +554,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
      * Enables or disables ipc event handling. When disabled, incoming event messages will be ignored.
      */
     set eventsEnabled(enabled: boolean) {
-        this.storage.debug.log(`ipc events ${enabled ? 'enabled' : 'disabled'}`);
+        this.logger.info(`ipc events ${enabled ? 'enabled' : 'disabled'}`);
         this._eventsEnabled = enabled;
     }
 
