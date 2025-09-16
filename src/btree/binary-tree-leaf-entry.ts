@@ -13,8 +13,6 @@ export class BinaryBPlusTreeLeafEntry {
      * @param values Array of binary values - NOTE if the tree has unique values, it must always wrap the single value in an Array: [value]
      */
     constructor(public key: NodeEntryKeyType, public values: BinaryBPlusTreeLeafEntryValue[]) {
-        this.key = key;
-        this.values = values;
     }
 
     /**
