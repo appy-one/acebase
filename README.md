@@ -289,7 +289,7 @@ You can remove data with the `remove` method
 ```javascript
 db.ref('animals/dog')
 .remove()
-.then(() => { /* removed successfully */ )};
+.then(() => { /* removed successfully */ });
 ```
 
 Removing data can also be done by setting or updating its value to `null`. Any property that has a null value will be removed from the parent object node.
@@ -298,12 +298,12 @@ Removing data can also be done by setting or updating its value to `null`. Any p
 // Remove by setting it to null
 db.ref('animals/dog')
 .set(null)
-.then(ref => { /* dog property removed */ )};
+.then(ref => { /* dog property removed */ });
 
 // Or, update its parent with a null value for 'dog' property
 db.ref('animals')
 .update({ dog: null })
-.then(ref => { /* dog property removed */ )};
+.then(ref => { /* dog property removed */ });
 ```
 
 ### Generating unique keys
@@ -319,7 +319,7 @@ db.ref('users')
 .then(userRef => {
     // user is saved, userRef points to something 
     // like 'users/jld2cjxh0000qzrmn831i7rn'
-};
+});
 ```
 
 The above example generates the unique key and stores the object immediately. You can also choose to have the key generated, but store the value later. 
@@ -333,7 +333,7 @@ postRef.set({
 })
 .then(ref => {
     console.log(`Saved post "${postRef.key}"`);
-};
+});
 ```
 
 **NOTE**: This approach is recommended if you want to add multitple new objects at once, because a single update performs way faster:
@@ -349,7 +349,7 @@ console.log(`About to add multiple messages in 1 update operation`);
 db.ref('messages').update(newMessages)
 .then(ref => {
     console.log(`Added all messages at once`);
-};
+});
 ```
 
 ### Using arrays
