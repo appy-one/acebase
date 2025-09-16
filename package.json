@@ -93,7 +93,6 @@
   "license": "MIT",
   "dependencies": {
     "acebase-core": "file:../acebase-core",
-    "pino": "^8.15.7",
     "unidecode": "^0.1.8"
   },
   "devDependencies": {
