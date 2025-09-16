@@ -1,1 +1,0 @@
-{"version":3,"file":"binary-pointer.d.ts","sourceRoot":"","sources":["../../../src/btree/binary-pointer.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,aAAa,EAAE,MAAM,aAAa,CAAC;AAE5C,MAAM,MAAM,aAAa,GAAG;IACxB,IAAI,EAAE,MAAM,CAAC;IACb,IAAI,EAAE,aAAa,CAAC;IACpB,KAAK,EAAE,MAAM,CAAA;CAChB,CAAA"}

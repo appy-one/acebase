@@ -1,1 +1,0 @@
-{"version":3,"file":"array-index-query-hint.d.ts","sourceRoot":"","sources":["../../../src/data-index/array-index-query-hint.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,cAAc,EAAE,MAAM,cAAc,CAAC;AAE9C,qBAAa,mBAAoB,SAAQ,cAAc;IACnD,MAAM,KAAK,KAAK;;OAIf;gBAEW,IAAI,EAAE,SAAS,EAAE,KAAK,EAAE,OAAO;IAI3C,IAAI,WAAW,WAUd;CACJ"}

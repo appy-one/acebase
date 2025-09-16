@@ -1,1 +1,0 @@
-{"version":3,"file":"node-address.d.ts","sourceRoot":"","sources":["../../../../src/storage/binary/node-address.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,WAAW,EAAE,MAAM,oBAAoB,CAAC;AAEjD,qBAAa,iBAAkB,SAAQ,WAAW;aAG1B,MAAM,EAAE,MAAM;aACd,QAAQ,EAAE,MAAM;gBAFhC,IAAI,EAAE,MAAM,EACI,MAAM,EAAE,MAAM,EACd,QAAQ,EAAE,MAAM;IAKpC,QAAQ;IAIR;;OAEG;IACH,MAAM,CAAC,OAAO,EAAE,iBAAiB;CAIpC"}

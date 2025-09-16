@@ -3733,24 +3733,15 @@ export class BinaryBPlusTree {
                 }
             };
 
-            const processEntries = async (entries: BinaryBPlusTreeLeafEntry[]) => {
-                if (entries.length === 0) {
-                    return flush(true); // done!
-                }
-                // options.treeStatistics.readEntries += entries.length;
-
-                // assert(entries.every((entry, index, arr) => index === 0 || _isMoreOrEqual(entry.key, arr[index-1].key)), 'Leaf entries are not sorted ok');
-                // assert(newLeafEntries.length === 0 || _isMore(entries[0].key, newLeafEntries[newLeafEntries.length-1].key), 'adding entries will corrupt sort order');
+            // Process all leaf entries
+            let entries = await options.getEntries(options.maxEntriesPerNode);
+            while (entries.length > 0) {
                 newLeafEntries.push(...entries);
-
                 const writePromise = flush(false);
                 const readNextPromise = options.getEntries(options.maxEntriesPerNode);
-                const [moreEntries] = await Promise.all([readNextPromise, writePromise]);
-                await processEntries(moreEntries);
-            };
-
-            const entries = await options.getEntries(options.maxEntriesPerNode);
-            await processEntries(entries);
+                [entries] = await Promise.all([readNextPromise, writePromise]);
+            }
+            await flush(true); // done!
 
             // .then(() => {
             //     // // DEbug tree writing

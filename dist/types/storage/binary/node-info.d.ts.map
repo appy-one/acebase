@@ -1,1 +1,0 @@
-{"version":3,"file":"node-info.d.ts","sourceRoot":"","sources":["../../../../src/storage/binary/node-info.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,QAAQ,EAAE,MAAM,iBAAiB,CAAC;AAC3C,OAAO,EAAE,iBAAiB,EAAE,MAAM,gBAAgB,CAAC;AAEnD,qBAAa,cAAe,SAAQ,QAAQ;IACxC,OAAO,CAAC,EAAE,iBAAiB,CAAC;CAC/B"}
