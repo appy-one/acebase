@@ -1,1 +1,0 @@
-{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../../../src/ipc/service/index.ts"],"names":[],"mappings":"AAEA,OAAO,EAAW,KAAK,oBAAoB,EAAE,MAAM,QAAQ,CAAC;AAS5D,wBAAsB,WAAW,CAAC,MAAM,EAAE,MAAM,EAAE,OAAO,EAAE;IAAE,QAAQ,EAAE,oBAAoB,CAAC,UAAU,CAAC,CAAC;IAAC,WAAW,EAAE,MAAM,CAAC;IAAC,IAAI,EAAE,CAAC,IAAI,EAAE,MAAM,KAAK,IAAI,CAAA;CAAE,iBAuF3J"}

@@ -1,3 +1,6 @@
 node_modules
 .vscode
 *.acebase
+dist/esm
+dist/cjs
+dist/types
