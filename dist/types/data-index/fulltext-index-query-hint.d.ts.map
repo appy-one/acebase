@@ -1,1 +1,0 @@
-{"version":3,"file":"fulltext-index-query-hint.d.ts","sourceRoot":"","sources":["../../../src/data-index/fulltext-index-query-hint.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,cAAc,EAAE,MAAM,cAAc,CAAC;AAE9C,qBAAa,sBAAuB,SAAQ,cAAc;IACtD,MAAM,KAAK,KAAK;;;;OAMf;gBAEW,IAAI,EAAE,SAAS,GAAG,SAAS,GAAG,SAAS,EAAE,KAAK,EAAE,OAAO;IAInE,IAAI,WAAW,WAed;CACJ"}

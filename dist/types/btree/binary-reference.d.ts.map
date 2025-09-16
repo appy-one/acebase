@@ -1,1 +1,0 @@
-{"version":3,"file":"binary-reference.d.ts","sourceRoot":"","sources":["../../../src/btree/binary-reference.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,aAAa,EAAE,MAAM,aAAa,CAAC;AAC5C,OAAO,EAAE,aAAa,EAAE,MAAM,aAAa,CAAC;AAE5C,MAAM,MAAM,eAAe,GAAG;IAC1B,IAAI,EAAE,MAAM,CAAC;IACb,MAAM,EAAE,aAAa,GAAG,aAAa,CAAC;IACtC,KAAK,EAAE,MAAM,CAAC;CACjB,CAAA"}
