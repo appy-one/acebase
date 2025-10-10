@@ -167,7 +167,7 @@ describe('DataProxy', () => {
         proxy.on('mutation', (event) => {
             const { snapshot: snap, isRemote: remote } = event;
             mutations.push({ snap, remote, val: snap.val(), context: snap.context() });
-            // console.log(`Mutation on "/${snap.ref.path}" with context: `, snap.context(), snap.val());
+            console.log(`Mutation on "/${snap.ref.path}" with context: `, snap.context(), snap.val());
         });
         const obj = proxy.value;
 
@@ -175,8 +175,8 @@ describe('DataProxy', () => {
             book2 = { title: 'New book 2', description: 'This is my second book' },
             book3 = { title: 'New book 3', description: 'This is my third book' };
 
-        // Add book through the proxy, considered a local mutation
-        await (obj.books as ProxiedBooks).push(book1);
+        // Add book through the proxy, considered a local mutation (is done in next tick, we can't await it)
+        (obj.books as ProxiedBooks).push(book1);
 
         // Add another book through a reference, considered a remote mutation
         await ref.child('books').push(book2);
@@ -187,12 +187,18 @@ describe('DataProxy', () => {
         await delay();
 
         expect(mutations.length).toEqual(3);
-        expect(mutations[0].remote).toBeFalse();
-        expect(mutations[0].val).toEqual(book1);
-        expect(mutations[1].remote).toBeTrue();
-        expect(mutations[1].val).toEqual(book2);
-        expect(mutations[2].remote).toBeTrue();
-        expect(mutations[2].val).toEqual(book3);
+        const book1Mutation = mutations.find(m => m.val.title === book1.title);
+        const book2Mutation = mutations.find(m => m.val.title === book2.title);
+        const book3Mutation = mutations.find(m => m.val.title === book3.title);
+        expect(book1Mutation).toBeDefined();
+        expect(book2Mutation).toBeDefined();
+        expect(book3Mutation).toBeDefined();
+        expect(book1Mutation.remote).toBeFalse();
+        expect(book1Mutation.val).toEqual(book1);
+        expect(book2Mutation.remote).toBeTrue();
+        expect(book2Mutation.val).toEqual(book2);
+        expect(book3Mutation.remote).toBeTrue();
+        expect(book3Mutation.val).toEqual(book3);
 
         removeDB();
     });
