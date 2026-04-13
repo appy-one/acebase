@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
 
 jobs:
   publish:
@@ -26,7 +27,13 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF_NAME}" == *"-rc."* ]]; then
+            echo "IS_RC=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "IS_RC=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Resolve file dependencies to npm versions
         # Replaces any "file:..." dependency entries with the latest published
@@ -84,7 +91,14 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --notes-file release_notes.md
+            --notes-file release_notes.md \
+            ${{ steps.version.outputs.IS_RC == 'true' && '--prerelease' || '' }}
 
       - name: Publish to npm
-        run: npm publish --access public --provenance
+        run: |
+          if [[ "${{ steps.version.outputs.IS_RC }}" == "true" ]]; then
+            echo "RC tag detected — running npm publish --dry-run"
+            npm publish --access public --provenance --dry-run
+          else
+            npm publish --access public --provenance
+          fi
