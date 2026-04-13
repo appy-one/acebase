@@ -42,9 +42,21 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Find which branch tip matches the tagged commit.
+          TAGGED_COMMIT=$(git rev-parse "$GITHUB_REF_NAME")
+          TARGET_BRANCH=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
+            --points-at "$TAGGED_COMMIT" | sed 's|^origin/||' | grep -v '^HEAD$' | head -1)
+
+          if [ -z "$TARGET_BRANCH" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME is not at the tip of any branch. Create tags only at the latest commit of a branch."
+            exit 1
+          fi
+
+          echo "Pushing version bump to branch: $TARGET_BRANCH"
           git add package.json package-lock.json
           git commit -m "chore: release ${{ github.ref_name }} [skip ci]"
-          git push origin HEAD:master
+          git push origin HEAD:"$TARGET_BRANCH"
 
       - name: Resolve file dependencies to npm versions
         # Replaces any "file:..." dependency entries with the latest published
