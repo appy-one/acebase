@@ -188,6 +188,23 @@ export class NodeCache {
     }
 
     /**
+     * Invalidates all cache entries whose recorded address matches any address in `addresses`.
+     * Call this before freeing (deallocating) records so stale cache pointers never cause
+     * a CorruptRecordError when the freed records are later reused by a different node.
+     */
+    invalidateAddress(addresses: Array<{ pageNr: number; recordNr: number }>) {
+        for (const [path, entry] of this._cache) {
+            const addr = entry.nodeInfo.address as { pageNr?: number; recordNr?: number } | undefined;
+            if (!addr || typeof addr.pageNr !== 'number') { return; }
+            const stale = addresses.some(a => a.pageNr === addr.pageNr && a.recordNr === addr.recordNr);
+            if (stale) {
+                console.error(`CACHE INVALIDATED for path ${path} because it used freed address ${addr.pageNr},${addr.recordNr}`);
+                this._cache.delete(path);
+            }
+        }
+    }
+
+    /**
      * Finds cached NodeInfo for a given path. Returns null if the info is not found in cache
      * @returns returns cached info, a promise, or null
      */
