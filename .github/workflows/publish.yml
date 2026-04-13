@@ -45,17 +45,19 @@ jobs:
           const fs = require('fs');
           const { execSync } = require('child_process');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const toInstall = [];
           for (const section of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
             if (!pkg[section]) continue;
             for (const [name, version] of Object.entries(pkg[section])) {
               if (version.startsWith('file:')) {
-                const latest = execSync(`npm view ${name} version`, { encoding: 'utf8' }).trim();
-                console.log(`Replacing ${name}: "${version}" → "^${latest}"`);
-                pkg[section][name] = `^${latest}`;
+                console.log(`Queuing ${name} for npm install`);
+                toInstall.push(name + '@latest');
               }
             }
           }
-          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          if (toInstall.length > 0) {
+            execSync(`npm install ${toInstall.join(' ')}`, { stdio: 'inherit' });
+          }
           EOF
 
       - name: Set version in package.json
