@@ -2359,15 +2359,13 @@ export class AceBaseStorage extends Storage {
                 deallocate.normalize();
                 this.logger.trace(`Releasing ${deallocate.totalAddresses} addresses (${deallocate.ranges.length} ranges) previously used by node "/${path}" and/or descendants: ${deallocate}`.colorize(ColorStyle.grey));
 
-                // // TEMP check, remove loop when all is good:
-                // storage.nodeCache._cache.forEach((entry, path) => {
-                //     let cachedAddress = entry.nodeInfo.address;
-                //     if (!cachedAddress) { return; }
-                //     const i = deallocate.addresses.findIndex(a => a.pageNr === cachedAddress.pageNr && a.recordNr === cachedAddress.recordNr);
-                //     if (i >= 0) {
-                //         throw new Error(`This is bad`);
-                //     }
-                // });
+                // Invalidate any cache entries still pointing at addresses we are about
+                // to free.  If such a stale pointer is not cleared here it can cause a
+                // CorruptRecordError: the freed record gets reused by a new node, the
+                // stale cache entry hands the old address to a NodeReader, and when a
+                // descendant NodeReader tries to use the same (now-repurposed) record
+                // the stack clash is detected and the error is thrown.
+                this.nodeCache.invalidateAddress(deallocate.addresses);
 
                 this.FST.release(deallocate.ranges);
             }
