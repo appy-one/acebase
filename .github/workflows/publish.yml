@@ -35,6 +35,17 @@ jobs:
             echo "IS_RC=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Set version in package.json
+        run: npm version ${{ steps.version.outputs.VERSION }} --no-git-tag-version
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: release ${{ github.ref_name }} [skip ci]"
+          git push origin HEAD:master
+
       - name: Resolve file dependencies to npm versions
         # Replaces any "file:..." dependency entries with the latest published
         # npm version. This is needed because acebase-core is referenced as a
@@ -59,9 +70,6 @@ jobs:
             execSync(`npm install ${toInstall.join(' ')}`, { stdio: 'inherit' });
           }
           EOF
-
-      - name: Set version in package.json
-        run: npm version ${{ steps.version.outputs.VERSION }} --no-git-tag-version
 
       - name: Install dependencies
         run: npm install
