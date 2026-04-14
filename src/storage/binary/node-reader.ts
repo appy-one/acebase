@@ -132,6 +132,8 @@ export class NodeReader {
                             childLock.release();
                             return { path: child.path, allocation: childAllocation };
                         });
+                    // eslint-disable-next-line @typescript-eslint/no-empty-function
+                    promise.catch(() => {}); // Suppress unhandled rejection until Promise.all attaches a handler (async gap between chunk reads)
                     childPromises.push(promise);
                 }
             });
@@ -340,6 +342,8 @@ export class NodeReader {
                             }
                             if (child.address) {
                                 const childValuePromise = loadChildValue(child);
+                                // eslint-disable-next-line @typescript-eslint/no-empty-function
+                                childValuePromise.catch(() => {}); // Suppress unhandled rejection until Promise.all attaches a handler (async gap between chunk reads)
                                 promises.push(childValuePromise);
                             }
                             else if (typeof child.value !== 'undefined') {

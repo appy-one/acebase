@@ -87,7 +87,8 @@ export class NodeCache {
             resolve = res;
             reject = rej;
         });
-        promise.catch(() => null); // Prevent unhandled rejection if rejectAnnouncement is called before anyone awaits this
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        promise.catch(() => {}); // Prevent unhandled rejection if rejectAnnouncement is called before anyone awaits this
         this._announcements.set(path, { resolve, reject, promise });
     }
 
