@@ -2085,6 +2085,7 @@ export class AceBaseStorage extends Storage {
         }
         catch(err) {
             this.logger.error('DEBUG THIS: getNodeInfo error', err);
+            this.nodeCache.rejectAnnouncement(path, err);
             throw err;
         }
         finally {

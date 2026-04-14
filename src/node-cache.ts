@@ -69,20 +69,26 @@ export class NodeCache {
         }
     }
 
-    announce(path: string) {
-        let announcement = this._announcements.get(path);
-        if (!announcement) {
-            announcement = {
-                resolve: null,
-                reject: null,
-                promise: null,
-            };
-            announcement.promise = new Promise<NodeInfo>((resolve, reject) => {
-                announcement.resolve = resolve;
-                announcement.reject = reject;
-            });
-            this._announcements.set(path, announcement);
+    rejectAnnouncement(path: string, reason: any) {
+        const announcement = this._announcements.get(path);
+        if (announcement) {
+            this._announcements.delete(path);
+            announcement.reject(reason);
         }
+    }
+
+    announce(path: string) {
+        if (this._announcements.has(path)) {
+            return;
+        }
+        let resolve!: (nodeInfo: NodeInfo) => void;
+        let reject!: (reason: any) => void;
+        const promise = new Promise<NodeInfo>((res, rej) => {
+            resolve = res;
+            reject = rej;
+        });
+        promise.catch(() => null); // Prevent unhandled rejection if rejectAnnouncement is called before anyone awaits this
+        this._announcements.set(path, { resolve, reject, promise });
     }
 
     /**
