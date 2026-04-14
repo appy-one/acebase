@@ -2154,6 +2154,7 @@ export class AceBaseStorage extends Storage {
         }
         catch(err) {
             this.logger.error('DEBUG THIS: getNodeInfo error', err);
+            this.nodeCache.rejectAnnouncement(path, err);
             throw err;
         }
         finally {
@@ -3479,7 +3480,7 @@ class NodeReader {
         let data = new Uint8Array(bytesPerRecord);
 
         const bytesRead = await this.storage.readData(fileIndex, data.buffer);
-        if (bytesRead < bytesPerRecord) { throw new Error(`Not enough bytes read from file at index ${fileIndex}, expected ${bytesPerRecord} but got ${bytesRead}`); }
+        if (bytesRead < bytesPerRecord) { throw new Error(`Not enough bytes read from file at index ${fileIndex}, expected ${bytesPerRecord} but got ${bytesRead}. Affected node: ${this.address.toString()}`); }
 
         const hasKeyIndex = (data[0] & FLAG_KEY_TREE) === FLAG_KEY_TREE;
         const valueType = (data[0] & FLAG_VALUE_TYPE) as NodeValueType; // Last 4-bits of first byte of read data has value type
