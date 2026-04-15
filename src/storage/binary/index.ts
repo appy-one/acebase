@@ -13,7 +13,7 @@ import { BinaryBPlusTree, BPlusTreeBuilder, BinaryWriter } from '../../btree';
 import { Uint8ArrayBuilder } from '../../binary';
 import { IAceBaseIPCLock } from '../../ipc/ipc';
 import { BinaryBPlusTreeTransactionOperation } from '../../btree/binary-tree-transaction-operation';
-import { NodeLock } from '../../node-lock';
+import { NodeLock, NodeLockError } from '../../node-lock';
 import { LoggerPlugin } from 'acebase-core';
 
 const { concatTypedArrays, bytesToNumber, bytesToBigint, numberToBytes, bigintToBytes, encodeString, decodeString, cloneObject } = Utils;
@@ -1924,14 +1924,14 @@ export class AceBaseStorage extends Storage {
              * @param valueCallback callback function to run for each child. Return false to stop iterating
              * @returns returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
              */
-            async next(valueCallback: ChildCallbackFunction, useAsync = options.async): Promise<boolean> {
-                return start(valueCallback, useAsync);
+            async next(valueCallback: ChildCallbackFunction): Promise<boolean> {
+                return start(valueCallback);
             },
         };
-        const start = async (callback: ChildCallbackFunction, isAsync = false) => {
+        const start = async (callback: ChildCallbackFunction) => {
             const tid = this.createTid(); //ID.generate();
             let canceled = false;
-            const lock = await this.nodeLocker.lock(path, tid.toString(), false, `storage.getChildren "/${path}"`);
+            const lock = await this.nodeLocker.lock(path, tid.toString(), false, `storage.getChildren`);
             try {
                 const nodeInfo = await this.getNodeInfo(path, { tid });
                 if (!nodeInfo.exists) {
@@ -1942,22 +1942,24 @@ export class AceBaseStorage extends Storage {
                     return;
                 }
                 const reader = new NodeReader(this, nodeInfo.address, lock, true);
-                const nextCallback = isAsync
-                    ? async (childInfo: BinaryNodeInfo) => {
-                        canceled = (await callback(childInfo)) === false;
-                        return !canceled;
-                    }
-                    : (childInfo: BinaryNodeInfo) => {
-                        canceled = callback(childInfo) === false;
-                        return !canceled;
-                    };
                 await reader.getChildStream({ keyFilter: options.keyFilter })
-                    .next(nextCallback, isAsync);
+                    .next((childInfo: BinaryNodeInfo) => {
+                        const result = callback(childInfo);
+                        if (result instanceof Promise) {
+                            return result.then((r) => {
+                                canceled = r === false;
+                        return !canceled;
+                            });
+                    }
+                        canceled = result === false;
+                        return !canceled;
+                    });
                 return canceled;
             }
-            catch(err) {
+            catch(err: any) {
                 if (!(err instanceof NodeNotFoundError)) {
-                    this.logger.error(`Error getting children: ${err.stack}`);
+                    this.logger.error(`Error getting children of "/${path}": ${err.message}`);
+                    this.logger.trace(err);
                 }
                 throw err;
             }
@@ -2660,37 +2662,40 @@ class NodeReader {
         if (!includeChildNodes && this.recordInfo !== null) {
             return this.recordInfo.allocation;
         }
-        let allocation: NodeAllocation = null;
 
         await this.readHeader();
-        allocation = this.recordInfo.allocation;
+        const allocation = this.recordInfo.allocation;
         if (!includeChildNodes) {
             return [{ path: this.address.path, allocation }];
         }
 
-        const childPromises = [] as Promise<any>[];
         await this.getChildStream()
             .next(child => {
+                if (child.address) {
+                    // Get child allocation
                 const address = child.address;
-                if (address) {
-                // Get child Allocation
-                    const promise = this.storage.nodeLocker.lock(child.path, this.lock.tid, false, `NodeReader:getAllocation:child "/${child.path}"`)
-                        .then(async childLock => {
+                    return new Promise<boolean>(async (resolve, reject) => {
+                        let childLock;
+                        try {
+                            childLock = await this.storage.nodeLocker.lock(child.path, this.lock.tid, false, `NodeReader:getAllocation:child "/${child.path}"`);
                             const reader = new NodeReader(this.storage, address, childLock, this.updateCache);
                             const childAllocation = await reader.getAllocation(true);
-                            childLock.release();
-                            return { path: child.path, allocation: childAllocation };
-                        });
-                    // eslint-disable-next-line @typescript-eslint/no-empty-function
-                    promise.catch(() => {}); // Suppress unhandled rejection until Promise.all attaches a handler (async gap between chunk reads)
-                    childPromises.push(promise);
+                            allocation.ranges.push(...childAllocation.ranges);
+                        }
+                        catch (err: any) {
+                            this.logger.error(`Error getting record allocation for ${address.toString()}: ${err.message}`);
+                            this.logger.trace(err);
+                            if (err instanceof NodeLockError) {
+                                return reject(err); // Lock denied - throw error
+                }
+                        }
+                        finally {
+                            await childLock?.release().catch();
+                        }
+                        resolve(true);
+        });
                 }
             });
-        const arr = await Promise.all(childPromises);
-        arr.forEach(result => {
-            allocation.ranges.push(...result.allocation.ranges);
-        });
-        //console.log(childAllocations);
         return allocation;
     }
 
@@ -2800,7 +2805,6 @@ class NodeReader {
                 //     }
                 // }
 
-                const promises = [] as Promise<any>[];
                 const isWildcardKey = (key: string | number) => typeof key === 'string' && (key === '*' || key[0] === '$');
                 const hasWildcardInclude = includeFilter.length > 0 && includeFilter.some(pathInfo => pathInfo.keys.length === 1 && isWildcardKey(pathInfo.keys[0]));
                 const hasChildIncludes = includeFilter.length > 0 && includeFilter.some(pathInfo => pathInfo.keys.length === 1 && !isWildcardKey(pathInfo.keys[0]));
@@ -2869,7 +2873,7 @@ class NodeReader {
                         throw reason;
                     }
                     finally {
-                        childLock && childLock.release();
+                        childLock?.release();
                     }
                 };
 
@@ -2890,10 +2894,7 @@ class NodeReader {
                                 return;
                             }
                             if (child.address) {
-                                const childValuePromise = loadChildValue(child);
-                                // eslint-disable-next-line @typescript-eslint/no-empty-function
-                                childValuePromise.catch(() => {}); // Suppress unhandled rejection until Promise.all attaches a handler (async gap between chunk reads)
-                                promises.push(childValuePromise);
+                                return loadChildValue(child);
                             }
                             else if (typeof child.value !== 'undefined') {
                                 (obj as any)[keyOrIndex] = child.value;
@@ -2908,7 +2909,6 @@ class NodeReader {
                             }
                         });
                     // We're done reading child info
-                    await Promise.all(promises); // Wait for any child reads to complete
                     return obj;
                 }
                 catch (err) {
@@ -3061,12 +3061,10 @@ class NodeReader {
 
         type ChildCallbackFunction = (childInfo: BinaryNodeInfo, index: number) => boolean | void | Promise<boolean | void>
         let callback: ChildCallbackFunction;
-        let isAsync = false;
         let childCount = 0;
         const generator = {
-            async next(cb: ChildCallbackFunction, useAsync = false) {
+            async next(cb: ChildCallbackFunction) {
                 callback = cb;
-                isAsync = useAsync;
                 return start();
             },
         };
@@ -3118,7 +3116,7 @@ class NodeReader {
                 //     const res = getValueFromBinary(childInfo, value.recordPointer, 0);
                 //     if (!res.skip) {
                 //         let result = callback(childInfo, i);
-                //         if (isAsync && result instanceof Promise) { result = await result; }
+                //         if (result instanceof Promise) { result = await result; }
                 //         canceled = result === false; // Keep going until callback returns false
                 //         if (canceled) { break; }
                 //     }
@@ -3134,7 +3132,7 @@ class NodeReader {
                     const res = getValueFromBinary(childInfo, value.recordPointer, 0);
                     if (!res.skip) {
                         let result = callback(childInfo, i++);
-                        if (isAsync && result instanceof Promise) { result = await result; }
+                        if (result instanceof Promise) { result = await result; }
                         canceled = result === false; // Keep going until callback returns false
                         if (canceled) { break; }
                     }
@@ -3155,7 +3153,7 @@ class NodeReader {
 
                     for(let i = 0; !canceled && i < children.length; i++) {
                         let result = callback(children[i], i);
-                        if (isAsync && result instanceof Promise) { result = await result; }
+                        if (result instanceof Promise) { result = await result; }
                         canceled = result === false; // Keep going until callback returns false
                     }
                     leaf = !canceled && leaf.getNext ? await leaf.getNext() : null;
@@ -3347,7 +3345,7 @@ class NodeReader {
             for (let i = 0; !canceled && i < children.length; i++) {
                 const child = children[i];
                 let result = callback(child, i);
-                if (isAsync && result instanceof Promise) { result = await result; }
+                if (result instanceof Promise) { result = await result; }
                 canceled = result === false; // Keep going until callback returns false
             }
             if (canceled || isLastChunk) {
@@ -3629,18 +3627,15 @@ async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, upd
 
     await nodeReader.getChildStream({ keyFilter: affectedKeys as string[] | number[] })
         .next(child => {
-
-            const keyOrIndex = isArray ? child.index : child.key;
+            const keyOrIndex = isArray ? child.index as number : child.key as string;
             newKeys.splice(newKeys.indexOf(keyOrIndex), 1); // Remove from newKeys array, it exists already
             const newValue = updates[keyOrIndex];
 
             // Get current value
             if (child.address) {
-
                 if (newValue instanceof InternalNodeReference) {
                 // This update originates from a child node update, its record location changed
                 // so we only have to update the reference to the new location
-
                     isInternalUpdate = true;
                     const oldAddress = child.address; //child.storedAddress || child.address;
                     const currentValue = new InternalNodeReference(child.type, oldAddress);
@@ -3650,23 +3645,34 @@ async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, upd
 
                 // Child is stored in own record, and it is updated or deleted so we need to get
                 // its allocation so we can release it when updating is done
-                const promise = storage.nodeLocker.lock(child.address.path, lock.tid, false, `_mergeNode: read child "/${child.address.path}"`)
-                    .then(async childLock => {
-                        const childReader = new NodeReader(storage, child.address, childLock, false);
+                const childAddress = child.address;
+                return new Promise<boolean>(async (resolve, reject) => {
+                    let childLock;
+                    try {
+                        childLock = await storage.nodeLocker.lock(childAddress.path, lock.tid, false, '_mergeNode: read child');
+                        const childReader = new NodeReader(storage, childAddress, childLock, false);
                         const allocation = await childReader.getAllocation(true);
-                        childLock.release();
                         discardAllocation.ranges.push(...allocation.ranges);
+                    }
+                    catch (err: any) {
+                        storage.logger.error(`Error getting record allocation for ${childAddress.toString()}: ${err.message}`);
+                        storage.logger.trace(err);
+                        if (err instanceof NodeLockError) {
+                            return reject(err); // Lock denied - throw error
+                        }
+                    }
+                    finally {
+                        await childLock?.release().catch();
+                    }
                         const currentChildValue = new InternalNodeReference(child.type, child.address);
                         changes.add(keyOrIndex, currentChildValue, newValue);
+                    resolve(true);
                     });
-                childValuePromises.push(promise);
             }
             else {
                 changes.add(keyOrIndex, child.value, newValue);
             }
         });
-
-    await Promise.all(childValuePromises);
 
     // Check which keys we haven't seen (were not in the current node), these will be added
     newKeys.forEach(key => {
@@ -3955,7 +3961,7 @@ async function _createNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, ne
 }
 
 async function _lockAndWriteNode(storage: AceBaseStorage, path: string, value: any, parentTid: string | number): Promise<RecordInfo> {
-    const lock = await storage.nodeLocker.lock(path, parentTid.toString(), true, `_lockAndWrite "${path}"`);
+    const lock = await storage.nodeLocker.lock(path, parentTid.toString(), true, '_lockAndWrite');
     try {
         const recordInfo = await _writeNode(storage, path, value, lock);
         return recordInfo;
