@@ -68,6 +68,13 @@ export class NodeReader {
             const error = new CorruptRecordError(parentAddress, pathInfo.key, `CORRUPT RECORD: key "${pathInfo.key}" in "/${parentAddress.path}" (@${parentAddress.pageNr},${parentAddress.recordNr}) refers to address @${clash.pageNr},${clash.recordNr} which was already used to read "/${clash.path}". Recursive or repeated reading has been prevented.`);
             this.logger.error(error.message);
             throw error;
+        } else if (address.path === 'simulate/corrupt/record/here') {
+            const pathInfo = PathInfo.get(address.path);
+            const parentAddress = new BinaryNodeAddress(pathInfo.parentPath, 9999, 1);
+            const clash = new BinaryNodeAddress('simulate/clash/record', 9999, 2);
+            const error = new CorruptRecordError(parentAddress, pathInfo.key, `(SIMULATED) CORRUPT RECORD: key "${pathInfo.key}" in "/${parentAddress.path}" (@${parentAddress.pageNr},${parentAddress.recordNr}) refers to address @${clash.pageNr},${clash.recordNr} which was already used to read "/${clash.path}". Recursive or repeated reading has been prevented.`);
+            this.logger.error(error.message);
+            throw error;
         }
         stack[key] = address;
         this.stack = stack;
