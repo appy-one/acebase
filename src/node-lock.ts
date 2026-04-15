@@ -11,6 +11,12 @@ export const LOCK_STATE = {
     DONE: 'done',
 };
 
+export class NodeLockError extends Error {
+    constructor(message: string, public lock: NodeLock | null) {
+        super(message);
+    }
+}
+
 export class NodeLocker {
 
     private _locks: NodeLock[] = [];
@@ -155,10 +161,12 @@ export class NodeLocker {
             proceed = true;
         }
         else if (this._locks.findIndex((l => l.tid === tid && l.state === LOCK_STATE.EXPIRED)) >= 0) {
-            throw new Error(`lock on tid ${tid} has expired, not allowed to continue`);
+            const expiredLock = this._locks.find((l => l.tid === tid && l.state === LOCK_STATE.EXPIRED));
+            throw new NodeLockError(`lock on tid ${tid} has expired, not allowed to continue`, expiredLock ?? null);
         }
         else if (this._quit && !options.withPriority) {
-            throw new Error(`Quitting`);
+            const refLock = this._locks.find((l => l.tid === tid && l.path === path));
+            throw new NodeLockError(`Quitting`, refLock ?? null);
         }
         else {
             DEBUG_MODE && console.error(`${forWriting ? 'write' : 'read'} lock requested on "${path}" by tid ${tid} (${comment})`);
@@ -205,11 +213,12 @@ export class NodeLocker {
                         timeoutCount++;
                         if (timeoutCount <= 3) {
                             // Warn first.
-                            this.logger.warn(`${lock.forWriting ? 'write' : 'read' } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) is taking a long time to complete [${timeoutCount}]`);
+                            this.logger.warn(`${lock.forWriting ? 'write' : 'read' } lock on "/${lock.path}" is taking long [${timeoutCount}]; tid=${lock.tid} comment=${lock.comment}`);
+                            lock.warned = true;
                             lock.timeout = setTimeout(timeoutHandler, this.timeout / 4);
                             return;
                         }
-                        this.logger.error(`lock :: ${lock.forWriting ? 'write' : 'read' } lock on path "/${lock.path}" by tid ${lock.tid} (${lock.comment}) took too long`);
+                        this.logger.error(`${lock.forWriting ? 'write' : 'read' } lock on "/${lock.path}" expired! tid=${lock.tid} comment=${lock.comment}`);
                         lock.state = LOCK_STATE.EXPIRED;
                         // let allTransactionLocks = _locks.filter(l => l.tid === lock.tid).sort((a,b) => a.requested < b.requested ? -1 : 1);
                         // let transactionsDebug = allTransactionLocks.map(l => `${l.state} ${l.forWriting ? "WRITE" : "read"} ${l.comment}`).join("\n");
@@ -246,12 +255,15 @@ export class NodeLocker {
             lock = this._locks[i];
         }
         if (i < 0) {
-            const msg = `lock on "/${lock.path}" for tid ${lock.tid} wasn't found; ${comment}`;
+            const msg = `lock on "/${lock?.path ?? '?'}" for tid ${lock?.tid ?? '?'} wasn't found; ${comment}`;
             // debug.error(`unlock :: ${msg}`);
-            throw new Error(msg);
+            throw new NodeLockError(msg, lock ?? null);
         }
         lock.state = LOCK_STATE.DONE;
         clearTimeout(lock.timeout);
+        if (lock.warned) {
+            this.logger.info(`long running ${lock.forWriting ? 'write' : 'read'} lock on "${lock.path}" by tid ${lock.tid} has been released`);
+        }
         this._locks.splice(i, 1);
         DEBUG_MODE && console.error(`${lock.forWriting ? 'write' : 'read'} lock RELEASED on "${lock.path}" by tid ${lock.tid}`);
         //debug.warn(`unlock :: RELEASED ${lock.forWriting ? "write" : "read" } lock on "/${lock.path}" for tid ${lock.tid}; ${lock.comment}; ${comment}`);
@@ -283,6 +295,7 @@ export class NodeLock {
     id: number = ++lastid;
     history: { action: string; path: string; forWriting: boolean; comment?: string }[] = [];
     timeout: NodeJS.Timeout;
+    warned = false;
 
     resolve: (lock: NodeLock) => void;
     reject: (err: Error) => void;

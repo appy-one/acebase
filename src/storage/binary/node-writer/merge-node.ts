@@ -1,5 +1,6 @@
 import { ColorStyle, PathInfo, Utils } from 'acebase-core';
 import { IAceBaseIPCLock } from '../../../ipc/ipc.js';
+import { NodeLockError } from '../../../node-lock.js';
 import { NodeChange, NodeChangeTracker } from '../../../node-changes.js';
 import { VALUE_TYPES } from '../../../node-value-types.js';
 import { InternalNodeReference } from '../internal-node-reference.js';
@@ -52,8 +53,6 @@ export async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeIn
         return { recordMoved, recordInfo: newRecordInfo, deallocate: discardAllocation };
     };
 
-    const childValuePromises = [] as Promise<unknown>[];
-
     if (isArray) {
         // keys to update must be integers
         for (let i = 0; i < affectedKeys.length; i++) {
@@ -68,18 +67,15 @@ export async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeIn
 
     await nodeReader.getChildStream({ keyFilter: affectedKeys as string[] | number[] })
         .next(child => {
-
-            const keyOrIndex = isArray ? child.index : child.key;
+            const keyOrIndex = isArray ? child.index! : child.key!;
             newKeys.splice(newKeys.indexOf(keyOrIndex), 1); // Remove from newKeys array, it exists already
             const newValue = updates[keyOrIndex];
 
             // Get current value
             if (child.address) {
-
                 if (newValue instanceof InternalNodeReference) {
-                // This update originates from a child node update, its record location changed
-                // so we only have to update the reference to the new location
-
+                    // This update originates from a child node update, its record location changed
+                    // so we only have to update the reference to the new location
                     isInternalUpdate = true;
                     const oldAddress = child.address; //child.storedAddress || child.address;
                     const currentValue = new InternalNodeReference(child.type, oldAddress);
@@ -89,23 +85,34 @@ export async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeIn
 
                 // Child is stored in own record, and it is updated or deleted so we need to get
                 // its allocation so we can release it when updating is done
-                const promise = storage.nodeLocker.lock(child.address.path, lock.tid, false, `_mergeNode: read child "/${child.address.path}"`)
-                    .then(async childLock => {
-                        const childReader = new NodeReader(storage, child.address, childLock, false);
+                const childAddress = child.address;
+                return new Promise<boolean>(async (resolve, reject) => {
+                    let childLock;
+                    try {
+                        childLock = await storage.nodeLocker.lock(childAddress.path, lock.tid, false, '_mergeNode: read child');
+                        const childReader = new NodeReader(storage, childAddress, childLock, false);
                         const allocation = await childReader.getAllocation(true);
-                        childLock.release();
                         discardAllocation.ranges.push(...allocation.ranges);
-                        const currentChildValue = new InternalNodeReference(child.type, child.address);
-                        changes.add(keyOrIndex, currentChildValue, newValue);
-                    });
-                childValuePromises.push(promise);
+                    }
+                    catch (err: any) {
+                        storage.logger.error(`Error getting record allocation for ${childAddress.toString()}: ${err.message}`);
+                        storage.logger.trace(err);
+                        if (err instanceof NodeLockError) {
+                            return reject(err); // Lock denied - throw error
+                        }
+                    }
+                    finally {
+                        await childLock?.release().catch();
+                    }
+                    const currentChildValue = new InternalNodeReference(child.type, child.address);
+                    changes.add(keyOrIndex, currentChildValue, newValue);
+                    resolve(true);
+                });
             }
             else {
                 changes.add(keyOrIndex, child.value, newValue);
             }
         });
-
-    await Promise.all(childValuePromises);
 
     // Check which keys we haven't seen (were not in the current node), these will be added
     newKeys.forEach(key => {

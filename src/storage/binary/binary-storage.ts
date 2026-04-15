@@ -1855,14 +1855,14 @@ export class AceBaseStorage extends Storage {
              * @param valueCallback callback function to run for each child. Return false to stop iterating
              * @returns returns a promise that resolves with a boolean indicating if all children have been enumerated, or was canceled by the valueCallback function
              */
-            async next(valueCallback: ChildCallbackFunction, useAsync = options.async): Promise<boolean> {
-                return start(valueCallback, useAsync);
+            async next(valueCallback: ChildCallbackFunction): Promise<boolean> {
+                return start(valueCallback);
             },
         };
-        const start = async (callback: ChildCallbackFunction, isAsync = false) => {
+        const start = async (callback: ChildCallbackFunction) => {
             const tid = this.createTid(); //ID.generate();
             let canceled = false;
-            const lock = await this.nodeLocker.lock(path, tid.toString(), false, `storage.getChildren "/${path}"`);
+            const lock = await this.nodeLocker.lock(path, tid.toString(), false, `storage.getChildren`);
             try {
                 const nodeInfo = await this.getNodeInfo(path, { tid });
                 if (!nodeInfo.exists) {
@@ -1873,22 +1873,24 @@ export class AceBaseStorage extends Storage {
                     return;
                 }
                 const reader = new NodeReader(this, nodeInfo.address, lock, true);
-                const nextCallback = isAsync
-                    ? async (childInfo: BinaryNodeInfo) => {
-                        canceled = (await callback(childInfo)) === false;
-                        return !canceled;
-                    }
-                    : (childInfo: BinaryNodeInfo) => {
-                        canceled = callback(childInfo) === false;
-                        return !canceled;
-                    };
                 await reader.getChildStream({ keyFilter: options.keyFilter })
-                    .next(nextCallback, isAsync);
+                    .next((childInfo: BinaryNodeInfo) => {
+                        const result = callback(childInfo);
+                        if (result instanceof Promise) {
+                            return result.then((r) => {
+                                canceled = r === false;
+                                return !canceled;
+                            });
+                        }
+                        canceled = result === false;
+                        return !canceled;
+                    });
                 return canceled;
             }
-            catch(err) {
+            catch(err: any) {
                 if (!(err instanceof NodeNotFoundError)) {
-                    this.logger.error(`Error getting children: ${err.stack}`);
+                    this.logger.error(`Error getting children of "/${path}": ${err.message}`);
+                    this.logger.trace(err);
                 }
                 throw err;
             }

@@ -92,8 +92,9 @@ export class Storage extends SimpleEventEmitter {
             }
         });
         this.nodeLocker = {
-            lock: (path, tid, write, comment) => {
-                return this.ipc.lock({ path, tid, write, comment });
+            lock: async (path, tid, write, comment) => {
+                const lock = await this.ipc.lock({ path, tid, write, comment });
+                return lock;
             },
         };
         // this.transactionManager = new IPCTransactionManager(this.ipc);

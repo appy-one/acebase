@@ -1,6 +1,6 @@
 import { ColorStyle, LoggerPlugin, PartialArray, PathInfo, PathReference, Utils } from 'acebase-core';
 import { NodeValueType, VALUE_TYPES } from '../../node-value-types.js';
-import { NodeLock } from '../../node-lock.js';
+import { NodeLock, NodeLockError } from '../../node-lock.js';
 import { BinaryBPlusTree } from '../../btree/index.js';
 import { BinaryNodeAddress } from './node-address.js';
 import { RecordInfo } from './record-info.js';
@@ -111,37 +111,40 @@ export class NodeReader {
         if (!includeChildNodes && this.recordInfo !== null) {
             return this.recordInfo.allocation;
         }
-        let allocation: NodeAllocation = null;
 
         await this.readHeader();
-        allocation = this.recordInfo.allocation;
+        const allocation = this.recordInfo.allocation;
         if (!includeChildNodes) {
             return [{ path: this.address.path, allocation }];
         }
 
-        const childPromises = [] as Promise<any>[];
         await this.getChildStream()
             .next(child => {
-                const address = child.address;
-                if (address) {
-                // Get child Allocation
-                    const promise = this.storage.nodeLocker.lock(child.path, this.lock.tid, false, `NodeReader:getAllocation:child "/${child.path}"`)
-                        .then(async childLock => {
+                if (child.address) {
+                    // Get child allocation
+                    const address = child.address;
+                    return new Promise<boolean>(async (resolve, reject) => {
+                        let childLock;
+                        try {
+                            childLock = await this.storage.nodeLocker.lock(address.path, this.lock.tid, false, `NodeReader:getAllocation:child "/${address.path}"`);
                             const reader = new NodeReader(this.storage, address, childLock, this.updateCache);
                             const childAllocation = await reader.getAllocation(true);
-                            childLock.release();
-                            return { path: child.path, allocation: childAllocation };
-                        });
-                    // eslint-disable-next-line @typescript-eslint/no-empty-function
-                    promise.catch(() => {}); // Suppress unhandled rejection until Promise.all attaches a handler (async gap between chunk reads)
-                    childPromises.push(promise);
+                            allocation.ranges.push(...childAllocation.ranges);
+                        }
+                        catch (err: any) {
+                            this.logger.error(`Error getting record allocation for ${address.toString()}: ${err.message}`);
+                            this.logger.trace(err);
+                            if (err instanceof NodeLockError) {
+                                return reject(err); // Lock denied - throw error
+                            }
+                        }
+                        finally {
+                            await childLock?.release().catch();
+                        }
+                        resolve(true);
+                    });
                 }
             });
-        const arr = await Promise.all(childPromises);
-        arr.forEach(result => {
-            allocation.ranges.push(...result.allocation.ranges);
-        });
-        //console.log(childAllocations);
         return allocation;
     }
 
@@ -251,7 +254,6 @@ export class NodeReader {
                 //     }
                 // }
 
-                const promises = [] as Promise<any>[];
                 const isWildcardKey = (key: string | number) => typeof key === 'string' && (key === '*' || key[0] === '$');
                 const hasWildcardInclude = includeFilter.length > 0 && includeFilter.some(pathInfo => pathInfo.keys.length === 1 && isWildcardKey(pathInfo.keys[0]));
                 const hasChildIncludes = includeFilter.length > 0 && includeFilter.some(pathInfo => pathInfo.keys.length === 1 && !isWildcardKey(pathInfo.keys[0]));
@@ -320,7 +322,7 @@ export class NodeReader {
                         throw reason;
                     }
                     finally {
-                        childLock && childLock.release();
+                        childLock?.release();
                     }
                 };
 
@@ -341,10 +343,7 @@ export class NodeReader {
                                 return;
                             }
                             if (child.address) {
-                                const childValuePromise = loadChildValue(child);
-                                // eslint-disable-next-line @typescript-eslint/no-empty-function
-                                childValuePromise.catch(() => {}); // Suppress unhandled rejection until Promise.all attaches a handler (async gap between chunk reads)
-                                promises.push(childValuePromise);
+                                return loadChildValue(child);
                             }
                             else if (typeof child.value !== 'undefined') {
                                 (obj as any)[keyOrIndex] = child.value;
@@ -359,7 +358,6 @@ export class NodeReader {
                             }
                         });
                     // We're done reading child info
-                    await Promise.all(promises); // Wait for any child reads to complete
                     return obj;
                 }
                 catch (err) {
@@ -512,12 +510,10 @@ export class NodeReader {
 
         type ChildCallbackFunction = (childInfo: BinaryNodeInfo, index: number) => boolean | void | Promise<boolean | void>
         let callback: ChildCallbackFunction;
-        let isAsync = false;
         let childCount = 0;
         const generator = {
-            async next(cb: ChildCallbackFunction, useAsync = false) {
+            async next(cb: ChildCallbackFunction) {
                 callback = cb;
-                isAsync = useAsync;
                 return start();
             },
         };
@@ -569,7 +565,7 @@ export class NodeReader {
                 //     const res = getValueFromBinary(childInfo, value.recordPointer, 0);
                 //     if (!res.skip) {
                 //         let result = callback(childInfo, i);
-                //         if (isAsync && result instanceof Promise) { result = await result; }
+                //         if (result instanceof Promise) { result = await result; }
                 //         canceled = result === false; // Keep going until callback returns false
                 //         if (canceled) { break; }
                 //     }
@@ -585,7 +581,7 @@ export class NodeReader {
                     const res = getValueFromBinary(childInfo, value.recordPointer, 0);
                     if (!res.skip) {
                         let result = callback(childInfo, i++);
-                        if (isAsync && result instanceof Promise) { result = await result; }
+                        if (result instanceof Promise) { result = await result; }
                         canceled = result === false; // Keep going until callback returns false
                         if (canceled) { break; }
                     }
@@ -606,7 +602,7 @@ export class NodeReader {
 
                     for(let i = 0; !canceled && i < children.length; i++) {
                         let result = callback(children[i], i);
-                        if (isAsync && result instanceof Promise) { result = await result; }
+                        if (result instanceof Promise) { result = await result; }
                         canceled = result === false; // Keep going until callback returns false
                     }
                     leaf = !canceled && leaf.getNext ? await leaf.getNext() : null;
@@ -798,7 +794,7 @@ export class NodeReader {
             for (let i = 0; !canceled && i < children.length; i++) {
                 const child = children[i];
                 let result = callback(child, i);
-                if (isAsync && result instanceof Promise) { result = await result; }
+                if (result instanceof Promise) { result = await result; }
                 canceled = result === false; // Keep going until callback returns false
             }
             if (canceled || isLastChunk) {
