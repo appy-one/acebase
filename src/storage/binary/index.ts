@@ -1948,9 +1948,9 @@ export class AceBaseStorage extends Storage {
                         if (result instanceof Promise) {
                             return result.then((r) => {
                                 canceled = r === false;
-                        return !canceled;
+                                return !canceled;
                             });
-                    }
+                        }
                         canceled = result === false;
                         return !canceled;
                     });
@@ -2619,6 +2619,13 @@ class NodeReader {
             const error = new CorruptRecordError(parentAddress, pathInfo.key, `CORRUPT RECORD: key "${pathInfo.key}" in "/${parentAddress.path}" (@${parentAddress.pageNr},${parentAddress.recordNr}) refers to address @${clash.pageNr},${clash.recordNr} which was already used to read "/${clash.path}". Recursive or repeated reading has been prevented.`);
             this.logger.error(error.message);
             throw error;
+        } else if (address.path === 'simulate/corrupt/record/here') {
+            const pathInfo = PathInfo.get(address.path);
+            const parentAddress = new BinaryNodeAddress(pathInfo.parentPath, 9999, 1);
+            const clash = new BinaryNodeAddress('simulate/clash/record', 9999, 2);
+            const error = new CorruptRecordError(parentAddress, pathInfo.key, `(SIMULATED) CORRUPT RECORD: key "${pathInfo.key}" in "/${parentAddress.path}" (@${parentAddress.pageNr},${parentAddress.recordNr}) refers to address @${clash.pageNr},${clash.recordNr} which was already used to read "/${clash.path}". Recursive or repeated reading has been prevented.`);
+            this.logger.error(error.message);
+            throw error;
         }
         stack[key] = address;
         this.stack = stack;
@@ -2673,7 +2680,7 @@ class NodeReader {
             .next(child => {
                 if (child.address) {
                     // Get child allocation
-                const address = child.address;
+                    const address = child.address;
                     return new Promise<boolean>(async (resolve, reject) => {
                         let childLock;
                         try {
@@ -2687,13 +2694,13 @@ class NodeReader {
                             this.logger.trace(err);
                             if (err instanceof NodeLockError) {
                                 return reject(err); // Lock denied - throw error
-                }
+                            }
                         }
                         finally {
                             await childLock?.release().catch();
                         }
                         resolve(true);
-        });
+                    });
                 }
             });
         return allocation;
@@ -3634,8 +3641,8 @@ async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, upd
             // Get current value
             if (child.address) {
                 if (newValue instanceof InternalNodeReference) {
-                // This update originates from a child node update, its record location changed
-                // so we only have to update the reference to the new location
+                    // This update originates from a child node update, its record location changed
+                    // so we only have to update the reference to the new location
                     isInternalUpdate = true;
                     const oldAddress = child.address; //child.storedAddress || child.address;
                     const currentValue = new InternalNodeReference(child.type, oldAddress);
@@ -3664,10 +3671,10 @@ async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeInfo, upd
                     finally {
                         await childLock?.release().catch();
                     }
-                        const currentChildValue = new InternalNodeReference(child.type, child.address);
-                        changes.add(keyOrIndex, currentChildValue, newValue);
+                    const currentChildValue = new InternalNodeReference(child.type, child.address);
+                    changes.add(keyOrIndex, currentChildValue, newValue);
                     resolve(true);
-                    });
+                });
             }
             else {
                 changes.add(keyOrIndex, child.value, newValue);
