@@ -187,7 +187,7 @@ describe('node locking', () => {
             actions: [] as number[],
             delays: [] as number[],
         };
-        const handleError = (err: any) => {
+        const handleError = async (err: any) => {
             console.error(err.message);
             console.log(`To replay, use following actions and delays`);
             console.log(replay);
@@ -203,7 +203,7 @@ describe('node locking', () => {
             const nr = i;
             const p = actions[actionIndex]().catch(err => {
                 console.error(`Error executing action nr ${nr} index ${actionIndex}:`, actions[actionIndex]);
-                handleError(err);
+                return handleError(err);
             });
             promises.push(p);
             const ms = replay.enabled ? replay.delays[i] : Math.round(50 * Math.random());
