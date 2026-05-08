@@ -806,6 +806,10 @@ export class NodeReader {
 
         const createStreamFromLinearData = async (chunkData: Uint8Array, isLastChunk: boolean) => { // , chunkStartIndex
             const children = getChildrenFromChunk(this.recordInfo.valueType, chunkData); //, chunkStartIndex);
+            if (options.fromKey) {
+                // Sort children to make sure we don't skip any
+                children.sort((a, b) => isArray ? (a.index as number) - (b.index as number) : (a.key as string) < (b.key as string) ? -1 : 1);
+            }
             let canceled = false;
             for (let i = 0; !canceled && i < children.length; i++) {
                 const child = children[i];
