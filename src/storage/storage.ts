@@ -1127,6 +1127,7 @@ export class Storage extends SimpleEventEmitter {
         tid?: string|number;
         /**
          * whether to use an async/await flow for each `.next` call
+         * @deprectaed automatically uses async
          */
         async?: boolean;
     }): { next: (callback: (child: NodeInfo) => boolean|void|Promise<boolean|void>) => Promise<boolean>} {
