@@ -116,7 +116,10 @@ export async function _write(
         const wholePages = Math.floor(requiredRecords / storage.settings.pageSize);
         const remainingRecords = requiredRecords % storage.settings.pageSize;
         const maxChunks = Math.max(0, wholePages) + Math.min(storage.FST.maxScraps, remainingRecords);
-        calculateStorageNeeds(maxChunks);
+        // If the existing allocation has more ranges than maxChunks, use the actual range count
+        // so requiredRecords correctly accounts for the larger header before the useExistingAllocation check.
+        const existingRanges = currentRecordInfo ? currentRecordInfo.allocation.ranges.length : 0;
+        calculateStorageNeeds(Math.max(maxChunks, existingRanges));
     }
 
     // Request storage space for these records
