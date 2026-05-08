@@ -1839,16 +1839,12 @@ export class AceBaseStorage extends Storage {
             /**
              * whether to use an async/await flow for each `.next` call
              * @default false
+             * @deprecated Uses async automatically
              */
             async?: boolean;
-        } = {
-            async: false,
-        },
+        } = {},
     ) {
         type ChildCallbackFunction = (child: BinaryNodeInfo) => boolean | void | Promise<boolean | void>;
-        if (typeof options.async !== 'boolean') {
-            options.async = false;
-        }
         const generator = {
             /**
              *
