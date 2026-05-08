@@ -1,7 +1,7 @@
 import { ColorStyle, LoggerPlugin, PartialArray, PathInfo, PathReference, Utils } from 'acebase-core';
 import { NodeValueType, VALUE_TYPES } from '../../node-value-types.js';
 import { NodeLock, NodeLockError } from '../../node-lock.js';
-import { BinaryBPlusTree } from '../../btree/index.js';
+import { BinaryBPlusTree, BinaryBPlusTreeLeaf } from '../../btree/index.js';
 import { BinaryNodeAddress } from './node-address.js';
 import { RecordInfo } from './record-info.js';
 import { AceBaseStorage } from './binary-storage.js';
@@ -828,6 +828,27 @@ export class NodeReader {
      */
     async getChildCount() {
         let count = 0;
+
+        // Check if the record has a B+Tree for the child keys
+        if (this.recordInfo === null) {
+            await this.readHeader();
+        }
+        if (this.recordInfo.hasKeyIndex) {
+            // Read the tree to quickly count the child keys
+            const tree = new BinaryBPlusTree({
+                readFn: this._treeDataReader.bind(this),
+                logger: this.storage.logger,
+                id: `path:${this.address.path}`, // Prefix to fix #168
+            });
+            let leaf: BinaryBPlusTreeLeaf | null = await tree.getFirstLeaf();
+            while (leaf) {
+                count += leaf.entries.length;
+                leaf = await leaf.getNext?.() ?? null;
+            }
+            return count;
+        }
+
+        // Not a B+Tree, so the amount of children is limited: use child stream.
         await this.getChildStream()
             .next(childInfo => {
                 count++;
