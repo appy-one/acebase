@@ -240,7 +240,7 @@ export class LocalApi extends Api {
             if (['null','undefined'].includes(from)) { from = null; }
             const children = [] as IReflectionChildrenInfo['list']; // Array<{ key: string | number; type: string; value: any; address?: any }>;
             let n = 0, stop = false, more = false; //stop = skip + limit,
-            await this.storage.getChildren(path)
+            await this.storage.getChildren(path, { ...(from && { fromKey: from }) })
                 .next(childInfo => {
                     if (stop) {
                         // Stop 1 child too late on purpose to make sure there's more
@@ -248,7 +248,8 @@ export class LocalApi extends Api {
                         return false; // Stop iterating
                     }
                     n++;
-                    const include = from !== null ? childInfo.key > from : skip === 0 || n > skip;
+                    // const include = from !== null ? childInfo.key > from : skip === 0 || n > skip;
+                    const include = skip === 0 || n > skip;
                     if (include) {
                         children.push({
                             key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index,

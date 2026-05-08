@@ -512,7 +512,7 @@ export class NodeReader {
      * @param options optional options: keyFilter specific keys to get, offers performance and memory improvements when searching specific keys
      * @returns returns a generator that is called for each child. return false from your `.next` callback to stop iterating
      */
-    getChildStream(options: { keyFilter?: string[] | number[] } = {}) {
+    getChildStream(options: { keyFilter?: string[] | number[], fromKey?: string | number } = {}) {
         this._assertLock();
 
         type ChildCallbackFunction = (childInfo: BinaryNodeInfo, index: number) => boolean | void | Promise<boolean | void>
@@ -596,16 +596,19 @@ export class NodeReader {
             }
             else {
                 // Loop the tree leafs, run callback for each child
-                let leaf = await tree.getFirstLeaf();
+                let leaf = options.fromKey ? await tree.findLeaf(options.fromKey) : await tree.getFirstLeaf();
                 while (leaf) {
                     const children = leaf.entries.reduce((nodes, entry) => {
+                        if (options.fromKey && (typeof entry.key === 'undefined' || entry.key <= options.fromKey)) {
+                            return nodes;
+                        }
                         const child = isArray
                             ? new BinaryNodeInfo({ path: `${this.address.path}[${entry.key}]`, index: entry.key as number })
                             : new BinaryNodeInfo({ path: `${this.address.path}/${entry.key}`, key: entry.key as string });
-                        const res = getValueFromBinary(child, entry.value.recordPointer, 0);
+                        const res = getValueFromBinary(child, entry.values[0].recordPointer, 0);
                         if (!res.skip) { nodes.push(child); }
                         return nodes;
-                    }, []);
+                    }, [] as BinaryNodeInfo[]);
 
                     for(let i = 0; !canceled && i < children.length; i++) {
                         let result = callback(children[i], i);
@@ -775,6 +778,12 @@ export class NodeReader {
                             continue;
                         }
                         else if (isArray && options.keyFilter && !(options.keyFilter as number[]).includes(child.index)) {
+                            continue;
+                        }
+                        else if (!isArray && typeof options.fromKey !== 'undefined' && child.key <= options.fromKey) {
+                            continue;
+                        }
+                        else if (isArray && typeof options.fromKey !== 'undefined' && child.index <= Number(options.fromKey)) {
                             continue;
                         }
 

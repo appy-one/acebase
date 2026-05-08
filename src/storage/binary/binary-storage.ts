@@ -1834,6 +1834,7 @@ export class AceBaseStorage extends Storage {
         options: {
             /** specify the child keys to get callbacks for, skips .next callbacks for other keys */
             keyFilter?: string[] | number[];
+            fromKey?: string | number;
             /** optional transaction id for node locking purposes */
             tid?: string | number;
             /**
@@ -1869,7 +1870,7 @@ export class AceBaseStorage extends Storage {
                     return;
                 }
                 const reader = new NodeReader(this, nodeInfo.address, lock, true);
-                await reader.getChildStream({ keyFilter: options.keyFilter })
+                await reader.getChildStream({ keyFilter: options.keyFilter, fromKey: options.fromKey })
                     .next((childInfo: BinaryNodeInfo) => {
                         const result = callback(childInfo);
                         if (result instanceof Promise) {

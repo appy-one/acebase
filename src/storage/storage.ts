@@ -1120,6 +1120,7 @@ export class Storage extends SimpleEventEmitter {
          * specify the child keys to get callbacks for, skips .next callbacks for other keys
          */
         keyFilter?: string[] | number[];
+        fromKey?: string | number;
         /**
          * optional transaction id for node locking purposes
          */
