@@ -596,10 +596,10 @@ export class NodeReader {
             }
             else {
                 // Loop the tree leafs, run callback for each child
-                let leaf = options.fromKey ? await tree.findLeaf(options.fromKey) : await tree.getFirstLeaf();
+                let leaf = typeof options.fromKey !== 'undefined' ? await tree.findLeaf(options.fromKey) : await tree.getFirstLeaf();
                 while (leaf) {
                     const children = leaf.entries.reduce((nodes, entry) => {
-                        if (options.fromKey && (typeof entry.key === 'undefined' || entry.key <= options.fromKey)) {
+                        if (typeof options.fromKey !== 'undefined' && (typeof entry.key === 'undefined' || entry.key <= options.fromKey)) {
                             return nodes;
                         }
                         const child = isArray
@@ -806,7 +806,7 @@ export class NodeReader {
 
         const createStreamFromLinearData = async (chunkData: Uint8Array, isLastChunk: boolean) => { // , chunkStartIndex
             const children = getChildrenFromChunk(this.recordInfo.valueType, chunkData); //, chunkStartIndex);
-            if (options.fromKey) {
+            if (typeof options.fromKey !== 'undefined') {
                 // Sort children to make sure we don't skip any
                 children.sort((a, b) => isArray ? (a.index as number) - (b.index as number) : (a.key as string) < (b.key as string) ? -1 : 1);
             }
