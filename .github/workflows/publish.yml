@@ -1,0 +1,125 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to create GitHub releases
+      id-token: write  # needed for npm provenance attestation
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history needed for release notes
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF_NAME}" == *"-rc."* ]]; then
+            echo "IS_RC=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "IS_RC=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set version in package.json
+        run: npm version ${{ steps.version.outputs.VERSION }} --no-git-tag-version
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Find which branch tip matches the tagged commit.
+          TAGGED_COMMIT=$(git rev-parse "$GITHUB_REF_NAME")
+          TARGET_BRANCH=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
+            --points-at "$TAGGED_COMMIT" | sed 's|^origin/||' | grep -v '^HEAD$' | head -1)
+
+          if [ -z "$TARGET_BRANCH" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME is not at the tip of any branch. Create tags only at the latest commit of a branch."
+            exit 1
+          fi
+
+          echo "Pushing version bump to branch: $TARGET_BRANCH"
+          git add package.json package-lock.json
+          git commit -m "chore: release ${{ github.ref_name }} [skip ci]"
+          git push origin HEAD:"$TARGET_BRANCH"
+
+      - name: Resolve file dependencies to npm versions
+        # Replaces any "file:..." dependency entries with the latest published
+        # npm version. This is needed because acebase-core is referenced as a
+        # local path during development but must be a real semver range in the
+        # published package.
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+          const { execSync } = require('child_process');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const toInstall = [];
+          for (const section of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+            if (!pkg[section]) continue;
+            for (const [name, version] of Object.entries(pkg[section])) {
+              if (version.startsWith('file:')) {
+                console.log(`Queuing ${name} for npm install`);
+                toInstall.push(name + '@latest');
+              }
+            }
+          }
+          if (toInstall.length > 0) {
+            execSync(`npm install ${toInstall.join(' ')}`, { stdio: 'inherit' });
+          }
+          EOF
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          CURRENT_TAG="${GITHUB_REF_NAME}"
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${CURRENT_TAG}$" | head -1)
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "Generating notes from ${PREVIOUS_TAG} to ${CURRENT_TAG}"
+            NOTES=$(git log "${PREVIOUS_TAG}..${CURRENT_TAG}" --pretty=format:"- %s (%h)" --no-merges)
+          else
+            echo "No previous tag found, using all commits"
+            NOTES=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          # Write to a file to avoid quoting/escaping issues
+          printf '%s\n' "$NOTES" > release_notes.md
+          cat release_notes.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release_notes.md \
+            ${{ steps.version.outputs.IS_RC == 'true' && '--prerelease' || '' }}
+
+      - name: Publish to npm
+        run: |
+          if [[ "${{ steps.version.outputs.IS_RC }}" == "true" ]]; then
+            echo "RC tag detected — running npm publish --dry-run"
+            npm publish --access public --dry-run
+          else
+            npm publish --access public
+          fi
