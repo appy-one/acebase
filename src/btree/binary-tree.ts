@@ -2153,7 +2153,7 @@ export class BinaryBPlusTree {
                         else {
                             leaf.parentNode.gtChildIndex = leaf.index;
                         }
-                        if (options.nextLeaf.parentNode === leaf.parentNode) {
+                        if (options.nextLeaf && options.nextLeaf.parentNode === leaf.parentNode) {
                             if (options.nextLeaf.parentEntry) {
                                 options.nextLeaf.parentEntry.ltChildIndex = options.nextLeaf.index;
                             }
