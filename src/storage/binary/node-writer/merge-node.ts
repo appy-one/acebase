@@ -277,7 +277,7 @@ export async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeIn
                     const originalLength = tree.info.byteLength;
                     const reader = async (length: number) => {
                         let data: any;
-                        if (sourceIndex > originalLength) {
+                        if (sourceIndex >= originalLength) {
                             // 0s only
                             data = new Uint8Array(length);
                         }
