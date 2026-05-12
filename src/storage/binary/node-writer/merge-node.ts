@@ -310,7 +310,7 @@ export async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeIn
                     recordInfo = await _rebuildKeyTree(tree, nodeReader, { reserveSpaceForNewEntries: changes.inserts.length - changes.deletes.length });
                 }
 
-                if (recordInfo !== nodeReader.recordInfo) {
+                if (!recordInfo.address.equals(nodeReader.recordInfo.address)) {
                     // release previous allocation
                     discardAllocation.ranges.push(...nodeReader.recordInfo.allocation.ranges);
                     recordMoved = true;
