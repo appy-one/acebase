@@ -1076,16 +1076,24 @@ export class BinaryBPlusTree {
         if (!this.id) {
             throw new DetailedError('tree-id-not-set', 'Set tree.id property to something unique for locking purposes');
         }
-        const lock = await ThreadSafe.lock(this.id, { timeout: 15 * 60 * 1000, shared: mode === 'shared' }); // 15 minutes for debugging:
+        const timeout = 15 * 60 * 1000; // 15 minutes
+        const lock = await ThreadSafe.lock(this.id, { timeout, shared: mode === 'shared' });
+        let timeoutHandle: NodeJS.Timeout | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(() => {
+                reject(new DetailedError('lock-timeout', `_threadSafe lock timed out after ${timeout / 1000}s`));
+            }, timeout);
+        });
         try {
-            let result = fn();
+            const result = fn();
             if (result instanceof Promise) {
-                result = await result;
+                return await Promise.race([result, timeoutPromise]);
             }
             return result;
         }
         finally {
-            lock.release();
+            clearTimeout(timeoutHandle);
+            try { lock.release(); } catch { /* lock probably timed out */ }
         }
     }
 
@@ -2153,7 +2161,7 @@ export class BinaryBPlusTree {
                         else {
                             leaf.parentNode.gtChildIndex = leaf.index;
                         }
-                        if (options.nextLeaf.parentNode === leaf.parentNode) {
+                        if (options.nextLeaf && options.nextLeaf.parentNode === leaf.parentNode) {
                             if (options.nextLeaf.parentEntry) {
                                 options.nextLeaf.parentEntry.ltChildIndex = options.nextLeaf.index;
                             }

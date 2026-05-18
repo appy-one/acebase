@@ -234,13 +234,12 @@ export class LocalApi extends Api {
     reflect(path: string, type: 'info', args: any): Promise<IReflectionNodeInfo>;
     async reflect(path: string, type: ReflectionType, args: any): Promise<IReflectionNodeInfo | IReflectionChildrenInfo> {
         args = args || {};
-        const getChildren = async (path: string, limit = 50, skip = 0, from: string = null) => {
+        const getChildren = async (path: string, limit = 50, skip = 0, from: string | number | null = null) => {
             if (typeof limit === 'string') { limit = parseInt(limit); }
             if (typeof skip === 'string') { skip = parseInt(skip); }
-            if (['null','undefined'].includes(from)) { from = null; }
             const children = [] as IReflectionChildrenInfo['list']; // Array<{ key: string | number; type: string; value: any; address?: any }>;
             let n = 0, stop = false, more = false; //stop = skip + limit,
-            await this.storage.getChildren(path)
+            await this.storage.getChildren(path, { ...(['number', 'string'].includes(typeof from) && { fromKey: from as string | number }) })
                 .next(childInfo => {
                     if (stop) {
                         // Stop 1 child too late on purpose to make sure there's more
@@ -248,7 +247,8 @@ export class LocalApi extends Api {
                         return false; // Stop iterating
                     }
                     n++;
-                    const include = from !== null ? childInfo.key > from : skip === 0 || n > skip;
+                    // const include = from !== null ? childInfo.key > from : skip === 0 || n > skip;
+                    const include = skip === 0 || n > skip;
                     if (include) {
                         children.push({
                             key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index,

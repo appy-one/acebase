@@ -145,7 +145,7 @@ class AceBase extends acebase_core_1.AceBaseBase {
 }
 exports.AceBase = AceBase;
 
-},{"./api-local":3,"./storage/binary":18,"./storage/custom/indexed-db/settings":23,"./storage/custom/local-storage":25,"acebase-core":43}],3:[function(require,module,exports){
+},{"./api-local":3,"./storage/binary":18,"./storage/custom/indexed-db/settings":23,"./storage/custom/local-storage":25,"acebase-core":46}],3:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalApi = void 0;
@@ -311,12 +311,9 @@ class LocalApi extends acebase_core_1.Api {
             if (typeof skip === 'string') {
                 skip = parseInt(skip);
             }
-            if (['null', 'undefined'].includes(from)) {
-                from = null;
-            }
             const children = []; // Array<{ key: string | number; type: string; value: any; address?: any }>;
             let n = 0, stop = false, more = false; //stop = skip + limit,
-            await this.storage.getChildren(path)
+            await this.storage.getChildren(path, Object.assign({}, (['number', 'string'].includes(typeof from) && { fromKey: from })))
                 .next(childInfo => {
                 if (stop) {
                     // Stop 1 child too late on purpose to make sure there's more
@@ -324,7 +321,8 @@ class LocalApi extends acebase_core_1.Api {
                     return false; // Stop iterating
                 }
                 n++;
-                const include = from !== null ? childInfo.key > from : skip === 0 || n > skip;
+                // const include = from !== null ? childInfo.key > from : skip === 0 || n > skip;
+                const include = skip === 0 || n > skip;
                 if (include) {
                     children.push(Object.assign({ key: typeof childInfo.key === 'string' ? childInfo.key : childInfo.index, type: childInfo.valueTypeName, value: childInfo.value }, (typeof childInfo.address === 'object' && 'pageNr' in childInfo.address && {
                         address: {
@@ -447,7 +445,7 @@ class LocalApi extends acebase_core_1.Api {
 }
 exports.LocalApi = LocalApi;
 
-},{"./node-errors":11,"./node-value-types":14,"./query":17,"./storage/binary":18,"./storage/custom":21,"./storage/mssql":30,"./storage/sqlite":31,"acebase-core":43}],4:[function(require,module,exports){
+},{"./node-errors":11,"./node-value-types":14,"./query":17,"./storage/binary":18,"./storage/custom":21,"./storage/mssql":31,"./storage/sqlite":32,"acebase-core":46}],4:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.assert = void 0;
@@ -625,7 +623,7 @@ var storage_1 = require("./storage");
 Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return storage_1.StorageSettings; } });
 Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return storage_1.SchemaValidationError; } });
 
-},{"./acebase-browser":1,"./acebase-local":2,"./storage":28,"./storage/binary":18,"./storage/custom":21,"./storage/mssql":30,"./storage/sqlite":31,"acebase-core":43}],7:[function(require,module,exports){
+},{"./acebase-browser":1,"./acebase-local":2,"./storage":29,"./storage/binary":18,"./storage/custom":21,"./storage/mssql":31,"./storage/sqlite":32,"acebase-core":46}],7:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ArrayIndex = exports.GeoIndex = exports.FullTextIndex = exports.DataIndex = void 0;
@@ -801,7 +799,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
 }
 exports.IPCPeer = IPCPeer;
 
-},{"../not-supported":15,"./ipc":9,"acebase-core":43}],9:[function(require,module,exports){
+},{"../not-supported":15,"./ipc":9,"acebase-core":46}],9:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
@@ -1301,7 +1299,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock":13,"acebase-core":43}],10:[function(require,module,exports){
+},{"../node-lock":13,"acebase-core":46}],10:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RemovedNodeAddress = exports.NodeAddress = void 0;
@@ -1396,7 +1394,7 @@ class NodeInfo {
 }
 exports.NodeInfo = NodeInfo;
 
-},{"./node-value-types":14,"acebase-core":43}],13:[function(require,module,exports){
+},{"./node-value-types":14,"acebase-core":46}],13:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeLock = exports.NodeLocker = exports.NodeLockError = exports.LOCK_STATE = void 0;
@@ -1696,7 +1694,7 @@ class NodeLock {
 }
 exports.NodeLock = NodeLock;
 
-},{"./assert":4,"acebase-core":43}],14:[function(require,module,exports){
+},{"./assert":4,"acebase-core":46}],14:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getValueType = exports.getNodeValueType = exports.getValueTypeName = exports.VALUE_TYPES = void 0;
@@ -1789,7 +1787,7 @@ function getValueType(value) {
 }
 exports.getValueType = getValueType;
 
-},{"acebase-core":43}],15:[function(require,module,exports){
+},{"acebase-core":46}],15:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotSupported = void 0;
@@ -2604,7 +2602,7 @@ async function executeQuery(api, path, query, options = { snapshots: false, incl
 }
 exports.executeQuery = executeQuery;
 
-},{"./async-task-batch":5,"./data-index":7,"./node-errors":11,"./node-value-types":14,"acebase-core":43}],18:[function(require,module,exports){
+},{"./async-task-batch":5,"./data-index":7,"./node-errors":11,"./node-value-types":14,"acebase-core":46}],18:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseStorage = exports.AceBaseStorageSettings = void 0;
@@ -2699,7 +2697,7 @@ async function createIndex(context, path, key, options) {
 }
 exports.createIndex = createIndex;
 
-},{"../data-index":7,"../promise-fs":16,"acebase-core":43}],20:[function(require,module,exports){
+},{"../data-index":7,"../promise-fs":16,"acebase-core":46}],20:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorageHelpers = void 0;
@@ -2768,7 +2766,7 @@ class CustomStorageHelpers {
 }
 exports.CustomStorageHelpers = CustomStorageHelpers;
 
-},{"acebase-core":43}],21:[function(require,module,exports){
+},{"acebase-core":46}],21:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorage = exports.CustomStorageNodeInfo = exports.CustomStorageNodeAddress = exports.CustomStorageSettings = exports.CustomStorageTransaction = exports.ICustomStorageNode = exports.ICustomStorageNodeMetaData = exports.CustomStorageHelpers = void 0;
@@ -3983,7 +3981,7 @@ class CustomStorage extends index_1.Storage {
 }
 exports.CustomStorage = CustomStorage;
 
-},{"../../assert":4,"../../node-address":10,"../../node-errors":11,"../../node-info":12,"../../node-lock":13,"../../node-value-types":14,"../index":28,"./helpers":20,"acebase-core":43}],22:[function(require,module,exports){
+},{"../../assert":4,"../../node-address":10,"../../node-errors":11,"../../node-info":12,"../../node-lock":13,"../../node-value-types":14,"../index":29,"./helpers":20,"acebase-core":46}],22:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndexedDBInstance = void 0;
@@ -4060,7 +4058,7 @@ function createIndexedDBInstance(dbname, init = {}) {
 }
 exports.createIndexedDBInstance = createIndexedDBInstance;
 
-},{"..":21,"../../..":6,"./settings":23,"./transaction":24,"acebase-core":43}],23:[function(require,module,exports){
+},{"..":21,"../../..":6,"./settings":23,"./transaction":24,"acebase-core":46}],23:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageSettings = void 0;
@@ -4104,7 +4102,7 @@ class IndexedDBStorageSettings extends __1.StorageSettings {
 }
 exports.IndexedDBStorageSettings = IndexedDBStorageSettings;
 
-},{"../..":28}],24:[function(require,module,exports){
+},{"../..":29}],24:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageTransaction = void 0;
@@ -4413,7 +4411,7 @@ class LocalStorageSettings extends __1.StorageSettings {
 }
 exports.LocalStorageSettings = LocalStorageSettings;
 
-},{"../..":28}],27:[function(require,module,exports){
+},{"../..":29}],27:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageTransaction = void 0;
@@ -4510,24 +4508,7 @@ exports.LocalStorageTransaction = LocalStorageTransaction;
 },{"..":21}],28:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Storage = exports.StorageSettings = exports.SchemaValidationError = void 0;
-const acebase_core_1 = require("acebase-core");
-const node_value_types_1 = require("../node-value-types");
-const node_errors_1 = require("../node-errors");
-const node_info_1 = require("../node-info");
-const ipc_1 = require("../ipc");
-const promise_fs_1 = require("../promise-fs");
-// const { IPCTransactionManager } = require('./node-transaction');
-const data_index_1 = require("../data-index"); // Indexing might not be available: the browser dist bundle doesn't include it because fs is not available: browserify --i ./src/data-index.js
-const indexes_1 = require("./indexes");
-const assert_1 = require("../assert");
-const { compareValues, getChildValues, encodeString, defer } = acebase_core_1.Utils;
-const DEBUG_MODE = false;
-const SUPPORTED_EVENTS = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
-// Add 'notify_*' event types for each event to enable data-less notifications, so data retrieval becomes optional
-SUPPORTED_EVENTS.push(...SUPPORTED_EVENTS.map(event => `notify_${event}`));
-// eslint-disable-next-line @typescript-eslint/no-empty-function
-const NOOP = () => { };
+exports.SchemaValidationError = void 0;
 class SchemaValidationError extends Error {
     constructor(reason) {
         super(`Schema validation failed: ${reason}`);
@@ -4535,6 +4516,65 @@ class SchemaValidationError extends Error {
     }
 }
 exports.SchemaValidationError = SchemaValidationError;
+
+},{}],29:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Storage = exports.SchemaValidationError = exports.StorageSettings = void 0;
+var storage_settings_js_1 = require("./storage-settings.js");
+Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return storage_settings_js_1.StorageSettings; } });
+var errors_js_1 = require("./errors.js");
+Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return errors_js_1.SchemaValidationError; } });
+var storage_js_1 = require("./storage.js");
+Object.defineProperty(exports, "Storage", { enumerable: true, get: function () { return storage_js_1.Storage; } });
+
+},{"./errors.js":28,"./storage-settings.js":33,"./storage.js":34}],30:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createIndex = void 0;
+var create_index_1 = require("./create-index");
+Object.defineProperty(exports, "createIndex", { enumerable: true, get: function () { return create_index_1.createIndex; } });
+
+},{"./create-index":19}],31:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MSSQLStorage = exports.MSSQLStorageSettings = void 0;
+const not_supported_1 = require("../../not-supported");
+/**
+ * Not supported in browser context
+ */
+class MSSQLStorageSettings extends not_supported_1.NotSupported {
+}
+exports.MSSQLStorageSettings = MSSQLStorageSettings;
+/**
+ * Not supported in browser context
+ */
+class MSSQLStorage extends not_supported_1.NotSupported {
+}
+exports.MSSQLStorage = MSSQLStorage;
+
+},{"../../not-supported":15}],32:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SQLiteStorage = exports.SQLiteStorageSettings = void 0;
+const not_supported_1 = require("../../not-supported");
+/**
+ * Not supported in browser context
+ */
+class SQLiteStorageSettings extends not_supported_1.NotSupported {
+}
+exports.SQLiteStorageSettings = SQLiteStorageSettings;
+/**
+ * Not supported in browser context
+ */
+class SQLiteStorage extends not_supported_1.NotSupported {
+}
+exports.SQLiteStorage = SQLiteStorage;
+
+},{"../../not-supported":15}],33:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.StorageSettings = void 0;
 /**
  * Storage Settings
  */
@@ -4597,6 +4637,28 @@ class StorageSettings {
     }
 }
 exports.StorageSettings = StorageSettings;
+
+},{}],34:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Storage = void 0;
+const acebase_core_1 = require("acebase-core");
+const index_js_1 = require("../ipc/index.js");
+const assert_js_1 = require("../assert.js");
+const index_js_2 = require("../data-index/index.js");
+const indexes_js_1 = require("./indexes.js");
+const index_js_3 = require("../promise-fs/index.js");
+const errors_js_1 = require("./errors.js");
+const node_errors_js_1 = require("../node-errors.js");
+const node_info_js_1 = require("../node-info.js");
+const node_value_types_js_1 = require("../node-value-types.js");
+const { compareValues, getChildValues, encodeString, defer } = acebase_core_1.Utils;
+const DEBUG_MODE = false;
+const SUPPORTED_EVENTS = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
+// Add 'notify_*' event types for each event to enable data-less notifications, so data retrieval becomes optional
+SUPPORTED_EVENTS.push(...SUPPORTED_EVENTS.map(event => `notify_${event}`));
+// eslint-disable-next-line @typescript-eslint/no-empty-function
+const NOOP = () => { };
 class Storage extends acebase_core_1.SimpleEventEmitter {
     createTid() {
         return DEBUG_MODE ? ++this._lastTid : acebase_core_1.ID.generate();
@@ -4623,13 +4685,13 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
              * TODO: Implement storage specific indexes (eg in SQLite, MySQL, MSSQL, in-memory)
              */
             get supported() {
-                return promise_fs_1.pfs === null || promise_fs_1.pfs === void 0 ? void 0 : promise_fs_1.pfs.hasFileSystem;
+                return index_js_3.pfs === null || index_js_3.pfs === void 0 ? void 0 : index_js_3.pfs.hasFileSystem;
             },
             create: (path, key, options = {
                 rebuild: false,
             }) => {
                 const context = { storage: this, logger: this.logger, indexes: this._indexes, ipc: this.ipc };
-                return (0, indexes_1.createIndex)(context, path, key, options);
+                return (0, indexes_js_1.createIndex)(context, path, key, options);
             },
             /**
              * Returns indexes at a path, or a specific index on a key in that path
@@ -4683,13 +4745,13 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
              */
             load: async () => {
                 this._indexes.splice(0);
-                if (!promise_fs_1.pfs.hasFileSystem) {
+                if (!index_js_3.pfs.hasFileSystem) {
                     // If pfs (fs) is not available, don't try using it
                     return;
                 }
                 let files = [];
                 try {
-                    files = (await promise_fs_1.pfs.readdir(`${this.settings.path}/${this.name}.acebase`));
+                    files = (await index_js_3.pfs.readdir(`${this.settings.path}/${this.name}.acebase`));
                 }
                 catch (err) {
                     if (err.code !== 'ENOENT') {
@@ -4724,7 +4786,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 }
                 try {
                     // Announce the index to prevent race condition in between reading and receiving the IPC index.created notification
-                    const indexPromise = data_index_1.DataIndex.readFromFile(this, fileName);
+                    const indexPromise = index_js_2.DataIndex.readFromFile(this, fileName);
                     this._annoucedIndexes.set(fileName, indexPromise);
                     const index = await indexPromise;
                     this._indexes.push(index);
@@ -4932,9 +4994,9 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         const ipcSocketSettings = typeof settings.ipc === 'object' && settings.ipc !== null && 'role' in settings.ipc && settings.ipc.role === 'socket'
             ? settings.ipc
             : null;
-        if (ipcSocketSettings || settings.ipc === 'socket' || settings.ipc instanceof ipc_1.NetIPCServer) {
-            const ipcSettings = Object.assign({ ipcName, server: settings.ipc instanceof ipc_1.NetIPCServer ? settings.ipc : null }, (ipcSocketSettings && { maxIdleTime: ipcSocketSettings.maxIdleTime, loggerPluginPath: ipcSocketSettings.loggerPluginPath }));
-            this.ipc = new ipc_1.IPCSocketPeer(this, ipcSettings);
+        if (ipcSocketSettings || settings.ipc === 'socket' || settings.ipc instanceof index_js_1.NetIPCServer) {
+            const ipcSettings = Object.assign({ ipcName, server: settings.ipc instanceof index_js_1.NetIPCServer ? settings.ipc : null }, (ipcSocketSettings && { maxIdleTime: ipcSocketSettings.maxIdleTime, loggerPluginPath: ipcSocketSettings.loggerPluginPath }));
+            this.ipc = new index_js_1.IPCSocketPeer(this, ipcSettings);
         }
         else if (settings.ipc) {
             const ipcClientSettings = settings.ipc;
@@ -4945,10 +5007,10 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 throw new Error(`IPC client role must be either "master" or "worker", not "${ipcClientSettings.role}"`);
             }
             const ipcSettings = Object.assign({ dbname: ipcName }, ipcClientSettings);
-            this.ipc = new ipc_1.RemoteIPCPeer(this, ipcSettings);
+            this.ipc = new index_js_1.RemoteIPCPeer(this, ipcSettings);
         }
         else {
-            this.ipc = new ipc_1.IPCPeer(this, ipcName);
+            this.ipc = new index_js_1.IPCPeer(this, ipcName);
         }
         this.ipc.once('exit', (code) => {
             // We can perform any custom cleanup here:
@@ -5117,7 +5179,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         // Does the value meet schema requirements?
         const validation = this.validateSchema(path, value, { updates: options.merge });
         if (!validation.ok) {
-            throw new SchemaValidationError(validation.reason);
+            throw new errors_js_1.SchemaValidationError(validation.reason);
         }
         const tid = options.tid;
         const transaction = options.transaction;
@@ -5284,7 +5346,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             const oldValue = topEventData;
             const newValue = newTopEventData;
             if (trailKeys.length === 0) {
-                (0, assert_1.assert)(pathKeys.length === indexPathKeys.length, 'check logic');
+                (0, assert_js_1.assert)(pathKeys.length === indexPathKeys.length, 'check logic');
                 // Index is on updated path
                 const p = this.ipc.isMaster
                     ? index.handleRecordUpdate(topEventPath, oldValue, newValue)
@@ -5300,7 +5362,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 const indexPathKeys = acebase_core_1.PathInfo.getPathKeys(index.path + '/*');
                 const trailKeys = indexPathKeys.slice(pathKeys.length);
                 if (trailKeys.length === 0) {
-                    (0, assert_1.assert)(pathKeys.length === indexPathKeys.length, 'check logic');
+                    (0, assert_js_1.assert)(pathKeys.length === indexPathKeys.length, 'check logic');
                     return [{ path, oldValue, newValue }];
                 }
                 let results = [];
@@ -5373,7 +5435,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             variables.forEach(variable => {
                 // only replaces first occurrence (so multiple *'s will be processed 1 by 1)
                 const index = pathKeys.indexOf(variable.name);
-                (0, assert_1.assert)(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
+                (0, assert_js_1.assert)(index >= 0, `Variable "${variable.name}" not found in subscription dataPath "${sub.dataPath}"`);
                 pathKeys[index] = variable.value;
             });
             const dataPath = pathKeys.reduce((path, key) => acebase_core_1.PathInfo.getChildPath(path, key), '');
@@ -5708,13 +5770,13 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 this.subscriptions.remove(path, 'notify_value', changeCallback);
             }
             if (changed) {
-                throw new node_errors_1.NodeRevisionError('Node changed');
+                throw new node_errors_js_1.NodeRevisionError('Node changed');
             }
             const cursor = await this.setNode(path, newValue, { assert_revision: checkRevision, tid: lock.tid, suppress_events: options.suppress_events, context: options.context });
             return cursor;
         }
         catch (err) {
-            if (err instanceof node_errors_1.NodeRevisionError) {
+            if (err instanceof node_errors_js_1.NodeRevisionError) {
                 // try again
                 console.warn(`node value changed, running again. Error: ${err.message}`);
                 return this.transactNode(path, callback, options);
@@ -5793,7 +5855,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 }
                 // Now, also check keys that weren't found in the node. (a criterium may be "!exists")
                 isMatch = unseenKeys.every(keyOrIndex => {
-                    const childInfo = new node_info_1.NodeInfo(Object.assign(Object.assign(Object.assign({}, (typeof keyOrIndex === 'number' && { index: keyOrIndex })), (typeof keyOrIndex === 'string' && { key: keyOrIndex })), { exists: false }));
+                    const childInfo = new node_info_js_1.NodeInfo(Object.assign(Object.assign(Object.assign({}, (typeof keyOrIndex === 'number' && { index: keyOrIndex })), (typeof keyOrIndex === 'string' && { key: keyOrIndex })), { exists: false }));
                     const childCriteria = criteria
                         .filter(cr => typeof cr.key === 'string' && cr.key.startsWith(`${typeof keyOrIndex === 'number' ? `[${keyOrIndex}]` : keyOrIndex}/`))
                         .map(cr => ({ op: cr.op, compare: cr.compare }));
@@ -5840,7 +5902,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 }
                 else {
                     if (child.address) {
-                        if (child.valueType === node_value_types_1.VALUE_TYPES.OBJECT && ['has', '!has'].indexOf(f.op) >= 0) {
+                        if (child.valueType === node_value_types_js_1.VALUE_TYPES.OBJECT && ['has', '!has'].indexOf(f.op) >= 0) {
                             const op = f.op === 'has' ? 'exists' : '!exists';
                             const p = checkNode(child.path, [{ key: f.compare, op }])
                                 .then(isMatch => {
@@ -5849,7 +5911,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                             promises.push(p);
                             proceed = true;
                         }
-                        else if (child.valueType === node_value_types_1.VALUE_TYPES.ARRAY && ['contains', '!contains'].indexOf(f.op) >= 0) {
+                        else if (child.valueType === node_value_types_js_1.VALUE_TYPES.ARRAY && ['contains', '!contains'].indexOf(f.op) >= 0) {
                             // TODO: refactor to use child stream
                             const p = this.getNode(child.path, { tid })
                                 .then(({ value: arr }) => {
@@ -5869,7 +5931,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                             promises.push(p);
                             proceed = true;
                         }
-                        else if (child.valueType === node_value_types_1.VALUE_TYPES.STRING) {
+                        else if (child.valueType === node_value_types_js_1.VALUE_TYPES.STRING) {
                             const p = this.getNode(child.path, { tid })
                                 .then(node => {
                                 return { key: child.key, isMatch: this.test(node.value, f.op, f.compare) };
@@ -5881,11 +5943,11 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                             proceed = false;
                         }
                     }
-                    else if (child.type === node_value_types_1.VALUE_TYPES.OBJECT && ['has', '!has'].indexOf(f.op) >= 0) {
+                    else if (child.type === node_value_types_js_1.VALUE_TYPES.OBJECT && ['has', '!has'].indexOf(f.op) >= 0) {
                         const has = f.compare in child.value;
                         proceed = (has && f.op === 'has') || (!has && f.op === '!has');
                     }
-                    else if (child.type === node_value_types_1.VALUE_TYPES.ARRAY && ['contains', '!contains'].indexOf(f.op) >= 0) {
+                    else if (child.type === node_value_types_js_1.VALUE_TYPES.ARRAY && ['contains', '!contains'].indexOf(f.op) >= 0) {
                         const contains = child.value.indexOf(f.compare) >= 0;
                         proceed = (contains && f.op === 'contains') || (!contains && f.op === '!contains');
                     }
@@ -5981,34 +6043,34 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 .replace(/[\u0000-\u001f]/g, // other control characters
             // other control characters
             ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
-            if (type === node_value_types_1.VALUE_TYPES.DATETIME) {
+            if (type === node_value_types_js_1.VALUE_TYPES.DATETIME) {
                 val = `"${val.toISOString()}"`;
                 if (options.type_safe) {
                     val = `{".type":"date",".val":${val}}`; // Previously: "Date"
                 }
             }
-            else if (type === node_value_types_1.VALUE_TYPES.STRING) {
+            else if (type === node_value_types_js_1.VALUE_TYPES.STRING) {
                 val = `"${escape(val)}"`;
             }
-            else if (type === node_value_types_1.VALUE_TYPES.ARRAY) {
+            else if (type === node_value_types_js_1.VALUE_TYPES.ARRAY) {
                 val = '[]';
             }
-            else if (type === node_value_types_1.VALUE_TYPES.OBJECT) {
+            else if (type === node_value_types_js_1.VALUE_TYPES.OBJECT) {
                 val = '{}';
             }
-            else if (type === node_value_types_1.VALUE_TYPES.BINARY) {
+            else if (type === node_value_types_js_1.VALUE_TYPES.BINARY) {
                 val = `"${escape(acebase_core_1.ascii85.encode(val))}"`; // TODO: use base64 instead, no escaping needed
                 if (options.type_safe) {
                     val = `{".type":"binary",".val":${val}}`; // Previously: "Buffer"
                 }
             }
-            else if (type === node_value_types_1.VALUE_TYPES.REFERENCE) {
+            else if (type === node_value_types_js_1.VALUE_TYPES.REFERENCE) {
                 val = `"${val.path}"`;
                 if (options.type_safe) {
                     val = `{".type":"reference",".val":${val}}`; // Previously: "PathReference"
                 }
             }
-            else if (type === node_value_types_1.VALUE_TYPES.BIGINT) {
+            else if (type === node_value_types_js_1.VALUE_TYPES.BIGINT) {
                 // Unfortnately, JSON.parse does not support 0n bigint json notation
                 val = `"${val}"`;
                 if (options.type_safe) {
@@ -6022,11 +6084,11 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         if (!nodeInfo.exists) {
             return write('null');
         }
-        else if (nodeInfo.type === node_value_types_1.VALUE_TYPES.OBJECT) {
+        else if (nodeInfo.type === node_value_types_js_1.VALUE_TYPES.OBJECT) {
             objStart = '{';
             objEnd = '}';
         }
-        else if (nodeInfo.type === node_value_types_1.VALUE_TYPES.ARRAY) {
+        else if (nodeInfo.type === node_value_types_js_1.VALUE_TYPES.ARRAY) {
             objStart = '[';
             objEnd = ']';
         }
@@ -6644,50 +6706,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
 }
 exports.Storage = Storage;
 
-},{"../assert":4,"../data-index":7,"../ipc":8,"../node-errors":11,"../node-info":12,"../node-value-types":14,"../promise-fs":16,"./indexes":29,"acebase-core":43}],29:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createIndex = void 0;
-var create_index_1 = require("./create-index");
-Object.defineProperty(exports, "createIndex", { enumerable: true, get: function () { return create_index_1.createIndex; } });
-
-},{"./create-index":19}],30:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.MSSQLStorage = exports.MSSQLStorageSettings = void 0;
-const not_supported_1 = require("../../not-supported");
-/**
- * Not supported in browser context
- */
-class MSSQLStorageSettings extends not_supported_1.NotSupported {
-}
-exports.MSSQLStorageSettings = MSSQLStorageSettings;
-/**
- * Not supported in browser context
- */
-class MSSQLStorage extends not_supported_1.NotSupported {
-}
-exports.MSSQLStorage = MSSQLStorage;
-
-},{"../../not-supported":15}],31:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.SQLiteStorage = exports.SQLiteStorageSettings = void 0;
-const not_supported_1 = require("../../not-supported");
-/**
- * Not supported in browser context
- */
-class SQLiteStorageSettings extends not_supported_1.NotSupported {
-}
-exports.SQLiteStorageSettings = SQLiteStorageSettings;
-/**
- * Not supported in browser context
- */
-class SQLiteStorage extends not_supported_1.NotSupported {
-}
-exports.SQLiteStorage = SQLiteStorage;
-
-},{"../../not-supported":15}],32:[function(require,module,exports){
+},{"../assert.js":4,"../data-index/index.js":7,"../ipc/index.js":8,"../node-errors.js":11,"../node-info.js":12,"../node-value-types.js":14,"../promise-fs/index.js":16,"./errors.js":28,"./indexes.js":30,"acebase-core":46}],35:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseBase = exports.AceBaseBaseSettings = void 0;
@@ -6887,7 +6906,7 @@ class AceBaseBase extends simple_event_emitter_1.SimpleEventEmitter {
 }
 exports.AceBaseBase = AceBaseBase;
 
-},{"./data-reference":39,"./debug":41,"./optional-observable":45,"./simple-colors":52,"./simple-event-emitter":53,"./type-mappings":57}],33:[function(require,module,exports){
+},{"./data-reference":42,"./debug":44,"./optional-observable":48,"./simple-colors":55,"./simple-event-emitter":56,"./type-mappings":60}],36:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Api = void 0;
@@ -6937,7 +6956,7 @@ class Api extends simple_event_emitter_1.SimpleEventEmitter {
 }
 exports.Api = Api;
 
-},{"./simple-event-emitter":53}],34:[function(require,module,exports){
+},{"./simple-event-emitter":56}],37:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ascii85 = void 0;
@@ -7016,7 +7035,7 @@ exports.ascii85 = {
     },
 };
 
-},{}],35:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 "use strict";
 var _a, _b;
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -7029,7 +7048,7 @@ function fingerprint() {
 }
 exports.default = fingerprint;
 
-},{"../pad":37}],36:[function(require,module,exports){
+},{"../pad":40}],39:[function(require,module,exports){
 "use strict";
 /**
  * cuid.js
@@ -7081,7 +7100,7 @@ function cuid(timebias = 0) {
 exports.default = cuid;
 // Not using slugs, removed code
 
-},{"./fingerprint":35,"./pad":37}],37:[function(require,module,exports){
+},{"./fingerprint":38,"./pad":40}],40:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 function pad(num, size) {
@@ -7090,7 +7109,7 @@ function pad(num, size) {
 }
 exports.default = pad;
 
-},{}],38:[function(require,module,exports){
+},{}],41:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OrderedCollectionProxy = exports.proxyAccess = exports.LiveDataProxy = void 0;
@@ -8323,7 +8342,7 @@ class OrderedCollectionProxy {
 }
 exports.OrderedCollectionProxy = OrderedCollectionProxy;
 
-},{"./data-reference":39,"./data-snapshot":40,"./id":42,"./optional-observable":45,"./path-info":47,"./path-reference":48,"./process":49,"./simple-event-emitter":53,"./utils":58}],39:[function(require,module,exports){
+},{"./data-reference":42,"./data-snapshot":43,"./id":45,"./optional-observable":48,"./path-info":50,"./path-reference":51,"./process":52,"./simple-event-emitter":56,"./utils":61}],42:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DataReferencesArray = exports.DataSnapshotsArray = exports.DataReferenceQuery = exports.DataReference = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = void 0;
@@ -9402,7 +9421,7 @@ class DataReferencesArray extends Array {
 }
 exports.DataReferencesArray = DataReferencesArray;
 
-},{"./data-proxy":38,"./data-snapshot":40,"./id":42,"./optional-observable":45,"./path-info":47,"./subscription":55}],40:[function(require,module,exports){
+},{"./data-proxy":41,"./data-snapshot":43,"./id":45,"./optional-observable":48,"./path-info":50,"./subscription":58}],43:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MutationsDataSnapshot = exports.DataSnapshot = void 0;
@@ -9545,7 +9564,7 @@ class MutationsDataSnapshot extends DataSnapshot {
 }
 exports.MutationsDataSnapshot = MutationsDataSnapshot;
 
-},{"./path-info":47}],41:[function(require,module,exports){
+},{"./path-info":50}],44:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DebugLogger = void 0;
@@ -9581,7 +9600,7 @@ class DebugLogger {
 }
 exports.DebugLogger = DebugLogger;
 
-},{"./process":49}],42:[function(require,module,exports){
+},{"./process":52}],45:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ID = void 0;
@@ -9607,7 +9626,7 @@ class ID {
 }
 exports.ID = ID;
 
-},{"./cuid":36}],43:[function(require,module,exports){
+},{"./cuid":39}],46:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ObjectCollection = exports.PartialArray = exports.SimpleObservable = exports.SchemaDefinition = exports.Colorize = exports.ColorStyle = exports.SimpleEventEmitter = exports.SimpleCache = exports.ascii85 = exports.PathInfo = exports.Utils = exports.TypeMappings = exports.Transport = exports.EventSubscription = exports.EventPublisher = exports.EventStream = exports.PathReference = exports.ID = exports.DebugLogger = exports.OrderedCollectionProxy = exports.proxyAccess = exports.MutationsDataSnapshot = exports.DataSnapshot = exports.DataReferencesArray = exports.DataSnapshotsArray = exports.QueryDataRetrievalOptions = exports.DataRetrievalOptions = exports.DataReferenceQuery = exports.DataReference = exports.Api = exports.AceBaseBaseSettings = exports.AceBaseBase = void 0;
@@ -9663,7 +9682,7 @@ Object.defineProperty(exports, "PartialArray", { enumerable: true, get: function
 const object_collection_1 = require("./object-collection");
 Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: function () { return object_collection_1.ObjectCollection; } });
 
-},{"./acebase-base":32,"./api":33,"./ascii85":34,"./data-proxy":38,"./data-reference":39,"./data-snapshot":40,"./debug":41,"./id":42,"./object-collection":44,"./partial-array":46,"./path-info":47,"./path-reference":48,"./schema":50,"./simple-cache":51,"./simple-colors":52,"./simple-event-emitter":53,"./simple-observable":54,"./subscription":55,"./transport":56,"./type-mappings":57,"./utils":58}],44:[function(require,module,exports){
+},{"./acebase-base":35,"./api":36,"./ascii85":37,"./data-proxy":41,"./data-reference":42,"./data-snapshot":43,"./debug":44,"./id":45,"./object-collection":47,"./partial-array":49,"./path-info":50,"./path-reference":51,"./schema":53,"./simple-cache":54,"./simple-colors":55,"./simple-event-emitter":56,"./simple-observable":57,"./subscription":58,"./transport":59,"./type-mappings":60,"./utils":61}],47:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ObjectCollection = void 0;
@@ -9715,7 +9734,7 @@ class ObjectCollection {
 }
 exports.ObjectCollection = ObjectCollection;
 
-},{"./id":42}],45:[function(require,module,exports){
+},{"./id":45}],48:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.setObservable = exports.getObservable = void 0;
@@ -9764,7 +9783,7 @@ function setObservable(Observable) {
 }
 exports.setObservable = setObservable;
 
-},{"./simple-observable":54,"./utils":58,"rxjs":59}],46:[function(require,module,exports){
+},{"./simple-observable":57,"./utils":61,"rxjs":62}],49:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PartialArray = void 0;
@@ -9787,7 +9806,7 @@ class PartialArray {
 }
 exports.PartialArray = PartialArray;
 
-},{}],47:[function(require,module,exports){
+},{}],50:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathInfo = void 0;
@@ -10089,7 +10108,7 @@ class PathInfo {
 }
 exports.PathInfo = PathInfo;
 
-},{}],48:[function(require,module,exports){
+},{}],51:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathReference = void 0;
@@ -10104,7 +10123,7 @@ class PathReference {
 }
 exports.PathReference = PathReference;
 
-},{}],49:[function(require,module,exports){
+},{}],52:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = {
@@ -10114,7 +10133,7 @@ exports.default = {
     },
 };
 
-},{}],50:[function(require,module,exports){
+},{}],53:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SchemaDefinition = void 0;
@@ -10478,7 +10497,7 @@ class SchemaDefinition {
 }
 exports.SchemaDefinition = SchemaDefinition;
 
-},{}],51:[function(require,module,exports){
+},{}],54:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleCache = void 0;
@@ -10562,7 +10581,7 @@ class SimpleCache {
 }
 exports.SimpleCache = SimpleCache;
 
-},{"./utils":58}],52:[function(require,module,exports){
+},{"./utils":61}],55:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Colorize = exports.SetColorsEnabled = exports.ColorsSupported = exports.ColorStyle = void 0;
@@ -10716,7 +10735,7 @@ String.prototype.colorize = function (style) {
     return Colorize(this, style);
 };
 
-},{"./process":49}],53:[function(require,module,exports){
+},{"./process":52}],56:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleEventEmitter = void 0;
@@ -10799,7 +10818,7 @@ class SimpleEventEmitter {
 }
 exports.SimpleEventEmitter = SimpleEventEmitter;
 
-},{}],54:[function(require,module,exports){
+},{}],57:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SimpleObservable = void 0;
@@ -10847,7 +10866,7 @@ class SimpleObservable {
 }
 exports.SimpleObservable = SimpleObservable;
 
-},{}],55:[function(require,module,exports){
+},{}],58:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EventStream = exports.EventPublisher = exports.EventSubscription = void 0;
@@ -11034,7 +11053,7 @@ class EventStream {
 }
 exports.EventStream = EventStream;
 
-},{}],56:[function(require,module,exports){
+},{}],59:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deserialize2 = exports.serialize2 = exports.serialize = exports.detectSerializeVersion = exports.deserialize = void 0;
@@ -11370,7 +11389,7 @@ const deserialize2 = (data) => {
 };
 exports.deserialize2 = deserialize2;
 
-},{"./ascii85":34,"./partial-array":46,"./path-info":47,"./path-reference":48,"./utils":58}],57:[function(require,module,exports){
+},{"./ascii85":37,"./partial-array":49,"./path-info":50,"./path-reference":51,"./utils":61}],60:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TypeMappings = void 0;
@@ -11692,7 +11711,7 @@ class TypeMappings {
 }
 exports.TypeMappings = TypeMappings;
 
-},{"./data-reference":39,"./data-snapshot":40,"./path-info":47,"./utils":58}],58:[function(require,module,exports){
+},{"./data-reference":42,"./data-snapshot":43,"./path-info":50,"./utils":61}],61:[function(require,module,exports){
 (function (global,Buffer){(function (){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -12158,7 +12177,7 @@ function getGlobalObject() {
 exports.getGlobalObject = getGlobalObject;
 
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {},require("buffer").Buffer)
-},{"./partial-array":46,"./path-reference":48,"./process":49,"buffer":59}],59:[function(require,module,exports){
+},{"./partial-array":49,"./path-reference":51,"./process":52,"buffer":62}],62:[function(require,module,exports){
 
 },{}]},{},[6])(6)
 });

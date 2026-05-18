@@ -38,7 +38,9 @@ export async function createTempDB(enable: { transactionLogging?: boolean; logLe
             await rmdir(dbdir);
         }
         else {
-            await rmdir(dbdir, { recursive: true, maxRetries: 10 });
+            await rmdir(dbdir, { recursive: true, maxRetries: 10 }).catch(err => {
+                if (err.code !== 'ENOENT') throw err;
+            });
         }
     };
 
