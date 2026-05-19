@@ -1,5 +1,5 @@
 import { LoggingLevel } from 'acebase-core';
-import { StorageSettings } from '../..';
+import { StorageSettings } from '../../index.js';
 
 export class IndexedDBStorageSettings extends StorageSettings {
     /**

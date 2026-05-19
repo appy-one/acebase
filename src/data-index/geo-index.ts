@@ -1,12 +1,12 @@
-import type { Storage } from '../storage';
-import { BlacklistingSearchOperator } from '../btree';
-import { VALUE_TYPES } from '../node-value-types';
-import { DataIndex } from './data-index';
-import { DataIndexOptions } from './options';
-import { IndexQueryResults } from './query-results';
-import { IndexQueryStats } from './query-stats';
-import { IndexableValueOrArray } from './shared';
-import * as Geohash from '../geohash';
+import type { Storage } from '../storage/index.js';
+import { BlacklistingSearchOperator } from '../btree/index.js';
+import { VALUE_TYPES } from '../node-value-types.js';
+import { DataIndex } from './data-index.js';
+import { DataIndexOptions } from './options.js';
+import { IndexQueryResults } from './query-results.js';
+import { IndexQueryStats } from './query-stats.js';
+import { IndexableValueOrArray } from './shared.js';
+import * as Geohash from '../geohash.js';
 
 function _getGeoRadiusPrecision(radiusM: number) {
     if (typeof radiusM !== 'number') { return; }

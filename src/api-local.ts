@@ -2,17 +2,17 @@ import { AceBaseBase, IStreamLike, Api, EventSubscriptionCallback,
     ReflectionType, IReflectionNodeInfo, IReflectionChildrenInfo,
     StreamReadFunction, StreamWriteFunction, TransactionLogFilter,
     LoggingLevel, Query, QueryOptions, LoggerPlugin } from 'acebase-core';
-import { AceBaseStorage, AceBaseStorageSettings } from './storage/binary';
-import { SQLiteStorage, SQLiteStorageSettings } from './storage/sqlite';
-import { MSSQLStorage, MSSQLStorageSettings } from './storage/mssql';
-import { CustomStorage, CustomStorageSettings } from './storage/custom';
-import { VALUE_TYPES } from './node-value-types';
-import { executeQuery } from './query';
-import { Storage, StorageEnv } from './storage';
-import { CreateIndexOptions } from './storage/indexes';
-import type { BinaryNodeAddress } from './storage/binary/node-address';
-import { AceBaseLocalSettings } from '.';
-import { NodeNotFoundError } from './node-errors';
+import { AceBaseStorage, AceBaseStorageSettings } from './storage/binary/index.js';
+import { SQLiteStorage, SQLiteStorageSettings } from './storage/sqlite/index.js';
+import { MSSQLStorage, MSSQLStorageSettings } from './storage/mssql/index.js';
+import { CustomStorage, CustomStorageSettings } from './storage/custom/index.js';
+import { VALUE_TYPES } from './node-value-types.js';
+import { executeQuery } from './query.js';
+import { Storage, StorageEnv } from './storage/index.js';
+import { CreateIndexOptions } from './storage/indexes.js';
+import type { BinaryNodeAddress } from './storage/binary/node-address.js';
+import { AceBaseLocalSettings } from './acebase-local.js';
+import { NodeNotFoundError } from './node-errors.js';
 
 export class LocalApi extends Api {
     // All api methods for local database instance

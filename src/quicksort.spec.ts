@@ -1,4 +1,4 @@
-import quickSort from './quicksort';
+import quickSort from './quicksort.js';
 import { performance } from 'perf_hooks';
 
 describe('quicksort', () => {

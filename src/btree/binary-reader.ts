@@ -1,9 +1,9 @@
 import { Utils } from 'acebase-core';
-import { readByteLength, readSignedNumber } from '../binary';
-import { DetailedError } from '../detailed-error';
-import { pfs } from '../promise-fs';
-import { assert } from '../assert';
-import { BPlusTree } from './tree';
+import { readByteLength, readSignedNumber } from '../binary.js';
+import { DetailedError } from '../detailed-error.js';
+import { pfs } from '../promise-fs/index.js';
+import { assert } from '../assert.js';
+import { BPlusTree } from './tree.js';
 const { bytesToNumber } = Utils;
 
 export type ReadFunction = (index: number, length: number) => Promise<Buffer>;

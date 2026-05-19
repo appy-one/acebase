@@ -1,12 +1,12 @@
-import { BlacklistingSearchOperator } from '../btree';
-import { DataIndex } from './data-index';
-import { DataIndexOptions } from './options';
-import type { Storage } from '../storage';
-import { IndexableValue, IndexableValueOrArray } from './shared';
-import { VALUE_TYPES } from '../node-value-types';
-import { IndexQueryResults } from './query-results';
-import { IndexQueryStats } from './query-stats';
-import { ArrayIndexQueryHint } from './array-index-query-hint';
+import { BlacklistingSearchOperator } from '../btree/index.js';
+import { DataIndex } from './data-index.js';
+import { DataIndexOptions } from './options.js';
+import type { Storage } from '../storage/index.js';
+import { IndexableValue, IndexableValueOrArray } from './shared.js';
+import { VALUE_TYPES } from '../node-value-types.js';
+import { IndexQueryResults } from './query-results.js';
+import { IndexQueryStats } from './query-stats.js';
+import { ArrayIndexQueryHint } from './array-index-query-hint.js';
 
 /**
  * An array index allows all values in an array node to be indexed and searched

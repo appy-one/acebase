@@ -1,9 +1,9 @@
 import type { WriteStream } from 'fs';
-import { Uint8ArrayBuilder, writeByteLength, writeSignedNumber, BufferLike } from '../binary';
-import { BinaryBPlusTreeBuilder } from './binary-tree-builder';
+import { Uint8ArrayBuilder, writeByteLength, writeSignedNumber, BufferLike } from '../binary.js';
+import { BinaryBPlusTreeBuilder } from './binary-tree-builder.js';
 import { Utils } from 'acebase-core';
-import { NodeEntryKeyType } from './entry-key-type';
-import { assert } from '../assert';
+import { NodeEntryKeyType } from './entry-key-type.js';
+import { assert } from '../assert.js';
 const { numberToBytes, bytesToNumber } = Utils;
 
 type WriteStreamLike = Pick<WriteStream, 'write' | 'end' | 'once' | 'bytesWritten'>;

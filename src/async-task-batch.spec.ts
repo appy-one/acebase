@@ -1,4 +1,4 @@
-import { AsyncTaskBatch } from './async-task-batch';
+import { AsyncTaskBatch } from './async-task-batch.js';
 
 describe('Async task batches', () => {
     it('works', async () => {

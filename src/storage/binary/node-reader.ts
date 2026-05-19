@@ -5,7 +5,7 @@ import { BinaryBPlusTree, BinaryBPlusTreeLeaf } from '../../btree/index.js';
 import { BinaryNodeAddress } from './node-address.js';
 import { RecordInfo } from './record-info.js';
 import { AceBaseStorage } from './binary-storage.js';
-import { IAceBaseIPCLock } from '../../ipc/ipc';
+import { IAceBaseIPCLock } from '../../ipc/ipc.js';
 import { NodeAllocation } from './node-allocation.js';
 import { BinaryNodeInfo } from './node-info.js';
 import { StorageAddressRange } from './binary-storage-address-range.js';

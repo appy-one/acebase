@@ -1,5 +1,5 @@
 // Test the new NodeTransaction class being developed
-import { TransactionManager, NodeLockIntention } from './node-transaction';
+import { TransactionManager, NodeLockIntention } from './node-transaction.js';
 
 describe('NodeTransaction (beta)', () => {
 

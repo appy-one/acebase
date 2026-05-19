@@ -1,6 +1,6 @@
-import { BinaryBPlusTree } from './binary-tree';
-import { BinaryBPlusTreeNode } from './binary-tree-node';
-import { BinaryBPlusTreeNodeEntry } from './binary-tree-node-entry';
+import { BinaryBPlusTree } from './binary-tree.js';
+import { BinaryBPlusTreeNode } from './binary-tree-node.js';
+import { BinaryBPlusTreeNodeEntry } from './binary-tree-node-entry.js';
 
 export class BinaryBPlusTreeNodeInfo {
     tree?: BinaryBPlusTree;

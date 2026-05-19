@@ -1,6 +1,6 @@
-import { DetailedError } from '../detailed-error';
-import { BinaryBPlusTreeNodeEntry } from './binary-tree-node-entry';
-import { BinaryBPlusTreeNodeInfo } from './binary-tree-node-info';
+import { DetailedError } from '../detailed-error.js';
+import { BinaryBPlusTreeNodeEntry } from './binary-tree-node-entry.js';
+import { BinaryBPlusTreeNodeInfo } from './binary-tree-node-info.js';
 
 export class BinaryBPlusTreeNode extends BinaryBPlusTreeNodeInfo {
 

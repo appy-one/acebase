@@ -1,4 +1,4 @@
-import { IndexQueryHint } from './query-hint';
+import { IndexQueryHint } from './query-hint.js';
 
 export class FullTextIndexQueryHint extends IndexQueryHint {
     static get types() {

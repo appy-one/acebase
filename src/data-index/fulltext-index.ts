@@ -1,14 +1,14 @@
-import { DataIndex } from './data-index';
-import { DataIndexOptions } from './options';
-import { IndexQueryResults } from './query-results';
-import { Storage } from '../storage';
-import { IndexMetaData } from './shared';
-import { VALUE_TYPES } from '../node-value-types';
-import { BlacklistingSearchOperator } from '../btree';
-import { IndexQueryStats } from './query-stats';
-import { FullTextIndexQueryHint } from './fulltext-index-query-hint';
-import unidecode from '../unidecode';
-import { assert } from '../assert';
+import { DataIndex } from './data-index.js';
+import { DataIndexOptions } from './options.js';
+import { IndexQueryResults } from './query-results.js';
+import { Storage } from '../storage/index.js';
+import { IndexMetaData } from './shared.js';
+import { VALUE_TYPES } from '../node-value-types.js';
+import { BlacklistingSearchOperator } from '../btree/index.js';
+import { IndexQueryStats } from './query-stats.js';
+import { FullTextIndexQueryHint } from './fulltext-index-query-hint.js';
+import unidecode from '../unidecode.js';
+import { assert } from '../assert.js';
 
 class WordInfo {
     constructor(public word: string, public indexes: number[], public sourceIndexes: number[]) { }

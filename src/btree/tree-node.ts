@@ -1,13 +1,13 @@
-import { BPlusTreeNodeEntry } from './tree-node-entry';
-import { BPlusTreeLeaf } from './tree-leaf';
-import { BPlusTree } from './tree';
-import { NodeEntryKeyType } from './entry-key-type';
-import { _isEqual, _isMore } from './typesafe-compare';
-import { DetailedError } from '../detailed-error';
-import { BinaryWriter } from './binary-writer';
-import { writeByteLength, writeSignedOffset } from '../binary';
-import { BinaryPointer } from './binary-pointer';
-import { BinaryReference } from './binary-reference';
+import { BPlusTreeNodeEntry } from './tree-node-entry.js';
+import { BPlusTreeLeaf } from './tree-leaf.js';
+import { BPlusTree } from './tree.js';
+import { NodeEntryKeyType } from './entry-key-type.js';
+import { _isEqual, _isMore } from './typesafe-compare.js';
+import { DetailedError } from '../detailed-error.js';
+import { BinaryWriter } from './binary-writer.js';
+import { writeByteLength, writeSignedOffset } from '../binary.js';
+import { BinaryPointer } from './binary-pointer.js';
+import { BinaryReference } from './binary-reference.js';
 
 export class BPlusTreeNode {
     entries: BPlusTreeNodeEntry[] = [];

@@ -1,5 +1,5 @@
-import { startServer } from '.';
-import { type AceBaseLocalSettings } from '../../';
+import { startServer } from './index.js';
+import { type AceBaseLocalSettings } from '../../index.js';
 
 (async () => {
     try {

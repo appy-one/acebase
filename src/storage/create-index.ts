@@ -1,7 +1,7 @@
 import { ColorStyle } from 'acebase-core';
-import { DataIndex, ArrayIndex, FullTextIndex, GeoIndex } from '../data-index';
-import { pfs } from '../promise-fs';
-import { IndexesContext } from './context';
+import { DataIndex, ArrayIndex, FullTextIndex, GeoIndex } from '../data-index/index.js';
+import { pfs } from '../promise-fs/index.js';
+import { IndexesContext } from './context.js';
 
 export interface CreateIndexOptions {
     rebuild?: boolean;

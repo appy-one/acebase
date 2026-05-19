@@ -1,6 +1,6 @@
-import { NodeEntryKeyType } from './entry-key-type';
-import { BPlusTreeLeaf } from './tree-leaf';
-import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value';
+import { NodeEntryKeyType } from './entry-key-type.js';
+import { BPlusTreeLeaf } from './tree-leaf.js';
+import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value.js';
 
 export class BPlusTreeLeafEntry {
     values: BPlusTreeLeafEntryValue[];

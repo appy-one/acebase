@@ -1,4 +1,4 @@
-import { BPlusTreeLeaf } from './tree-leaf';
+import { BPlusTreeLeaf } from './tree-leaf.js';
 
 export type BinaryPointer = {
     name: string;

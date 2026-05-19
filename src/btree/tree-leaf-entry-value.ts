@@ -1,5 +1,5 @@
-import { LeafEntryMetaData } from './leaf-entry-metadata';
-import { LeafEntryRecordPointer } from './leaf-entry-recordpointer';
+import { LeafEntryMetaData } from './leaf-entry-metadata.js';
+import { LeafEntryRecordPointer } from './leaf-entry-recordpointer.js';
 
 export class BPlusTreeLeafEntryValue {
     /**

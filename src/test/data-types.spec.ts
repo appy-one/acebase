@@ -1,6 +1,6 @@
 import { PathReference } from 'acebase-core';
-import { AceBase } from '..';
-import { createTempDB } from './tempdb';
+import { AceBase } from '../index.js';
+import { createTempDB } from './tempdb.js';
 
 describe('Data type', () => {
     let db: AceBase, removeDB: () => Promise<void>;

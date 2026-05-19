@@ -1,7 +1,7 @@
-import { createTempDB } from './tempdb';
+import { createTempDB } from './tempdb.js';
 import { proxyAccess, ObjectCollection, ILiveDataProxyValue } from 'acebase-core';
 import * as Util from 'util';
-import { readDataSet } from './dataset';
+import { readDataSet } from './dataset.js';
 const util: typeof Util = (Util as any).default ?? Util;
 
 describe('DataProxy', () => {

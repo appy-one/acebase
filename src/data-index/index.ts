@@ -1,10 +1,10 @@
-import { DataIndex } from './data-index';
-import { FullTextIndex } from './fulltext-index';
-import { GeoIndex } from './geo-index';
-import { ArrayIndex } from './array-index';
+import { DataIndex } from './data-index.js';
+import { FullTextIndex } from './fulltext-index.js';
+import { GeoIndex } from './geo-index.js';
+import { ArrayIndex } from './array-index.js';
 
 export { DataIndex, FullTextIndex, GeoIndex, ArrayIndex };
-export { IndexQueryResults } from './query-results';
+export { IndexQueryResults } from './query-results.js';
 
 DataIndex.KnownIndexTypes = {
     normal: DataIndex,

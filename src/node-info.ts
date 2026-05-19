@@ -1,6 +1,6 @@
-import { NodeValueType, getValueTypeName } from './node-value-types';
 import { PathInfo } from 'acebase-core';
-import { NodeAddress } from './node-address';
+import { NodeValueType, getValueTypeName } from './node-value-types.js';
+import { NodeAddress } from './node-address.js';
 
 export class NodeInfo {
     path?: string;

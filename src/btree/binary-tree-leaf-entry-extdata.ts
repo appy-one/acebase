@@ -1,7 +1,7 @@
-import { ThreadSafeLock } from '../thread-safe';
-import { BinaryBPlusTreeLeafEntryValue } from './binary-tree-leaf-entry-value';
-import { LeafEntryMetaData } from './leaf-entry-metadata';
-import { LeafEntryRecordPointer } from './leaf-entry-recordpointer';
+import { ThreadSafeLock } from '../thread-safe.js';
+import { BinaryBPlusTreeLeafEntryValue } from './binary-tree-leaf-entry-value.js';
+import { LeafEntryMetaData } from './leaf-entry-metadata.js';
+import { LeafEntryRecordPointer } from './leaf-entry-recordpointer.js';
 
 export interface IBinaryBPlusTreeLeafEntryExtData {
     length: number;

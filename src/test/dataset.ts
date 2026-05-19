@@ -8,6 +8,6 @@ export async function readDataSet(name: string) {
 }
 
 export function getDataSetPath(name: string) {
-    const path = resolve(__dirname, '../../../spec/dataset'); // dir relative to dist/[cjs|esm]/test
+    const path = resolve(process.cwd(), 'spec/dataset');
     return `${path}/${name}.json`;
 }

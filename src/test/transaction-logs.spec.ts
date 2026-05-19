@@ -1,7 +1,7 @@
 import { SimpleEventEmitter } from 'acebase-core';
-import { AceBase } from '..';
-import type { AceBaseStorage } from '../storage/binary';
-import { createTempDB } from './tempdb';
+import { AceBase } from '../index.js';
+import type { AceBaseStorage } from '../storage/binary/index.js';
+import { createTempDB } from './tempdb.js';
 
 describe('BETA - Transaction logging', () => {
     let db: AceBase, removeDB: () => Promise<void>;

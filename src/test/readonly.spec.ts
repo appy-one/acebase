@@ -1,5 +1,5 @@
-import { createTempDB } from './tempdb';
-import { AceBase } from '..';
+import { createTempDB } from './tempdb.js';
+import { AceBase } from '../index.js';
 
 describe('readonly databases', () => {
 
@@ -21,7 +21,7 @@ describe('readonly databases', () => {
         await db.close();
 
         // Open it readonly
-        db = new AceBase(db.name, { logLevel: 'verbose', storage: { path: __dirname, readOnly: true } });
+        db = new AceBase(db.name, { logLevel: 'verbose', storage: { path: db.api.storage.settings.path, readOnly: true } });
 
         try {
             // Try writing to it
@@ -43,7 +43,7 @@ describe('readonly databases', () => {
         await db.close();
 
         // Open it readonly
-        db = new AceBase(db.name, { logLevel: 'verbose', storage: { path: __dirname, readOnly: true } });
+        db = new AceBase(db.name, { logLevel: 'verbose', storage: { path: db.api.storage.settings.path, readOnly: true } });
 
         // Try reading from it
         const snap = await db.ref('test').get();

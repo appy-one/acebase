@@ -1,6 +1,6 @@
-import { NodeEntryKeyType } from '../btree/entry-key-type';
-import { LeafEntryMetaData } from '../btree/leaf-entry-metadata';
-import { LeafEntryRecordPointer } from '../btree/leaf-entry-recordpointer';
+import { NodeEntryKeyType } from '../btree/entry-key-type.js';
+import { LeafEntryMetaData } from '../btree/leaf-entry-metadata.js';
+import { LeafEntryRecordPointer } from '../btree/leaf-entry-recordpointer.js';
 
 export type FileSystemError = Error & { code: string };
 

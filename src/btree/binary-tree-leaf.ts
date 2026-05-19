@@ -1,9 +1,9 @@
-import { assert } from '../assert';
-import { DetailedError } from '../detailed-error';
-import { BinaryBPlusTreeLeafEntry } from './binary-tree-leaf-entry';
-import { BinaryBPlusTreeNodeInfo } from './binary-tree-node-info';
-import { NodeEntryKeyType } from './entry-key-type';
-import { _isEqual } from './typesafe-compare';
+import { assert } from '../assert.js';
+import { DetailedError } from '../detailed-error.js';
+import { BinaryBPlusTreeLeafEntry } from './binary-tree-leaf-entry.js';
+import { BinaryBPlusTreeNodeInfo } from './binary-tree-node-info.js';
+import { NodeEntryKeyType } from './entry-key-type.js';
+import { _isEqual } from './typesafe-compare.js';
 
 export class BinaryBPlusTreeLeaf extends BinaryBPlusTreeNodeInfo {
 

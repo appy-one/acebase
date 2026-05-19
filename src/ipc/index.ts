@@ -1,9 +1,9 @@
-import { AceBaseIPCPeer, IHelloMessage, IMessage } from './ipc';
-import { Storage } from '../storage';
+import { AceBaseIPCPeer, IHelloMessage, IMessage } from './ipc.js';
+import { Storage } from '../storage/index.js';
 import * as Cluster from 'cluster';
 const cluster = Cluster.default ?? Cluster as any as typeof Cluster.default; // ESM and CJS compatible approach
-export { RemoteIPCPeer, RemoteIPCServerConfig } from './remote';
-export { IPCSocketPeer, NetIPCServer } from './socket';
+export { RemoteIPCPeer, RemoteIPCServerConfig } from './remote.js';
+export { IPCSocketPeer, NetIPCServer } from './socket.js';
 
 const masterPeerId = '[master]';
 

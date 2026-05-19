@@ -1,17 +1,17 @@
 import { PathInfo, Utils, ID, ColorStyle, Transport, type LoggerPlugin } from 'acebase-core';
-import { ThreadSafe } from '../thread-safe';
-import type { Storage } from '../storage';
-import { pfs } from '../promise-fs';
-import { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryBPlusTreeLeafEntry, BinaryWriter, BinaryReader, BlacklistingSearchOperator } from '../btree';
-import { DataIndexOptions } from './options';
-import { FileSystemError, IndexableValue, IndexableValueOrArray, IndexMetaData, IndexRecordPointer } from './shared';
-import { getValueType, VALUE_TYPES }  from '../node-value-types';
-import quickSort from '../quicksort';
-import { BinaryBPlusTreeTransactionOperation } from '../btree/binary-tree-transaction-operation';
-import { IndexQueryStats } from './query-stats';
-import { IndexQueryResult, IndexQueryResults } from './query-results';
-import { BPlusTreeLeafEntryValue } from '../btree/tree-leaf-entry-value';
-import { assert } from '../assert';
+import { ThreadSafe } from '../thread-safe.js';
+import type { Storage } from '../storage/index.js';
+import { pfs } from '../promise-fs/index.js';
+import { BPlusTreeBuilder, BPlusTree, BinaryBPlusTree, BinaryBPlusTreeLeafEntry, BinaryWriter, BinaryReader, BlacklistingSearchOperator } from '../btree/index.js';
+import { DataIndexOptions } from './options.js';
+import { FileSystemError, IndexableValue, IndexableValueOrArray, IndexMetaData, IndexRecordPointer } from './shared.js';
+import { getValueType, VALUE_TYPES }  from '../node-value-types.js';
+import quickSort from '../quicksort.js';
+import { BinaryBPlusTreeTransactionOperation } from '../btree/binary-tree-transaction-operation.js';
+import { IndexQueryStats } from './query-stats.js';
+import { IndexQueryResult, IndexQueryResults } from './query-results.js';
+import { BPlusTreeLeafEntryValue } from '../btree/tree-leaf-entry-value.js';
+import { assert } from '../assert.js';
 const { compareValues, getChildValues, numberToBytes, bytesToNumber, encodeString, decodeString } = Utils;
 
 const DISK_BLOCK_SIZE = 4096; // use 512 for older disks

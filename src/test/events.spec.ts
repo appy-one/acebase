@@ -1,6 +1,6 @@
 import { MutationsDataSnapshot } from 'acebase-core';
-import { AceBase, DataSnapshot } from '..';
-import { createTempDB } from './tempdb';
+import { AceBase, DataSnapshot } from '../index.js';
+import { createTempDB } from './tempdb.js';
 
 describe('Event', () => {
     let db: AceBase, removeDB: () => Promise<void>;

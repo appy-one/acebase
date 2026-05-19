@@ -1,6 +1,6 @@
 import { ID, LoggerPlugin, SimpleEventEmitter } from 'acebase-core';
-import { NodeLocker, NodeLock, LOCK_STATE } from '../node-lock';
-import { Storage } from '../storage';
+import { NodeLocker, NodeLock, LOCK_STATE } from '../node-lock.js';
+import { Storage } from '../storage/index.js';
 
 export class AceBaseIPCPeerExitingError extends Error {
     constructor(message: string) { super(`Exiting: ${message}`); }
@@ -34,7 +34,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         storage.on('subscribe', (subscription: { path: string, event: string, callback: AceBaseSubscribeCallback }) => {
             // Subscription was added to db
 
-            this.logger.trace(`database subscription being added on peer ${this.id}`);
+            // this.logger.trace(`database subscription being added on peer ${this.id}`);
 
             const remoteSubscription = this.remoteSubscriptions.find(sub => sub.callback === subscription.callback);
             if (remoteSubscription) {
@@ -452,7 +452,7 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
                         const req: IUnlockRequestMessage = { type: 'unlock-request', id: ID.generate(), from: this.id, to: this.masterPeerId, data: { id: lockInfo.lock.id } };
                         await this.request(req);
                         lockInfo.lock.state = LOCK_STATE.DONE;
-                        this.logger.trace(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
+                        // this.logger.trace(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
                         removeLock(lockInfo);
                     },
                     moveToParent: async () => {

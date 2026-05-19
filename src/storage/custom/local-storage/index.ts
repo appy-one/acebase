@@ -1,7 +1,7 @@
-import { CustomStorageSettings } from '..';
-import { AceBase } from '../../..';
-import { LocalStorageSettings } from './settings';
-import { LocalStorageTransaction } from './transaction';
+import { CustomStorageSettings } from '../index.js';
+import { AceBase } from '../../../index.js';
+import { LocalStorageSettings } from './settings.js';
+import { LocalStorageTransaction } from './transaction.js';
 
 export { LocalStorageSettings, LocalStorageTransaction };
 

@@ -1,12 +1,12 @@
 import { ID, PathReference, PathInfo, ascii85, ColorStyle } from 'acebase-core';
-import { Storage, StorageEnv, StorageSettings } from '..';
-import { NodeInfo } from '../../node-info';
-import { VALUE_TYPES } from '../../node-value-types';
-import { NodeNotFoundError, NodeRevisionError } from '../../node-errors';
-import { pfs } from '../../promise-fs';
-import { ThreadSafe } from '../../thread-safe';
-import { NodeAddress } from '../../node-address';
-import { assert } from '../../assert';
+import { Storage, StorageEnv, StorageSettings } from '../index.js';
+import { NodeInfo } from '../../node-info.js';
+import { VALUE_TYPES } from '../../node-value-types.js';
+import { NodeNotFoundError, NodeRevisionError } from '../../node-errors.js';
+import { pfs } from '../../promise-fs/index.js';
+import { ThreadSafe } from '../../thread-safe.js';
+import { NodeAddress } from '../../node-address.js';
+import { assert } from '../../assert.js';
 
 export class SQLiteNodeAddress extends NodeAddress {
     constructor(containerPath: string) {

@@ -1,14 +1,14 @@
 import { ID, PathReference, PathInfo, ascii85, ColorStyle, Utils, DebugLogger } from 'acebase-core';
 const { compareValues } = Utils;
-import { NodeInfo } from '../../node-info';
-import { NodeLock, NodeLocker } from '../../node-lock';
-import { NodeValueType, VALUE_TYPES } from '../../node-value-types';
-import { NodeNotFoundError, NodeRevisionError } from '../../node-errors';
-import { Storage, StorageEnv, StorageSettings } from '../index';
-import { CustomStorageHelpers } from './helpers';
-import { NodeAddress } from '../../node-address';
-import { assert } from '../../assert';
-export { CustomStorageHelpers } from './helpers';
+import { NodeInfo } from '../../node-info.js';
+import { NodeLock, NodeLocker } from '../../node-lock.js';
+import { NodeValueType, VALUE_TYPES } from '../../node-value-types.js';
+import { NodeNotFoundError, NodeRevisionError } from '../../node-errors.js';
+import { Storage, StorageEnv, StorageSettings } from '../index.js';
+import { CustomStorageHelpers } from './helpers.js';
+import { NodeAddress } from '../../node-address.js';
+import { assert } from '../../assert.js';
+export { CustomStorageHelpers } from './helpers.js';
 
 /** Interface for metadata being stored for nodes */
 export class ICustomStorageNodeMetaData {

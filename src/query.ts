@@ -1,10 +1,10 @@
 import { ID, PathInfo } from 'acebase-core';
 import type { EventSubscriptionCallback, Query, QueryOptions, QueryFilter, QueryOrder } from 'acebase-core';
-import { VALUE_TYPES } from './node-value-types';
-import { NodeNotFoundError } from './node-errors';
-import { DataIndex, FullTextIndex, IndexQueryResults } from './data-index';
-import { AsyncTaskBatch } from './async-task-batch';
-import type { LocalApi } from './api-local';
+import { VALUE_TYPES } from './node-value-types.js';
+import { NodeNotFoundError } from './node-errors.js';
+import { DataIndex, FullTextIndex, IndexQueryResults } from './data-index/index.js';
+import { AsyncTaskBatch } from './async-task-batch.js';
+import type { LocalApi } from './api-local.js';
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => {};

@@ -1,4 +1,4 @@
-import { createTempDB } from './tempdb';
+import { createTempDB } from './tempdb.js';
 
 describe('node locking', () => {
     it('should not cause deadlocks', async () => {

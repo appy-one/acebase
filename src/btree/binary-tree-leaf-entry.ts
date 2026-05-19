@@ -1,6 +1,6 @@
-import { IBinaryBPlusTreeLeafEntryExtData } from './binary-tree-leaf-entry-extdata';
-import { BinaryBPlusTreeLeafEntryValue } from './binary-tree-leaf-entry-value';
-import { NodeEntryKeyType } from './entry-key-type';
+import { IBinaryBPlusTreeLeafEntryExtData } from './binary-tree-leaf-entry-extdata.js';
+import { BinaryBPlusTreeLeafEntryValue } from './binary-tree-leaf-entry-value.js';
+import { NodeEntryKeyType } from './entry-key-type.js';
 
 export class BinaryBPlusTreeLeafEntry {
 

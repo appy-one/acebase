@@ -1,5 +1,5 @@
-import { AceBase } from '..';
-import { createTempDB } from './tempdb';
+import { AceBase } from '../index.js';
+import { createTempDB } from './tempdb.js';
 import { ID } from 'acebase-core';
 
 // This test takes at least an hour on a fast system, enable only if you have time

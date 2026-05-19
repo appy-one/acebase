@@ -1,6 +1,6 @@
-import { AceBase, AceBaseLocalSettings } from './acebase-local';
-import { createIndexedDBInstance } from './storage/custom/indexed-db';
-import { IndexedDBStorageSettings } from './storage/custom/indexed-db/settings';
+import { AceBase, AceBaseLocalSettings } from './acebase-local.js';
+import { createIndexedDBInstance } from './storage/custom/indexed-db/index.js';
+import { IndexedDBStorageSettings } from './storage/custom/indexed-db/settings.js';
 
 const deprecatedConstructorError = `Using AceBase constructor in the browser to use localStorage is deprecated!
 Switch to:

@@ -1,6 +1,6 @@
 import { SimpleCache } from 'acebase-core';
-import { CustomStorageHelpers, CustomStorageTransaction, ICustomStorageNode, ICustomStorageNodeMetaData } from '..';
-import { IPCPeer } from '../../../ipc';
+import { CustomStorageHelpers, CustomStorageTransaction, ICustomStorageNode, ICustomStorageNodeMetaData } from '../index.js';
+import { IPCPeer } from '../../../ipc/index.js';
 
 interface IIndexedDBNodeData {
     path: string;

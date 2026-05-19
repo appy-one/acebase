@@ -1,4 +1,4 @@
-import { NodeAddress } from '../../node-address';
+import { NodeAddress } from '../../node-address.js';
 
 export class BinaryNodeAddress extends NodeAddress {
     constructor(

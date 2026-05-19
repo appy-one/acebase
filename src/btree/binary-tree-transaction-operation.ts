@@ -1,7 +1,7 @@
-import { BinaryBPlusTreeLeafEntryValue } from './binary-tree-leaf-entry-value';
-import { NodeEntryKeyType } from './entry-key-type';
-import { LeafEntryMetaData } from './leaf-entry-metadata';
-import { LeafEntryRecordPointer } from './leaf-entry-recordpointer';
+import { BinaryBPlusTreeLeafEntryValue } from './binary-tree-leaf-entry-value.js';
+import { NodeEntryKeyType } from './entry-key-type.js';
+import { LeafEntryMetaData } from './leaf-entry-metadata.js';
+import { LeafEntryRecordPointer } from './leaf-entry-recordpointer.js';
 
 export class BinaryBPlusTreeTransactionOperation {
     static add(key: NodeEntryKeyType, recordPointer: LeafEntryRecordPointer, metadata?: LeafEntryMetaData) {

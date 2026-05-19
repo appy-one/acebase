@@ -1,16 +1,16 @@
-import { assert } from '../assert';
-import { DetailedError } from '../detailed-error';
-import { NodeEntryKeyType, NodeEntryValueType } from './entry-key-type';
-import { LeafEntryMetaData } from './leaf-entry-metadata';
-import { LeafEntryRecordPointer } from './leaf-entry-recordpointer';
-import { BPlusTree } from './tree';
-import { BPlusTreeLeaf } from './tree-leaf';
-import { BPlusTreeLeafEntry } from './tree-leaf-entry';
-import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value';
-import { BPlusTreeNode } from './tree-node';
-import { BPlusTreeNodeEntry } from './tree-node-entry';
-import { _sortCompare } from './typesafe-compare';
-import { _checkNewEntryArgs } from './utils';
+import { assert } from '../assert.js';
+import { DetailedError } from '../detailed-error.js';
+import { NodeEntryKeyType, NodeEntryValueType } from './entry-key-type.js';
+import { LeafEntryMetaData } from './leaf-entry-metadata.js';
+import { LeafEntryRecordPointer } from './leaf-entry-recordpointer.js';
+import { BPlusTree } from './tree.js';
+import { BPlusTreeLeaf } from './tree-leaf.js';
+import { BPlusTreeLeafEntry } from './tree-leaf-entry.js';
+import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value.js';
+import { BPlusTreeNode } from './tree-node.js';
+import { BPlusTreeNodeEntry } from './tree-node-entry.js';
+import { _sortCompare } from './typesafe-compare.js';
+import { _checkNewEntryArgs } from './utils.js';
 
 export class BPlusTreeBuilder {
     list = new Map<NodeEntryValueType, BPlusTreeLeafEntryValue | BPlusTreeLeafEntryValue[]>();

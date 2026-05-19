@@ -1,5 +1,5 @@
-import { CustomStorageHelpers, CustomStorageTransaction, ICustomStorageNode, ICustomStorageNodeMetaData } from '..';
-import { LocalStorageLike } from './interface';
+import { CustomStorageHelpers, CustomStorageTransaction, ICustomStorageNode, ICustomStorageNodeMetaData } from '../index.js';
+import { LocalStorageLike } from './interface.js';
 
 // Setup CustomStorageTransaction for browser's LocalStorage
 export class LocalStorageTransaction extends CustomStorageTransaction {
