@@ -1,10 +1,10 @@
-import { BinaryReader } from './binary-reader';
-import { BinaryBPlusTree, BlacklistingSearchOperator } from './binary-tree';
-import { BinaryBPlusTreeLeaf } from './binary-tree-leaf';
-import { BinaryBPlusTreeLeafEntry } from './binary-tree-leaf-entry';
-import { BinaryWriter } from './binary-writer';
-import { BPlusTree } from './tree';
-import { BPlusTreeBuilder } from './tree-builder';
+import { BinaryReader } from './binary-reader.js';
+import { BinaryBPlusTree, BlacklistingSearchOperator } from './binary-tree.js';
+import { BinaryBPlusTreeLeaf } from './binary-tree-leaf.js';
+import { BinaryBPlusTreeLeafEntry } from './binary-tree-leaf-entry.js';
+import { BinaryWriter } from './binary-writer.js';
+import { BPlusTree } from './tree.js';
+import { BPlusTreeBuilder } from './tree-builder.js';
 
 export {
     BPlusTree,

@@ -1,8 +1,8 @@
 import { SimpleCache } from 'acebase-core';
-import { CustomStorageSettings, ICustomStorageNode } from '..';
-import { AceBase } from '../../..';
-import { IndexedDBStorageSettings } from './settings';
-import { IndexedDBStorageTransaction, IndexedDBTransactionContext } from './transaction';
+import { CustomStorageSettings, ICustomStorageNode } from '../index.js';
+import { AceBase } from '../../../index.js';
+import { IndexedDBStorageSettings } from './settings.js';
+import { IndexedDBStorageTransaction, IndexedDBTransactionContext } from './transaction.js';
 
 export function createIndexedDBInstance(dbname: string, init: Partial<IndexedDBStorageSettings> = {}) {
     const settings = new IndexedDBStorageSettings(init);

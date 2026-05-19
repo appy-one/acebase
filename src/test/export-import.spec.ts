@@ -1,8 +1,8 @@
-import { createTempDB } from './tempdb';
+import { createTempDB } from './tempdb.js';
 import { openSync, closeSync, read } from 'fs';
 import { PathReference } from 'acebase-core';
-import { AceBase } from '..';
-import { getDataSetPath } from './dataset';
+import { AceBase } from '../index.js';
+import { getDataSetPath } from './dataset.js';
 
 describe('export/import', () => {
     let db: AceBase, removeDB: () => Promise<void>;

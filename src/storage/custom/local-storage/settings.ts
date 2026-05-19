@@ -1,6 +1,6 @@
 import { LoggingLevel } from 'acebase-core';
-import { StorageSettings } from '../..';
-import { LocalStorageLike } from './interface';
+import { StorageSettings } from '../../index.js';
+import { LocalStorageLike } from './interface.js';
 
 export class LocalStorageSettings extends StorageSettings {
     constructor(settings: Partial<LocalStorageSettings>) {

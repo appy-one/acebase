@@ -1,5 +1,5 @@
-import { AceBase } from '../..';
-import { createTempDB } from '../../test/tempdb';
+import { AceBase } from '../../index.js';
+import { createTempDB } from '../../test/tempdb.js';
 
 describe('issue', () => {
     let db: AceBase, removeDB: () => Promise<void>;

@@ -1,14 +1,14 @@
-import { Uint8ArrayBuilder, writeByteLength, writeSignedOffset } from '../binary';
-import { DetailedError } from '../detailed-error';
-import { MAX_SMALL_LEAF_VALUE_LENGTH, WRITE_SMALL_LEAFS } from './config';
-import { BPlusTree } from './tree';
-import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value';
-import { BinaryBPlusTreeLeafEntry } from './binary-tree-leaf-entry';
+import { Uint8ArrayBuilder, writeByteLength, writeSignedOffset } from '../binary.js';
+import { DetailedError } from '../detailed-error.js';
+import { MAX_SMALL_LEAF_VALUE_LENGTH, WRITE_SMALL_LEAFS } from './config.js';
+import { BPlusTree } from './tree.js';
+import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value.js';
+import { BinaryBPlusTreeLeafEntry } from './binary-tree-leaf-entry.js';
 import { Utils } from 'acebase-core';
-import { LeafEntryRecordPointer } from './leaf-entry-recordpointer';
-import { LeafEntryMetaData } from './leaf-entry-metadata';
-import { NodeEntryKeyType } from './entry-key-type';
-import { assert } from '../assert';
+import { LeafEntryRecordPointer } from './leaf-entry-recordpointer.js';
+import { LeafEntryMetaData } from './leaf-entry-metadata.js';
+import { NodeEntryKeyType } from './entry-key-type.js';
+import { assert } from '../assert.js';
 
 const { bigintToBytes, encodeString, numberToBytes } = Utils;
 

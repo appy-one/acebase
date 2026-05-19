@@ -1,6 +1,6 @@
-import { AceBase } from '..';
-import { readDataSet } from './dataset';
-import { createTempDB } from './tempdb';
+import { AceBase } from '../index.js';
+import { readDataSet } from './dataset.js';
+import { createTempDB } from './tempdb.js';
 
 describe('Include/exclude filters', () => {
     let db: AceBase, removeDB: () => Promise<void>;

@@ -1,5 +1,5 @@
-import { assert } from '../assert';
-import { DetailedError } from '../detailed-error';
+import { assert } from '../assert.js';
+import { DetailedError } from '../detailed-error.js';
 
 export class TxDetailedError extends DetailedError {
     transactionErrors: Array<DetailedError|Error> = null;

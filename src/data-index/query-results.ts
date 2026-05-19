@@ -1,7 +1,7 @@
-import { BPlusTreeLeafEntryValue } from '../btree/tree-leaf-entry-value';
-import { IndexQueryHint } from './query-hint';
-import { IndexQueryStats } from './query-stats';
-import { IndexableValue, IndexableValueOrArray, IndexMetaData } from './shared';
+import { BPlusTreeLeafEntryValue } from '../btree/tree-leaf-entry-value.js';
+import { IndexQueryHint } from './query-hint.js';
+import { IndexQueryStats } from './query-stats.js';
+import { IndexableValue, IndexableValueOrArray, IndexMetaData } from './shared.js';
 
 export class IndexQueryResult {
     public values: BPlusTreeLeafEntryValue[];

@@ -1,7 +1,7 @@
 // TODO: Rename to NodeInfoCache
 
-import { NodeInfo } from './node-info';
 import { PathInfo } from 'acebase-core';
+import { NodeInfo } from './node-info.js';
 
 // const SECOND = 1000;
 const MINUTE = 60_000;

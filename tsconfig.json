@@ -7,7 +7,7 @@
         "module": "es2020",
         "rootDir": "./src",
         "outDir": "./dist/esm",
-        "moduleResolution": "node",
+        "moduleResolution": "bundler",
         "target": "es2020",
         "pretty": true,
         "declaration": true,

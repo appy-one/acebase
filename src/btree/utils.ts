@@ -1,6 +1,6 @@
-import { NodeEntryKeyType } from './entry-key-type';
-import { LeafEntryMetaData } from './leaf-entry-metadata';
-import { LeafEntryRecordPointer } from './leaf-entry-recordpointer';
+import { NodeEntryKeyType } from './entry-key-type.js';
+import { LeafEntryMetaData } from './leaf-entry-metadata.js';
+import { LeafEntryRecordPointer } from './leaf-entry-recordpointer.js';
 
 export function _checkNewEntryArgs(key: NodeEntryKeyType, recordPointer: LeafEntryRecordPointer, metadataKeys: string[], metadata: LeafEntryMetaData) {
     const storageTypesText = 'supported types are string, number, boolean, Date and undefined';

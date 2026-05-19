@@ -9,7 +9,7 @@
     \_| |_/\___\___\____/ \__,_|___/\___|
                         realtime database
 
-   Copyright 2018-2022 by Ewout Stortenbeker (me@appy.one)
+   Copyright 2018-2026 by Ewout Stortenbeker (me@appy.one)
    Published under MIT license
 
    See docs at https://github.com/appy-one/acebase
@@ -38,7 +38,7 @@ export {
     PartialArray,
 } from 'acebase-core';
 
-import { AceBase } from './acebase-local';
+import { AceBase } from './acebase-local.js';
 export default AceBase; // Use AceBase as default export, allows: `import AceBase from 'acebase'`
 
 export {
@@ -46,11 +46,11 @@ export {
     AceBaseLocalSettings,
     LocalStorageSettings,
     IndexedDBStorageSettings,
-} from './acebase-local';
+} from './acebase-local.js';
 
-export { AceBaseStorageSettings } from './storage/binary';
-export { SQLiteStorageSettings } from './storage/sqlite';
-export { MSSQLStorageSettings } from './storage/mssql';
+export { AceBaseStorageSettings } from './storage/binary/index.js';
+export { SQLiteStorageSettings } from './storage/sqlite/index.js';
+export { MSSQLStorageSettings } from './storage/mssql/index.js';
 
 export {
     CustomStorageTransaction,
@@ -58,11 +58,11 @@ export {
     CustomStorageHelpers,
     ICustomStorageNode,
     ICustomStorageNodeMetaData,
-} from './storage/custom';
+} from './storage/custom/index.js';
 
 export {
     StorageSettings,
     TransactionLogSettings,
     IPCClientSettings,
     SchemaValidationError,
-} from './storage';
+} from './storage/index.js';

@@ -1,5 +1,5 @@
-import { AceBase } from '..';
-import { createTempDB } from './tempdb';
+import { AceBase } from '../index.js';
+import { createTempDB } from './tempdb.js';
 
 describe('Examples', () => {
     let db: AceBase, removeDB: () => Promise<void>;
@@ -95,9 +95,12 @@ describe('Examples', () => {
         const now = new Date();
         await questionRef.update({ edited: now } as any);
 
-        // In the next tick, the live proxy value will have updated:
-        process.nextTick(() => {
-            liveQuestion.edited === now; // true
-        });
+        // In the next tick, the live proxy value will have updated.
+        // When IPC is used, this may take up to a few ms
+        await new Promise((resolve) => questionProxy.on('mutation', resolve));
+        expect(liveQuestion.edited).toBe(now);
+        // process.nextTick(() => {
+        //     liveQuestion.edited === now; // true
+        // });
     });
 });

@@ -1,11 +1,11 @@
 import { Socket, connect, Server } from 'net';
 import { resolve as resolvePath } from 'path';
 import { spawn } from 'child_process';
-import { AceBaseIPCPeer, IHelloMessage, IMessage } from './ipc';
-import { Storage } from '../storage';
+import { AceBaseIPCPeer, IHelloMessage, IMessage } from './ipc.js';
+import { Storage } from '../storage/index.js';
 import { DebugLogger, ID, Transport } from 'acebase-core';
-import { getSocketPath, MSG_DELIMITER } from './service/shared';
-import { startServer } from './service';
+import { getSocketPath, MSG_DELIMITER } from './service/shared.js';
+import { startServer } from './service/index.js';
 export { Server as NetIPCServer } from 'net';
 
 const masterPeerId = '[master]';

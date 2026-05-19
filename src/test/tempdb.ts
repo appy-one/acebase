@@ -1,12 +1,13 @@
-import { AceBase, ID, AceBaseLocalSettings } from '..';
+import { AceBase, ID, AceBaseLocalSettings } from '../index.js';
 import { readdir, rm, rmdir } from 'fs/promises';
+import { tmpdir } from 'os';
 // import { resolve as resolvePath } from 'path';
-// import customLogger from './custom-logger';
+// import customLogger from './custom-logger.js';
 
 export async function createTempDB(enable: { transactionLogging?: boolean; logLevel?: 'verbose'|'log'|'warn'|'error'; config?: (options: any) => void } = {}) {
     // Create temp db
     const dbname = 'test-' + ID.generate();
-    const options: Partial<AceBaseLocalSettings> = { storage: { path: __dirname }, logLevel: enable.logLevel || 'log' };
+    const options: Partial<AceBaseLocalSettings> = { storage: { path: tmpdir() }, logLevel: enable.logLevel || 'log' };
     if (enable.transactionLogging === true) {
         options.transactions = { log: true };
     }
@@ -29,7 +30,7 @@ export async function createTempDB(enable: { transactionLogging?: boolean; logLe
         await db.close();
 
         // Remove database
-        const dbdir = `${__dirname}/${dbname}.acebase`;
+        const dbdir = `${tmpdir()}/${dbname}.acebase`;
 
         if (nodeVersion.major < 12) {
             // console.error(`Node ${process.version} cannot remove temp database directory ${dbdir}. Remove it manually!`);

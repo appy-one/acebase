@@ -1,6 +1,6 @@
-import { DetailedError } from '../detailed-error';
-import { BinaryBPlusTreeNodeInfo } from './binary-tree-node-info';
-import { NodeEntryKeyType } from './entry-key-type';
+import { DetailedError } from '../detailed-error.js';
+import { BinaryBPlusTreeNodeInfo } from './binary-tree-node-info.js';
+import { NodeEntryKeyType } from './entry-key-type.js';
 
 export class BinaryBPlusTreeNodeEntry {
     ltChildOffset: number = null;

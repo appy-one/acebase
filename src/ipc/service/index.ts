@@ -1,6 +1,5 @@
-import { createServer, Socket } from 'net';
-import { getSocketPath } from './shared';
-import { AceBase, type AceBaseLocalSettings } from '../../';
+import { getSocketPath } from './shared.js';
+import { AceBase, type AceBaseLocalSettings } from '../../index.js';
 import { DebugLogger, LoggerPlugin } from 'acebase-core';
 
 const ERROR = Object.freeze({

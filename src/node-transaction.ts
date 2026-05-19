@@ -1,5 +1,5 @@
 import { PathInfo } from 'acebase-core';
-import { IPCPeer } from './ipc';
+import { IPCPeer } from './ipc/index.js';
 
 const SECOND = 1_000;
 const MINUTE = 60_000;

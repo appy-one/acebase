@@ -1,6 +1,6 @@
 import { ID, Utils } from 'acebase-core';
-import { AceBaseIPCPeer, IMessage } from './ipc';
-import { Storage } from '../storage';
+import { AceBaseIPCPeer, IMessage } from './ipc.js';
+import { Storage } from '../storage/index.js';
 import * as http from 'http';
 
 import type * as wsTypes from 'ws'; // @types/ws must always available

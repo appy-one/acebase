@@ -1,7 +1,7 @@
 import { ID, Transport } from 'acebase-core';
-import { AceBaseIPCPeer, IAceBaseIPCLock, IHelloMessage, IMessage } from './ipc';
-import { Storage } from '../storage';
-import { NotSupported } from '../not-supported';
+import { AceBaseIPCPeer, IAceBaseIPCLock, IHelloMessage, IMessage } from './ipc.js';
+import { Storage } from '../storage/index.js';
+import { NotSupported } from '../not-supported.js';
 
 type MessageEventCallback = (event: MessageEvent) => any;
 

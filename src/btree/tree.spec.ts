@@ -1,7 +1,7 @@
-import { BPlusTree } from '.';
+import { BPlusTree } from './index.js';
 import { ID } from 'acebase-core';
-import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value';
-import { BPlusTreeLeafEntry } from './tree-leaf-entry';
+import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value.js';
+import { BPlusTreeLeafEntry } from './tree-leaf-entry.js';
 
 describe('Unique B+Tree', () => {
     // Tests basic operations of the (append only) BPlusTree implementation

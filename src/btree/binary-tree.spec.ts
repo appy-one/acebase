@@ -1,6 +1,6 @@
-import { BPlusTree, BinaryWriter, BinaryBPlusTree, BlacklistingSearchOperator, BinaryBPlusTreeLeafEntry } from '.';
+import { BPlusTree, BinaryWriter, BinaryBPlusTree, BlacklistingSearchOperator, BinaryBPlusTreeLeafEntry } from './index.js';
 import { DebugLogger, ID } from 'acebase-core';
-import { BinaryBPlusTreeLeafEntryValue } from './binary-tree-leaf-entry-value';
+import { BinaryBPlusTreeLeafEntryValue } from './binary-tree-leaf-entry-value.js';
 
 describe('Unique Binary B+Tree', () => {
     // Tests basic operations of the BinaryBPlusTree implementation

@@ -1,4 +1,4 @@
-import { encode, decode, neighbours, adjacent, bounds } from './geohash';
+import { encode, decode, neighbours, adjacent, bounds } from './geohash.js';
 
 describe('Geohash', () => {
     it('encode', () => {

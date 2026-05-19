@@ -1,5 +1,5 @@
-import { createTempDB } from './tempdb';
-import { AceBase } from '..';
+import { createTempDB } from './tempdb.js';
+import { AceBase } from '../index.js';
 
 describe('readonly databases', () => {
 

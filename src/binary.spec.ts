@@ -1,4 +1,4 @@
-import { Uint8ArrayBuilder } from './binary';
+import { Uint8ArrayBuilder } from './binary.js';
 
 describe('Uint8ArrayBuilder', () => {
     it('write grows the buffer', () => {

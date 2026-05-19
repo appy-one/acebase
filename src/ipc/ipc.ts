@@ -1,6 +1,6 @@
 import { ID, LoggerPlugin, SimpleEventEmitter } from 'acebase-core';
-import { NodeLocker, NodeLock, LOCK_STATE } from '../node-lock';
-import { Storage } from '../storage';
+import { NodeLocker, NodeLock, LOCK_STATE } from '../node-lock.js';
+import { Storage } from '../storage/index.js';
 
 export class AceBaseIPCPeerExitingError extends Error {
     constructor(message: string) { super(`Exiting: ${message}`); }

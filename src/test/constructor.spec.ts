@@ -1,4 +1,4 @@
-import { AceBase, ID } from '..';
+import { AceBase, ID } from '../index.js';
 import { readdir, rm, rmdir } from 'fs/promises';
 
 const removeDB = async (db: AceBase) => {

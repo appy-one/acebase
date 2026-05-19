@@ -1,7 +1,7 @@
 import { DataReference, DataSnapshotsArray, DataReferencesArray, DataReferenceQuery, ObjectCollection, DataSnapshot } from 'acebase-core';
-import { AceBase, ID } from '..';
-import { readDataSet } from './dataset';
-import { createTempDB } from './tempdb';
+import { AceBase, ID } from '../index.js';
+import { readDataSet } from './dataset.js';
+import { createTempDB } from './tempdb.js';
 
 describe('Query', () => {
     let db: AceBase, removeDB: () => Promise<void>;

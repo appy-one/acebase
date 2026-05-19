@@ -1,1 +1,1 @@
-export { createIndex, CreateIndexOptions } from './create-index';
+export { createIndex, CreateIndexOptions } from './create-index.js';

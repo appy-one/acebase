@@ -1,19 +1,19 @@
-import { assert } from '../assert';
-import { writeByteLength } from '../binary';
-import { DetailedError } from '../detailed-error';
-import { BinaryReference } from './binary-reference';
-import { FLAGS } from './binary-tree-builder';
-import { BinaryWriter } from './binary-writer';
-import { MAX_LEAF_ENTRY_VALUES, MAX_SMALL_LEAF_VALUE_LENGTH, WRITE_SMALL_LEAFS } from './config';
-import { NodeEntryKeyType } from './entry-key-type';
-import { LeafEntryMetaData } from './leaf-entry-metadata';
-import { BPlusTree } from './tree';
-import { BPlusTreeLeafEntry } from './tree-leaf-entry';
-import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value';
-import { BPlusTreeNode } from './tree-node';
-import { BPlusTreeNodeEntry } from './tree-node-entry';
-import { _isEqual, _isMore } from './typesafe-compare';
-import { _appendToArray, _checkNewEntryArgs } from './utils';
+import { assert } from '../assert.js';
+import { writeByteLength } from '../binary.js';
+import { DetailedError } from '../detailed-error.js';
+import { BinaryReference } from './binary-reference.js';
+import { FLAGS } from './binary-tree-builder.js';
+import { BinaryWriter } from './binary-writer.js';
+import { MAX_LEAF_ENTRY_VALUES, MAX_SMALL_LEAF_VALUE_LENGTH, WRITE_SMALL_LEAFS } from './config.js';
+import { NodeEntryKeyType } from './entry-key-type.js';
+import { LeafEntryMetaData } from './leaf-entry-metadata.js';
+import { BPlusTree } from './tree.js';
+import { BPlusTreeLeafEntry } from './tree-leaf-entry.js';
+import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value.js';
+import { BPlusTreeNode } from './tree-node.js';
+import { BPlusTreeNodeEntry } from './tree-node-entry.js';
+import { _isEqual, _isMore } from './typesafe-compare.js';
+import { _appendToArray, _checkNewEntryArgs } from './utils.js';
 
 export class BPlusTreeLeaf {
 

@@ -1,5 +1,5 @@
 import { DataSnapshot } from 'acebase-core';
-import { createTempDB } from './tempdb';
+import { createTempDB } from './tempdb.js';
 
 describe('transactions', () => {
 

@@ -1,5 +1,5 @@
-import { AceBase } from '..';
-import { createTempDB } from './tempdb';
+import { AceBase } from '../index.js';
+import { createTempDB } from './tempdb.js';
 const ok = { ok: true };
 
 describe('schema', () => {

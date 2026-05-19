@@ -21,9 +21,9 @@ import { DataReference, DataSnapshot, EventSubscription, PathReference, TypeMapp
     DataSnapshotsArray, ObjectCollection, DataReferencesArray, EventStream, TypeMappingOptions,
     IReflectionNodeInfo, IReflectionChildrenInfo, IStreamLike, ILiveDataProxy, ILiveDataProxyValue,
     IObjectCollection, PartialArray } from 'acebase-core';
-import { AceBaseLocalSettings } from './acebase-local';
-import { BrowserAceBase } from './acebase-browser';
-import { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } from './storage/custom';
+import { AceBaseLocalSettings } from './acebase-local.js';
+import { BrowserAceBase } from './acebase-browser.js';
+import { CustomStorageSettings, CustomStorageTransaction, CustomStorageHelpers } from './storage/custom/index.js';
 
 const acebase = {
     AceBase: BrowserAceBase,
@@ -83,11 +83,11 @@ export {
     AceBaseLocalSettings,
     LocalStorageSettings,
     IndexedDBStorageSettings,
-} from './acebase-local';
+} from './acebase-local.js';
 
-export { AceBaseStorageSettings } from './storage/binary';
-export { SQLiteStorageSettings } from './storage/sqlite';
-export { MSSQLStorageSettings } from './storage/mssql';
+export { AceBaseStorageSettings } from './storage/binary/index.js';
+export { SQLiteStorageSettings } from './storage/sqlite/index.js';
+export { MSSQLStorageSettings } from './storage/mssql/index.js';
 
 export {
     CustomStorageTransaction,
@@ -95,11 +95,11 @@ export {
     CustomStorageHelpers,
     ICustomStorageNode,
     ICustomStorageNodeMetaData,
-} from './storage/custom';
+} from './storage/custom/index.js';
 
 export {
     StorageSettings,
     TransactionLogSettings,
     IPCClientSettings,
     SchemaValidationError,
-} from './storage';
+} from './storage/index.js';

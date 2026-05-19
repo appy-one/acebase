@@ -1,17 +1,17 @@
 import { Utils } from 'acebase-core';
-import { assert } from '../assert';
-import { writeByteLength } from '../binary';
-import { DetailedError } from '../detailed-error';
-import { FLAGS, KEY_TYPE } from './binary-tree-builder';
-import { BinaryWriter } from './binary-writer';
-import { WRITE_SMALL_LEAFS } from './config';
-import { NodeEntryKeyType, NodeEntryValueType } from './entry-key-type';
-import { LeafEntryMetaData } from './leaf-entry-metadata';
-import { BPlusTreeLeaf } from './tree-leaf';
-import { BPlusTreeLeafEntry } from './tree-leaf-entry';
-import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value';
-import { BPlusTreeNode } from './tree-node';
-import { _isEqual, _isLess, _isLessOrEqual, _isMore, _isMoreOrEqual, _isNotEqual } from './typesafe-compare';
+import { assert } from '../assert.js';
+import { writeByteLength } from '../binary.js';
+import { DetailedError } from '../detailed-error.js';
+import { FLAGS, KEY_TYPE } from './binary-tree-builder.js';
+import { BinaryWriter } from './binary-writer.js';
+import { WRITE_SMALL_LEAFS } from './config.js';
+import { NodeEntryKeyType, NodeEntryValueType } from './entry-key-type.js';
+import { LeafEntryMetaData } from './leaf-entry-metadata.js';
+import { BPlusTreeLeaf } from './tree-leaf.js';
+import { BPlusTreeLeafEntry } from './tree-leaf-entry.js';
+import { BPlusTreeLeafEntryValue } from './tree-leaf-entry-value.js';
+import { BPlusTreeNode } from './tree-node.js';
+import { _isEqual, _isLess, _isLessOrEqual, _isMore, _isMoreOrEqual, _isNotEqual } from './typesafe-compare.js';
 
 const { bigintToBytes, bytesToBigint, bytesToNumber, decodeString, encodeString, numberToBytes } = Utils;
 

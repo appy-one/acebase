@@ -1,9 +1,9 @@
 import { AceBaseBase, AceBaseBaseSettings } from 'acebase-core';
-import { AceBaseStorage } from './storage/binary';
-import { LocalApi } from './api-local';
-import { IPCClientSettings, StorageSettings, TransactionLogSettings } from './storage';
-import { createLocalStorageInstance, LocalStorageSettings } from './storage/custom/local-storage';
-import { IndexedDBStorageSettings } from './storage/custom/indexed-db/settings';
+import { AceBaseStorage } from './storage/binary/index.js';
+import { LocalApi } from './api-local.js';
+import { IPCClientSettings, StorageSettings, TransactionLogSettings } from './storage/index.js';
+import { createLocalStorageInstance, LocalStorageSettings } from './storage/custom/local-storage/index.js';
+import { IndexedDBStorageSettings } from './storage/custom/indexed-db/settings.js';
 
 export { LocalStorageSettings, IndexedDBStorageSettings };
 

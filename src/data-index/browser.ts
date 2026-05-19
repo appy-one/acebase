@@ -1,4 +1,4 @@
-import { NotSupported } from '../not-supported';
+import { NotSupported } from '../not-supported.js';
 
 /**
  * Not supported in browser context

@@ -1,7 +1,7 @@
-import { createTempDB } from './tempdb';
-import { AceBase } from '..';
+import { createTempDB } from './tempdb.js';
+import { AceBase } from '../index.js';
 import { ObjectCollection } from 'acebase-core';
-import { readDataSet } from './dataset';
+import { readDataSet } from './dataset.js';
 
 describe('database recovery', () => {
     let db: AceBase;

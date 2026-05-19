@@ -1,5 +1,5 @@
 import { PathInfo, ID, LoggerPlugin } from 'acebase-core';
-import { assert } from './assert';
+import { assert } from './assert.js';
 
 const DEBUG_MODE = false;
 const DEFAULT_LOCK_TIMEOUT = 120; // in seconds

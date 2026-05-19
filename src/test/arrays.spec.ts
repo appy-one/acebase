@@ -1,4 +1,4 @@
-import { createTempDB } from './tempdb';
+import { createTempDB } from './tempdb.js';
 
 describe('arrays', () => {
     it('test array updates', async () => {

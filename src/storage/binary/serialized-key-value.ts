@@ -1,4 +1,4 @@
-import { BinaryNodeAddress } from './node-address';
+import { BinaryNodeAddress } from './node-address.js';
 
 // TODO @appy-one consider converting to interface
 export class SerializedKeyValue {

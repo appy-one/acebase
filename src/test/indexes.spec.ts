@@ -1,7 +1,7 @@
-import { createTempDB } from './tempdb';
-import { AceBase, ID } from '..';
+import { createTempDB } from './tempdb.js';
+import { AceBase, ID } from '../index.js';
 import { ObjectCollection } from 'acebase-core';
-import { readDataSet } from './dataset';
+import { readDataSet } from './dataset.js';
 
 // TODO: MANY MORE index options to spec
 
