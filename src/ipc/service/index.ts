@@ -1,6 +1,8 @@
+import { createServer, connect, Socket } from 'net';
+import { unlink } from 'fs';
+import { DebugLogger, LoggerPlugin } from 'acebase-core';
 import { getSocketPath } from './shared.js';
 import { AceBase, type AceBaseLocalSettings } from '../../index.js';
-import { DebugLogger, LoggerPlugin } from 'acebase-core';
 
 const ERROR = Object.freeze({
     ALREADY_RUNNING: { code: 'already_running', exitCode: 2 },
@@ -34,14 +36,9 @@ export async function startServer(
     const sockets = [] as Socket[];
 
     const socketPath = getSocketPath(dbFile);
-    logger.info(`[starting socket server on path ${socketPath}`);
+    logger.info(`[starting socket server on path ${socketPath}]`);
 
     const server = createServer();
-    server.listen({
-        path: socketPath,
-        readableAll: true,
-        writableAll: true,
-    });
 
     server.on('listening', () => {
         // Started successful
@@ -56,8 +53,19 @@ export async function startServer(
 
     server.on('error', (err: Error & { code: string }) => {
         if (err.code === 'EADDRINUSE') {
-            logger.info(`socket server already running`);
-            return options.exit(ERROR.ALREADY_RUNNING.exitCode);
+            // Race condition: another process grabbed the socket between our pre-check and listen call.
+            // Test-connect to confirm it's truly already running.
+            const testClient = connect({ path: socketPath });
+            testClient.once('connect', () => {
+                testClient.destroy();
+                logger.info(`socket server already running`);
+                options.exit(ERROR.ALREADY_RUNNING.exitCode);
+            });
+            testClient.once('error', () => {
+                logger.error(`socket server error: EADDRINUSE but nothing is listening`);
+                options.exit(ERROR.UNKNOWN.exitCode);
+            });
+            return;
         }
         logger.error(`socket server error ${err.code ?? err.message}`);
         options.exit(ERROR.UNKNOWN.exitCode);
@@ -95,7 +103,9 @@ export async function startServer(
     });
 
     server.on('close', () => {
-        db.close();
+        // Clean up socket file so subsequent runs don't hit EADDRINUSE
+        unlink(socketPath, () => { /* ignore errors on close cleanup */ });
+        db?.close();
     });
 
     if (options.maxIdleTime > 0) {
@@ -109,4 +119,24 @@ export async function startServer(
             }
         }, options.maxIdleTime).unref();
     }
+
+    // Before listening, check whether a server is already running or a stale socket file exists.
+    // This is the common case on macOS: socket files persist after process exit.
+    const testClient = connect({ path: socketPath });
+    testClient.once('connect', () => {
+        testClient.destroy();
+        logger.info(`socket server already running`);
+        options.exit(ERROR.ALREADY_RUNNING.exitCode);
+    });
+    testClient.once('error', () => {
+        // Nothing is listening (file absent, stale, or ECONNREFUSED) — remove any leftover and bind
+        unlink(socketPath, (unlinkErr) => {
+            if (unlinkErr && (unlinkErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+                logger.error(`Failed to remove stale socket: ${unlinkErr.message}`);
+                options.exit(ERROR.UNKNOWN.exitCode);
+                return;
+            }
+            server.listen({ path: socketPath, readableAll: true, writableAll: true });
+        });
+    });
 }

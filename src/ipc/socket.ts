@@ -1,5 +1,5 @@
 import { Socket, connect, Server } from 'net';
-import { resolve as resolvePath } from 'path';
+import { resolve as resolvePath, join as joinPaths } from 'path';
 import { spawn } from 'child_process';
 import { AceBaseIPCPeer, IHelloMessage, IMessage } from './ipc.js';
 import { Storage } from '../storage/index.js';
@@ -8,6 +8,7 @@ import { getSocketPath, MSG_DELIMITER } from './service/shared.js';
 import { startServer } from './service/index.js';
 export { Server as NetIPCServer } from 'net';
 
+const DEBUG_MODE = false; // Enable to start IPC service in this process for easy debugging
 const masterPeerId = '[master]';
 
 interface EventEmitterLike {
@@ -54,26 +55,28 @@ export class IPCSocketPeer extends AceBaseIPCPeer {
         });
 
         if (!isMaster) {
-            // Try starting IPC service if it is not running yet.
-            const args = [
-                __dirname + '/service/start.js',
-                dbFile,
-                ...(this.logger instanceof DebugLogger ? ['--loglevel', this.logger.level] : []),
-                ...(ipcSettings.loggerPluginPath ? ['--logger', ipcSettings.loggerPluginPath] : []),
-                '--maxidletime', ipcSettings.maxIdleTime?.toString() ?? '0', // Use maxIdleTime 0 to allow tests to remove database files when done
-            ];
-            const service = spawn('node', args, { detached: true, stdio: 'ignore' });
-            service.unref(); // Process is detached and allowed to keep running after we exit. Do not keep a reference to it, possibly preventing app exit.
-
-            // // For testing:
-            // startServer(dbFile, {
-            //     maxIdleTime: 0,
-            //     ...(this.logger instanceof DebugLogger && { logLevel: this.logger.level }),
-            //     ...(ipcSettings.loggerPluginPath && { loggerPluginPath: ipcSettings.loggerPluginPath }),
-            //     exit: (code) => {
-            //         this.logger.info(`[IPC ${ipcSettings.ipcName}] service exited with code ${code}`);
-            //     },
-            // });
+            if (DEBUG_MODE) {
+                // Easy debugging option: start the IPC service in this process
+                startServer(dbFile, {
+                    maxIdleTime: 0,
+                    logLevel: this.logger instanceof DebugLogger ? this.logger.level : 'warn',
+                    ...(ipcSettings.loggerPluginPath && { loggerPluginPath: ipcSettings.loggerPluginPath }),
+                    exit: (code) => {
+                        this.logger.info(`[IPC ${ipcSettings.ipcName}] service exited with code ${code}`);
+                    },
+                });
+            } else {
+                // Try starting IPC service if it is not running yet.
+                const args = [
+                    joinPaths(__dirname, '/service/start.js'),
+                    dbFile,
+                    ...(this.logger instanceof DebugLogger ? ['--loglevel', this.logger.level] : []),
+                    ...(ipcSettings.loggerPluginPath ? ['--logger', ipcSettings.loggerPluginPath] : []),
+                    '--maxidletime', ipcSettings.maxIdleTime?.toString() ?? '0', // Use maxIdleTime 0 to allow tests to remove database files when done
+                ];
+                const service = spawn(process.execPath, args, { detached: true, stdio: 'ignore' });
+                service.unref(); // Process is detached and allowed to keep running after we exit. Do not keep a reference to it, possibly preventing app exit.
+            }
         }
 
         /**
