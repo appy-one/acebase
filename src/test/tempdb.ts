@@ -14,10 +14,10 @@ export async function createTempDB(enable: { transactionLogging?: boolean; logLe
     if (typeof enable.config === 'function') {
         enable.config(options);
     }
-    // if (!options.storage) { options.storage = {}; }
+    if (!options.storage) { options.storage = {}; }
     // options.storage.lockTimeout = 0.001;
 
-    // options.storage.ipc = 'socket';
+    options.storage.ipc = 'socket';
     // options.storage.ipc = { role: 'socket', maxIdleTime: 0, loggerPluginPath: resolvePath(__dirname, 'custom-logger.js') };
     // options.logger = customLogger;
     // options.logColors = false;
