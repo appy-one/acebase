@@ -5473,8 +5473,8 @@ exports.getGlobalObject = getGlobalObject;
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BrowserAceBase = void 0;
-const acebase_local_js_1 = require("./acebase-local.js");
-const index_js_1 = require("./storage/custom/indexed-db/index.js");
+const acebase_local_1 = require("./acebase-local");
+const indexed_db_1 = require("./storage/custom/indexed-db");
 const deprecatedConstructorError = `Using AceBase constructor in the browser to use localStorage is deprecated!
 Switch to:
 IndexedDB implementation (FASTER, MORE RELIABLE):
@@ -5484,7 +5484,7 @@ Or, new LocalStorage implementation:
 Or, write your own CustomStorage adapter:
     let myCustomStorage = new CustomStorageSettings({ ... });
     let db = new AceBase(name, { storage: myCustomStorage })`;
-class BrowserAceBase extends acebase_local_js_1.AceBase {
+class BrowserAceBase extends acebase_local_1.AceBase {
     /**
      * Constructor that is used in browser context
      * @param name database name
@@ -5511,22 +5511,22 @@ class BrowserAceBase extends acebase_local_js_1.AceBase {
      * @param settings optional settings
      */
     static WithIndexedDB(dbname, init = {}) {
-        return (0, index_js_1.createIndexedDBInstance)(dbname, init);
+        return (0, indexed_db_1.createIndexedDBInstance)(dbname, init);
     }
 }
 exports.BrowserAceBase = BrowserAceBase;
 
-},{"./acebase-local.js":29,"./storage/custom/indexed-db/index.js":49}],29:[function(require,module,exports){
+},{"./acebase-local":29,"./storage/custom/indexed-db":49}],29:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBase = exports.AceBaseLocalSettings = exports.IndexedDBStorageSettings = exports.LocalStorageSettings = void 0;
 const acebase_core_1 = require("acebase-core");
-const index_js_1 = require("./storage/binary/index.js");
-const api_local_js_1 = require("./api-local.js");
-const index_js_2 = require("./storage/custom/local-storage/index.js");
-Object.defineProperty(exports, "LocalStorageSettings", { enumerable: true, get: function () { return index_js_2.LocalStorageSettings; } });
-const settings_js_1 = require("./storage/custom/indexed-db/settings.js");
-Object.defineProperty(exports, "IndexedDBStorageSettings", { enumerable: true, get: function () { return settings_js_1.IndexedDBStorageSettings; } });
+const binary_1 = require("./storage/binary");
+const api_local_1 = require("./api-local");
+const local_storage_1 = require("./storage/custom/local-storage");
+Object.defineProperty(exports, "LocalStorageSettings", { enumerable: true, get: function () { return local_storage_1.LocalStorageSettings; } });
+const settings_1 = require("./storage/custom/indexed-db/settings");
+Object.defineProperty(exports, "IndexedDBStorageSettings", { enumerable: true, get: function () { return settings_1.IndexedDBStorageSettings; } });
 class AceBaseLocalSettings extends acebase_core_1.AceBaseBaseSettings {
     constructor(options = {}) {
         super(options);
@@ -5556,7 +5556,7 @@ class AceBase extends acebase_core_1.AceBaseBase {
              */
             repairNode: async (path, options) => {
                 await this.ready();
-                if (this.api.storage instanceof index_js_1.AceBaseStorage) {
+                if (this.api.storage instanceof binary_1.AceBaseStorage) {
                     await this.api.storage.repairNode(path, options);
                 }
                 else if (!this.api.storage.repairNode) {
@@ -5578,7 +5578,7 @@ class AceBase extends acebase_core_1.AceBaseBase {
             db: this,
             settings,
         };
-        this.api = new api_local_js_1.LocalApi(dbname, apiSettings, () => {
+        this.api = new api_local_1.LocalApi(dbname, apiSettings, () => {
             this.emit('ready');
         });
     }
@@ -5602,7 +5602,7 @@ class AceBase extends acebase_core_1.AceBaseBase {
      * @param settings optional settings
      */
     static WithLocalStorage(dbname, settings = {}) {
-        const db = (0, index_js_2.createLocalStorageInstance)(dbname, settings);
+        const db = (0, local_storage_1.createLocalStorageInstance)(dbname, settings);
         return db;
     }
     /**
@@ -5616,18 +5616,18 @@ class AceBase extends acebase_core_1.AceBaseBase {
 }
 exports.AceBase = AceBase;
 
-},{"./api-local.js":30,"./storage/binary/index.js":45,"./storage/custom/indexed-db/settings.js":50,"./storage/custom/local-storage/index.js":52,"acebase-core":12}],30:[function(require,module,exports){
+},{"./api-local":30,"./storage/binary":45,"./storage/custom/indexed-db/settings":50,"./storage/custom/local-storage":52,"acebase-core":12}],30:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalApi = void 0;
 const acebase_core_1 = require("acebase-core");
-const index_js_1 = require("./storage/binary/index.js");
-const index_js_2 = require("./storage/sqlite/index.js");
-const index_js_3 = require("./storage/mssql/index.js");
-const index_js_4 = require("./storage/custom/index.js");
-const node_value_types_js_1 = require("./node-value-types.js");
-const query_js_1 = require("./query.js");
-const node_errors_js_1 = require("./node-errors.js");
+const binary_1 = require("./storage/binary");
+const sqlite_1 = require("./storage/sqlite");
+const mssql_1 = require("./storage/mssql");
+const custom_1 = require("./storage/custom");
+const node_value_types_1 = require("./node-value-types");
+const query_1 = require("./query");
+const node_errors_1 = require("./node-errors");
 class LocalApi extends acebase_core_1.Api {
     constructor(dbname = 'default', init, readyCallback) {
         super();
@@ -5636,24 +5636,24 @@ class LocalApi extends acebase_core_1.Api {
         const storageEnv = { logLevel: init.settings.logLevel, logColors: init.settings.logColors, logger: init.settings.logger };
         if (typeof init.settings.storage === 'object') {
             // settings.storage.logLevel = settings.logLevel;
-            if (index_js_2.SQLiteStorageSettings && (init.settings.storage instanceof index_js_2.SQLiteStorageSettings)) { //  || env.settings.storage.type === 'sqlite'
-                this.storage = new index_js_2.SQLiteStorage(dbname, init.settings.storage, storageEnv);
+            if (sqlite_1.SQLiteStorageSettings && (init.settings.storage instanceof sqlite_1.SQLiteStorageSettings)) { //  || env.settings.storage.type === 'sqlite'
+                this.storage = new sqlite_1.SQLiteStorage(dbname, init.settings.storage, storageEnv);
             }
-            else if (index_js_3.MSSQLStorageSettings && (init.settings.storage instanceof index_js_3.MSSQLStorageSettings)) { //  || env.settings.storage.type === 'mssql'
-                this.storage = new index_js_3.MSSQLStorage(dbname, init.settings.storage, storageEnv);
+            else if (mssql_1.MSSQLStorageSettings && (init.settings.storage instanceof mssql_1.MSSQLStorageSettings)) { //  || env.settings.storage.type === 'mssql'
+                this.storage = new mssql_1.MSSQLStorage(dbname, init.settings.storage, storageEnv);
             }
-            else if (index_js_4.CustomStorageSettings && (init.settings.storage instanceof index_js_4.CustomStorageSettings)) { //  || settings.storage.type === 'custom'
-                this.storage = new index_js_4.CustomStorage(dbname, init.settings.storage, storageEnv);
+            else if (custom_1.CustomStorageSettings && (init.settings.storage instanceof custom_1.CustomStorageSettings)) { //  || settings.storage.type === 'custom'
+                this.storage = new custom_1.CustomStorage(dbname, init.settings.storage, storageEnv);
             }
             else {
-                const storageSettings = init.settings.storage instanceof index_js_1.AceBaseStorageSettings
+                const storageSettings = init.settings.storage instanceof binary_1.AceBaseStorageSettings
                     ? init.settings.storage
-                    : new index_js_1.AceBaseStorageSettings(init.settings.storage);
-                this.storage = new index_js_1.AceBaseStorage(dbname, storageSettings, storageEnv);
+                    : new binary_1.AceBaseStorageSettings(init.settings.storage);
+                this.storage = new binary_1.AceBaseStorage(dbname, storageSettings, storageEnv);
             }
         }
         else {
-            this.storage = new index_js_1.AceBaseStorage(dbname, new index_js_1.AceBaseStorageSettings(), storageEnv);
+            this.storage = new binary_1.AceBaseStorage(dbname, new binary_1.AceBaseStorageSettings(), storageEnv);
         }
         this.storage.on('ready', readyCallback);
     }
@@ -5752,7 +5752,7 @@ class LocalApi extends acebase_core_1.Api {
      * @returns Returns a promise that resolves with matching data or paths in `results`
      */
     async query(path, query, options = { snapshots: false }) {
-        const results = await (0, query_js_1.executeQuery)(this, path, query, options);
+        const results = await (0, query_1.executeQuery)(this, path, query, options);
         return results;
     }
     /**
@@ -5806,7 +5806,7 @@ class LocalApi extends acebase_core_1.Api {
             })
                 .catch(err => {
                 // Node doesn't exist? No children..
-                if (!(err instanceof node_errors_js_1.NodeNotFoundError)) {
+                if (!(err instanceof node_errors_1.NodeNotFoundError)) {
                     throw err;
                 }
             });
@@ -5844,7 +5844,7 @@ class LocalApi extends acebase_core_1.Api {
                         recordNr: nodeInfo.address.recordNr,
                     }
                     : undefined;
-                const isObjectOrArray = nodeInfo.exists && nodeInfo.address && [node_value_types_js_1.VALUE_TYPES.OBJECT, node_value_types_js_1.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
+                const isObjectOrArray = nodeInfo.exists && nodeInfo.address && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(nodeInfo.type);
                 if (args.child_count === true) {
                     // set child count instead of enumerating
                     info.children = { count: isObjectOrArray ? nodeInfo.childCount : 0 };
@@ -5916,7 +5916,7 @@ class LocalApi extends acebase_core_1.Api {
 }
 exports.LocalApi = LocalApi;
 
-},{"./node-errors.js":38,"./node-value-types.js":41,"./query.js":44,"./storage/binary/index.js":45,"./storage/custom/index.js":48,"./storage/mssql/index.js":58,"./storage/sqlite/index.js":59,"acebase-core":12}],31:[function(require,module,exports){
+},{"./node-errors":38,"./node-value-types":41,"./query":44,"./storage/binary":45,"./storage/custom":48,"./storage/mssql":58,"./storage/sqlite":59,"acebase-core":12}],31:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.assert = void 0;
@@ -6047,21 +6047,21 @@ Object.defineProperty(exports, "ObjectCollection", { enumerable: true, get: func
 Object.defineProperty(exports, "DataReferencesArray", { enumerable: true, get: function () { return acebase_core_1.DataReferencesArray; } });
 Object.defineProperty(exports, "EventStream", { enumerable: true, get: function () { return acebase_core_1.EventStream; } });
 Object.defineProperty(exports, "PartialArray", { enumerable: true, get: function () { return acebase_core_1.PartialArray; } });
-const acebase_local_js_1 = require("./acebase-local.js");
-const acebase_browser_js_1 = require("./acebase-browser.js");
-Object.defineProperty(exports, "AceBase", { enumerable: true, get: function () { return acebase_browser_js_1.BrowserAceBase; } });
-const index_js_1 = require("./storage/custom/index.js");
+const acebase_local_1 = require("./acebase-local");
+const acebase_browser_1 = require("./acebase-browser");
+Object.defineProperty(exports, "AceBase", { enumerable: true, get: function () { return acebase_browser_1.BrowserAceBase; } });
+const custom_1 = require("./storage/custom");
 const acebase = {
-    AceBase: acebase_browser_js_1.BrowserAceBase,
-    AceBaseLocalSettings: acebase_local_js_1.AceBaseLocalSettings,
+    AceBase: acebase_browser_1.BrowserAceBase,
+    AceBaseLocalSettings: acebase_local_1.AceBaseLocalSettings,
     DataReference: acebase_core_1.DataReference,
     DataSnapshot: acebase_core_1.DataSnapshot,
     EventSubscription: acebase_core_1.EventSubscription,
     PathReference: acebase_core_1.PathReference,
     TypeMappings: acebase_core_1.TypeMappings,
-    CustomStorageSettings: index_js_1.CustomStorageSettings,
-    CustomStorageTransaction: index_js_1.CustomStorageTransaction,
-    CustomStorageHelpers: index_js_1.CustomStorageHelpers,
+    CustomStorageSettings: custom_1.CustomStorageSettings,
+    CustomStorageTransaction: custom_1.CustomStorageTransaction,
+    CustomStorageHelpers: custom_1.CustomStorageHelpers,
     ID: acebase_core_1.ID,
     proxyAccess: acebase_core_1.proxyAccess,
     DataSnapshotsArray: acebase_core_1.DataSnapshotsArray,
@@ -6070,76 +6070,76 @@ if (typeof window !== 'undefined') {
     // Expose classes to window.acebase:
     window.acebase = acebase;
     // Expose BrowserAceBase class as window.AceBase:
-    window.AceBase = acebase_browser_js_1.BrowserAceBase;
+    window.AceBase = acebase_browser_1.BrowserAceBase;
 }
 // Expose classes for module imports:
 exports.default = acebase;
-var acebase_local_js_2 = require("./acebase-local.js");
-Object.defineProperty(exports, "AceBaseLocalSettings", { enumerable: true, get: function () { return acebase_local_js_2.AceBaseLocalSettings; } });
-Object.defineProperty(exports, "LocalStorageSettings", { enumerable: true, get: function () { return acebase_local_js_2.LocalStorageSettings; } });
-Object.defineProperty(exports, "IndexedDBStorageSettings", { enumerable: true, get: function () { return acebase_local_js_2.IndexedDBStorageSettings; } });
-var index_js_2 = require("./storage/binary/index.js");
-Object.defineProperty(exports, "AceBaseStorageSettings", { enumerable: true, get: function () { return index_js_2.AceBaseStorageSettings; } });
-var index_js_3 = require("./storage/sqlite/index.js");
-Object.defineProperty(exports, "SQLiteStorageSettings", { enumerable: true, get: function () { return index_js_3.SQLiteStorageSettings; } });
-var index_js_4 = require("./storage/mssql/index.js");
-Object.defineProperty(exports, "MSSQLStorageSettings", { enumerable: true, get: function () { return index_js_4.MSSQLStorageSettings; } });
-var index_js_5 = require("./storage/custom/index.js");
-Object.defineProperty(exports, "CustomStorageTransaction", { enumerable: true, get: function () { return index_js_5.CustomStorageTransaction; } });
-Object.defineProperty(exports, "CustomStorageSettings", { enumerable: true, get: function () { return index_js_5.CustomStorageSettings; } });
-Object.defineProperty(exports, "CustomStorageHelpers", { enumerable: true, get: function () { return index_js_5.CustomStorageHelpers; } });
-Object.defineProperty(exports, "ICustomStorageNode", { enumerable: true, get: function () { return index_js_5.ICustomStorageNode; } });
-Object.defineProperty(exports, "ICustomStorageNodeMetaData", { enumerable: true, get: function () { return index_js_5.ICustomStorageNodeMetaData; } });
-var index_js_6 = require("./storage/index.js");
-Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return index_js_6.StorageSettings; } });
-Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return index_js_6.SchemaValidationError; } });
+var acebase_local_2 = require("./acebase-local");
+Object.defineProperty(exports, "AceBaseLocalSettings", { enumerable: true, get: function () { return acebase_local_2.AceBaseLocalSettings; } });
+Object.defineProperty(exports, "LocalStorageSettings", { enumerable: true, get: function () { return acebase_local_2.LocalStorageSettings; } });
+Object.defineProperty(exports, "IndexedDBStorageSettings", { enumerable: true, get: function () { return acebase_local_2.IndexedDBStorageSettings; } });
+var binary_1 = require("./storage/binary");
+Object.defineProperty(exports, "AceBaseStorageSettings", { enumerable: true, get: function () { return binary_1.AceBaseStorageSettings; } });
+var sqlite_1 = require("./storage/sqlite");
+Object.defineProperty(exports, "SQLiteStorageSettings", { enumerable: true, get: function () { return sqlite_1.SQLiteStorageSettings; } });
+var mssql_1 = require("./storage/mssql");
+Object.defineProperty(exports, "MSSQLStorageSettings", { enumerable: true, get: function () { return mssql_1.MSSQLStorageSettings; } });
+var custom_2 = require("./storage/custom");
+Object.defineProperty(exports, "CustomStorageTransaction", { enumerable: true, get: function () { return custom_2.CustomStorageTransaction; } });
+Object.defineProperty(exports, "CustomStorageSettings", { enumerable: true, get: function () { return custom_2.CustomStorageSettings; } });
+Object.defineProperty(exports, "CustomStorageHelpers", { enumerable: true, get: function () { return custom_2.CustomStorageHelpers; } });
+Object.defineProperty(exports, "ICustomStorageNode", { enumerable: true, get: function () { return custom_2.ICustomStorageNode; } });
+Object.defineProperty(exports, "ICustomStorageNodeMetaData", { enumerable: true, get: function () { return custom_2.ICustomStorageNodeMetaData; } });
+var storage_1 = require("./storage");
+Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return storage_1.StorageSettings; } });
+Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return storage_1.SchemaValidationError; } });
 
-},{"./acebase-browser.js":28,"./acebase-local.js":29,"./storage/binary/index.js":45,"./storage/custom/index.js":48,"./storage/index.js":56,"./storage/mssql/index.js":58,"./storage/sqlite/index.js":59,"acebase-core":12}],34:[function(require,module,exports){
+},{"./acebase-browser":28,"./acebase-local":29,"./storage":56,"./storage/binary":45,"./storage/custom":48,"./storage/mssql":58,"./storage/sqlite":59,"acebase-core":12}],34:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ArrayIndex = exports.GeoIndex = exports.FullTextIndex = exports.DataIndex = void 0;
-const not_supported_js_1 = require("../not-supported.js");
+const not_supported_1 = require("../not-supported");
 /**
  * Not supported in browser context
  */
-class DataIndex extends not_supported_js_1.NotSupported {
+class DataIndex extends not_supported_1.NotSupported {
 }
 exports.DataIndex = DataIndex;
 /**
  * Not supported in browser context
  */
-class FullTextIndex extends not_supported_js_1.NotSupported {
+class FullTextIndex extends not_supported_1.NotSupported {
 }
 exports.FullTextIndex = FullTextIndex;
 /**
  * Not supported in browser context
  */
-class GeoIndex extends not_supported_js_1.NotSupported {
+class GeoIndex extends not_supported_1.NotSupported {
 }
 exports.GeoIndex = GeoIndex;
 /**
  * Not supported in browser context
  */
-class ArrayIndex extends not_supported_js_1.NotSupported {
+class ArrayIndex extends not_supported_1.NotSupported {
 }
 exports.ArrayIndex = ArrayIndex;
 
-},{"../not-supported.js":42}],35:[function(require,module,exports){
+},{"../not-supported":42}],35:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NetIPCServer = exports.IPCSocketPeer = exports.RemoteIPCPeer = exports.IPCPeer = void 0;
 const acebase_core_1 = require("acebase-core");
-const ipc_js_1 = require("./ipc.js");
-const not_supported_js_1 = require("../not-supported.js");
-Object.defineProperty(exports, "RemoteIPCPeer", { enumerable: true, get: function () { return not_supported_js_1.NotSupported; } });
-Object.defineProperty(exports, "IPCSocketPeer", { enumerable: true, get: function () { return not_supported_js_1.NotSupported; } });
-Object.defineProperty(exports, "NetIPCServer", { enumerable: true, get: function () { return not_supported_js_1.NotSupported; } });
+const ipc_1 = require("./ipc");
+const not_supported_1 = require("../not-supported");
+Object.defineProperty(exports, "RemoteIPCPeer", { enumerable: true, get: function () { return not_supported_1.NotSupported; } });
+Object.defineProperty(exports, "IPCSocketPeer", { enumerable: true, get: function () { return not_supported_1.NotSupported; } });
+Object.defineProperty(exports, "NetIPCServer", { enumerable: true, get: function () { return not_supported_1.NotSupported; } });
 /**
  * Browser tabs IPC. Database changes and events will be synchronized automatically.
  * Locking of resources will be done by the election of a single locking master:
  * the one with the lowest id.
  */
-class IPCPeer extends ipc_js_1.AceBaseIPCPeer {
+class IPCPeer extends ipc_1.AceBaseIPCPeer {
     constructor(storage) {
         super(storage, acebase_core_1.ID.generate());
         this.masterPeerId = this.id; // We don't know who the master is yet...
@@ -6270,12 +6270,12 @@ class IPCPeer extends ipc_js_1.AceBaseIPCPeer {
 }
 exports.IPCPeer = IPCPeer;
 
-},{"../not-supported.js":42,"./ipc.js":36,"acebase-core":12}],36:[function(require,module,exports){
+},{"../not-supported":42,"./ipc":36,"acebase-core":12}],36:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
 const acebase_core_1 = require("acebase-core");
-const node_lock_js_1 = require("../node-lock.js");
+const node_lock_1 = require("../node-lock");
 class AceBaseIPCPeerExitingError extends Error {
     constructor(message) { super(`Exiting: ${message}`); }
 }
@@ -6299,7 +6299,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         this._locks = [];
         this._requests = new Map();
         this._eventsEnabled = true;
-        this._nodeLocker = new node_lock_js_1.NodeLocker(storage.logger, storage.settings.lockTimeout);
+        this._nodeLocker = new node_lock_1.NodeLocker(storage.logger, storage.settings.lockTimeout);
         this.logger = storage.logger;
         // Setup db event listeners
         storage.on('subscribe', (subscription) => {
@@ -6668,13 +6668,13 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                     tid: result.tid,
                     path: result.path,
                     forWriting: result.write,
-                    state: node_lock_js_1.LOCK_STATE.LOCKED,
+                    state: node_lock_1.LOCK_STATE.LOCKED,
                     expires: result.expires,
                     comment: result.comment,
                     release: async () => {
                         const req = { type: 'unlock-request', id: acebase_core_1.ID.generate(), from: this.id, to: this.masterPeerId, data: { id: lockInfo.lock.id } };
                         await this.request(req);
-                        lockInfo.lock.state = node_lock_js_1.LOCK_STATE.DONE;
+                        lockInfo.lock.state = node_lock_1.LOCK_STATE.DONE;
                         // this.logger.trace(`Worker ${this.id} released lock ${lockInfo.lock.id} (tid ${lockInfo.lock.tid}, ${lockInfo.lock.comment}, "/${lockInfo.lock.path}", ${lockInfo.lock.forWriting ? 'write' : 'read'})`);
                         removeLock(lockInfo);
                     },
@@ -6686,7 +6686,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
                         }
                         catch (err) {
                             // We didn't get new lock?!
-                            lockInfo.lock.state = node_lock_js_1.LOCK_STATE.DONE;
+                            lockInfo.lock.state = node_lock_1.LOCK_STATE.DONE;
                             removeLock(lockInfo);
                             throw err;
                         }
@@ -6770,7 +6770,7 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock.js":40,"acebase-core":12}],37:[function(require,module,exports){
+},{"../node-lock":40,"acebase-core":12}],37:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RemovedNodeAddress = exports.NodeAddress = void 0;
@@ -6820,8 +6820,8 @@ exports.NodeRevisionError = NodeRevisionError;
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeInfo = void 0;
+const node_value_types_1 = require("./node-value-types");
 const acebase_core_1 = require("acebase-core");
-const node_value_types_js_1 = require("./node-value-types.js");
 class NodeInfo {
     constructor(info) {
         this.path = info.path;
@@ -6849,7 +6849,7 @@ class NodeInfo {
         return this.type;
     }
     get valueTypeName() {
-        return (0, node_value_types_js_1.getValueTypeName)(this.valueType);
+        return (0, node_value_types_1.getValueTypeName)(this.valueType);
     }
     toString() {
         if (!this.exists) {
@@ -6865,12 +6865,12 @@ class NodeInfo {
 }
 exports.NodeInfo = NodeInfo;
 
-},{"./node-value-types.js":41,"acebase-core":12}],40:[function(require,module,exports){
+},{"./node-value-types":41,"acebase-core":12}],40:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeLock = exports.NodeLocker = exports.NodeLockError = exports.LOCK_STATE = void 0;
 const acebase_core_1 = require("acebase-core");
-const assert_js_1 = require("./assert.js");
+const assert_1 = require("./assert");
 const DEBUG_MODE = false;
 const DEFAULT_LOCK_TIMEOUT = 120; // in seconds
 exports.LOCK_STATE = {
@@ -7066,7 +7066,7 @@ class NodeLocker {
         else {
             // Keep pending until clashing lock(s) is/are removed
             //debug.warn(`lock :: QUEUED ${lock.forWriting ? "write" : "read" } lock on path "/${lock.path}" by tid ${lock.tid}; ${lock.comment}`);
-            (0, assert_js_1.assert)(lock.state === exports.LOCK_STATE.PENDING);
+            (0, assert_1.assert)(lock.state === exports.LOCK_STATE.PENDING);
             return new Promise((resolve, reject) => {
                 lock.resolve = resolve;
                 lock.reject = reject;
@@ -7165,7 +7165,7 @@ class NodeLock {
 }
 exports.NodeLock = NodeLock;
 
-},{"./assert.js":31,"acebase-core":12}],41:[function(require,module,exports){
+},{"./assert":31,"acebase-core":12}],41:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getValueType = exports.getNodeValueType = exports.getValueTypeName = exports.VALUE_TYPES = void 0;
@@ -7282,10 +7282,10 @@ exports.pfs = pfs;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.executeQuery = void 0;
 const acebase_core_1 = require("acebase-core");
-const node_value_types_js_1 = require("./node-value-types.js");
-const node_errors_js_1 = require("./node-errors.js");
-const index_js_1 = require("./data-index/index.js");
-const async_task_batch_js_1 = require("./async-task-batch.js");
+const node_value_types_1 = require("./node-value-types");
+const node_errors_1 = require("./node-errors");
+const data_index_1 = require("./data-index");
+const async_task_batch_1 = require("./async-task-batch");
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => { };
 /**
@@ -7350,7 +7350,7 @@ async function executeQuery(api, path, query, options = { snapshots: false, incl
             return [];
         }
         const maxBatchSize = 50;
-        const batch = new async_task_batch_js_1.AsyncTaskBatch(maxBatchSize);
+        const batch = new async_task_batch_1.AsyncTaskBatch(maxBatchSize);
         const results = [];
         preResults.forEach(({ path }, index) => batch.add(async () => {
             const node = await api.storage.getNode(path, options);
@@ -7531,7 +7531,7 @@ async function executeQuery(api, path, query, options = { snapshots: false, incl
             // Assign to other filters and sorts
             bestBenificialIndex.filterKeys.forEach(key => {
                 queryFilters.filter(f => f !== filter && f.key === key).forEach(f => {
-                    if (!index_js_1.DataIndex.validOperators.includes(f.op)) {
+                    if (!data_index_1.DataIndex.validOperators.includes(f.op)) {
                         // The used operator for this filter is invalid for use on metadata
                         // Probably because it is an Array/Fulltext/Geo query operator
                         return;
@@ -7796,7 +7796,7 @@ async function executeQuery(api, path, query, options = { snapshots: false, incl
         };
         try {
             await api.storage.getChildren(path, { keyFilter: indexKeyFilter, async: true }).next(child => {
-                if (child.type !== node_value_types_js_1.VALUE_TYPES.OBJECT) {
+                if (child.type !== node_value_types_1.VALUE_TYPES.OBJECT) {
                     return;
                 }
                 if (!child.address) {
@@ -7855,7 +7855,7 @@ async function executeQuery(api, path, query, options = { snapshots: false, incl
         }
         catch (reason) {
             // No record?
-            if (!(reason instanceof node_errors_js_1.NodeNotFoundError)) {
+            if (!(reason instanceof node_errors_1.NodeNotFoundError)) {
                 api.logger.warn(`Error getting child stream: ${reason}`);
             }
             return [];
@@ -7987,7 +7987,7 @@ async function executeQuery(api, path, query, options = { snapshots: false, incl
                                 if (!keys.includes(filter.key)) {
                                     keys.push(filter.key);
                                 }
-                                if (filter.index instanceof index_js_1.FullTextIndex && filter.index.config.localeKey && !keys.includes(filter.index.config.localeKey)) {
+                                if (filter.index instanceof data_index_1.FullTextIndex && filter.index.config.localeKey && !keys.includes(filter.index.config.localeKey)) {
                                     keys.push(filter.index.config.localeKey);
                                 }
                                 return keys;
@@ -8073,31 +8073,31 @@ async function executeQuery(api, path, query, options = { snapshots: false, incl
 }
 exports.executeQuery = executeQuery;
 
-},{"./async-task-batch.js":32,"./data-index/index.js":34,"./node-errors.js":38,"./node-value-types.js":41,"acebase-core":12}],45:[function(require,module,exports){
+},{"./async-task-batch":32,"./data-index":34,"./node-errors":38,"./node-value-types":41,"acebase-core":12}],45:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseStorage = exports.AceBaseStorageSettings = void 0;
-const not_supported_js_1 = require("../../not-supported.js");
+const not_supported_1 = require("../../not-supported");
 /**
  * Not supported in browser context
  */
-class AceBaseStorageSettings extends not_supported_js_1.NotSupported {
+class AceBaseStorageSettings extends not_supported_1.NotSupported {
 }
 exports.AceBaseStorageSettings = AceBaseStorageSettings;
 /**
  * Not supported in browser context
  */
-class AceBaseStorage extends not_supported_js_1.NotSupported {
+class AceBaseStorage extends not_supported_1.NotSupported {
 }
 exports.AceBaseStorage = AceBaseStorage;
 
-},{"../../not-supported.js":42}],46:[function(require,module,exports){
+},{"../../not-supported":42}],46:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
 const acebase_core_1 = require("acebase-core");
-const index_js_1 = require("../data-index/index.js");
-const index_js_2 = require("../promise-fs/index.js");
+const data_index_1 = require("../data-index");
+const promise_fs_1 = require("../promise-fs");
 /**
 * Creates an index on specified path and key(s)
 * @param path location of objects to be indexed. Eg: "users" to index all children of the "users" node; or "chats/*\/members" to index all members of all chats
@@ -8134,7 +8134,7 @@ async function createIndex(context, path, key, options) {
         }
         throw new Error(result.reason);
     }
-    await index_js_2.pfs.mkdir(`${storage.settings.path}/${storage.name}.acebase`).catch(err => {
+    await promise_fs_1.pfs.mkdir(`${storage.settings.path}/${storage.name}.acebase`).catch(err => {
         if (err.code !== 'EEXIST') {
             throw err;
         }
@@ -8143,10 +8143,10 @@ async function createIndex(context, path, key, options) {
         const { include, caseSensitive, textLocale, textLocaleKey } = options;
         const indexOptions = { include, caseSensitive, textLocale, textLocaleKey };
         switch (indexType) {
-            case 'array': return new index_js_1.ArrayIndex(storage, path, key, Object.assign({}, indexOptions));
-            case 'fulltext': return new index_js_1.FullTextIndex(storage, path, key, Object.assign(Object.assign({}, indexOptions), { config: options.config }));
-            case 'geo': return new index_js_1.GeoIndex(storage, path, key, Object.assign({}, indexOptions));
-            default: return new index_js_1.DataIndex(storage, path, key, Object.assign({}, indexOptions));
+            case 'array': return new data_index_1.ArrayIndex(storage, path, key, Object.assign({}, indexOptions));
+            case 'fulltext': return new data_index_1.FullTextIndex(storage, path, key, Object.assign(Object.assign({}, indexOptions), { config: options.config }));
+            case 'geo': return new data_index_1.GeoIndex(storage, path, key, Object.assign({}, indexOptions));
+            default: return new data_index_1.DataIndex(storage, path, key, Object.assign({}, indexOptions));
         }
     })();
     if (!existingIndex) {
@@ -8168,7 +8168,7 @@ async function createIndex(context, path, key, options) {
 }
 exports.createIndex = createIndex;
 
-},{"../data-index/index.js":34,"../promise-fs/index.js":43,"acebase-core":12}],47:[function(require,module,exports){
+},{"../data-index":34,"../promise-fs":43,"acebase-core":12}],47:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorageHelpers = void 0;
@@ -8243,16 +8243,16 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorage = exports.CustomStorageNodeInfo = exports.CustomStorageNodeAddress = exports.CustomStorageSettings = exports.CustomStorageTransaction = exports.ICustomStorageNode = exports.ICustomStorageNodeMetaData = exports.CustomStorageHelpers = void 0;
 const acebase_core_1 = require("acebase-core");
 const { compareValues } = acebase_core_1.Utils;
-const node_info_js_1 = require("../../node-info.js");
-const node_lock_js_1 = require("../../node-lock.js");
-const node_value_types_js_1 = require("../../node-value-types.js");
-const node_errors_js_1 = require("../../node-errors.js");
-const index_js_1 = require("../index.js");
-const helpers_js_1 = require("./helpers.js");
-const node_address_js_1 = require("../../node-address.js");
-const assert_js_1 = require("../../assert.js");
-var helpers_js_2 = require("./helpers.js");
-Object.defineProperty(exports, "CustomStorageHelpers", { enumerable: true, get: function () { return helpers_js_2.CustomStorageHelpers; } });
+const node_info_1 = require("../../node-info");
+const node_lock_1 = require("../../node-lock");
+const node_value_types_1 = require("../../node-value-types");
+const node_errors_1 = require("../../node-errors");
+const index_1 = require("../index");
+const helpers_1 = require("./helpers");
+const node_address_1 = require("../../node-address");
+const assert_1 = require("../../assert");
+var helpers_2 = require("./helpers");
+Object.defineProperty(exports, "CustomStorageHelpers", { enumerable: true, get: function () { return helpers_2.CustomStorageHelpers; } });
 /** Interface for metadata being stored for nodes */
 class ICustomStorageNodeMetaData {
     constructor() {
@@ -8343,7 +8343,7 @@ class CustomStorageTransaction {
         if (currentPath === targetPath) {
             return targetPath; // Already on the right path
         }
-        const pathInfo = helpers_js_1.CustomStorageHelpers.PathInfo.get(targetPath);
+        const pathInfo = helpers_1.CustomStorageHelpers.PathInfo.get(targetPath);
         if (pathInfo.isParentOf(currentPath)) {
             if (this._lock) {
                 this._lock = await this._lock.moveToParent();
@@ -8361,7 +8361,7 @@ exports.CustomStorageTransaction = CustomStorageTransaction;
  * Allows data to be stored in a custom storage backend of your choice! Simply provide a couple of functions
  * to get, set and remove data and you're done.
  */
-class CustomStorageSettings extends index_js_1.StorageSettings {
+class CustomStorageSettings extends index_1.StorageSettings {
     constructor(settings) {
         super(settings);
         /**
@@ -8390,11 +8390,11 @@ class CustomStorageSettings extends index_js_1.StorageSettings {
         this.ready = settings.ready;
         // Hijack getTransaction to add locking
         const useLocking = this.locking;
-        const nodeLocker = useLocking ? new node_lock_js_1.NodeLocker(console, this.lockTimeout) : null;
+        const nodeLocker = useLocking ? new node_lock_1.NodeLocker(console, this.lockTimeout) : null;
         this.getTransaction = async ({ path, write }) => {
             // console.log(`${write ? 'WRITE' : 'READ'} transaction requested for path "${path}"`)
             const transaction = await settings.getTransaction({ path, write });
-            (0, assert_js_1.assert)(typeof transaction.id === 'string', `transaction id not set`);
+            (0, assert_1.assert)(typeof transaction.id === 'string', `transaction id not set`);
             // console.log(`Got transaction ${transaction.id} for ${write ? 'WRITE' : 'READ'} on path "${path}"`);
             // Hijack rollback and commit
             const rollback = transaction.rollback;
@@ -8433,7 +8433,7 @@ class CustomStorageNodeAddress {
     }
 }
 exports.CustomStorageNodeAddress = CustomStorageNodeAddress;
-class CustomStorageNodeInfo extends node_info_js_1.NodeInfo {
+class CustomStorageNodeInfo extends node_info_1.NodeInfo {
     constructor(info) {
         super(info);
         this.revision = info.revision;
@@ -8443,7 +8443,7 @@ class CustomStorageNodeInfo extends node_info_js_1.NodeInfo {
     }
 }
 exports.CustomStorageNodeInfo = CustomStorageNodeInfo;
-class CustomStorage extends index_js_1.Storage {
+class CustomStorage extends index_1.Storage {
     constructor(dbname, settings, env) {
         super(dbname, settings, env);
         this._customImplementation = settings;
@@ -8481,21 +8481,21 @@ class CustomStorage extends index_js_1.Storage {
                 return val;
             }
             else if (val instanceof Date) {
-                return { type: node_value_types_js_1.VALUE_TYPES.DATETIME, value: val.getTime() };
+                return { type: node_value_types_1.VALUE_TYPES.DATETIME, value: val.getTime() };
             }
             else if (val instanceof acebase_core_1.PathReference) {
-                return { type: node_value_types_js_1.VALUE_TYPES.REFERENCE, value: val.path };
+                return { type: node_value_types_1.VALUE_TYPES.REFERENCE, value: val.path };
             }
             else if (val instanceof ArrayBuffer) {
-                return { type: node_value_types_js_1.VALUE_TYPES.BINARY, value: acebase_core_1.ascii85.encode(val) };
+                return { type: node_value_types_1.VALUE_TYPES.BINARY, value: acebase_core_1.ascii85.encode(val) };
             }
             else if (typeof val === 'object') {
-                (0, assert_js_1.assert)(Object.keys(val).length === 0, 'child object stored in parent can only be empty');
+                (0, assert_1.assert)(Object.keys(val).length === 0, 'child object stored in parent can only be empty');
                 return val;
             }
         };
         const unprocessed = `Caller should have pre-processed the value by converting it to a string`;
-        if (node.type === node_value_types_js_1.VALUE_TYPES.ARRAY && node.value instanceof Array) {
+        if (node.type === node_value_types_1.VALUE_TYPES.ARRAY && node.value instanceof Array) {
             // Convert array to object with numeric properties
             // NOTE: caller should have done this already
             console.warn(`Unprocessed array. ${unprocessed}`);
@@ -8505,15 +8505,15 @@ class CustomStorage extends index_js_1.Storage {
             }
             node.value = obj;
         }
-        if (node.type === node_value_types_js_1.VALUE_TYPES.BINARY && typeof node.value !== 'string') {
+        if (node.type === node_value_types_1.VALUE_TYPES.BINARY && typeof node.value !== 'string') {
             console.warn(`Unprocessed binary value. ${unprocessed}`);
             node.value = acebase_core_1.ascii85.encode(node.value);
         }
-        if (node.type === node_value_types_js_1.VALUE_TYPES.REFERENCE && node.value instanceof acebase_core_1.PathReference) {
+        if (node.type === node_value_types_1.VALUE_TYPES.REFERENCE && node.value instanceof acebase_core_1.PathReference) {
             console.warn(`Unprocessed path reference. ${unprocessed}`);
             node.value = node.value.path;
         }
-        if ([node_value_types_js_1.VALUE_TYPES.OBJECT, node_value_types_js_1.VALUE_TYPES.ARRAY].includes(node.type)) {
+        if ([node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(node.type)) {
             const original = node.value;
             node.value = {};
             // If original is an array, it'll automatically be converted to an object now
@@ -8526,15 +8526,15 @@ class CustomStorage extends index_js_1.Storage {
     _processReadNodeValue(node) {
         const getTypedChildValue = (val) => {
             // Typed value stored in parent record
-            if (val.type === node_value_types_js_1.VALUE_TYPES.BINARY) {
+            if (val.type === node_value_types_1.VALUE_TYPES.BINARY) {
                 // binary stored in a parent record as a string
                 return acebase_core_1.ascii85.decode(val.value);
             }
-            else if (val.type === node_value_types_js_1.VALUE_TYPES.DATETIME) {
+            else if (val.type === node_value_types_1.VALUE_TYPES.DATETIME) {
                 // Date value stored as number
                 return new Date(val.value);
             }
-            else if (val.type === node_value_types_js_1.VALUE_TYPES.REFERENCE) {
+            else if (val.type === node_value_types_1.VALUE_TYPES.REFERENCE) {
                 // Path reference stored as string
                 return new acebase_core_1.PathReference(val.value);
             }
@@ -8543,8 +8543,8 @@ class CustomStorage extends index_js_1.Storage {
             }
         };
         switch (node.type) {
-            case node_value_types_js_1.VALUE_TYPES.ARRAY:
-            case node_value_types_js_1.VALUE_TYPES.OBJECT: {
+            case node_value_types_1.VALUE_TYPES.ARRAY:
+            case node_value_types_1.VALUE_TYPES.OBJECT: {
                 // check if any value needs to be converted
                 // NOTE: Arrays are stored with numeric properties
                 const obj = node.value;
@@ -8557,15 +8557,15 @@ class CustomStorage extends index_js_1.Storage {
                 node.value = obj;
                 break;
             }
-            case node_value_types_js_1.VALUE_TYPES.BINARY: {
+            case node_value_types_1.VALUE_TYPES.BINARY: {
                 node.value = acebase_core_1.ascii85.decode(node.value);
                 break;
             }
-            case node_value_types_js_1.VALUE_TYPES.REFERENCE: {
+            case node_value_types_1.VALUE_TYPES.REFERENCE: {
                 node.value = new acebase_core_1.PathReference(node.value);
                 break;
             }
-            case node_value_types_js_1.VALUE_TYPES.STRING: {
+            case node_value_types_1.VALUE_TYPES.STRING: {
                 // No action needed
                 // node.value = node.value;
                 break;
@@ -8589,31 +8589,31 @@ class CustomStorage extends index_js_1.Storage {
     _getTypeFromStoredValue(val) {
         let type;
         if (typeof val === 'string') {
-            type = node_value_types_js_1.VALUE_TYPES.STRING;
+            type = node_value_types_1.VALUE_TYPES.STRING;
         }
         else if (typeof val === 'number') {
-            type = node_value_types_js_1.VALUE_TYPES.NUMBER;
+            type = node_value_types_1.VALUE_TYPES.NUMBER;
         }
         else if (typeof val === 'boolean') {
-            type = node_value_types_js_1.VALUE_TYPES.BOOLEAN;
+            type = node_value_types_1.VALUE_TYPES.BOOLEAN;
         }
         else if (val instanceof Array) {
-            type = node_value_types_js_1.VALUE_TYPES.ARRAY;
+            type = node_value_types_1.VALUE_TYPES.ARRAY;
         }
         else if (typeof val === 'object') {
             if ('type' in val) {
                 const serialized = val;
                 type = serialized.type;
                 val = serialized.value;
-                if (type === node_value_types_js_1.VALUE_TYPES.DATETIME) {
+                if (type === node_value_types_1.VALUE_TYPES.DATETIME) {
                     val = new Date(val);
                 }
-                else if (type === node_value_types_js_1.VALUE_TYPES.REFERENCE) {
+                else if (type === node_value_types_1.VALUE_TYPES.REFERENCE) {
                     val = new acebase_core_1.PathReference(val);
                 }
             }
             else {
-                type = node_value_types_js_1.VALUE_TYPES.OBJECT;
+                type = node_value_types_1.VALUE_TYPES.OBJECT;
             }
         }
         else {
@@ -8649,21 +8649,21 @@ class CustomStorage extends index_js_1.Storage {
             ? null // No need to load info if currentValue is null (we already know it doesn't exist)
             : await this._readNode(path, { transaction });
         if (options.merge && currentRow) {
-            if (currentRow.type === node_value_types_js_1.VALUE_TYPES.ARRAY && !(value instanceof Array) && typeof value === 'object' && Object.keys(value).some(key => isNaN(parseInt(key)))) {
+            if (currentRow.type === node_value_types_1.VALUE_TYPES.ARRAY && !(value instanceof Array) && typeof value === 'object' && Object.keys(value).some(key => isNaN(parseInt(key)))) {
                 throw new Error(`Cannot merge existing array of path "${path}" with an object`);
             }
-            if (value instanceof Array && currentRow.type !== node_value_types_js_1.VALUE_TYPES.ARRAY) {
+            if (value instanceof Array && currentRow.type !== node_value_types_1.VALUE_TYPES.ARRAY) {
                 throw new Error(`Cannot merge existing object of path "${path}" with an array`);
             }
         }
         const revision = options.revision || acebase_core_1.ID.generate();
         const mainNode = {
-            type: currentRow && currentRow.type === node_value_types_js_1.VALUE_TYPES.ARRAY ? node_value_types_js_1.VALUE_TYPES.ARRAY : node_value_types_js_1.VALUE_TYPES.OBJECT,
+            type: currentRow && currentRow.type === node_value_types_1.VALUE_TYPES.ARRAY ? node_value_types_1.VALUE_TYPES.ARRAY : node_value_types_1.VALUE_TYPES.OBJECT,
             value: {},
         };
         const childNodeValues = {};
         if (value instanceof Array) {
-            mainNode.type = node_value_types_js_1.VALUE_TYPES.ARRAY;
+            mainNode.type = node_value_types_1.VALUE_TYPES.ARRAY;
             // Convert array to object with numeric properties
             const obj = {};
             for (let i = 0; i < value.length; i++) {
@@ -8672,19 +8672,19 @@ class CustomStorage extends index_js_1.Storage {
             value = obj;
         }
         else if (value instanceof acebase_core_1.PathReference) {
-            mainNode.type = node_value_types_js_1.VALUE_TYPES.REFERENCE;
+            mainNode.type = node_value_types_1.VALUE_TYPES.REFERENCE;
             mainNode.value = value.path;
         }
         else if (value instanceof ArrayBuffer) {
-            mainNode.type = node_value_types_js_1.VALUE_TYPES.BINARY;
+            mainNode.type = node_value_types_1.VALUE_TYPES.BINARY;
             mainNode.value = acebase_core_1.ascii85.encode(value);
         }
         else if (typeof value === 'string') {
-            mainNode.type = node_value_types_js_1.VALUE_TYPES.STRING;
+            mainNode.type = node_value_types_1.VALUE_TYPES.STRING;
             mainNode.value = value;
         }
-        const currentIsObjectOrArray = currentRow ? [node_value_types_js_1.VALUE_TYPES.OBJECT, node_value_types_js_1.VALUE_TYPES.ARRAY].includes(currentRow.type) : false;
-        const newIsObjectOrArray = [node_value_types_js_1.VALUE_TYPES.OBJECT, node_value_types_js_1.VALUE_TYPES.ARRAY].includes(mainNode.type);
+        const currentIsObjectOrArray = currentRow ? [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(currentRow.type) : false;
+        const newIsObjectOrArray = [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(mainNode.type);
         const children = {
             current: [],
             new: [],
@@ -8745,7 +8745,7 @@ class CustomStorage extends index_js_1.Storage {
             });
         }
         // Insert or update node
-        const isArray = mainNode.type === node_value_types_js_1.VALUE_TYPES.ARRAY;
+        const isArray = mainNode.type === node_value_types_1.VALUE_TYPES.ARRAY;
         if (currentRow) {
             // update
             this.logger.info(`Node "/${path}" is being ${options.merge ? 'updated' : 'overwritten'}`.colorize(acebase_core_1.ColorStyle.cyan));
@@ -8933,13 +8933,13 @@ class CustomStorage extends index_js_1.Storage {
                 await (async () => {
                     const node = await this._readNode(path, { transaction });
                     if (!node) {
-                        throw new node_errors_js_1.NodeNotFoundError(`Node "/${path}" does not exist`);
+                        throw new node_errors_1.NodeNotFoundError(`Node "/${path}" does not exist`);
                     }
-                    if (![node_value_types_js_1.VALUE_TYPES.OBJECT, node_value_types_js_1.VALUE_TYPES.ARRAY].includes(node.type)) {
+                    if (![node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(node.type)) {
                         // No children
                         return;
                     }
-                    const isArray = node.type === node_value_types_js_1.VALUE_TYPES.ARRAY;
+                    const isArray = node.type === node_value_types_1.VALUE_TYPES.ARRAY;
                     const value = node.value;
                     let keys = Object.keys(value).map(key => isArray ? parseInt(key) : key);
                     if (options.keyFilter) {
@@ -8991,7 +8991,7 @@ class CustomStorage extends index_js_1.Storage {
                             type: node.type,
                             key: isArray ? null : key,
                             index: isArray ? key : null,
-                            address: new node_address_js_1.NodeAddress(childPath),
+                            address: new node_address_1.NodeAddress(childPath),
                             exists: true,
                             value: null,
                             revision: node.revision,
@@ -9036,9 +9036,9 @@ class CustomStorage extends index_js_1.Storage {
                         return { value: null };
                     } // path is root. There is no parent.
                     const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                    (0, assert_js_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                    (0, assert_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                     const parentNode = await this._readNode(pathInfo.parentPath, { transaction });
-                    if (parentNode && [node_value_types_js_1.VALUE_TYPES.OBJECT, node_value_types_js_1.VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode.value) {
+                    if (parentNode && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(parentNode.type) && pathInfo.key in parentNode.value) {
                         const childValueInfo = this._getTypeFromStoredValue(parentNode.value[pathInfo.key]);
                         return {
                             revision: parentNode.revision,
@@ -9051,7 +9051,7 @@ class CustomStorage extends index_js_1.Storage {
                     }
                     return { value: null };
                 }
-                const isArray = targetNode.type === node_value_types_js_1.VALUE_TYPES.ARRAY;
+                const isArray = targetNode.type === node_value_types_1.VALUE_TYPES.ARRAY;
                 /**
                  * Convert include & exclude filters to PathInfo instances for easier handling
                  */
@@ -9076,13 +9076,13 @@ class CustomStorage extends index_js_1.Storage {
                  * properties `posted` and `history` must be removed from the object
                  */
                 const applyFiltersOnInlineData = (descPath, node) => {
-                    if ([node_value_types_js_1.VALUE_TYPES.OBJECT, node_value_types_js_1.VALUE_TYPES.ARRAY].includes(node.type) && includeFilter.length > 0) {
+                    if ([node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(node.type) && includeFilter.length > 0) {
                         const trailKeys = acebase_core_1.PathInfo.getPathKeys(descPath).slice(pathInfo.keys.length);
                         const checkPathInfo = new acebase_core_1.PathInfo(trailKeys);
                         const remove = [];
                         const includes = includeFilter.filter(info => info.isDescendantOf(checkPathInfo));
                         if (includes.length > 0) {
-                            const isArray = node.type === node_value_types_js_1.VALUE_TYPES.ARRAY;
+                            const isArray = node.type === node_value_types_1.VALUE_TYPES.ARRAY;
                             remove.push(...Object.keys(node.value).map(key => isArray ? +key : key)); // Mark all at first
                             for (const info of includes) {
                                 const targetProp = info.keys[trailKeys.length];
@@ -9136,7 +9136,7 @@ class CustomStorage extends index_js_1.Storage {
                     // Apply child_objects filter. If metadata is not loaded, we can only skip deeper descendants here - any child object that does get through will be ignored by addDescendant
                     if (include
                         && options.child_objects === false
-                        && (pathInfo.isParentOf(descPath) && [node_value_types_js_1.VALUE_TYPES.OBJECT, node_value_types_js_1.VALUE_TYPES.ARRAY].includes(metadata ? metadata.type : -1)
+                        && (pathInfo.isParentOf(descPath) && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(metadata ? metadata.type : -1)
                             || acebase_core_1.PathInfo.getPathKeys(descPath).length > pathInfo.pathKeys.length + 1)) {
                         include = false;
                     }
@@ -9148,7 +9148,7 @@ class CustomStorage extends index_js_1.Storage {
                     if (!checkExecuted) {
                         this.throwImplementationError('descendantsOf did not call checkCallback before addCallback');
                     }
-                    if (options.child_objects === false && [node_value_types_js_1.VALUE_TYPES.OBJECT, node_value_types_js_1.VALUE_TYPES.ARRAY].includes(node.type)) {
+                    if (options.child_objects === false && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(node.type)) {
                         // child objects are filtered out, but this one got through because includeDescendantCheck did not have access to its metadata,
                         // which is ok because doing that might drastically improve performance in client code. Skip it now.
                         return true;
@@ -9175,10 +9175,10 @@ class CustomStorage extends index_js_1.Storage {
                     });
                     return arr;
                 };
-                if (targetNode.type === node_value_types_js_1.VALUE_TYPES.ARRAY) {
+                if (targetNode.type === node_value_types_1.VALUE_TYPES.ARRAY) {
                     result.value = objectToArray(result.value);
                 }
-                if (targetNode.type === node_value_types_js_1.VALUE_TYPES.OBJECT || targetNode.type === node_value_types_js_1.VALUE_TYPES.ARRAY) {
+                if (targetNode.type === node_value_types_1.VALUE_TYPES.OBJECT || targetNode.type === node_value_types_1.VALUE_TYPES.ARRAY) {
                     // target node is an object or array
                     // merge with other found (child) nodes
                     const targetPathKeys = acebase_core_1.PathInfo.getPathKeys(path);
@@ -9189,27 +9189,27 @@ class CustomStorage extends index_js_1.Storage {
                         const trailKeys = pathKeys.slice(targetPathKeys.length);
                         let parent = value;
                         for (let j = 0; j < trailKeys.length; j++) {
-                            (0, assert_js_1.assert)(typeof parent === 'object', 'parent must be an object/array to have children!!');
+                            (0, assert_1.assert)(typeof parent === 'object', 'parent must be an object/array to have children!!');
                             const key = trailKeys[j];
                             const isLast = j === trailKeys.length - 1;
                             const nodeType = isLast
                                 ? otherNode.type
                                 : typeof trailKeys[j + 1] === 'number'
-                                    ? node_value_types_js_1.VALUE_TYPES.ARRAY
-                                    : node_value_types_js_1.VALUE_TYPES.OBJECT;
+                                    ? node_value_types_1.VALUE_TYPES.ARRAY
+                                    : node_value_types_1.VALUE_TYPES.OBJECT;
                             let nodeValue;
                             if (!isLast) {
-                                nodeValue = nodeType === node_value_types_js_1.VALUE_TYPES.OBJECT ? {} : [];
+                                nodeValue = nodeType === node_value_types_1.VALUE_TYPES.OBJECT ? {} : [];
                             }
                             else {
                                 nodeValue = otherNode.value;
-                                if (nodeType === node_value_types_js_1.VALUE_TYPES.ARRAY) {
+                                if (nodeType === node_value_types_1.VALUE_TYPES.ARRAY) {
                                     nodeValue = objectToArray(nodeValue);
                                 }
                             }
                             if (key in parent) {
                                 // Merge with parent
-                                const mergePossible = typeof parent[key] === typeof nodeValue && [node_value_types_js_1.VALUE_TYPES.OBJECT, node_value_types_js_1.VALUE_TYPES.ARRAY].includes(nodeType);
+                                const mergePossible = typeof parent[key] === typeof nodeValue && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(nodeType);
                                 if (!mergePossible) {
                                     // Ignore the value in the child record, see issue #20: "Assertion failed: Merging child values can only be done if existing and current values are both an array or object"
                                     this.logger.error(`The value stored in node "${otherNode.path}" cannot be merged with the parent node, value will be ignored. This error should disappear once the target node value is updated. See issue #20 for more information`, { path, parent, key, nodeType, nodeValue });
@@ -9245,7 +9245,7 @@ class CustomStorage extends index_js_1.Storage {
                     Object.keys(result.value).forEach(key => {
                         if (typeof result.value[key] === 'object' && result.value[key].constructor === Object) {
                             // This can only happen if the object was empty
-                            (0, assert_js_1.assert)(Object.keys(result.value[key]).length === 0);
+                            (0, assert_1.assert)(Object.keys(result.value[key]).length === 0);
                             delete result.value[key];
                         }
                     });
@@ -9304,7 +9304,7 @@ class CustomStorage extends index_js_1.Storage {
                 index: typeof pathInfo.key === 'number' ? pathInfo.key : null,
                 type: node ? node.type : 0,
                 exists: node !== null,
-                address: node ? new node_address_js_1.NodeAddress(path) : null,
+                address: node ? new node_address_1.NodeAddress(path) : null,
                 created: node ? new Date(node.created) : null,
                 modified: node ? new Date(node.modified) : null,
                 revision: node ? node.revision : null,
@@ -9313,9 +9313,9 @@ class CustomStorage extends index_js_1.Storage {
             if (!node && path !== '') {
                 // Try parent node
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                (0, assert_js_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                (0, assert_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                 const parent = await this._readNode(pathInfo.parentPath, { transaction });
-                if (parent && [node_value_types_js_1.VALUE_TYPES.OBJECT, node_value_types_js_1.VALUE_TYPES.ARRAY].includes(parent.type) && pathInfo.key in parent.value) {
+                if (parent && [node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(parent.type) && pathInfo.key in parent.value) {
                     // Stored in parent node
                     info.exists = true;
                     info.value = parent.value[pathInfo.key];
@@ -9333,7 +9333,7 @@ class CustomStorage extends index_js_1.Storage {
             }
             if (options.include_child_count) {
                 info.childCount = 0;
-                if ([node_value_types_js_1.VALUE_TYPES.OBJECT, node_value_types_js_1.VALUE_TYPES.ARRAY].includes(info.valueType) && info.address) {
+                if ([node_value_types_1.VALUE_TYPES.OBJECT, node_value_types_1.VALUE_TYPES.ARRAY].includes(info.valueType) && info.address) {
                     // Get number of children
                     info.childCount = node.value ? Object.keys(node.value).length : 0;
                     info.childCount += await transaction.getChildCount(path);
@@ -9370,7 +9370,7 @@ class CustomStorage extends index_js_1.Storage {
             else if (typeof options.assert_revision !== 'undefined') {
                 const info = await this.getNodeInfo(path, { transaction });
                 if (info.revision !== options.assert_revision) {
-                    throw new node_errors_js_1.NodeRevisionError(`revision '${info.revision}' does not match requested revision '${options.assert_revision}'`);
+                    throw new node_errors_1.NodeRevisionError(`revision '${info.revision}' does not match requested revision '${options.assert_revision}'`);
                 }
                 if (info.address && info.address.path === path && value !== null && !this.valueFitsInline(value)) {
                     // Overwrite node
@@ -9379,14 +9379,14 @@ class CustomStorage extends index_js_1.Storage {
                 else {
                     // Update parent node
                     const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                    (0, assert_js_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                    (0, assert_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                     await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: value }, { merge: true, transaction, suppress_events: options.suppress_events, context: options.context });
                 }
             }
             else {
                 // Delegate operation to update on parent node
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                (0, assert_js_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                (0, assert_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                 await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: value }, { transaction, suppress_events: options.suppress_events, context: options.context });
             }
             if (!options.transaction) {
@@ -9427,13 +9427,13 @@ class CustomStorage extends index_js_1.Storage {
                 // Node exists, but is stored in its parent node.
                 const pathInfo = acebase_core_1.PathInfo.get(path);
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                (0, assert_js_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                (0, assert_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                 await this._writeNodeWithTracking(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, merge: true, suppress_events: options.suppress_events, context: options.context });
             }
             else {
                 // The node does not exist, it's parent doesn't have it either. Update the parent instead
                 const lockPath = await transaction.moveToParentPath(pathInfo.parentPath);
-                (0, assert_js_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
+                (0, assert_1.assert)(lockPath === pathInfo.parentPath, `transaction.moveToParentPath() did not move to the right parent path of "${path}"`);
                 await this.updateNode(pathInfo.parentPath, { [pathInfo.key]: updates }, { transaction, suppress_events: options.suppress_events, context: options.context });
             }
             if (!options.transaction) {
@@ -9452,17 +9452,17 @@ class CustomStorage extends index_js_1.Storage {
 }
 exports.CustomStorage = CustomStorage;
 
-},{"../../assert.js":31,"../../node-address.js":37,"../../node-errors.js":38,"../../node-info.js":39,"../../node-lock.js":40,"../../node-value-types.js":41,"../index.js":56,"./helpers.js":47,"acebase-core":12}],49:[function(require,module,exports){
+},{"../../assert":31,"../../node-address":37,"../../node-errors":38,"../../node-info":39,"../../node-lock":40,"../../node-value-types":41,"../index":56,"./helpers":47,"acebase-core":12}],49:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndexedDBInstance = void 0;
 const acebase_core_1 = require("acebase-core");
-const index_js_1 = require("../index.js");
-const index_js_2 = require("../../../index.js");
-const settings_js_1 = require("./settings.js");
-const transaction_js_1 = require("./transaction.js");
+const __1 = require("..");
+const __2 = require("../../..");
+const settings_1 = require("./settings");
+const transaction_1 = require("./transaction");
 function createIndexedDBInstance(dbname, init = {}) {
-    const settings = new settings_js_1.IndexedDBStorageSettings(init);
+    const settings = new settings_1.IndexedDBStorageSettings(init);
     // We'll create an IndexedDB with name "dbname.acebase"
     const request = indexedDB.open(`${dbname}.acebase`, 1);
     request.onupgradeneeded = (e) => {
@@ -9485,7 +9485,7 @@ function createIndexedDBInstance(dbname, init = {}) {
     });
     const cache = new acebase_core_1.SimpleCache(typeof settings.cacheSeconds === 'number' ? settings.cacheSeconds : 60); // 60 second node cache by default
     // cache.enabled = false;
-    const storageSettings = new index_js_1.CustomStorageSettings({
+    const storageSettings = new __1.CustomStorageSettings({
         name: 'IndexedDB',
         locking: true,
         removeVoidProperties: settings.removeVoidProperties,
@@ -9502,10 +9502,10 @@ function createIndexedDBInstance(dbname, init = {}) {
                 cache,
                 ipc,
             };
-            return new transaction_js_1.IndexedDBStorageTransaction(context, target);
+            return new transaction_1.IndexedDBStorageTransaction(context, target);
         },
     });
-    const db = new index_js_2.AceBase(dbname, {
+    const db = new __2.AceBase(dbname, {
         logLevel: settings.logLevel,
         storage: storageSettings,
         sponsor: settings.sponsor,
@@ -9529,12 +9529,12 @@ function createIndexedDBInstance(dbname, init = {}) {
 }
 exports.createIndexedDBInstance = createIndexedDBInstance;
 
-},{"../../../index.js":33,"../index.js":48,"./settings.js":50,"./transaction.js":51,"acebase-core":12}],50:[function(require,module,exports){
+},{"..":48,"../../..":33,"./settings":50,"./transaction":51,"acebase-core":12}],50:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageSettings = void 0;
-const index_js_1 = require("../../index.js");
-class IndexedDBStorageSettings extends index_js_1.StorageSettings {
+const __1 = require("../..");
+class IndexedDBStorageSettings extends __1.StorageSettings {
     constructor(settings) {
         super(settings);
         /**
@@ -9573,11 +9573,11 @@ class IndexedDBStorageSettings extends index_js_1.StorageSettings {
 }
 exports.IndexedDBStorageSettings = IndexedDBStorageSettings;
 
-},{"../../index.js":56}],51:[function(require,module,exports){
+},{"../..":56}],51:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageTransaction = void 0;
-const index_js_1 = require("../index.js");
+const __1 = require("..");
 function _requestToPromise(request) {
     return new Promise((resolve, reject) => {
         request.onsuccess = event => {
@@ -9586,7 +9586,7 @@ function _requestToPromise(request) {
         request.onerror = reject;
     });
 }
-class IndexedDBStorageTransaction extends index_js_1.CustomStorageTransaction {
+class IndexedDBStorageTransaction extends __1.CustomStorageTransaction {
     /**
      * Creates a transaction object for IndexedDB usage. Because IndexedDB automatically commits
      * transactions when they have not been touched for a number of microtasks (eg promises
@@ -9728,7 +9728,7 @@ class IndexedDBStorageTransaction extends index_js_1.CustomStorageTransaction {
     _getChildrenOf(path, include, checkCallback, addCallback) {
         // Use cursor to loop from path on
         return new Promise((resolve, reject) => {
-            const pathInfo = index_js_1.CustomStorageHelpers.PathInfo.get(path);
+            const pathInfo = __1.CustomStorageHelpers.PathInfo.get(path);
             const tx = this._createTransaction(false);
             const store = tx.objectStore('nodes');
             const query = IDBKeyRange.lowerBound(path, true);
@@ -9800,22 +9800,22 @@ class IndexedDBStorageTransaction extends index_js_1.CustomStorageTransaction {
 }
 exports.IndexedDBStorageTransaction = IndexedDBStorageTransaction;
 
-},{"../index.js":48}],52:[function(require,module,exports){
+},{"..":48}],52:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createLocalStorageInstance = exports.LocalStorageTransaction = exports.LocalStorageSettings = void 0;
-const index_js_1 = require("../index.js");
-const index_js_2 = require("../../../index.js");
-const settings_js_1 = require("./settings.js");
-Object.defineProperty(exports, "LocalStorageSettings", { enumerable: true, get: function () { return settings_js_1.LocalStorageSettings; } });
-const transaction_js_1 = require("./transaction.js");
-Object.defineProperty(exports, "LocalStorageTransaction", { enumerable: true, get: function () { return transaction_js_1.LocalStorageTransaction; } });
+const __1 = require("..");
+const __2 = require("../../..");
+const settings_1 = require("./settings");
+Object.defineProperty(exports, "LocalStorageSettings", { enumerable: true, get: function () { return settings_1.LocalStorageSettings; } });
+const transaction_1 = require("./transaction");
+Object.defineProperty(exports, "LocalStorageTransaction", { enumerable: true, get: function () { return transaction_1.LocalStorageTransaction; } });
 function createLocalStorageInstance(dbname, init = {}) {
-    const settings = new settings_js_1.LocalStorageSettings(init);
+    const settings = new settings_1.LocalStorageSettings(init);
     // Determine whether to use localStorage or sessionStorage
     const ls = settings.provider ? settings.provider : settings.temp ? localStorage : sessionStorage;
     // Setup our CustomStorageSettings
-    const storageSettings = new index_js_1.CustomStorageSettings({
+    const storageSettings = new __1.CustomStorageSettings({
         name: 'LocalStorage',
         locking: true,
         removeVoidProperties: settings.removeVoidProperties,
@@ -9830,22 +9830,22 @@ function createLocalStorageInstance(dbname, init = {}) {
                 dbname,
                 localStorage: ls,
             };
-            const transaction = new transaction_js_1.LocalStorageTransaction(context, target);
+            const transaction = new transaction_1.LocalStorageTransaction(context, target);
             return transaction;
         },
     });
-    const db = new index_js_2.AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
+    const db = new __2.AceBase(dbname, { logLevel: settings.logLevel, storage: storageSettings, sponsor: settings.sponsor });
     db.settings.ipcEvents = settings.multipleTabs === true;
     return db;
 }
 exports.createLocalStorageInstance = createLocalStorageInstance;
 
-},{"../../../index.js":33,"../index.js":48,"./settings.js":53,"./transaction.js":54}],53:[function(require,module,exports){
+},{"..":48,"../../..":33,"./settings":53,"./transaction":54}],53:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageSettings = void 0;
-const index_js_1 = require("../../index.js");
-class LocalStorageSettings extends index_js_1.StorageSettings {
+const __1 = require("../..");
+class LocalStorageSettings extends __1.StorageSettings {
     constructor(settings) {
         super(settings);
         /**
@@ -9882,13 +9882,13 @@ class LocalStorageSettings extends index_js_1.StorageSettings {
 }
 exports.LocalStorageSettings = LocalStorageSettings;
 
-},{"../../index.js":56}],54:[function(require,module,exports){
+},{"../..":56}],54:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageTransaction = void 0;
-const index_js_1 = require("../index.js");
+const __1 = require("..");
 // Setup CustomStorageTransaction for browser's LocalStorage
-class LocalStorageTransaction extends index_js_1.CustomStorageTransaction {
+class LocalStorageTransaction extends __1.CustomStorageTransaction {
     constructor(context, target) {
         super(target);
         this.context = context;
@@ -9918,7 +9918,7 @@ class LocalStorageTransaction extends index_js_1.CustomStorageTransaction {
     async childrenOf(path, include, checkCallback, addCallback) {
         // Streams all child paths
         // Cannot query localStorage, so loop through all stored keys to find children
-        const pathInfo = index_js_1.CustomStorageHelpers.PathInfo.get(path);
+        const pathInfo = __1.CustomStorageHelpers.PathInfo.get(path);
         for (let i = 0; i < this.context.localStorage.length; i++) {
             const key = this.context.localStorage.key(i);
             if (!key.startsWith(this._storageKeysPrefix)) {
@@ -9941,7 +9941,7 @@ class LocalStorageTransaction extends index_js_1.CustomStorageTransaction {
     async descendantsOf(path, include, checkCallback, addCallback) {
         // Streams all descendant paths
         // Cannot query localStorage, so loop through all stored keys to find descendants
-        const pathInfo = index_js_1.CustomStorageHelpers.PathInfo.get(path);
+        const pathInfo = __1.CustomStorageHelpers.PathInfo.get(path);
         for (let i = 0; i < this.context.localStorage.length; i++) {
             const key = this.context.localStorage.key(i);
             if (!key.startsWith(this._storageKeysPrefix)) {
@@ -9976,7 +9976,7 @@ class LocalStorageTransaction extends index_js_1.CustomStorageTransaction {
 }
 exports.LocalStorageTransaction = LocalStorageTransaction;
 
-},{"../index.js":48}],55:[function(require,module,exports){
+},{"..":48}],55:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SchemaValidationError = void 0;
@@ -10003,46 +10003,46 @@ Object.defineProperty(exports, "Storage", { enumerable: true, get: function () {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
-var create_index_js_1 = require("./create-index.js");
-Object.defineProperty(exports, "createIndex", { enumerable: true, get: function () { return create_index_js_1.createIndex; } });
+var create_index_1 = require("./create-index");
+Object.defineProperty(exports, "createIndex", { enumerable: true, get: function () { return create_index_1.createIndex; } });
 
-},{"./create-index.js":46}],58:[function(require,module,exports){
+},{"./create-index":46}],58:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MSSQLStorage = exports.MSSQLStorageSettings = void 0;
-const not_supported_js_1 = require("../../not-supported.js");
+const not_supported_1 = require("../../not-supported");
 /**
  * Not supported in browser context
  */
-class MSSQLStorageSettings extends not_supported_js_1.NotSupported {
+class MSSQLStorageSettings extends not_supported_1.NotSupported {
 }
 exports.MSSQLStorageSettings = MSSQLStorageSettings;
 /**
  * Not supported in browser context
  */
-class MSSQLStorage extends not_supported_js_1.NotSupported {
+class MSSQLStorage extends not_supported_1.NotSupported {
 }
 exports.MSSQLStorage = MSSQLStorage;
 
-},{"../../not-supported.js":42}],59:[function(require,module,exports){
+},{"../../not-supported":42}],59:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SQLiteStorage = exports.SQLiteStorageSettings = void 0;
-const not_supported_js_1 = require("../../not-supported.js");
+const not_supported_1 = require("../../not-supported");
 /**
  * Not supported in browser context
  */
-class SQLiteStorageSettings extends not_supported_js_1.NotSupported {
+class SQLiteStorageSettings extends not_supported_1.NotSupported {
 }
 exports.SQLiteStorageSettings = SQLiteStorageSettings;
 /**
  * Not supported in browser context
  */
-class SQLiteStorage extends not_supported_js_1.NotSupported {
+class SQLiteStorage extends not_supported_1.NotSupported {
 }
 exports.SQLiteStorage = SQLiteStorage;
 
-},{"../../not-supported.js":42}],60:[function(require,module,exports){
+},{"../../not-supported":42}],60:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.StorageSettings = void 0;
