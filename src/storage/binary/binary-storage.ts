@@ -3,7 +3,7 @@ import { NodeCache } from '../../node-cache.js';
 import { AceBaseStorageSettings } from './binary-storage-settings.js';
 import { InternalDataRetrievalOptions, IWriteNodeResult, Storage, StorageEnv } from '../index.js';
 import { BinaryNodeInfo } from './node-info.js';
-import { ID, PathInfo, Utils, ColorStyle } from 'acebase-core';
+import { ID, PathInfo, Utils, ColorStyle, Transport } from 'acebase-core';
 import { StorageAddressRange } from './binary-storage-address-range.js';
 import { BinaryNodeAddress } from './node-address.js';
 import { pfs } from '../../promise-fs/index.js';
@@ -20,6 +20,7 @@ import { SerializedKeyValue } from './serialized-key-value.js';
 import { NodeNotFoundError } from '../../node-errors.js';
 import { _mergeNode } from './node-writer/merge-node.js';
 import { _createNode } from './node-writer/create-node.js';
+import { NodeLockError } from '../../node-lock.js';
 
 const { concatTypedArrays, encodeString, decodeString, cloneObject } = Utils;
 
@@ -1267,9 +1268,9 @@ export class AceBaseStorage extends Storage {
             deleted: deletedKeys,
             timestamp: Date.now(),
             type,
-            value,
-            context,
-            mutations,
+            value: JSON.stringify(Transport.serialize2(value)),
+            context: JSON.stringify(Transport.serialize2(context)),
+            mutations: JSON.stringify(Transport.serialize2(mutations)),
         };
         // console.log(`Logging mutations on "/${path}": ${JSON.stringify(item.mutations)}`);
 
@@ -1295,6 +1296,46 @@ export class AceBaseStorage extends Storage {
             return promise.then(() => cursor);
         }
         return cursor;
+    }
+
+    #lastRemovedMutationKey: string | null = null;
+
+    /**
+     * Removes mutations from the transaction logs, optionally in the background
+     */
+    async removeMutations(keys: string[], background = false) {
+        keys.sort(); // Make sure they are sorted
+        if (this.#lastRemovedMutationKey) {
+            // Remove keys already being processed
+            const firstKeyToContinueWith = Math.max(0, keys.indexOf(this.#lastRemovedMutationKey));
+            keys = keys.slice(firstKeyToContinueWith);
+        }
+        if (keys.length === 0) {
+            return;
+        }
+        this.#lastRemovedMutationKey = keys.at(-1) as string;
+
+        // Remove mutations in batches
+        const batchSize = 100;
+        this.logger.debug(`Removing ${keys.length} mutations in batches of ${batchSize}, keys ${keys[0]} to ${this.#lastRemovedMutationKey}`);
+        while (keys.length > 0) {
+            const batchUpdates = keys.splice(0, batchSize).reduce((updates, key) => {
+                updates[key] = null;
+                return updates;
+            }, {} as Record<string, null>);
+            try {
+                await this.updateNode('history', batchUpdates);
+            }
+            catch (err: any) {
+                this.logger.error(`Error removing mutations${background ? ' in the background' : ''}: ${err?.stack ?? err?.message ?? err}`);
+                if (background) {
+                    // We were running as a background task, just exit.
+                    // Don't throw because there might not be a catch
+                    return;
+                }
+                throw err;
+            }
+        }
     }
 
     /**
@@ -1354,191 +1395,173 @@ export class AceBaseStorage extends Storage {
             throw new Error('Cursor too old');
         }
 
-        if (!filter.for || filter.for.length === 0) {
-            filter.for = [{ path: typeof filter.path === 'string' ? filter.path : '', events: ['value'] }]; // Use filter.path, or root node as single path
-        }
+        const forFilter = filter.for && filter.for.length > 0
+            ? filter.for
+            : [{ path: typeof filter.path === 'string' ? filter.path : '', events: ['value'] }]; // Use filter.path, or root node as single path
 
         // Get filter paths, filter out paths that are descendants of another path
-        const filterPaths = filter.for.filter(t1 => {
+        const filterPaths = forFilter.filter(t1 => {
             const pathInfo = PathInfo.get(t1.path);
-            return !filter.for.some(t2 => pathInfo.isDescendantOf(t2.path));
+            return !forFilter.some(t2 => pathInfo.isDescendantOf(t2.path));
         }).map(item => item.path);
 
         const tid = this.createTid(); //ID.generate();
         const lock = await this.nodeLocker.lock('history', tid.toString(), false, 'getMutations');
         try {
-            type MutationItem = { id: string, path: string, type: 'set'|'update', timestamp: number, value: any, context: any, changes: IAppliedMutations };
+            type MutationItem = { id: string, path: string, type: 'set' | 'update', timestamp: number, value: any, context: any, changes: IAppliedMutations };
             let mutations = [] as MutationItem[];
-            const checkQueue = [] as string[];
-            let done: () => void;
-            const donePromise = new Promise<void>(resolve => done = resolve);
-            let allEnumerated = false;
 
             const hasValue = (val: any) => ![undefined,null].includes(val);
             const hasPropertyValue = (val: any, prop: string | number) => hasValue(val) && typeof val === 'object' && hasValue(val[prop]);
 
-            // const filterPathInfo = PathInfo.get(filter.path || '');
-            const check = async (key: string) => {
-                checkQueue.push(key);
-                const { value: mutation } = <{
-                    value: {
+            const oldestValidCursor = this.oldestValidCursor;
+            const expiredTransactions: string[] = [];
+            const inspectFurther: string[] = [];
+            try {
+                await this.getChildren('history', { tid }).next(async (childInfo) => {
+                    const txKey = childInfo.key as string;
+                    const txCursor = txKey.slice(0, cursor.length);
+                    if (txCursor < oldestValidCursor) { expiredTransactions.push(txKey); }
+                    if (txCursor < cursor) { return; }
+                    if (txCursor === cursor) {
+                        // cuid timestamp bytes are equal - perform extra check on this mutation later to find out if we have to include it in the results
+                        inspectFurther.push(txKey);
+                    }
+                    // checkQueue.push(key);
+                    const node = await this.getNode(`history/${txKey}`, { tid, include: ['path', 'updated', 'deleted', 'type', 'timestamp'] }); // Not including 'value'
+                    const mutation = node.value as {
                         path: string;
                         keys: (string | number)[];
                         updated: (string | number)[];
                         deleted: (string | number)[];
                         type: 'set' | 'update';
                         timestamp: number;
-                    }
-                }>await this.getNode(`history/${key}`, { tid, include: ['path', 'updated', 'deleted', 'type', 'timestamp'] }); // Not including 'value'
-                mutation.keys = mutation.updated.concat(mutation.deleted);
-                const mutationPathInfo = PathInfo.get(mutation.path);
+                    };
+                    mutation.keys = mutation.updated.concat(mutation.deleted);
+                    const mutationPathInfo = PathInfo.get(mutation.path);
 
-                // Find the path in filter.paths on this trail, there can only be 1 (descendants were filtered out above)
-                const filterPath = (() => {
-                    const path = filterPaths.find(path => mutationPathInfo.isOnTrailOf(path));
-                    return typeof path === 'string' ? path : null;
-                })();
-                const filterPathInfo = filterPath === null ? null : PathInfo.get(filterPath);
-                const load = (() => {
-                    /**
-                     * When to include a mutation & what data to include.
-                     * - mutation.path starts with __ (private path)
-                     *      - ignore
-                     * - filterPath === null if no filter paths were on the same trail as mutation.path
-                     *      - eg: filterPaths on ["books/book1", "books/book2"], mutation.path === "books/book3"
-                     *      - ignore
-                     * - filterPath equals mutation.path
-                     *      - eg: filterPath === mutation.path === "books/book1"
-                     *      - use entire mutation
-                     * - filterPath is an ancestor of mutation.path
-                     *      - eg: filterPath === "books", mutation.path === "books/book1"
-                     *      - use entire mutation
-                     * - filterPath is a descendant of mutation.path
-                     *      - eg: filterPath === "books/book1/title", mutation.path === "books"
-                     *      - ignore if mutation.type === 'update' and mutation.keys does NOT include first trailing key of filterPath (eg only book2 is updated)
-                     *      - if filterPath has wildcard (*, $var) keys, repeat following step recursively:
-                     *      - use target (trailing) data in mutation value (value/books/book1/title) or null
-                     */
-                    if (mutation.path.startsWith('__')) {
-                        return 'none';
-                    }
-                    if (mutation.timestamp < since || filterPath === null) {
-                        return 'none';
-                    }
-                    if (!filterPathInfo.isDescendantOf(mutationPathInfo)) {
-                        return 'all';
-                    }
-                    if (mutation.type === 'set' || mutation.keys.concat('*').includes(filterPathInfo.keys[mutationPathInfo.keys.length]) || filterPathInfo.keys[mutationPathInfo.keys.length].toString().startsWith('$')) {
-                        return 'target';
-                    }
-                    return 'none';
-                })();
-
-                if (load !== 'none') {
-                    const valueKey = 'value' + (load === 'target' ? (mutation.path.length === 0 ? '/' : '') + filterPath.slice(mutation.path.length) : '');
-                    const { value: tx } = <{
-                        value: {
-                            context: any;
-                            mutations: IAppliedMutations;
-                            value: any;
+                    // Find the path in filter.paths on this trail, there can only be 1 (descendants were filtered out above)
+                    const filterPath = (() => {
+                        const path = filterPaths.find(path => mutationPathInfo.isOnTrailOf(path));
+                        return typeof path === 'string' ? path : null;
+                    })();
+                    const filterPathInfo = filterPath === null ? null : PathInfo.get(filterPath);
+                    const load = (() => {
+                        /**
+                         * When to include a mutation & what data to include.
+                         * - mutation.path starts with __ (private path)
+                         *      - ignore
+                         * - filterPath === null if no filter paths were on the same trail as mutation.path
+                         *      - eg: filterPaths on ["books/book1", "books/book2"], mutation.path === "books/book3"
+                         *      - ignore
+                         * - filterPath equals mutation.path
+                         *      - eg: filterPath === mutation.path === "books/book1"
+                         *      - use entire mutation
+                         * - filterPath is an ancestor of mutation.path
+                         *      - eg: filterPath === "books", mutation.path === "books/book1"
+                         *      - use entire mutation
+                         * - filterPath is a descendant of mutation.path
+                         *      - eg: filterPath === "books/book1/title", mutation.path === "books"
+                         *      - ignore if mutation.type === 'update' and mutation.keys does NOT include first trailing key of filterPath (eg only book2 is updated)
+                         *      - if filterPath has wildcard (*, $var) keys, repeat following step recursively:
+                         *      - use target (trailing) data in mutation value (value/books/book1/title) or null
+                         */
+                        if (mutation.path.startsWith('__')) {
+                            return 'none';
                         }
-                    }>await this.getNode(`history/${key}`, { tid, include: ['context', 'mutations', valueKey] });
+                        if (mutation.timestamp < since || filterPathInfo === null) {
+                            return 'none';
+                        }
+                        if (!filterPathInfo.isDescendantOf(mutationPathInfo)) {
+                            return 'all';
+                        }
+                        if (mutation.type === 'set' || mutation.keys.concat('*').includes(filterPathInfo.keys[mutationPathInfo.keys.length]) || filterPathInfo.keys[mutationPathInfo.keys.length].toString().startsWith('$')) {
+                            return 'target';
+                        }
+                        return 'none';
+                    })();
 
-                    const targetPath = mutation.path;
-                    let targetValue = tx.value, targetOp = mutation.type;
-                    if (typeof targetValue === 'undefined') {
-                        targetValue = null;
-                    }
-                    else {
-                        // Add removed properties to the target value again
-                        mutation.deleted.forEach(key => targetValue[key] = null);
-                    }
-                    for (const m of tx.mutations.list) {
-                        if (typeof m.val === 'undefined') { m.val = null; }
-                        if (typeof m.prev === 'undefined') { m.prev = null; }
-                    }
-                    if (load === 'target') {
-                        targetOp = 'set';
-                        const trailKeys = filterPathInfo.keys.slice(mutationPathInfo.keys.length);
-                        const process = (targetPath: string, targetValue: any, trailKeys: (string | number)[]) => {
-                            const childKey = trailKeys[0];
-                            trailKeys = trailKeys.slice(1);
-                            if (childKey === '*' || childKey.toString().startsWith('$')) {
-                                // Wildcard. Process all child keys
-                                return Object.keys(targetValue).forEach(childKey => {
-                                    process(targetPath, targetValue, [childKey, ...trailKeys]);
-                                });
+                    if (load !== 'none') {
+                        if (filterPath === null || filterPathInfo === null) {
+                            throw new Error('DEV ERROR: impossible logic'); // Typescript guard for what we know is impossible
+                        }
+                        const valueKey = 'value' + (load === 'target' ? (mutation.path.length === 0 ? '/' : '') + filterPath.slice(mutation.path.length) : '');
+                        const txInfo = await this.getNode(`history/${txKey}`, { tid, include: ['context', 'mutations', valueKey] });
+                        const tx = typeof txInfo.value.mutations === 'string'
+                            ? // New serialized format to store mutations
+                            {
+                                context: Transport.deserialize2(JSON.parse(txInfo.value.context)),
+                                mutations: Transport.deserialize2(JSON.parse(txInfo.value.mutations)) as IAppliedMutations,
+                                value: Transport.deserialize2(JSON.parse(txInfo.value.value)),
                             }
-                            targetPath = PathInfo.getChildPath(targetPath, childKey);
-                            targetValue = targetValue !== null && childKey in targetValue ? targetValue[childKey] : null;
-                            if (trailKeys.length === 0) {
-                                // console.log(`Adding mutation on "${targetPath}" to history of "${filterPathInfo.path}"`)
-                                // Check if the targeted value actually changed
-                                const targetPathInfo = PathInfo.get(targetPath);
-                                const hasTargetMutation = tx.mutations.list.some(m => {
-                                    const mTargetPathInfo = PathInfo.get(tx.mutations.path).child(m.target);
-                                    if (mTargetPathInfo.isAncestorOf(targetPathInfo)) {
-                                        // Mutation on higher path, check if target mutation prev and val are different
-                                        const trailKeys = targetPathInfo.keys.slice(mTargetPathInfo.keys.length);
-                                        const val = !hasValue(m.val) ? null : trailKeys.reduce((val, key) => hasPropertyValue(val, key) ? val[key] : null, m.val);
-                                        const prev = !hasValue(m.prev) ? null : trailKeys.reduce((prev, key) => hasPropertyValue(prev, key) ? prev[key] : null, m.prev);
-                                        return (val !== prev);
-                                    }
-                                    return mTargetPathInfo.isOnTrailOf(targetPathInfo);
-                                });
-                                hasTargetMutation && mutations.push({ id: key, path: targetPath, type: targetOp, timestamp: mutation.timestamp, value: targetValue, context: tx.context, changes: tx.mutations });
-                            }
-                            else {
-                                process(targetPath, targetValue, trailKeys); // Deeper
-                            }
-                        };
-                        process(targetPath, targetValue, trailKeys);
-                    }
-                    else {
-                        // console.log(`Adding mutation on "${targetPath}" to history of "${filterPathInfo.path}"`)
-                        mutations.push({ id: key, path: targetPath, type: targetOp, timestamp: mutation.timestamp, value: targetValue, context: tx.context, changes: tx.mutations }); // TODO remove __mutation__: mutation
-                    }
-                }
+                            : // Old format using objects
+                            txInfo.value as {
+                                context: any;
+                                mutations: IAppliedMutations;
+                                value: any;
+                            };
 
-                checkQueue.splice(checkQueue.indexOf(key), 1);
-                if (allEnumerated && checkQueue.length === 0) {
-                    done();
-                }
-            };
-
-            let count = 0;
-            const oldestValidCursor = this.oldestValidCursor, expiredTransactions: string[] = [], inspectFurther: string[] = [];
-            try {
-                await this.getChildren('history', { tid }).next(childInfo => {
-                    const txCursor = childInfo.key.slice(0, cursor.length);
-                    if (txCursor < oldestValidCursor) { expiredTransactions.push(childInfo.key); }
-                    if (txCursor < cursor) { return; }
-                    if (txCursor === cursor) {
-                        // cuid timestamp bytes are equal - perform extra check on this mutation later to find out if we have to include it in the results
-                        inspectFurther.push(childInfo.key);
+                        const targetPath = mutation.path;
+                        let targetValue = tx.value, targetOp = mutation.type;
+                        if (typeof targetValue === 'undefined') {
+                            targetValue = null;
+                        }
+                        else {
+                            // Add removed properties to the target value again
+                            mutation.deleted.forEach(key => targetValue[key] = null);
+                        }
+                        for (const m of tx.mutations.list) {
+                            if (typeof m.val === 'undefined') { m.val = null; }
+                            if (typeof m.prev === 'undefined') { m.prev = null; }
+                        }
+                        if (load === 'target') {
+                            targetOp = 'set';
+                            const trailKeys = filterPathInfo.keys.slice(mutationPathInfo.keys.length);
+                            const process = (targetPath: string, targetValue: any, trailKeys: (string | number)[]) => {
+                                const childKey = trailKeys[0];
+                                trailKeys = trailKeys.slice(1);
+                                if (childKey === '*' || childKey.toString().startsWith('$')) {
+                                    // Wildcard. Process all child keys
+                                    return Object.keys(targetValue).forEach(childKey => {
+                                        process(targetPath, targetValue, [childKey, ...trailKeys]);
+                                    });
+                                }
+                                targetPath = PathInfo.getChildPath(targetPath, childKey);
+                                targetValue = targetValue !== null && childKey in targetValue ? targetValue[childKey] : null;
+                                if (trailKeys.length === 0) {
+                                    // console.log(`Adding mutation on "${targetPath}" to history of "${filterPathInfo.path}"`)
+                                    // Check if the targeted value actually changed
+                                    const targetPathInfo = PathInfo.get(targetPath);
+                                    const hasTargetMutation = tx.mutations.list.some(m => {
+                                        const mTargetPathInfo = PathInfo.get(tx.mutations.path).child(m.target);
+                                        if (mTargetPathInfo.isAncestorOf(targetPathInfo)) {
+                                            // Mutation on higher path, check if target mutation prev and val are different
+                                            const trailKeys = targetPathInfo.keys.slice(mTargetPathInfo.keys.length);
+                                            const val = !hasValue(m.val) ? null : trailKeys.reduce((val, key) => hasPropertyValue(val, key) ? val[key] : null, m.val);
+                                            const prev = !hasValue(m.prev) ? null : trailKeys.reduce((prev, key) => hasPropertyValue(prev, key) ? prev[key] : null, m.prev);
+                                            return (val !== prev);
+                                        }
+                                        return mTargetPathInfo.isOnTrailOf(targetPathInfo);
+                                    });
+                                    hasTargetMutation && mutations.push({ id: txKey, path: targetPath, type: targetOp, timestamp: mutation.timestamp, value: targetValue, context: tx.context, changes: tx.mutations });
+                                }
+                                else {
+                                    process(targetPath, targetValue, trailKeys); // Deeper
+                                }
+                            };
+                            process(targetPath, targetValue, trailKeys);
+                        }
+                        else {
+                            // console.log(`Adding mutation on "${targetPath}" to history of "${filterPathInfo.path}"`)
+                            mutations.push({ id: txKey, path: targetPath, type: targetOp, timestamp: mutation.timestamp, value: targetValue, context: tx.context, changes: tx.mutations }); // TODO remove __mutation__: mutation
+                        }
                     }
-                    count++;
-                    check(childInfo.key);
                 });
             }
             catch (err) {
                 if (!(err instanceof NodeNotFoundError)) {
                     throw err;
                 }
-            }
-
-            allEnumerated = true;
-            if (count > 0) {
-                await donePromise;
-            }
-
-            if (expiredTransactions.length > 0) {
-                // Remove expired transactions
-                const expiredUpdate = expiredTransactions.reduce((updates, key) => {
-                    updates[key] = null;
-                    return updates;
-                }, {} as Record<string, null>);
-                this.updateNode('history', expiredUpdate); // No need to await this, will be processed once we've released our read lock
             }
 
             if (inspectFurther.length === 1 && inspectFurther[0] === filter.cursor) {
@@ -1555,6 +1578,7 @@ export class AceBaseStorage extends Storage {
                 // NOTE that it is practically impossible to have more than 1 mutation in the same millisecond that
                 // could conflict with another because of the currently used locking mechanism - this will *probably* never
                 // happen.
+                this.logger.warn(`Multiple mutations found for cursor "${cursor}" (${inspectFurther})`);
             }
 
             // Make sure they are sorted
@@ -1626,7 +1650,7 @@ export class AceBaseStorage extends Storage {
 
                 // Now, are any of these changes relevant to any of the requested path/event combinations?
                 return changes.some(ch => {
-                    return filter.for.some(target => {
+                    return forFilter.some(target => {
 
                         if (!ch.pathInfo.isOnTrailOf(target.path)) {
                             return false;
@@ -1680,7 +1704,11 @@ export class AceBaseStorage extends Storage {
                 });
             });
 
-            return { mutations, used_cursor: filter.cursor, new_cursor: ID.generate() };
+            if (expiredTransactions.length > 0) {
+                // Remove expired transactions in the background.
+                this.removeMutations(expiredTransactions, true);
+            }
+            return { mutations, used_cursor: filter.cursor as string, new_cursor: ID.generate() };
         }
         finally {
             lock.release();
@@ -1930,7 +1958,7 @@ export class AceBaseStorage extends Storage {
                 cursor,
             };
         }
-        catch(err) {
+        catch(err: any) {
             if (err instanceof CorruptRecordError) {
                 // err.record points to the broken record address (path, pageNr, recordNr)
                 // err.key points to the property causing the issue
@@ -1938,8 +1966,11 @@ export class AceBaseStorage extends Storage {
                 // No need to console.error here, should have already been done
                 // TODO: release acebase-cli with ability to do that
             }
+            else if (err instanceof NodeLockError) {
+                this.logger.error(`A locking error occurred while reading node "/${path}": ${err.message}`);
+            }
             else {
-                this.logger.error('DEBUG THIS: getNode error:', err);
+                this.logger.error(`DEBUG THIS: getNode error on node "/${path}": ${err?.stack ?? err?.message ?? err}`);
             }
             throw err;
         }
@@ -2082,8 +2113,13 @@ export class AceBaseStorage extends Storage {
 
             return childInfo;
         }
-        catch(err) {
-            this.logger.error('DEBUG THIS: getNodeInfo error', err);
+        catch(err: any) {
+            if (err instanceof NodeLockError) {
+                this.logger.error(`A locking error occurred while reading node info for "/${path}": ${err.message}`);
+            }
+            else {
+                this.logger.error(`DEBUG THIS: getNodeInfo error on node "/${path}": ${err?.stack ?? err?.message ?? err}`);
+            }
             this.nodeCache.rejectAnnouncement(path, err);
             throw err;
         }
