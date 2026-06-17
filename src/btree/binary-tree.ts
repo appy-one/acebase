@@ -2869,19 +2869,15 @@ export class BinaryBPlusTree {
                     await this._removeLeaf(leaf);
                 }
                 else {
-                    // Parent node has only 1 entry, removing it would also make parent node empty...
-                    // throw new DetailedError('leaf-empty', 'leaf is now empty and parent node has only 1 entry, tree will have to be rebuilt');
-                    // Write the empty leaf anyway, will be removed automatically with a tree rebuild.
-                    await this._writeLeaf(leaf);
-
-                    // Rebuild the tree
-                    const options: Parameters<typeof this._rebuild>[1] = {
-                        allocatedBytes: this.info.byteLength,
-                        fillFactor: this.info.fillFactor,
-                        increaseMaxEntries: false,
-                    };
-                    await this._rebuild(BinaryWriter.forFunction(this._writeFn), options);
-                    await this._loadInfo(); // reload info
+                    // Parent node has only 1 entry, removing it would also make parent node empty.
+                    // Attempting to rebuild the tree in-place here is unsafe: the first-pass writes
+                    // placeholder ltChildOffset=0 values to disk; if the rebuilt tree exceeds the
+                    // current allocation those writes fail silently (swallowed by BinaryWriter's
+                    // fail handler), while the second-pass writes propagate the error and abort.
+                    // This leaves corrupted nodes with ltChildOffset=0 permanently on disk, breaking
+                    // all subsequent reads. Let processOperations handle it via _rebuildKeyTree
+                    // (temp-file approach) which is safe and idempotent.
+                    throw new DetailedError('leaf-empty', 'leaf is now empty and parent node has only 1 entry, tree will have to be rebuilt');
                 }
             };
 
@@ -2921,14 +2917,16 @@ export class BinaryBPlusTree {
                     return pointsThisDirection(leaf);
                 })();
                 if (!applyToThisLeaf) {
-                    // No. Save leaf edits and load a new one
-
-                    // try {
-                    await saveLeaf();
-                    // }
-                    // catch (err) {
-                    //     failedOps.push(...batchedOps);
-                    // }
+                    // No. Save leaf edits and load a new one.
+                    // op has already been shift()ed from operations but not yet added to batchedOps,
+                    // so we must restore it to operations if saveLeaf() throws, to prevent data loss.
+                    try {
+                        await saveLeaf();
+                    }
+                    catch (err) {
+                        operations.unshift(op);
+                        throw err;
+                    }
 
                     // Load new leaf
                     batchedOps = [];
