@@ -2870,14 +2870,32 @@ export class BinaryBPlusTree {
                 }
                 else {
                     // Parent node has only 1 entry, removing it would also make parent node empty.
-                    // Attempting to rebuild the tree in-place here is unsafe: the first-pass writes
-                    // placeholder ltChildOffset=0 values to disk; if the rebuilt tree exceeds the
-                    // current allocation those writes fail silently (swallowed by BinaryWriter's
-                    // fail handler), while the second-pass writes propagate the error and abort.
-                    // This leaves corrupted nodes with ltChildOffset=0 permanently on disk, breaking
-                    // all subsequent reads. Let processOperations handle it via _rebuildKeyTree
-                    // (temp-file approach) which is safe and idempotent.
-                    throw new DetailedError('leaf-empty', 'leaf is now empty and parent node has only 1 entry, tree will have to be rebuilt');
+                    // Write the empty leaf first so its entries are committed to disk — this is
+                    // required for processOperations to make forward progress on retry.
+                    await this._writeLeaf(leaf);
+
+                    // Rebuild the tree using an in-memory buffer, then flush the complete,
+                    // correct tree to storage in a single write.
+                    //
+                    // Writing directly to storage (BinaryWriter.forFunction(this._writeFn)) is
+                    // unsafe because _rebuild's two-pass approach temporarily writes placeholder
+                    // ltChildOffset=0 values to storage in the first pass. If the second pass
+                    // (which overwrites with correct values) fails or is interrupted for any
+                    // reason, those zeros remain permanently, corrupting all subsequent reads.
+                    //
+                    // Building in memory first ensures storage only ever sees the final,
+                    // consistent tree state. keepFreeSpace: false keeps the rebuilt content
+                    // compact so it always fits within the current allocatedBytes.
+                    const rebuildOptions: Parameters<typeof this._rebuild>[1] = {
+                        allocatedBytes: this.info.byteLength,
+                        fillFactor: this.info.fillFactor,
+                        increaseMaxEntries: false,
+                        keepFreeSpace: false,
+                    };
+                    const treeBuffer = new Uint8ArrayBuilder();
+                    await this._rebuild(BinaryWriter.forUint8ArrayBuilder(treeBuffer), rebuildOptions);
+                    await this._writeFn(treeBuffer.data, 0);
+                    await this._loadInfo(); // reload info
                 }
             };
 
@@ -3633,7 +3651,11 @@ export class BinaryBPlusTree {
                 uniqueKeys: options.isUnique,
                 byteLength: options.allocatedBytes,
                 maxEntriesPerNode: options.maxEntriesPerNode,
-                freeBytes: options.keepFreeSpace ? 1 : 0,
+                // When allocatedBytes is set, the final header will include a HAS_FREE_SPACE field
+                // (trailing free bytes always exist). The initial header must match, otherwise the
+                // header length differs between first and second pass, shifting all node positions
+                // by 4 bytes and corrupting the tree layout.
+                freeBytes: options.keepFreeSpace || options.allocatedBytes > 0 ? 1 : 0,
                 metadataKeys: options.metadataKeys,
                 smallLeafs: WRITE_SMALL_LEAFS,
                 fillFactor: options.fillFactor,
