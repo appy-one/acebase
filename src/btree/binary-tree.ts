@@ -2889,7 +2889,7 @@ export class BinaryBPlusTree {
                 const { type, key, recordPointer, metadata, newValue, currentValue } = op;
 
                 // Should this entry be added to this leaf?
-                const applyToThisLeaf = (() => {
+                const applyToCurrentLeaf = (() => {
                     if (type === 'add' && leaf.entries.length >= this.info.entriesPerNode) {
                         return false;
                     }
@@ -2914,7 +2914,7 @@ export class BinaryBPlusTree {
                     };
                     return pointsThisDirection(leaf);
                 })();
-                if (!applyToThisLeaf) {
+                if (!applyToCurrentLeaf) {
                     // No. Save leaf edits and load a new one.
                     // op has already been shift()ed from operations but not yet added to batchedOps,
                     // so we must restore it to operations if saveLeaf() throws, to prevent data loss.
