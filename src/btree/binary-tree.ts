@@ -2999,7 +2999,7 @@ export class BinaryBPlusTree {
             // batchedOps = [];
         }
         catch (err) {
-            operations.push(...batchedOps);
+            operations.unshift(...batchedOps);
             // debugThrownError = err;
             throw err; //new DetailedError('process-error', 'Could not process all requested operations', err);
         }
