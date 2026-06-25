@@ -324,8 +324,13 @@ export class NodeReader {
                         const val = await reader.getValue(childOptions);
                         (obj as any)[isArray ? child.index : child.key] = val;
                     }
-                    catch (reason) {
-                        this.logger.error('NodeReader.getValue:child error: ', reason);
+                    catch (reason: any) {
+                        if (reason instanceof NodeLockError) {
+                            this.logger.error(`A locking error occurred while reading child node "/${child.address.path}": ${reason.message}`);
+                        }
+                        else {
+                            this.logger.error(`NodeReader.getValue:child error on "/${child.address.path}": ${reason?.stack ?? reason?.message ?? reason}`);
+                        }
                         throw reason;
                     }
                     finally {

@@ -776,21 +776,22 @@ export class BinaryBPlusTree {
                 try {
                     childInfo = await this._readChild(freshReader);
                 }
-                catch (err) {
+                catch (err: any) {
                     if (repairMode) {
                         // Could not read next leaf using current leaf's next pointer. In repair mode, try getting it using the tree pointers.
                         // If that fails too, move on to the next leaf until we get a succesful read. Using this strategy, data referenced from
                         // broken leaf(s) will be skipped, following data will be able to be read again.
-                        const lastKey = leaf.entries.slice(-1)[0].key;
                         this.logger.warn(`B+Tree repair caught error: ${err.message}`);
-                        this.logger.warn(`B+Tree repair starting at key >= "${lastKey}"`);
                         const currentLeaf = await (async () => {
                             if (leaf.parentNode) { return leaf; }
+                            let lastKey: any;
                             try {
+                                lastKey = leaf.entries.slice(-1)[0].key;
+                                this.logger.warn(`B+Tree repair starting at key >= "${lastKey}"`);
                                 return await this._findLeaf(lastKey);
                             }
-                            catch (err) {
-                                throw new DetailedError('tree-repair', `Cannot repair B+Tree: unable to find current leaf using its last key`, err);
+                            catch (err: any) {
+                                throw new DetailedError('tree-repair', `Cannot repair B+Tree: unable to find current leaf using its last key ${lastKey}`, err);
                             }
                         })();
 
@@ -2823,7 +2824,8 @@ export class BinaryBPlusTree {
             throw new DetailedError('small-ptrs-deprecated', 'small ptrs have deprecated, tree will have to be rebuilt');
         }
 
-        let batchedOps = [];
+        let batchedOps = [] as BinaryBPlusTreeTransactionOperation[];
+        let treeRebuildAdvised = false;
         // const debugRemoved = [];
         // let debugThrownError;
         try {
@@ -2869,24 +2871,16 @@ export class BinaryBPlusTree {
                     await this._removeLeaf(leaf);
                 }
                 else {
-                    // Parent node has only 1 entry, removing it would also make parent node empty...
-                    // throw new DetailedError('leaf-empty', 'leaf is now empty and parent node has only 1 entry, tree will have to be rebuilt');
-                    // Write the empty leaf anyway, will be removed automatically with a tree rebuild.
+                    // Parent node has only 1 entry — removing this leaf would leave the parent with 0 entries (invalid).
+                    // Write the empty leaf. if entries are added in other operations, the leaf is still here.
+                    // If tree needs a rebuild at one point, the empty leaf will disappear automatically
                     await this._writeLeaf(leaf);
-
-                    // Rebuild the tree
-                    const options: Parameters<typeof this._rebuild>[1] = {
-                        allocatedBytes: this.info.byteLength,
-                        fillFactor: this.info.fillFactor,
-                        increaseMaxEntries: false,
-                    };
-                    await this._rebuild(BinaryWriter.forFunction(this._writeFn), options);
-                    await this._loadInfo(); // reload info
+                    return 'tree-rebuild-advised';
                 }
             };
 
             while (operations.length > 0) {
-                const op = operations.shift();
+                const op = operations.shift() as BinaryBPlusTreeTransactionOperation;
                 // tx.queue({
                 //     name: 'start',
                 //     action() { operations.shift(); },
@@ -2895,7 +2889,7 @@ export class BinaryBPlusTree {
                 const { type, key, recordPointer, metadata, newValue, currentValue } = op;
 
                 // Should this entry be added to this leaf?
-                const applyToThisLeaf = (() => {
+                const applyToCurrentLeaf = (() => {
                     if (type === 'add' && leaf.entries.length >= this.info.entriesPerNode) {
                         return false;
                     }
@@ -2920,15 +2914,20 @@ export class BinaryBPlusTree {
                     };
                     return pointsThisDirection(leaf);
                 })();
-                if (!applyToThisLeaf) {
-                    // No. Save leaf edits and load a new one
-
-                    // try {
-                    await saveLeaf();
-                    // }
-                    // catch (err) {
-                    //     failedOps.push(...batchedOps);
-                    // }
+                if (!applyToCurrentLeaf) {
+                    // No. Save leaf edits and load a new one.
+                    // op has already been shift()ed from operations but not yet added to batchedOps,
+                    // so we must restore it to operations if saveLeaf() throws, to prevent data loss.
+                    try {
+                        const result = await saveLeaf();
+                        if (result === 'tree-rebuild-advised') {
+                            treeRebuildAdvised = true;
+                        }
+                    }
+                    catch (err) {
+                        operations.unshift(op);
+                        throw err;
+                    }
 
                     // Load new leaf
                     batchedOps = [];
@@ -2995,14 +2994,21 @@ export class BinaryBPlusTree {
                 }
             }
             if (batchedOps.length > 0) {
-                await saveLeaf();
+                const result = await saveLeaf();
+                if (result === 'tree-rebuild-advised') {
+                    treeRebuildAdvised = true;
+                }
+                batchedOps = [];
             }
-            // batchedOps = [];
         }
         catch (err) {
-            operations.push(...batchedOps);
+            operations.unshift(...batchedOps);
             // debugThrownError = err;
             throw err; //new DetailedError('process-error', 'Could not process all requested operations', err);
+        }
+
+        if (treeRebuildAdvised) {
+            this.logger.warn(`Tree rebuild is advised for tree with id "${this.id}"`);
         }
         // finally {
         //     // await this._testTree();
@@ -3635,7 +3641,11 @@ export class BinaryBPlusTree {
                 uniqueKeys: options.isUnique,
                 byteLength: options.allocatedBytes,
                 maxEntriesPerNode: options.maxEntriesPerNode,
-                freeBytes: options.keepFreeSpace ? 1 : 0,
+                // When allocatedBytes is set, the final header will include a HAS_FREE_SPACE field
+                // (trailing free bytes always exist). The initial header must match, otherwise the
+                // header length differs between first and second pass, shifting all node positions
+                // by 4 bytes and corrupting the tree layout.
+                freeBytes: options.keepFreeSpace || options.allocatedBytes > 0 ? 1 : 0,
                 metadataKeys: options.metadataKeys,
                 smallLeafs: WRITE_SMALL_LEAFS,
                 fillFactor: options.fillFactor,

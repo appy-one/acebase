@@ -381,7 +381,7 @@ export class BinaryBPlusTreeBuilder {
             }
             else {
                 const freeEntries = this.maxEntriesPerNode - info.entries.length;
-                const avgEntrySize = info.entries.length === 0 ? 1 : Math.ceil((byteLength - 18) / info.entries.length);
+                const avgEntrySize = info.entries.length === 0 ? 1 : Math.max(1, Math.ceil((byteLength - 18) / info.entries.length));
                 // freeSpace = (freeEntries * avgEntrySize) + (avgEntrySize * 2);
                 freeSpace = Math.ceil(freeEntries * avgEntrySize * 1.1); // + 10%
                 byteLength += freeSpace;
