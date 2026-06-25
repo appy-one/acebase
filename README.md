@@ -602,6 +602,7 @@ const subscription2 = newPostStream.subscribe<MyOtherClass>(childSnapshot => {
     const child = childSnapshot.val(); // child is of type MyOtherClass
     // .subscribe overrode .on's type parameter
  });
+```
 
 ### Using variables and wildcards in subscription paths
 
