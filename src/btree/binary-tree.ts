@@ -2824,6 +2824,7 @@ export class BinaryBPlusTree {
         }
 
         let batchedOps = [];
+        let treeRebuildAdvised = false;
         // const debugRemoved = [];
         // let debugThrownError;
         try {
@@ -2872,7 +2873,12 @@ export class BinaryBPlusTree {
                     // Parent node has only 1 entry — removing this leaf would leave the parent
                     // with 0 entries (invalid). Tree needs to be rebuilt.
 
-                    throw new DetailedError('empty-branch', 'Empty leaf causes parent node to become empty, tree needs a rebuild');
+                    // throw new DetailedError('empty-branch', 'Empty leaf causes parent node to become empty, tree needs a rebuild');
+
+                    // Write the empty leaf - if entries are added in other operations, the leaf is still here.
+                    // If tree needs a rebuild at one point, the empty leaf will disappear automatically
+                    await this._writeLeaf(leaf);
+                    return 'tree-rebuild-advised';
                 }
             };
 
@@ -2916,7 +2922,10 @@ export class BinaryBPlusTree {
                     // op has already been shift()ed from operations but not yet added to batchedOps,
                     // so we must restore it to operations if saveLeaf() throws, to prevent data loss.
                     try {
-                        await saveLeaf();
+                        const result = await saveLeaf();
+                        if (result === 'tree-rebuild-advised') {
+                            treeRebuildAdvised = true;
+                        }
                     }
                     catch (err) {
                         operations.unshift(op);
@@ -2996,6 +3005,10 @@ export class BinaryBPlusTree {
             operations.push(...batchedOps);
             // debugThrownError = err;
             throw err; //new DetailedError('process-error', 'Could not process all requested operations', err);
+        }
+
+        if (treeRebuildAdvised) {
+            this.logger.warn(`Tree rebuild is advised for tree with id "${this.id}"`);
         }
         // finally {
         //     // await this._testTree();
