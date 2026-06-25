@@ -2994,9 +2994,12 @@ export class BinaryBPlusTree {
                 }
             }
             if (batchedOps.length > 0) {
-                await saveLeaf();
+                const result = await saveLeaf();
+                if (result === 'tree-rebuild-advised') {
+                    treeRebuildAdvised = true;
+                }
+                batchedOps = [];
             }
-            // batchedOps = [];
         }
         catch (err) {
             operations.unshift(...batchedOps);
