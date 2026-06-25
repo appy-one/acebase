@@ -776,21 +776,22 @@ export class BinaryBPlusTree {
                 try {
                     childInfo = await this._readChild(freshReader);
                 }
-                catch (err) {
+                catch (err: any) {
                     if (repairMode) {
                         // Could not read next leaf using current leaf's next pointer. In repair mode, try getting it using the tree pointers.
                         // If that fails too, move on to the next leaf until we get a succesful read. Using this strategy, data referenced from
                         // broken leaf(s) will be skipped, following data will be able to be read again.
-                        const lastKey = leaf.entries.slice(-1)[0].key;
                         this.logger.warn(`B+Tree repair caught error: ${err.message}`);
-                        this.logger.warn(`B+Tree repair starting at key >= "${lastKey}"`);
                         const currentLeaf = await (async () => {
                             if (leaf.parentNode) { return leaf; }
+                            let lastKey: any;
                             try {
+                                lastKey = leaf.entries.slice(-1)[0].key;
+                                this.logger.warn(`B+Tree repair starting at key >= "${lastKey}"`);
                                 return await this._findLeaf(lastKey);
                             }
-                            catch (err) {
-                                throw new DetailedError('tree-repair', `Cannot repair B+Tree: unable to find current leaf using its last key`, err);
+                            catch (err: any) {
+                                throw new DetailedError('tree-repair', `Cannot repair B+Tree: unable to find current leaf using its last key ${lastKey}`, err);
                             }
                         })();
 
