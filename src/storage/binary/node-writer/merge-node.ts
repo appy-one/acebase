@@ -261,10 +261,10 @@ export async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeIn
                 logger.info(`Updated tree for node "/${nodeInfo.path}"`.colorize(ColorStyle.green));
                 return recordInfo; // We do our own cleanup, return current allocation which is always the same as nodeReader.recordInfo
             }
-            catch (err) {
+            catch (err: any) {
                 logger.info(`Could not update tree for "/${nodeInfo.path}"${retry > 0 ? ` (retry ${retry})` : ''}: ${err.message}, ${err.codes}`.colorize(ColorStyle.yellow));
 
-                if (err.hasErrorCode && err.hasErrorCode('tree-full-no-autogrow')) {
+                if (err.hasErrorCode?.('tree-full-no-autogrow')) {
                     logger.trace('Tree needs more space');
 
                     const growBytes = Math.ceil(tree.info.byteLength * 0.1); // grow 10%
@@ -307,7 +307,10 @@ export async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeIn
                     // Failed to update the binary data, we need to rebuild the tree
                     logger.trace(`B+Tree for path ${nodeInfo.path} needs rebuild`);
                     fixHistory.push({ err, fix: 'rebuild' });
-                    recordInfo = await _rebuildKeyTree(tree, nodeReader, { reserveSpaceForNewEntries: changes.inserts.length - changes.deletes.length });
+                    recordInfo = await _rebuildKeyTree(tree, nodeReader, {
+                        ...(changes.inserts.length > changes.deletes.length && { reserveSpaceForNewEntries: changes.inserts.length - changes.deletes.length }),
+                        ...(err.hasErrorCode?.('empty-branch') && { allocatedBytes: tree.info.byteLength }),
+                    });
                 }
 
                 if (!recordInfo.address.equals(nodeReader.recordInfo.address)) {

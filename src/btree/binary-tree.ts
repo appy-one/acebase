@@ -2870,11 +2870,9 @@ export class BinaryBPlusTree {
                 }
                 else {
                     // Parent node has only 1 entry — removing this leaf would leave the parent
-                    // with 0 entries (invalid). Delegate to _removeLeafWithEmptyParent which
-                    // either bypasses the empty parent in the grandparent (non-root, no rebuild
-                    // needed) or does a safe in-memory rebuild to reduce tree depth (root case,
-                    // cheap because the tree is very small at that point).
-                    await this._removeLeafWithEmptyParent(leaf);
+                    // with 0 entries (invalid). Tree needs to be rebuilt.
+
+                    throw new DetailedError('empty-branch', 'Empty leaf causes parent node to become empty, tree needs a rebuild');
                 }
             };
 

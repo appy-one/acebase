@@ -381,11 +381,7 @@ export class BinaryBPlusTreeBuilder {
             }
             else {
                 const freeEntries = this.maxEntriesPerNode - info.entries.length;
-                // Use 32 bytes as a minimum avgEntrySize to avoid grossly under-sizing the free
-                // space on empty leaves. When a leaf has 0 entries (e.g. after an in-place tree
-                // rebuild that removed all entries), avgEntrySize would otherwise be 1, giving
-                // only ~entriesPerNode bytes of free space — far too small for future additions.
-                const avgEntrySize = info.entries.length === 0 ? 32 : Math.max(32, Math.ceil((byteLength - 18) / info.entries.length));
+                const avgEntrySize = info.entries.length === 0 ? 1 : Math.max(32, Math.ceil((byteLength - 18) / info.entries.length));
                 // freeSpace = (freeEntries * avgEntrySize) + (avgEntrySize * 2);
                 freeSpace = Math.ceil(freeEntries * avgEntrySize * 1.1); // + 10%
                 byteLength += freeSpace;
