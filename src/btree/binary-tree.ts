@@ -2824,7 +2824,7 @@ export class BinaryBPlusTree {
             throw new DetailedError('small-ptrs-deprecated', 'small ptrs have deprecated, tree will have to be rebuilt');
         }
 
-        let batchedOps = [];
+        let batchedOps = [] as BinaryBPlusTreeTransactionOperation[];
         let treeRebuildAdvised = false;
         // const debugRemoved = [];
         // let debugThrownError;
@@ -2880,7 +2880,7 @@ export class BinaryBPlusTree {
             };
 
             while (operations.length > 0) {
-                const op = operations.shift();
+                const op = operations.shift() as BinaryBPlusTreeTransactionOperation;
                 // tx.queue({
                 //     name: 'start',
                 //     action() { operations.shift(); },
