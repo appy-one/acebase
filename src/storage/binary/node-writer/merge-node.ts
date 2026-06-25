@@ -309,7 +309,6 @@ export async function _mergeNode(storage: AceBaseStorage, nodeInfo: BinaryNodeIn
                     fixHistory.push({ err, fix: 'rebuild' });
                     recordInfo = await _rebuildKeyTree(tree, nodeReader, {
                         ...(changes.inserts.length > changes.deletes.length && { reserveSpaceForNewEntries: changes.inserts.length - changes.deletes.length }),
-                        ...(err.hasErrorCode?.('empty-branch') && { allocatedBytes: tree.info.byteLength }),
                     });
                 }
 

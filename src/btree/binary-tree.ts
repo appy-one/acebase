@@ -2871,12 +2871,8 @@ export class BinaryBPlusTree {
                     await this._removeLeaf(leaf);
                 }
                 else {
-                    // Parent node has only 1 entry — removing this leaf would leave the parent
-                    // with 0 entries (invalid). Tree needs to be rebuilt.
-
-                    // throw new DetailedError('empty-branch', 'Empty leaf causes parent node to become empty, tree needs a rebuild');
-
-                    // Write the empty leaf - if entries are added in other operations, the leaf is still here.
+                    // Parent node has only 1 entry — removing this leaf would leave the parent with 0 entries (invalid).
+                    // Write the empty leaf. if entries are added in other operations, the leaf is still here.
                     // If tree needs a rebuild at one point, the empty leaf will disappear automatically
                     await this._writeLeaf(leaf);
                     return 'tree-rebuild-advised';
