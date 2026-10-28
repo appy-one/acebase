@@ -588,8 +588,8 @@ export class NodeReader {
                 let i = 0;
                 for (const { key, value } of results) {
                     const childInfo = isArray
-                        ? new BinaryNodeInfo({ path: `${this.address.path}[${key}]`, index: key as number })
-                        : new BinaryNodeInfo({ path: `${this.address.path}/${key}`, key: key as string });
+                        ? new BinaryNodeInfo({ path: PathInfo.getChildPath(this.address.path, key as number), index: key as number })
+                        : new BinaryNodeInfo({ path: PathInfo.getChildPath(this.address.path, key as string), key: key as string });
                     const res = getValueFromBinary(childInfo, value.recordPointer, 0);
                     if (!res.skip) {
                         let result = callback(childInfo, i++);
@@ -608,8 +608,8 @@ export class NodeReader {
                             return nodes;
                         }
                         const child = isArray
-                            ? new BinaryNodeInfo({ path: `${this.address.path}[${entry.key}]`, index: entry.key as number })
-                            : new BinaryNodeInfo({ path: `${this.address.path}/${entry.key}`, key: entry.key as string });
+                            ? new BinaryNodeInfo({ path: PathInfo.getChildPath(this.address.path, entry.key as number), index: entry.key as number })
+                            : new BinaryNodeInfo({ path: PathInfo.getChildPath(this.address.path, entry.key as string), key: entry.key as string });
                         const res = getValueFromBinary(child, entry.values[0].recordPointer, 0);
                         if (!res.skip) { nodes.push(child); }
                         return nodes;
