@@ -134,7 +134,7 @@ function _parseRecordPointer(path: string, recordPointer: IndexRecordPointer) {
     }
     // return { key, pageNr, recordNr, address: new NodeAddress(`${path}/${key}`, pageNr, recordNr) };
     const keyOrIndex =  key[0] === '[' && key.slice(-1) === ']' ? parseInt(key.slice(1, -1)) : key;
-    return { key: keyOrIndex, path: `${path}/${key}`, wildcards };
+    return { key: keyOrIndex, path: PathInfo.getChildPath(path, key), wildcards };
 }
 
 export class DataIndex {
