@@ -1426,12 +1426,12 @@ export class BinaryBPlusTree {
                     // if (!keyMatch) { continue; }
                     add(entry); // check will be done by add
                 }
-                if (leaf.hasNext) {
+                if (leaf.getNext) {
                     return leaf.getNext()
                         .then(processLeaf);
                 }
                 else {
-                    return ret(); // results; //ret(results);
+                    return ret();
                 }
             };
             return this._getFirstLeaf(getLeafOptions)
@@ -1464,7 +1464,7 @@ export class BinaryBPlusTree {
                     if (op === '>=' && _isMoreOrEqual(entry.key, param)) { add(entry); }
                     else if (op === '>' && _isMore(entry.key, param)) { add(entry); }
                 }
-                if (leaf.hasNext) {
+                if (leaf.getNext) {
                     return leaf.getNext()
                         .then(processLeaf);
                 }
@@ -1492,7 +1492,7 @@ export class BinaryBPlusTree {
                     const entry = leaf.entries[i];
                     if (_isNotEqual(entry.key, param)) { add(entry); } //entry.key !== param
                 }
-                if (leaf.hasNext) {
+                if (leaf.getNext) {
                     return leaf.getNext()
                         .then(processLeaf);
                 }
@@ -1597,7 +1597,7 @@ export class BinaryBPlusTree {
                     const entry = leaf.entries[i];
                     if (keys.findIndex(key => _isEqual(key, entry.key)) < 0) { add(entry); } //if (keys.indexOf(entry.key) < 0)
                 }
-                if (leaf.hasNext) {
+                if (leaf.getNext) {
                     return leaf.getNext()
                         .then(processLeaf);
                 }
@@ -1698,7 +1698,7 @@ export class BinaryBPlusTree {
                         add(entry);
                     }
                 }
-                if (leaf.hasNext) {
+                if (leaf.getNext) {
                     return leaf.getNext()
                         .then(processLeaf);
                 }
@@ -1790,7 +1790,7 @@ export class BinaryBPlusTree {
 
         // Get lowerbound
         let firstLeaf = await this._getFirstLeaf();
-        while (firstLeaf.entries.length === 0 && firstLeaf.hasNext) {
+        while (firstLeaf.entries.length === 0 && firstLeaf.getNext) {
             firstLeaf = await firstLeaf.getNext();
         }
         const firstEntry = firstLeaf.entries[0];
@@ -2413,7 +2413,7 @@ export class BinaryBPlusTree {
 
         // Check if additional data has to be loaded before proceeding
         const reads = [];
-        if (!options.nextLeaf && leaf.hasNext) {
+        if (!options.nextLeaf && leaf.getNext) {
             // Load next leaf first
             reads.push(
                 leaf.getNext()
