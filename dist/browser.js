@@ -3075,7 +3075,7 @@ function setObservable(Observable) {
 }
 exports.setObservable = setObservable;
 
-},{"./simple-observable":23,"./utils":27,"rxjs":62}],15:[function(require,module,exports){
+},{"./simple-observable":23,"./utils":27,"rxjs":63}],15:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PartialArray = void 0;
@@ -5469,7 +5469,7 @@ function getGlobalObject() {
 exports.getGlobalObject = getGlobalObject;
 
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {},require("buffer").Buffer)
-},{"./partial-array":15,"./path-reference":17,"./process":18,"buffer":62}],28:[function(require,module,exports){
+},{"./partial-array":15,"./path-reference":17,"./process":18,"buffer":63}],28:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BrowserAceBase = void 0;
@@ -5516,7 +5516,7 @@ class BrowserAceBase extends acebase_local_1.AceBase {
 }
 exports.BrowserAceBase = BrowserAceBase;
 
-},{"./acebase-local":29,"./storage/custom/indexed-db":49}],29:[function(require,module,exports){
+},{"./acebase-local":29,"./storage/custom/indexed-db":50}],29:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBase = exports.AceBaseLocalSettings = exports.IndexedDBStorageSettings = exports.LocalStorageSettings = void 0;
@@ -5616,7 +5616,7 @@ class AceBase extends acebase_core_1.AceBaseBase {
 }
 exports.AceBase = AceBase;
 
-},{"./api-local":30,"./storage/binary":45,"./storage/custom/indexed-db/settings":50,"./storage/custom/local-storage":52,"acebase-core":12}],30:[function(require,module,exports){
+},{"./api-local":30,"./storage/binary":46,"./storage/custom/indexed-db/settings":51,"./storage/custom/local-storage":53,"acebase-core":12}],30:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalApi = void 0;
@@ -5916,7 +5916,7 @@ class LocalApi extends acebase_core_1.Api {
 }
 exports.LocalApi = LocalApi;
 
-},{"./node-errors":38,"./node-value-types":41,"./query":44,"./storage/binary":45,"./storage/custom":48,"./storage/mssql":58,"./storage/sqlite":59,"acebase-core":12}],31:[function(require,module,exports){
+},{"./node-errors":39,"./node-value-types":42,"./query":45,"./storage/binary":46,"./storage/custom":49,"./storage/mssql":59,"./storage/sqlite":60,"acebase-core":12}],31:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.assert = void 0;
@@ -6094,7 +6094,7 @@ var storage_1 = require("./storage");
 Object.defineProperty(exports, "StorageSettings", { enumerable: true, get: function () { return storage_1.StorageSettings; } });
 Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get: function () { return storage_1.SchemaValidationError; } });
 
-},{"./acebase-browser":28,"./acebase-local":29,"./storage":56,"./storage/binary":45,"./storage/custom":48,"./storage/mssql":58,"./storage/sqlite":59,"acebase-core":12}],34:[function(require,module,exports){
+},{"./acebase-browser":28,"./acebase-local":29,"./storage":57,"./storage/binary":46,"./storage/custom":49,"./storage/mssql":59,"./storage/sqlite":60,"acebase-core":12}],34:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ArrayIndex = exports.GeoIndex = exports.FullTextIndex = exports.DataIndex = void 0;
@@ -6124,7 +6124,7 @@ class ArrayIndex extends not_supported_1.NotSupported {
 }
 exports.ArrayIndex = ArrayIndex;
 
-},{"../not-supported":42}],35:[function(require,module,exports){
+},{"../not-supported":43}],35:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NetIPCServer = exports.IPCSocketPeer = exports.RemoteIPCPeer = exports.IPCPeer = void 0;
@@ -6270,7 +6270,7 @@ class IPCPeer extends ipc_1.AceBaseIPCPeer {
 }
 exports.IPCPeer = IPCPeer;
 
-},{"../not-supported":42,"./ipc":36,"acebase-core":12}],36:[function(require,module,exports){
+},{"../not-supported":43,"./ipc":36,"acebase-core":12}],36:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseIPCPeer = exports.AceBaseIPCPeerExitingError = void 0;
@@ -6770,7 +6770,26 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
 }
 exports.AceBaseIPCPeer = AceBaseIPCPeer;
 
-},{"../node-lock":40,"acebase-core":12}],37:[function(require,module,exports){
+},{"../node-lock":41,"acebase-core":12}],37:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.likePatternToRegExp = void 0;
+/**
+ * Converts a 'like' search pattern (with wildcards `*` and `?`) into a case-insensitive regular expression.
+ * All other characters are matched literally, so regex characters like `.`, `(`, `+`, `$` etc. are escaped.
+ * Wildcards match any character, including newlines.
+ * @param pattern pattern to convert, eg `'Al*'`, `'*.jpg'` or `'file?.txt'`
+ */
+function likePatternToRegExp(pattern) {
+    const source = pattern
+        .replace(/[.+^${}()|[\]\\\/-]/g, '\\$&') // escape regex characters (except our wildcards)
+        .replace(/\*/g, '[\\s\\S]*')
+        .replace(/\?/g, '[\\s\\S]');
+    return new RegExp(`^${source}$`, 'i');
+}
+exports.likePatternToRegExp = likePatternToRegExp;
+
+},{}],38:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RemovedNodeAddress = exports.NodeAddress = void 0;
@@ -6805,7 +6824,7 @@ class RemovedNodeAddress extends NodeAddress {
 }
 exports.RemovedNodeAddress = RemovedNodeAddress;
 
-},{}],38:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeRevisionError = exports.NodeNotFoundError = void 0;
@@ -6816,7 +6835,7 @@ class NodeRevisionError extends Error {
 }
 exports.NodeRevisionError = NodeRevisionError;
 
-},{}],39:[function(require,module,exports){
+},{}],40:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeInfo = void 0;
@@ -6865,7 +6884,7 @@ class NodeInfo {
 }
 exports.NodeInfo = NodeInfo;
 
-},{"./node-value-types":41,"acebase-core":12}],40:[function(require,module,exports){
+},{"./node-value-types":42,"acebase-core":12}],41:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NodeLock = exports.NodeLocker = exports.NodeLockError = exports.LOCK_STATE = void 0;
@@ -7165,7 +7184,7 @@ class NodeLock {
 }
 exports.NodeLock = NodeLock;
 
-},{"./assert":31,"acebase-core":12}],41:[function(require,module,exports){
+},{"./assert":31,"acebase-core":12}],42:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getValueType = exports.getNodeValueType = exports.getValueTypeName = exports.VALUE_TYPES = void 0;
@@ -7258,7 +7277,7 @@ function getValueType(value) {
 }
 exports.getValueType = getValueType;
 
-},{"acebase-core":12}],42:[function(require,module,exports){
+},{"acebase-core":12}],43:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotSupported = void 0;
@@ -7267,7 +7286,7 @@ class NotSupported {
 }
 exports.NotSupported = NotSupported;
 
-},{}],43:[function(require,module,exports){
+},{}],44:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pfs = void 0;
@@ -7277,7 +7296,7 @@ class pfs {
 }
 exports.pfs = pfs;
 
-},{}],44:[function(require,module,exports){
+},{}],45:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.executeQuery = void 0;
@@ -8073,7 +8092,7 @@ async function executeQuery(api, path, query, options = { snapshots: false, incl
 }
 exports.executeQuery = executeQuery;
 
-},{"./async-task-batch":32,"./data-index":34,"./node-errors":38,"./node-value-types":41,"acebase-core":12}],45:[function(require,module,exports){
+},{"./async-task-batch":32,"./data-index":34,"./node-errors":39,"./node-value-types":42,"acebase-core":12}],46:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AceBaseStorage = exports.AceBaseStorageSettings = void 0;
@@ -8091,7 +8110,7 @@ class AceBaseStorage extends not_supported_1.NotSupported {
 }
 exports.AceBaseStorage = AceBaseStorage;
 
-},{"../../not-supported":42}],46:[function(require,module,exports){
+},{"../../not-supported":43}],47:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
@@ -8168,7 +8187,7 @@ async function createIndex(context, path, key, options) {
 }
 exports.createIndex = createIndex;
 
-},{"../data-index":34,"../promise-fs":43,"acebase-core":12}],47:[function(require,module,exports){
+},{"../data-index":34,"../promise-fs":44,"acebase-core":12}],48:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorageHelpers = void 0;
@@ -8237,7 +8256,7 @@ class CustomStorageHelpers {
 }
 exports.CustomStorageHelpers = CustomStorageHelpers;
 
-},{"acebase-core":12}],48:[function(require,module,exports){
+},{"acebase-core":12}],49:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CustomStorage = exports.CustomStorageNodeInfo = exports.CustomStorageNodeAddress = exports.CustomStorageSettings = exports.CustomStorageTransaction = exports.ICustomStorageNode = exports.ICustomStorageNodeMetaData = exports.CustomStorageHelpers = void 0;
@@ -9452,7 +9471,7 @@ class CustomStorage extends index_1.Storage {
 }
 exports.CustomStorage = CustomStorage;
 
-},{"../../assert":31,"../../node-address":37,"../../node-errors":38,"../../node-info":39,"../../node-lock":40,"../../node-value-types":41,"../index":56,"./helpers":47,"acebase-core":12}],49:[function(require,module,exports){
+},{"../../assert":31,"../../node-address":38,"../../node-errors":39,"../../node-info":40,"../../node-lock":41,"../../node-value-types":42,"../index":57,"./helpers":48,"acebase-core":12}],50:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndexedDBInstance = void 0;
@@ -9529,7 +9548,7 @@ function createIndexedDBInstance(dbname, init = {}) {
 }
 exports.createIndexedDBInstance = createIndexedDBInstance;
 
-},{"..":48,"../../..":33,"./settings":50,"./transaction":51,"acebase-core":12}],50:[function(require,module,exports){
+},{"..":49,"../../..":33,"./settings":51,"./transaction":52,"acebase-core":12}],51:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageSettings = void 0;
@@ -9573,7 +9592,7 @@ class IndexedDBStorageSettings extends __1.StorageSettings {
 }
 exports.IndexedDBStorageSettings = IndexedDBStorageSettings;
 
-},{"../..":56}],51:[function(require,module,exports){
+},{"../..":57}],52:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IndexedDBStorageTransaction = void 0;
@@ -9800,7 +9819,7 @@ class IndexedDBStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.IndexedDBStorageTransaction = IndexedDBStorageTransaction;
 
-},{"..":48}],52:[function(require,module,exports){
+},{"..":49}],53:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createLocalStorageInstance = exports.LocalStorageTransaction = exports.LocalStorageSettings = void 0;
@@ -9840,7 +9859,7 @@ function createLocalStorageInstance(dbname, init = {}) {
 }
 exports.createLocalStorageInstance = createLocalStorageInstance;
 
-},{"..":48,"../../..":33,"./settings":53,"./transaction":54}],53:[function(require,module,exports){
+},{"..":49,"../../..":33,"./settings":54,"./transaction":55}],54:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageSettings = void 0;
@@ -9882,7 +9901,7 @@ class LocalStorageSettings extends __1.StorageSettings {
 }
 exports.LocalStorageSettings = LocalStorageSettings;
 
-},{"../..":56}],54:[function(require,module,exports){
+},{"../..":57}],55:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalStorageTransaction = void 0;
@@ -9976,7 +9995,7 @@ class LocalStorageTransaction extends __1.CustomStorageTransaction {
 }
 exports.LocalStorageTransaction = LocalStorageTransaction;
 
-},{"..":48}],55:[function(require,module,exports){
+},{"..":49}],56:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SchemaValidationError = void 0;
@@ -9988,7 +10007,7 @@ class SchemaValidationError extends Error {
 }
 exports.SchemaValidationError = SchemaValidationError;
 
-},{}],56:[function(require,module,exports){
+},{}],57:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Storage = exports.SchemaValidationError = exports.StorageSettings = void 0;
@@ -9999,14 +10018,14 @@ Object.defineProperty(exports, "SchemaValidationError", { enumerable: true, get:
 var storage_js_1 = require("./storage.js");
 Object.defineProperty(exports, "Storage", { enumerable: true, get: function () { return storage_js_1.Storage; } });
 
-},{"./errors.js":55,"./storage-settings.js":60,"./storage.js":61}],57:[function(require,module,exports){
+},{"./errors.js":56,"./storage-settings.js":61,"./storage.js":62}],58:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndex = void 0;
 var create_index_1 = require("./create-index");
 Object.defineProperty(exports, "createIndex", { enumerable: true, get: function () { return create_index_1.createIndex; } });
 
-},{"./create-index":46}],58:[function(require,module,exports){
+},{"./create-index":47}],59:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MSSQLStorage = exports.MSSQLStorageSettings = void 0;
@@ -10024,7 +10043,7 @@ class MSSQLStorage extends not_supported_1.NotSupported {
 }
 exports.MSSQLStorage = MSSQLStorage;
 
-},{"../../not-supported":42}],59:[function(require,module,exports){
+},{"../../not-supported":43}],60:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SQLiteStorage = exports.SQLiteStorageSettings = void 0;
@@ -10042,7 +10061,7 @@ class SQLiteStorage extends not_supported_1.NotSupported {
 }
 exports.SQLiteStorage = SQLiteStorage;
 
-},{"../../not-supported":42}],60:[function(require,module,exports){
+},{"../../not-supported":43}],61:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.StorageSettings = void 0;
@@ -10109,13 +10128,14 @@ class StorageSettings {
 }
 exports.StorageSettings = StorageSettings;
 
-},{}],61:[function(require,module,exports){
+},{}],62:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Storage = void 0;
 const acebase_core_1 = require("acebase-core");
 const index_js_1 = require("../ipc/index.js");
 const assert_js_1 = require("../assert.js");
+const like_pattern_js_1 = require("../like-pattern.js");
 const index_js_2 = require("../data-index/index.js");
 const indexes_js_1 = require("./indexes.js");
 const index_js_3 = require("../promise-fs/index.js");
@@ -11463,8 +11483,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             return compare.indexOf(val) < 0;
         }
         if (op === 'like' || op === '!like') {
-            const pattern = '^' + compare.replace(/[-[\]{}()+.,\\^$|#\s]/g, '\\$&').replace(/\?/g, '.').replace(/\*/g, '.*?') + '$';
-            const re = new RegExp(pattern, 'i');
+            const re = (0, like_pattern_js_1.likePatternToRegExp)(compare);
             const isMatch = re.test(val.toString());
             return op === 'like' ? isMatch : !isMatch;
         }
@@ -12177,7 +12196,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
 }
 exports.Storage = Storage;
 
-},{"../assert.js":31,"../data-index/index.js":34,"../ipc/index.js":35,"../node-errors.js":38,"../node-info.js":39,"../node-value-types.js":41,"../promise-fs/index.js":43,"./errors.js":55,"./indexes.js":57,"acebase-core":12}],62:[function(require,module,exports){
+},{"../assert.js":31,"../data-index/index.js":34,"../ipc/index.js":35,"../like-pattern.js":37,"../node-errors.js":39,"../node-info.js":40,"../node-value-types.js":42,"../promise-fs/index.js":44,"./errors.js":56,"./indexes.js":58,"acebase-core":12}],63:[function(require,module,exports){
 
 },{}]},{},[33])(33)
 });

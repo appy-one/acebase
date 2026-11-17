@@ -2,6 +2,7 @@ import { BPlusTreeLeafEntryValue } from '../btree/tree-leaf-entry-value';
 import { IndexQueryHint } from './query-hint';
 import { IndexQueryStats } from './query-stats';
 import { IndexableValue, IndexableValueOrArray, IndexMetaData } from './shared';
+import { likePatternToRegExp } from '../like-pattern';
 
 export class IndexQueryResult {
     public values: BPlusTreeLeafEntryValue[];
@@ -60,8 +61,7 @@ export class IndexQueryResults extends Array<IndexQueryResult> {
                 if (typeof compare !== 'string') {
                     return op === '!like';
                 }
-                const pattern = '^' + compare.replace(/\*/g, '.*').replace(/\?/g, '.') + '$';
-                const re = new RegExp(pattern, 'i');
+                const re = likePatternToRegExp(compare);
                 const isLike = re.test(value as string);
                 return op === 'like' ? isLike : !isLike;
             }

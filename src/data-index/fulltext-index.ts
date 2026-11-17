@@ -9,6 +9,7 @@ import { IndexQueryStats } from './query-stats';
 import { FullTextIndexQueryHint } from './fulltext-index-query-hint';
 import unidecode from '../unidecode';
 import { assert } from '../assert';
+import { likePatternToRegExp } from '../like-pattern';
 
 class WordInfo {
     constructor(public word: string, public indexes: number[], public sourceIndexes: number[]) { }
@@ -797,9 +798,7 @@ export class FullTextIndex extends DataIndex {
             // besides the ones that get blacklisted along the way by our callback function
             const wordChecks = words.map(word => {
                 if (word.includes('*') || word.includes('?')) {
-                    const pattern = '^' + word.replace(/\*/g, '.*').replace(/\?/g, '.') + '$';
-                    const re = new RegExp(pattern, 'i');
-                    return re;
+                    return likePatternToRegExp(word);
                 }
                 return word;
             });
@@ -828,7 +827,7 @@ export class FullTextIndex extends DataIndex {
         // op === 'fulltext:contains'
         // Get result count for each word
         const countPromises = words.map(word => {
-            const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?')); // TODO: improve readability
+            const wildcardIndex = word.search(/[*?]/); // index of first wildcard, or -1
             const wordOp = wildcardIndex >= 0 ? 'like' : '==';
             const step = new IndexQueryStats('count', { op: wordOp, word }, true);
             stats.steps.push(step);
@@ -883,7 +882,7 @@ export class FullTextIndex extends DataIndex {
         // });
 
         const queryWord = async (word: string, filter: IndexQueryResults) => {
-            const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?')); // TODO: improve readability
+            const wildcardIndex = word.search(/[*?]/); // index of first wildcard, or -1
             const wordOp = wildcardIndex >= 0 ? 'like' : '==';
             // const step = new IndexQueryStats('query', { op: wordOp, word }, true);
             // stats.steps.push(step);
