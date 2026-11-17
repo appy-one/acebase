@@ -152,7 +152,7 @@ export class ArrayIndex extends DataIndex {
 
                 // Get result count for each value in array
                 const countPromises = val.map(value => {
-                    const wildcardIndex = typeof value !== 'string' ? -1 : ~(~value.indexOf('*') || ~value.indexOf('?'));
+                    const wildcardIndex = typeof value !== 'string' ? -1 : value.search(/[*?]/);
                     const valueOp = ~wildcardIndex ? 'like' : '==';
 
                     const step = new IndexQueryStats('count', value, true);
@@ -199,7 +199,7 @@ export class ArrayIndex extends DataIndex {
                 // Query 1 value, then filter results further and further
                 // Start with the smallest result set
                 const queryValue = (value: IndexableValue, filter?: IndexQueryResults) => {
-                    const wildcardIndex = typeof value !== 'string' ? -1 : ~(~value.indexOf('*') || ~value.indexOf('?'));
+                    const wildcardIndex = typeof value !== 'string' ? -1 : value.search(/[*?]/);
                     const valueOp = ~wildcardIndex ? 'like' : '==';
 
                     return super.query(valueOp, value, { filter })

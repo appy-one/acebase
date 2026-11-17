@@ -827,7 +827,7 @@ export class FullTextIndex extends DataIndex {
         // op === 'fulltext:contains'
         // Get result count for each word
         const countPromises = words.map(word => {
-            const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?')); // TODO: improve readability
+            const wildcardIndex = word.search(/[*?]/); // index of first wildcard, or -1
             const wordOp = wildcardIndex >= 0 ? 'like' : '==';
             const step = new IndexQueryStats('count', { op: wordOp, word }, true);
             stats.steps.push(step);
@@ -882,7 +882,7 @@ export class FullTextIndex extends DataIndex {
         // });
 
         const queryWord = async (word: string, filter: IndexQueryResults) => {
-            const wildcardIndex = ~(~word.indexOf('*') || ~word.indexOf('?')); // TODO: improve readability
+            const wildcardIndex = word.search(/[*?]/); // index of first wildcard, or -1
             const wordOp = wildcardIndex >= 0 ? 'like' : '==';
             // const step = new IndexQueryStats('query', { op: wordOp, word }, true);
             // stats.steps.push(step);
