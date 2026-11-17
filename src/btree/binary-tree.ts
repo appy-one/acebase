@@ -3,6 +3,7 @@ import { readByteLength, readSignedOffset, Uint8ArrayBuilder, writeByteLength, w
 import { DetailedError } from '../detailed-error';
 import { ThreadSafe, ThreadSafeLock } from '../thread-safe';
 import { assert } from '../assert';
+import { likePatternToRegExp } from '../like-pattern';
 import { BinaryReader, ReadFunction } from './binary-reader';
 import { BinaryBPlusTreeBuilder, FLAGS } from './binary-tree-builder';
 import { BinaryBPlusTreeLeaf } from './binary-tree-leaf';
@@ -1506,14 +1507,13 @@ export class BinaryBPlusTree {
             if (typeof param !== 'string') {
                 throw new TypeError(`search param value must be a string for operator 'like'`);
             }
-            const wildcardIndex = ~(~param.indexOf('*') || ~param.indexOf('?')); // TODO: make less cryptic
+            const wildcardIndex = param.search(/[*?]/); // index of first wildcard, or -1
             const startSearch = wildcardIndex > 0 ? param.slice(0, wildcardIndex) : '';
-            const pattern = '^' + param.replace(/\*/g, '.*').replace(/\?/g, '.') + '$';
-            const re = new RegExp(pattern, 'i');
+            const re = likePatternToRegExp(param);
             const processLeaf = (leaf: BinaryBPlusTreeLeaf): ReturnType<typeof ret> => {
                 for (let i = 0; i < leaf.entries.length; i++) {
                     const entry = leaf.entries[i];
-                    if (re.test(entry.key.toString())) {
+                    if (typeof entry.key !== 'undefined' && re.test(entry.key.toString())) {
                         add(entry);
                     }
                 }
@@ -1522,7 +1522,7 @@ export class BinaryBPlusTree {
                     // Check if we can stop. If the last entry does not start with the first part of the string.
                     // Eg: like 'Al*', we can stop if the last entry starts with 'Am'
                     const lastEntry = leaf.entries[leaf.entries.length-1];
-                    stop = lastEntry.key.toString().slice(0, wildcardIndex) > startSearch;
+                    stop = typeof lastEntry.key === 'undefined' || lastEntry.key.toString().slice(0, wildcardIndex) > startSearch;
                 }
                 if (!stop && leaf.getNext) {
                     return leaf.getNext()
@@ -1546,14 +1546,13 @@ export class BinaryBPlusTree {
             if (typeof param !== 'string') {
                 throw new TypeError(`search param value must be a string for operator '!like'`);
             }
-            const pattern = '^' + param.replace(/\*/g, '.*').replace(/\?/g, '.') + '$';
-            const re = new RegExp(pattern, 'i');
+            const re = likePatternToRegExp(param);
             const processLeaf = (leaf: BinaryBPlusTreeLeaf): ReturnType<typeof ret> => {
                 for (let i = 0; i < leaf.entries.length; i++) {
                     const entry = leaf.entries[i];
-                    if (!re.test(entry.key.toString())) { add(entry); }
+                    if (typeof entry.key === 'undefined' || !re.test(entry.key.toString())) { add(entry); }
                 }
-                if (leaf.hasNext) {
+                if (leaf.getNext) {
                     return leaf.getNext()
                         .then(processLeaf);
                 }
@@ -1694,7 +1693,7 @@ export class BinaryBPlusTree {
             const processLeaf = (leaf: BinaryBPlusTreeLeaf): ReturnType<typeof ret> => {
                 for (let i = 0; i < leaf.entries.length; i++) {
                     const entry = leaf.entries[i];
-                    const isMatch = re.test(entry.key.toString());
+                    const isMatch = typeof entry.key !== 'undefined' && re.test(entry.key.toString());
                     if ((isMatch && op === 'matches') || (!isMatch && op === '!matches')) {
                         add(entry);
                     }

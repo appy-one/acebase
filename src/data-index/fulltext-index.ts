@@ -9,6 +9,7 @@ import { IndexQueryStats } from './query-stats';
 import { FullTextIndexQueryHint } from './fulltext-index-query-hint';
 import unidecode from '../unidecode';
 import { assert } from '../assert';
+import { likePatternToRegExp } from '../like-pattern';
 
 class WordInfo {
     constructor(public word: string, public indexes: number[], public sourceIndexes: number[]) { }
@@ -797,9 +798,7 @@ export class FullTextIndex extends DataIndex {
             // besides the ones that get blacklisted along the way by our callback function
             const wordChecks = words.map(word => {
                 if (word.includes('*') || word.includes('?')) {
-                    const pattern = '^' + word.replace(/\*/g, '.*').replace(/\?/g, '.') + '$';
-                    const re = new RegExp(pattern, 'i');
-                    return re;
+                    return likePatternToRegExp(word);
                 }
                 return word;
             });

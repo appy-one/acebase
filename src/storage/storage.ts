@@ -1,6 +1,7 @@
 import { ascii85, DebugLogger, ID, ISchemaCheckResult, LoggerPlugin, PathInfo, PathReference, SchemaDefinition, SimpleEventEmitter, Utils } from 'acebase-core';
 import { IPCPeer, IPCSocketPeer, NetIPCServer, RemoteIPCPeer } from '../ipc/index.js';
 import { assert } from '../assert.js';
+import { likePatternToRegExp } from '../like-pattern.js';
 import { StorageSettings } from './storage-settings.js';
 import { StorageEnv } from './storage-env.js';
 import { IPCClientSettings } from './ipc-client-settings.js';
@@ -1534,8 +1535,7 @@ export class Storage extends SimpleEventEmitter {
         if (op === 'in') { return compare.indexOf(val) >= 0; }
         if (op === '!in') { return compare.indexOf(val) < 0; }
         if (op === 'like' || op === '!like') {
-            const pattern = '^' + compare.replace(/[-[\]{}()+.,\\^$|#\s]/g, '\\$&').replace(/\?/g, '.').replace(/\*/g, '.*?') + '$';
-            const re = new RegExp(pattern, 'i');
+            const re = likePatternToRegExp(compare);
             const isMatch = re.test(val.toString());
             return op === 'like' ? isMatch : !isMatch;
         }
