@@ -303,3 +303,48 @@ describe('Fulltext index', () => {
         await removeDB();
     });
 });
+
+describe('Fulltext index phrases', () => {
+    let db: AceBase, removeDB: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ db, removeDB } = await createTempDB());
+
+        await db.ref('texts').set({
+            once: { text: 'The quick brown fox jumps over the lazy dog' },
+            repeated: { text: 'Brown bread is a quick snack for the quick brown bear' },
+            apart: { text: 'Brown bread, quick snacks, some brown rice and a quick tea' },
+            reversed: { text: 'The fox is brown quick and lazy' },
+        });
+        await db.indexes.create('texts', 'text', { type: 'fulltext' });
+    });
+
+    const find = async (text: string) => {
+        const snaps = await db.query('texts').filter('text', 'fulltext:contains', text).get();
+        return snaps.map(snap => snap.key).sort();
+    };
+
+    it('find the words next to each other, also if they occur more than once', async () => {
+        expect(await find('"quick brown"')).toEqual(['once', 'repeated']);
+        expect(await find('"quick brown bear"')).toEqual(['repeated']);
+        expect(await find('"brown rice"')).toEqual(['apart']);
+    });
+
+    it('can be used again with the same words in another phrase', async () => {
+        expect(await find('"quick brown"')).toEqual(['once', 'repeated']);
+        expect(await find('"brown quick"')).toEqual(['reversed']);
+        expect(await find('"quick brown" lazy')).toEqual(['once']);
+    });
+
+    it('do not share cached results with the same words without quotes', async () => {
+        expect(await find('lazy dog')).toEqual(['once']);
+        expect(await find('lazy quick')).toEqual(['once', 'reversed']);
+        expect(await find('"lazy quick"')).toEqual([]);
+        expect(await find('"fox brown"')).toEqual([]);
+        expect(await find('fox brown')).toEqual(['once', 'reversed']);
+    });
+
+    afterAll(async () => {
+        await removeDB();
+    });
+});
