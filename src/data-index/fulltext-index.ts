@@ -643,8 +643,9 @@ export class FullTextIndex extends DataIndex {
             throw new Error(`Fulltext indexes can only be queried with operators ${FullTextIndex.validOperators.map(op => `"${op}"`).join(', ')}`);
         }
 
-        // Check cache
-        const cache = this.cache(op, val);
+        // Check cache. Phrase results need their own cache key, they differ from the results for the same words without quotes
+        const cacheKey = options.phrase ? `"${val}"` : val;
+        const cache = this.cache(op, cacheKey);
         if (cache) {
             // Use cached results
             return Promise.resolve(cache);
@@ -820,7 +821,7 @@ export class FullTextIndex extends DataIndex {
             addIgnoredWordHints(results);
 
             // Cache results
-            this.cache(op, val, results);
+            this.cache(op, cacheKey, results);
             return results;
         }
 
@@ -865,7 +866,7 @@ export class FullTextIndex extends DataIndex {
             });
 
             // Cache the empty result set
-            this.cache(op, val, results);
+            this.cache(op, cacheKey, results);
             return results;
         }
         const allWords = counts.map(c => c.word);
@@ -907,8 +908,6 @@ export class FullTextIndex extends DataIndex {
         };
         await nextWord();
 
-        type MetaDataWithOccursArray = IndexMetaData & { _occurs_: number[] };
-
         if (options.phrase === true && allWords.length > 1) {
             // Check which results have the words in the right order
             const step = new IndexQueryStats('phrase_check', val, true);
@@ -920,12 +919,11 @@ export class FullTextIndex extends DataIndex {
                 const wordMatches = resultsPerWord.map(results => {
                     return results.find(result => result.path === path);
                 });
-                // Convert the _occurs_ strings to arrays we can use
-                wordMatches.forEach(match => {
-                    (match.metadata as MetaDataWithOccursArray)._occurs_ = (match.metadata._occurs_ as string).split(',').map(parseInt);
-                });
+                // Convert the _occurs_ strings to arrays we can use. Don't change the metadata itself,
+                // the matches are also in the index's cache
+                const occurrences = wordMatches.map(match => (match.metadata._occurs_ as string).split(',').map(Number));
                 const check = (wordMatchIndex: number, prevWordIndex?: number): boolean => {
-                    const sourceIndexes = (wordMatches[wordMatchIndex].metadata as MetaDataWithOccursArray)._occurs_;
+                    const sourceIndexes = occurrences[wordMatchIndex];
                     if (typeof prevWordIndex !== 'number') {
                         // try with each sourceIndex of the first word
                         for (let i = 0; i < sourceIndexes.length; i++) {
@@ -960,7 +958,7 @@ export class FullTextIndex extends DataIndex {
 
         // Cache results
         delete results.entryValues; // No need to cache these. Free the memory
-        this.cache(op, val, results);
+        this.cache(op, cacheKey, results);
         return results;
 
         // Parallel method: query all words at the same time, then combine results
