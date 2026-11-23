@@ -1980,18 +1980,15 @@ export class Storage extends SimpleEventEmitter {
             let obj = {} as Record<string, any>;
             let flushedBefore = false;
             const flushObject = async () => {
-                let p;
                 if (!flushedBefore) {
                     flushedBefore = true;
-                    p = this.setNode(target.path, obj, childOptions);
+                    await this.setNode(target.path, obj, childOptions);
                 }
                 else if (Object.keys(obj).length > 0) {
-                    p = this.updateNode(target.path, obj, childOptions);
+                    await this.updateNode(target.path, obj, childOptions);
                 }
                 obj = {};
-                if (p) { await p; }
             };
-            const promises = [];
             while (true) {
                 await consumeSpaces();
                 const property = await readString(); // readPropertyName();
@@ -2003,7 +2000,7 @@ export class Storage extends SimpleEventEmitter {
                 childCount++;
                 if (['object','array'].includes(type)) {
                     // Flush current imported value before proceeding with object/array child
-                    promises.push(flushObject());
+                    await flushObject();
 
                     if (type === 'object') {
                         // Import child object/array
@@ -2033,8 +2030,7 @@ export class Storage extends SimpleEventEmitter {
                 const val = getTypeSafeValue(target.path, obj);
                 return this.setNode(target.path, val, childOptions);
             }
-            promises.push(flushObject());
-            await Promise.all(promises);
+            await flushObject();
         };
 
         const importArray = async (target: PathInfo) => {
@@ -2046,33 +2042,30 @@ export class Storage extends SimpleEventEmitter {
                 return this.setNode(target.path, [], childOptions);
             }
             let flushedBefore = false;
-            let arr = [] as any[];
+            let arr: any[] | null = [];
             let updates = {} as Record<string, any>;
             const flushArray = async () => {
-                let p;
                 if (!flushedBefore) {
                     // Store array
                     flushedBefore = true;
-                    p = this.setNode(target.path, arr, childOptions);
+                    await this.setNode(target.path, arr, childOptions);
                     arr = null; // GC
                 }
                 else if (Object.keys(updates).length > 0) {
                     // Flush updates
-                    p = this.updateNode(target.path, updates, childOptions);
+                    await this.updateNode(target.path, updates, childOptions);
                     updates = {};
                 }
-                if (p) { await p; }
             };
             const pushChild = (value: any, index: number) => {
                 if (flushedBefore) {
                     updates[index] = value;
                 }
                 else {
-                    arr.push(value);
+                    (arr as any[]).push(value);
                 }
             };
 
-            const promises = [];
             let index = 0;
             while (true) {
                 await consumeSpaces();
@@ -2080,7 +2073,7 @@ export class Storage extends SimpleEventEmitter {
                 pushChild(value, index);
                 if (['object','array'].includes(type)) {
                     // Flush current imported value before proceeding with object/array child
-                    promises.push(flushArray()); // No need to await now
+                    await flushArray();
 
                     if (type === 'object') {
                         // Import child object/array
@@ -2104,8 +2097,7 @@ export class Storage extends SimpleEventEmitter {
                 index++;
             }
 
-            promises.push(flushArray());
-            await Promise.all(promises);
+            await flushArray();
         };
 
         const start = async () => {
