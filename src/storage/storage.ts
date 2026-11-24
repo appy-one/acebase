@@ -1646,10 +1646,13 @@ export class Storage extends SimpleEventEmitter {
 
         let output = '', outputCount = 0;
         const pending = [] as NodeInfo[];
+        const isArray = nodeInfo.type === VALUE_TYPES.ARRAY;
         await this.getChildren(path)
             .next(childInfo => {
-                if (childInfo.address) {
-                // Export child recursively
+                if (childInfo.address || (isArray && pending.length > 0)) {
+                    // Export child recursively.
+                    // Array entries are exported without their index, so once an array entry has to be exported
+                    // recursively, all following entries must be exported after it to preserve the array's order
                     pending.push(childInfo);
                 }
                 else {
@@ -1668,11 +1671,17 @@ export class Storage extends SimpleEventEmitter {
             let output = outputCount++ > 0 ? ',' : '';
             const key = typeof childInfo.index === 'number' ? childInfo.index : childInfo.key;
             if (typeof key === 'string') { output += `"${key}":`; }
+            if (!childInfo.address) {
+                // Inline array entry that had to wait for previous entries to be exported
+                output += stringifyValue(childInfo.type, childInfo.value);
+            }
             if (output) {
                 const p = write(output);
                 if (p instanceof Promise) { await p; }
             }
-            await this.exportNode(PathInfo.getChildPath(path, key), write, options);
+            if (childInfo.address) {
+                await this.exportNode(PathInfo.getChildPath(path, key), write, options);
+            }
         }
 
         if (objEnd) {
