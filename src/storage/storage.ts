@@ -17,7 +17,7 @@ import { NodeRevisionError } from '../node-errors.js';
 import { NodeInfo } from '../node-info.js';
 import { VALUE_TYPES } from '../node-value-types.js';
 
-const { compareValues, getChildValues, encodeString, defer } = Utils;
+const { compareValues, getChildValues, encodeString, bigintToBytes, defer } = Utils;
 
 const DEBUG_MODE = false;
 const SUPPORTED_EVENTS = ['value','child_added','child_changed','child_removed','mutated','mutations'];
@@ -470,16 +470,19 @@ export class Storage extends SimpleEventEmitter {
             if (value.length > this.settings.maxInlineValueSize) { return false; }
             // if the string has unicode chars, its byte size will be bigger than value.length
             const encoded = encodeString(value);
-            return encoded.length < this.settings.maxInlineValueSize;
+            return encoded.length <= this.settings.maxInlineValueSize;
         }
         else if (value instanceof PathReference) {
             if (value.path.length > this.settings.maxInlineValueSize) { return false; }
             // if the path has unicode chars, its byte size will be bigger than value.path.length
             const encoded = encodeString(value.path);
-            return encoded.length < this.settings.maxInlineValueSize;
+            return encoded.length <= this.settings.maxInlineValueSize;
         }
         else if (value instanceof ArrayBuffer) {
-            return value.byteLength < this.settings.maxInlineValueSize;
+            return value.byteLength <= this.settings.maxInlineValueSize;
+        }
+        else if (typeof value === 'bigint') {
+            return bigintToBytes(value).length <= this.settings.maxInlineValueSize;
         }
         else if (value instanceof Array) {
             return value.length === 0;
