@@ -108,17 +108,19 @@ export async function startServer(
         db?.close();
     });
 
-    if (options.maxIdleTime > 0) {
-        setTimeout(() => {
-            if (!connectionsMade) {
-                logger.info(`closing server socket because no clients connected, exiting with code 0`);
-                // Stop socket server
-                server.close((err) => {
-                    options.exit(err ? ERROR.UNKNOWN.exitCode : 0);
-                });
-            }
-        }, options.maxIdleTime).unref();
-    }
+    // Exit if no clients connect at all. With maxIdleTime 0 (exit as soon as the last client disconnects), a grace period
+    // is used so the service does not keep running forever if the client that started it connected to another service
+    // that was shutting down at that time
+    const startupIdleTime = options.maxIdleTime > 0 ? options.maxIdleTime : 10000;
+    setTimeout(() => {
+        if (!connectionsMade) {
+            logger.info(`closing server socket because no clients connected, exiting with code 0`);
+            // Stop socket server
+            server.close((err) => {
+                options.exit(err ? ERROR.UNKNOWN.exitCode : 0);
+            });
+        }
+    }, startupIdleTime).unref();
 
     // Before listening, check whether a server is already running or a stale socket file exists.
     // This is the common case on macOS: socket files persist after process exit.

@@ -171,6 +171,8 @@ export class AceBaseStorage extends Storage {
             get fileIndex() { return 64; },
             get length() { return 65536 - 64; },
             bytesUsed: 0,
+            /** Number of bytes the keys in memory need when written to file (1 length byte + encoded key per key) */
+            bytesNeeded: 0,
             keys: [] as string[],
         };
         this.KIT = {
@@ -192,10 +194,18 @@ export class AceBaseStorage extends Storage {
                         // Forward request to cluster master. Response will be too late for us, but it will be cached for future calls
                         this.ipc.sendRequest({ type: 'kit.add', key })
                             .then(result => {
-                                KIT.keys[result.index] = key; // Add to our local array
+                                if (result.index >= 0) {
+                                    KIT.keys[result.index] = key; // Add to our local array
+                                }
                             });
                         return -1;
                     }
+                    const keyBytes = 1 + encodeString(key).byteLength;
+                    if (KIT.bytesNeeded + keyBytes >= KIT.length) {
+                        // KIT is full, key will have to be stored inline
+                        return -1;
+                    }
+                    KIT.bytesNeeded += keyBytes;
                     index = KIT.keys.push(key) - 1;
                     if (this.ipc.isMaster) {
                         // Notify all workers
@@ -271,6 +281,7 @@ export class AceBaseStorage extends Storage {
                     index += keyLength;
                 }
                 KIT.bytesUsed = index;
+                KIT.bytesNeeded = index;
                 KIT.keys = keys;
                 this.logger.info(`KIT read, ${KIT.keys.length} keys indexed`.colorize(ColorStyle.bold));
                 //this.logger.debug(keys);
@@ -1487,6 +1498,12 @@ export class AceBaseStorage extends Storage {
                         }
                         const valueKey = 'value' + (load === 'target' ? (mutation.path.length === 0 ? '/' : '') + filterPath.slice(mutation.path.length) : '');
                         const txInfo = await this.getNode(`history/${txKey}`, { tid, include: ['context', 'mutations', valueKey] });
+                        if (typeof txInfo.value.mutations === 'string' && typeof txInfo.value.value === 'undefined') {
+                            // New serialized format stores the value as a single JSON string, so including a nested
+                            // valueKey (eg "value/books/book1") does not load it. Load the entire serialized value instead
+                            const valueNode = await this.getNode(`history/${txKey}/value`, { tid });
+                            txInfo.value.value = valueNode.value;
+                        }
                         const tx = typeof txInfo.value.mutations === 'string'
                             ? // New serialized format to store mutations
                             {

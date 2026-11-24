@@ -512,6 +512,28 @@ export abstract class AceBaseIPCPeer extends SimpleEventEmitter {
         return promise;
     }
 
+    /**
+     * To be called by worker implementations after they reconnected to a (new) IPC master because the connection
+     * to the previous master was lost. Resends all pending requests that are not about to be sent already. If this
+     * peer had any granted locks, pending requests are rejected instead: the master that granted the locks is gone,
+     * so the state of running transactions is unknown.
+     * @param isQueued callback that checks whether a request is already waiting to be sent
+     */
+    protected resendPendingRequests(isQueued: (request: IRequestMessage) => boolean) {
+        const hadGrantedLocks = this._locks.some(l => l.granted);
+        if (hadGrantedLocks) {
+            this.logger.error(`IPC peer ${this.id} lost its connection to the master while holding locks, rejecting ${this._requests.size} pending requests`);
+        }
+        for (const { request, reject } of [...this._requests.values()]) {
+            if (hadGrantedLocks) {
+                reject(new Error('IPC connection to the master was lost'));
+            }
+            else if (!isQueued(request)) {
+                this.sendMessage(request);
+            }
+        }
+    }
+
     protected abstract sendMessage(message: IMessage): any;
 
     /**
