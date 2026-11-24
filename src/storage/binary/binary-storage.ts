@@ -1498,6 +1498,12 @@ export class AceBaseStorage extends Storage {
                         }
                         const valueKey = 'value' + (load === 'target' ? (mutation.path.length === 0 ? '/' : '') + filterPath.slice(mutation.path.length) : '');
                         const txInfo = await this.getNode(`history/${txKey}`, { tid, include: ['context', 'mutations', valueKey] });
+                        if (typeof txInfo.value.mutations === 'string' && typeof txInfo.value.value === 'undefined') {
+                            // New serialized format stores the value as a single JSON string, so including a nested
+                            // valueKey (eg "value/books/book1") does not load it. Load the entire serialized value instead
+                            const valueNode = await this.getNode(`history/${txKey}/value`, { tid });
+                            txInfo.value.value = valueNode.value;
+                        }
                         const tx = typeof txInfo.value.mutations === 'string'
                             ? // New serialized format to store mutations
                             {
