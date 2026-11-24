@@ -6731,6 +6731,27 @@ class AceBaseIPCPeer extends acebase_core_1.SimpleEventEmitter {
         return promise;
     }
     /**
+     * To be called by worker implementations after they reconnected to a (new) IPC master because the connection
+     * to the previous master was lost. Resends all pending requests that are not about to be sent already. If this
+     * peer had any granted locks, pending requests are rejected instead: the master that granted the locks is gone,
+     * so the state of running transactions is unknown.
+     * @param isQueued callback that checks whether a request is already waiting to be sent
+     */
+    resendPendingRequests(isQueued) {
+        const hadGrantedLocks = this._locks.some(l => l.granted);
+        if (hadGrantedLocks) {
+            this.logger.error(`IPC peer ${this.id} lost its connection to the master while holding locks, rejecting ${this._requests.size} pending requests`);
+        }
+        for (const { request, reject } of [...this._requests.values()]) {
+            if (hadGrantedLocks) {
+                reject(new Error('IPC connection to the master was lost'));
+            }
+            else if (!isQueued(request)) {
+                this.sendMessage(request);
+            }
+        }
+    }
+    /**
      * Sends a custom request to the IPC master
      * @param request
      * @returns
@@ -10143,7 +10164,7 @@ const errors_js_1 = require("./errors.js");
 const node_errors_js_1 = require("../node-errors.js");
 const node_info_js_1 = require("../node-info.js");
 const node_value_types_js_1 = require("../node-value-types.js");
-const { compareValues, getChildValues, encodeString, defer } = acebase_core_1.Utils;
+const { compareValues, getChildValues, encodeString, bigintToBytes, defer } = acebase_core_1.Utils;
 const DEBUG_MODE = false;
 const SUPPORTED_EVENTS = ['value', 'child_added', 'child_changed', 'child_removed', 'mutated', 'mutations'];
 // Add 'notify_*' event types for each event to enable data-less notifications, so data retrieval becomes optional
@@ -10543,7 +10564,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             }
             // if the string has unicode chars, its byte size will be bigger than value.length
             const encoded = encodeString(value);
-            return encoded.length < this.settings.maxInlineValueSize;
+            return encoded.length <= this.settings.maxInlineValueSize;
         }
         else if (value instanceof acebase_core_1.PathReference) {
             if (value.path.length > this.settings.maxInlineValueSize) {
@@ -10551,10 +10572,13 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             }
             // if the path has unicode chars, its byte size will be bigger than value.path.length
             const encoded = encodeString(value.path);
-            return encoded.length < this.settings.maxInlineValueSize;
+            return encoded.length <= this.settings.maxInlineValueSize;
         }
         else if (value instanceof ArrayBuffer) {
-            return value.byteLength < this.settings.maxInlineValueSize;
+            return value.byteLength <= this.settings.maxInlineValueSize;
+        }
+        else if (typeof value === 'bigint') {
+            return bigintToBytes(value).length <= this.settings.maxInlineValueSize;
         }
         else if (value instanceof Array) {
             return value.length === 0;
@@ -11523,16 +11547,19 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         const write = typeof writeFn !== 'function'
             ? writeFn.write.bind(writeFn) // Using the "old" stream argument. Use its write method for backward compatibility
             : writeFn;
+        /**
+         * Escapes a string for use in JSON output (both for values and property keys)
+         */
+        const escape = (str) => str
+            .replace(/\\/g, '\\\\') // backslashes
+            .replace(/"/g, '\\"') // quotes
+            .replace(/\r/g, '\\r') // carriage return
+            .replace(/\n/g, '\\n') // line feed
+            .replace(/\t/g, '\\t') // tabs
+            .replace(/[\u0000-\u001f]/g, // other control characters
+        // other control characters
+        ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
         const stringifyValue = (type, val) => {
-            const escape = (str) => str
-                .replace(/\\/g, '\\\\') // forward slashes
-                .replace(/"/g, '\\"') // quotes
-                .replace(/\r/g, '\\r') // carriage return
-                .replace(/\n/g, '\\n') // line feed
-                .replace(/\t/g, '\\t') // tabs
-                .replace(/[\u0000-\u001f]/g, // other control characters
-            // other control characters
-            ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
             if (type === node_value_types_js_1.VALUE_TYPES.DATETIME) {
                 val = `"${val.toISOString()}"`;
                 if (options.type_safe) {
@@ -11555,9 +11582,16 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 }
             }
             else if (type === node_value_types_js_1.VALUE_TYPES.REFERENCE) {
-                val = `"${val.path}"`;
+                val = `"${escape(val.path)}"`;
                 if (options.type_safe) {
                     val = `{".type":"reference",".val":${val}}`; // Previously: "PathReference"
+                }
+            }
+            else if (type === node_value_types_js_1.VALUE_TYPES.NUMBER && !Number.isFinite(val)) {
+                // NaN, Infinity and -Infinity are not valid JSON
+                val = `"${val}"`;
+                if (options.type_safe) {
+                    val = `{".type":"number",".val":${val}}`;
                 }
             }
             else if (type === node_value_types_js_1.VALUE_TYPES.BIGINT) {
@@ -11596,10 +11630,13 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         }
         let output = '', outputCount = 0;
         const pending = [];
+        const isArray = nodeInfo.type === node_value_types_js_1.VALUE_TYPES.ARRAY;
         await this.getChildren(path)
             .next(childInfo => {
-            if (childInfo.address) {
-                // Export child recursively
+            if (childInfo.address || (isArray && pending.length > 0)) {
+                // Export child recursively.
+                // Array entries are exported without their index, so once an array entry has to be exported
+                // recursively, all following entries must be exported after it to preserve the array's order
                 pending.push(childInfo);
             }
             else {
@@ -11607,7 +11644,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                     output += ',';
                 }
                 if (typeof childInfo.key === 'string') {
-                    output += `"${childInfo.key}":`;
+                    output += `"${escape(childInfo.key)}":`;
                 }
                 output += stringifyValue(childInfo.type, childInfo.value);
             }
@@ -11623,7 +11660,11 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             let output = outputCount++ > 0 ? ',' : '';
             const key = typeof childInfo.index === 'number' ? childInfo.index : childInfo.key;
             if (typeof key === 'string') {
-                output += `"${key}":`;
+                output += `"${escape(key)}":`;
+            }
+            if (!childInfo.address) {
+                // Inline array entry that had to wait for previous entries to be exported
+                output += stringifyValue(childInfo.type, childInfo.value);
             }
             if (output) {
                 const p = write(output);
@@ -11631,7 +11672,9 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                     await p;
                 }
             }
-            await this.exportNode(acebase_core_1.PathInfo.getChildPath(path, key), write, options);
+            if (childInfo.address) {
+                await this.exportNode(acebase_core_1.PathInfo.getChildPath(path, key), write, options);
+            }
         }
         if (objEnd) {
             const p = write(objEnd);
@@ -11761,14 +11804,25 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             await consumeToken('"');
             let str = '';
             let i = state.index;
-            // Read until next (unescaped) quote
-            while (state.data[i] !== '"' || state.data[i - 1] === '\\') {
-                i++;
+            let escaped = false; // Whether the previous character was an escaping backslash (state is kept across chunks)
+            // Read until next unescaped quote
+            while (true) {
                 if (i >= state.data.length) {
                     str += state.data.slice(state.index);
                     await readNextChunk();
                     i = 0;
                 }
+                const ch = state.data[i];
+                if (escaped) {
+                    escaped = false;
+                }
+                else if (ch === '\\') {
+                    escaped = true;
+                }
+                else if (ch === '"') {
+                    break;
+                }
+                i++;
             }
             str += state.data.slice(state.index, i);
             state.index = i + 1;
@@ -11777,9 +11831,11 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
         const readBoolean = async () => {
             if (state.data[state.index] === 't') {
                 await consumeToken('true');
+                return true;
             }
             else if (state.data[state.index] === 'f') {
                 await consumeToken('false');
+                return false;
             }
             throw new Error(`Expected true or false at index ${state.offset + state.index}`);
         };
@@ -11787,7 +11843,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             let str = '';
             let i = state.index;
             // Read until non-number character is encountered
-            const nrChars = ['-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', 'e', 'b', 'f', 'x', 'o', 'n']; // b: 0b110101, x: 0x3a, o: 0o01, n: 29723n, e: 10e+23, f: ?
+            const nrChars = ['-', '+', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', 'e', 'E', 'b', 'f', 'x', 'o', 'n']; // b: 0b110101, x: 0x3a, o: 0o01, n: 29723n, e: 10e+23, f: ?
             while (nrChars.includes(state.data[i])) {
                 i++;
                 if (i >= state.data.length) {
@@ -11798,7 +11854,11 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             }
             str += state.data.slice(state.index, i);
             state.index = i;
-            const nr = str.endsWith('n') ? BigInt(str.slice(0, -1)) : str.includes('.') ? parseFloat(str) : parseInt(str);
+            // Number() handles exponents (1e-7), hex (0x3a), binary (0b101) and octal (0o17) notations
+            const nr = str.endsWith('n') ? BigInt(str.slice(0, -1)) : Number(str);
+            if (typeof nr === 'number' && isNaN(nr)) {
+                throw new Error(`Invalid number "${str}" at index ${state.offset + state.index - str.length}`);
+            }
             return nr;
         };
         const readValue = async () => {
@@ -11817,7 +11877,21 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             })();
             return { type, value };
         };
-        const unescape = (str) => str.replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        /**
+         * Reverts JSON string escaping (as done by `exportNode`) in a single pass, so escaped backslashes
+         * followed by other characters (eg `\\n`: backslash + n) are not mistaken for other escape sequences
+         */
+        const unescape = (str) => str.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_, esc) => {
+            switch (esc[0]) {
+                case 'n': return '\n';
+                case 'r': return '\r';
+                case 't': return '\t';
+                case 'b': return '\b';
+                case 'f': return '\f';
+                case 'u': return esc.length === 5 ? String.fromCharCode(parseInt(esc.slice(1), 16)) : esc;
+                default: return esc; // \\, \", \/ and any other escaped character
+            }
+        });
         const getTypeSafeValue = (path, obj) => {
             const type = obj['.type'];
             let val = obj['.val'];
@@ -11829,7 +11903,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 }
                 case 'Buffer':
                 case 'binary': {
-                    val = unescape(val);
+                    // Note: val was already unescaped by readString
                     if (val.startsWith('<~')) {
                         // Ascii85 encoded
                         val = acebase_core_1.ascii85.decode(val);
@@ -11847,6 +11921,11 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 }
                 case 'bigint': {
                     val = BigInt(val);
+                    break;
+                }
+                case 'number': {
+                    // Used for NaN, Infinity and -Infinity, which cannot be represented in JSON
+                    val = Number(val);
                     break;
                 }
                 default:
@@ -11915,20 +11994,15 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             let obj = {};
             let flushedBefore = false;
             const flushObject = async () => {
-                let p;
                 if (!flushedBefore) {
                     flushedBefore = true;
-                    p = this.setNode(target.path, obj, childOptions);
+                    await this.setNode(target.path, obj, childOptions);
                 }
                 else if (Object.keys(obj).length > 0) {
-                    p = this.updateNode(target.path, obj, childOptions);
+                    await this.updateNode(target.path, obj, childOptions);
                 }
                 obj = {};
-                if (p) {
-                    await p;
-                }
             };
-            const promises = [];
             while (true) {
                 await consumeSpaces();
                 const property = await readString(); // readPropertyName();
@@ -11940,7 +12014,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 childCount++;
                 if (['object', 'array'].includes(type)) {
                     // Flush current imported value before proceeding with object/array child
-                    promises.push(flushObject());
+                    await flushObject();
                     if (type === 'object') {
                         // Import child object/array
                         await importObject(target.child(property));
@@ -11968,8 +12042,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 const val = getTypeSafeValue(target.path, obj);
                 return this.setNode(target.path, val, childOptions);
             }
-            promises.push(flushObject());
-            await Promise.all(promises);
+            await flushObject();
         };
         const importArray = async (target) => {
             await consumeToken('[');
@@ -11983,20 +12056,16 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
             let arr = [];
             let updates = {};
             const flushArray = async () => {
-                let p;
                 if (!flushedBefore) {
                     // Store array
                     flushedBefore = true;
-                    p = this.setNode(target.path, arr, childOptions);
+                    await this.setNode(target.path, arr, childOptions);
                     arr = null; // GC
                 }
                 else if (Object.keys(updates).length > 0) {
                     // Flush updates
-                    p = this.updateNode(target.path, updates, childOptions);
+                    await this.updateNode(target.path, updates, childOptions);
                     updates = {};
-                }
-                if (p) {
-                    await p;
                 }
             };
             const pushChild = (value, index) => {
@@ -12007,7 +12076,6 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                     arr.push(value);
                 }
             };
-            const promises = [];
             let index = 0;
             while (true) {
                 await consumeSpaces();
@@ -12015,7 +12083,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 pushChild(value, index);
                 if (['object', 'array'].includes(type)) {
                     // Flush current imported value before proceeding with object/array child
-                    promises.push(flushArray()); // No need to await now
+                    await flushArray();
                     if (type === 'object') {
                         // Import child object/array
                         await importObject(target.child(index));
@@ -12036,8 +12104,7 @@ class Storage extends acebase_core_1.SimpleEventEmitter {
                 await consumeToken(',');
                 index++;
             }
-            promises.push(flushArray());
-            await Promise.all(promises);
+            await flushArray();
         };
         const start = async () => {
             const { value, type } = await readValue();
