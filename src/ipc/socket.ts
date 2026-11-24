@@ -54,7 +54,10 @@ export class IPCSocketPeer extends AceBaseIPCPeer {
             this.exit();
         });
 
-        if (!isMaster) {
+        /**
+         * Tries starting the IPC service. If it is already running, the new service process will exit
+         */
+        const startService = () => {
             if (DEBUG_MODE) {
                 // Easy debugging option: start the IPC service in this process
                 startServer(dbFile, {
@@ -77,6 +80,9 @@ export class IPCSocketPeer extends AceBaseIPCPeer {
                 const service = spawn(process.execPath, args, { detached: true, stdio: 'ignore' });
                 service.unref(); // Process is detached and allowed to keep running after we exit. Do not keep a reference to it, possibly preventing app exit.
             }
+        };
+        if (!isMaster) {
+            startService();
         }
 
         /**
@@ -85,6 +91,7 @@ export class IPCSocketPeer extends AceBaseIPCPeer {
         let socket: Socket | null = null;
         let connected = false;
         const queue = [] as IMessage[];
+        const helloMsg: IHelloMessage = { type: 'hello', from: this.id, data: undefined };
 
         /**
          * Maps peers to IPC sockets (master only)
@@ -164,22 +171,29 @@ export class IPCSocketPeer extends AceBaseIPCPeer {
             });
         }
         else {
+            this.once('exit', () => {
+                socket?.destroy();
+            });
+
             const connectSocket = async (path: string) => {
-                const tryConnect = async (tries: number): Promise<void> => {
+                const tryConnect = async (tries: number): Promise<Socket | null> => {
                     try {
-                        if (this._exiting) { return; }
+                        if (this._exiting) { return null; }
                         const s = connect({ path });
                         await new Promise<void>((resolve, reject) => {
                             s.once('error', reject).unref();
                             s.once('connect', resolve).unref();
                         });
-                        this.logger.info(`[IPC ${ipcSettings.ipcName}] peer ${this.id} successfully established connection to the service`);
-                        socket = s;
-                        connected = true;
+                        return s;
                     }
                     catch (err) {
                         if (tries < 100) {
-                            // Retry in 10ms
+                            if (tries % 10 === 0) {
+                                // The service might not be running: the one we started could have exited because another
+                                // service was still running at that time, which has exited itself since. Try starting it again
+                                startService();
+                            }
+                            // Retry in 100ms
                             await new Promise(resolve => setTimeout(resolve, 100));
                             return tryConnect(tries + 1);
                         }
@@ -187,19 +201,35 @@ export class IPCSocketPeer extends AceBaseIPCPeer {
                         throw err;
                     }
                 };
-                await tryConnect(1);
+                const s = await tryConnect(1);
+                if (!s) {
+                    // Exiting
+                    return;
+                }
+                this.logger.info(`[IPC ${ipcSettings.ipcName}] peer ${this.id} successfully established connection to the service`);
+                socket = s;
 
-                this.once('exit', () => {
-                    socket?.destroy();
-                });
-
-                bindEventHandler(socket, 'close', (hadError) => {
+                s.once('close', (hadError) => {
                     // Connection to server closed
-                    this.logger.info(`IPC peer ${this.id} lost its connection to the service${hadError ? ' because of an error' : ''}`);
+                    if (socket !== s) { return; }
+                    socket = null;
+                    connected = false;
+                    if (this._exiting) { return; }
+
+                    // Connection was lost unexpectedly. This happens if we connected to a service that was shutting down
+                    // at that time: the connection is accepted by the OS, but dropped once the service stops listening.
+                    // Start a new service (or connect to a running one), introduce ourselves again and resend pending requests
+                    this.logger.warn(`[IPC ${ipcSettings.ipcName}] peer ${this.id} lost its connection to the service${hadError ? ' because of an error' : ''}, reconnecting`);
+                    queue.unshift(helloMsg);
+                    this.resendPendingRequests(request => queue.some(m => m.type === request.type && (m as typeof request).id === request.id));
+                    startService();
+                    connectSocket(path).catch(err => {
+                        this.logger.error(`[IPC ${ipcSettings.ipcName}] peer ${this.id} failed to reconnect to the service: ${err.message}`);
+                    });
                 });
 
                 let buffer = Buffer.alloc(0); // Buffer to store incomplete messages
-                bindEventHandler(socket, 'data', chunk => {
+                s.on('data', chunk => {
                     // Received data from server
                     buffer = Buffer.concat([buffer, chunk]);
 
@@ -218,7 +248,7 @@ export class IPCSocketPeer extends AceBaseIPCPeer {
                             // this.logger.debug(`Received server message: `, json);
                             const serialized = JSON.parse(json);
                             const msg = Transport.deserialize2(serialized);
-                            handleMessage(socket, msg);
+                            handleMessage(s, msg);
                         }
                         catch (err) {
                             this.logger.error(`Error parsing message: ${err}`);
@@ -226,20 +256,29 @@ export class IPCSocketPeer extends AceBaseIPCPeer {
                     }
                 });
 
-                connected = true;
+                // Send queued messages, then send directly from now on
                 while (queue.length) {
                     const message = queue.shift();
-                    this.sendMessage(message);
+                    writeMessage(s, message);
                 }
+                connected = true;
             };
-            connectSocket(socketPath);
+            connectSocket(socketPath).catch(err => {
+                this.logger.error(`[IPC ${ipcSettings.ipcName}] peer ${this.id} failed to connect to the service: ${err.message}`);
+            });
         }
 
-        this.sendMessage = (message: IMessage) => {
+        const writeMessage = (target: Socket, message: IMessage) => {
             const serialized = Transport.serialize2(message);
             const buffer = Buffer.from(JSON.stringify(serialized) + MSG_DELIMITER);
+            target.write(buffer);
+        };
+
+        this.sendMessage = (message: IMessage) => {
             if (this.isMaster) {
                 // We are the master, send the message to the target worker(s)
+                const serialized = Transport.serialize2(message);
+                const buffer = Buffer.from(JSON.stringify(serialized) + MSG_DELIMITER);
                 this.peers
                     .filter(p => p.id !== message.from && (!message.to || p.id === message.to))
                     .forEach(peer => {
@@ -247,18 +286,17 @@ export class IPCSocketPeer extends AceBaseIPCPeer {
                         socket?.write(buffer);
                     });
             }
-            else if (connected) {
+            else if (connected && socket) {
                 // Send the message to the master who will forward it to the target worker(s)
-                socket.write(buffer);
+                writeMessage(socket, message);
             }
             else {
-                // Not connected yet, queue message
+                // Not connected (yet), queue message
                 queue.push(message);
             }
         };
 
         // Send hello to other peers
-        const helloMsg: IHelloMessage = { type: 'hello', from: this.id, data: undefined };
         this.sendMessage(helloMsg);
     }
 
