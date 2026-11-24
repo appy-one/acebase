@@ -1577,16 +1577,20 @@ export class Storage extends SimpleEventEmitter {
             ? writeFn.write.bind(writeFn) // Using the "old" stream argument. Use its write method for backward compatibility
             : writeFn;
 
+        /**
+         * Escapes a string for use in JSON output (both for values and property keys)
+         */
+        const escape = (str: string) => str
+            .replace(/\\/g, '\\\\')         // backslashes
+            .replace(/"/g, '\\"')           // quotes
+            .replace(/\r/g, '\\r')          // carriage return
+            .replace(/\n/g, '\\n')          // line feed
+            .replace(/\t/g, '\\t')          // tabs
+            .replace(/[\u0000-\u001f]/g,    // other control characters
+                ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`
+            );
+
         const stringifyValue = (type: number, val: any) => {
-            const escape = (str: string) => str
-                .replace(/\\/g, '\\\\')         // forward slashes
-                .replace(/"/g, '\\"')           // quotes
-                .replace(/\r/g, '\\r')          // carriage return
-                .replace(/\n/g, '\\n')          // line feed
-                .replace(/\t/g, '\\t')          // tabs
-                .replace(/[\u0000-\u001f]/g,    // other control characters
-                    ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`
-                );
 
             if (type === VALUE_TYPES.DATETIME) {
                 val = `"${val.toISOString()}"`;
@@ -1610,7 +1614,7 @@ export class Storage extends SimpleEventEmitter {
                 }
             }
             else if (type === VALUE_TYPES.REFERENCE) {
-                val = `"${val.path}"`;
+                val = `"${escape(val.path)}"`;
                 if (options.type_safe) {
                     val = `{".type":"reference",".val":${val}}`; // Previously: "PathReference"
                 }
@@ -1657,7 +1661,7 @@ export class Storage extends SimpleEventEmitter {
                 }
                 else {
                     if (outputCount++ > 0) { output += ','; }
-                    if (typeof childInfo.key === 'string') { output += `"${childInfo.key}":`; }
+                    if (typeof childInfo.key === 'string') { output += `"${escape(childInfo.key)}":`; }
                     output += stringifyValue(childInfo.type, childInfo.value);
                 }
             });
@@ -1670,7 +1674,7 @@ export class Storage extends SimpleEventEmitter {
             const childInfo = pending.shift();
             let output = outputCount++ > 0 ? ',' : '';
             const key = typeof childInfo.index === 'number' ? childInfo.index : childInfo.key;
-            if (typeof key === 'string') { output += `"${key}":`; }
+            if (typeof key === 'string') { output += `"${escape(key)}":`; }
             if (!childInfo.address) {
                 // Inline array entry that had to wait for previous entries to be exported
                 output += stringifyValue(childInfo.type, childInfo.value);
