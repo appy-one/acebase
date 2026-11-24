@@ -1817,14 +1817,19 @@ export class Storage extends SimpleEventEmitter {
             await consumeToken('"');
             let str = '';
             let i = state.index;
-            // Read until next (unescaped) quote
-            while (state.data[i] !== '"' || state.data[i-1] === '\\') {
-                i++;
+            let escaped = false; // Whether the previous character was an escaping backslash (state is kept across chunks)
+            // Read until next unescaped quote
+            while (true) {
                 if (i >= state.data.length) {
                     str += state.data.slice(state.index);
                     await readNextChunk();
                     i = 0;
                 }
+                const ch = state.data[i];
+                if (escaped) { escaped = false; }
+                else if (ch === '\\') { escaped = true; }
+                else if (ch === '"') { break; }
+                i++;
             }
             str += state.data.slice(state.index, i);
             state.index = i + 1;
@@ -1833,9 +1838,11 @@ export class Storage extends SimpleEventEmitter {
         const readBoolean = async () => {
             if (state.data[state.index] === 't') {
                 await consumeToken('true');
+                return true;
             }
             else if (state.data[state.index] === 'f') {
                 await consumeToken('false');
+                return false;
             }
             throw new Error(`Expected true or false at index ${state.offset + state.index}`);
         };
@@ -1843,7 +1850,7 @@ export class Storage extends SimpleEventEmitter {
             let str = '';
             let i = state.index;
             // Read until non-number character is encountered
-            const nrChars = ['-','0','1','2','3','4','5','6','7','8','9','.','e','b','f','x','o','n']; // b: 0b110101, x: 0x3a, o: 0o01, n: 29723n, e: 10e+23, f: ?
+            const nrChars = ['-','+','0','1','2','3','4','5','6','7','8','9','.','e','E','b','f','x','o','n']; // b: 0b110101, x: 0x3a, o: 0o01, n: 29723n, e: 10e+23, f: ?
             while (nrChars.includes(state.data[i])) {
                 i++;
                 if (i >= state.data.length) {
@@ -1854,7 +1861,11 @@ export class Storage extends SimpleEventEmitter {
             }
             str += state.data.slice(state.index, i);
             state.index = i;
-            const nr = str.endsWith('n') ? BigInt(str.slice(0, -1)) : str.includes('.') ? parseFloat(str) : parseInt(str);
+            // Number() handles exponents (1e-7), hex (0x3a), binary (0b101) and octal (0o17) notations
+            const nr = str.endsWith('n') ? BigInt(str.slice(0, -1)) : Number(str);
+            if (typeof nr === 'number' && isNaN(nr)) {
+                throw new Error(`Invalid number "${str}" at index ${state.offset + state.index - str.length}`);
+            }
             return nr;
         };
         const readValue = async () => {
@@ -1874,7 +1885,21 @@ export class Storage extends SimpleEventEmitter {
             return { type, value };
         };
 
-        const unescape = (str: string) => str.replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        /**
+         * Reverts JSON string escaping (as done by `exportNode`) in a single pass, so escaped backslashes
+         * followed by other characters (eg `\\n`: backslash + n) are not mistaken for other escape sequences
+         */
+        const unescape = (str: string) => str.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_, esc: string) => {
+            switch (esc[0]) {
+                case 'n': return '\n';
+                case 'r': return '\r';
+                case 't': return '\t';
+                case 'b': return '\b';
+                case 'f': return '\f';
+                case 'u': return esc.length === 5 ? String.fromCharCode(parseInt(esc.slice(1), 16)) : esc;
+                default: return esc; // \\, \", \/ and any other escaped character
+            }
+        });
         const getTypeSafeValue = (path: string, obj: any) => {
             const type = obj['.type'];
             let val = obj['.val'];
@@ -1886,7 +1911,7 @@ export class Storage extends SimpleEventEmitter {
                 }
                 case 'Buffer':
                 case 'binary': {
-                    val = unescape(val);
+                    // Note: val was already unescaped by readString
                     if (val.startsWith('<~')) {
                         // Ascii85 encoded
                         val = ascii85.decode(val);
