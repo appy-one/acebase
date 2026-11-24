@@ -121,7 +121,8 @@ describe('export/import', () => {
             for (let i = 0; i < length; i++) { str += pick([...chars]); }
             return str;
         };
-        const keyChars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-';
+        // Note: keys cannot contain control characters, \ / [ or ], but quotes are allowed (and must be escaped on export)
+        const keyChars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" ';
         const randomKey = () => {
             const length = randomInt(1, 12);
             let key = '';
@@ -137,7 +138,13 @@ describe('export/import', () => {
             switch (randomInt(0, 8)) {
                 case 0: { const s = randomString(pick([10, 50, 500])); generatedBytes += s.length + 2; return s; }
                 case 1: { generatedBytes += 8; return randomInt(-1000000, 1000000); }
-                case 2: { generatedBytes += 16; return (random() - 0.5) * Math.pow(10, randomInt(-10, 15)); }
+                case 2: {
+                    generatedBytes += 16;
+                    // Include NaN, Infinity and -Infinity, which are not valid JSON and need type-safe exporting
+                    return random() < 0.05
+                        ? pick([NaN, Infinity, -Infinity])
+                        : (random() - 0.5) * Math.pow(10, randomInt(-10, 15));
+                }
                 case 3: { generatedBytes += 5; return random() < 0.5; }
                 case 4: { generatedBytes += 40; return new Date(randomInt(0, 4102444800000)); }
                 case 5: {
@@ -204,14 +211,19 @@ describe('export/import', () => {
             return chunk;
         });
 
-        // 2nd export must be identical to the 1st
+        // 2nd export must contain the same data as the 1st.
+        // Note that the exported JSON strings are not compared directly because property order is not guaranteed:
+        // export writes inline values before values stored in their own records, and import may store a child
+        // inline first (eg an empty object placeholder) before moving it to its own record.
         let export2 = '';
         await ref.export(str => { export2 += str; });
-        if (export2 !== export1) {
-            // Find first difference to give a meaningful message (comparing 5MB strings with toEqual produces unreadable output)
-            let i = 0;
-            while (i < export1.length && export1[i] === export2[i]) { i++; }
-            fail(`Exports differ (seed ${seed}) at index ${i}: "${export1.slice(Math.max(0, i - 100), i + 100)}" vs "${export2.slice(Math.max(0, i - 100), i + 100)}"`);
+        expect(export2.length).withContext(`seed ${seed}`).toEqual(export1.length);
+        const exported1 = JSON.parse(export1), exported2 = JSON.parse(export2);
+        if (!jasmine.matchersUtil.equals(exported2, exported1)) {
+            // Narrow down to the first differing top-level item (comparing 5MB objects with toEqual produces unreadable output)
+            const key = Object.keys(exported1).find(key => !jasmine.matchersUtil.equals(exported2[key], exported1[key])) as string;
+            expect(exported2[key]).withContext(`seed ${seed}, item "${key}"`).toEqual(exported1[key]);
+            fail(`Exports differ (seed ${seed})`);
         }
 
         // Loaded data must equal the generated data
@@ -227,7 +239,7 @@ describe('export/import', () => {
         const isEqual = jasmine.matchersUtil.equals(loaded, data);
         if (!isEqual) {
             // Narrow down to the first differing top-level item
-            const key = Object.keys(data).find(key => !jasmine.matchersUtil.equals(loaded[key], data[key]));
+            const key = Object.keys(data).find(key => !jasmine.matchersUtil.equals(loaded[key], data[key])) as string;
             expect(loaded[key]).withContext(`seed ${seed}, item "${key}"`).toEqual(data[key]);
         }
         expect(isEqual).withContext(`seed ${seed}`).toBeTrue();
