@@ -1619,6 +1619,13 @@ export class Storage extends SimpleEventEmitter {
                     val = `{".type":"reference",".val":${val}}`; // Previously: "PathReference"
                 }
             }
+            else if (type === VALUE_TYPES.NUMBER && !Number.isFinite(val)) {
+                // NaN, Infinity and -Infinity are not valid JSON
+                val = `"${val}"`;
+                if (options.type_safe) {
+                    val = `{".type":"number",".val":${val}}`;
+                }
+            }
             else if (type === VALUE_TYPES.BIGINT) {
                 // Unfortnately, JSON.parse does not support 0n bigint json notation
                 val = `"${val}"`;
@@ -1942,6 +1949,11 @@ export class Storage extends SimpleEventEmitter {
                 }
                 case 'bigint': {
                     val = BigInt(val);
+                    break;
+                }
+                case 'number': {
+                    // Used for NaN, Infinity and -Infinity, which cannot be represented in JSON
+                    val = Number(val);
                     break;
                 }
                 default:
